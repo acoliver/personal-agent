@@ -30,12 +30,14 @@ PersonalAgent is a macOS menu bar application written in Rust that provides a co
 - **Rationale:** Pure Rust solution, native menu bar integration, highly customizable UI, active ecosystem, good performance
 
 ### 2.4 LLM Integration Library
-- **Primary:** `rig-core` (Rig)
-  - Multi-provider support (OpenAI, Anthropic, Google, Ollama, etc.)
-  - Streaming responses
+- **Primary:** `serdes-ai` (SerdesAI - PydanticAI port to Rust)
+  - Multi-provider support (OpenAI, Anthropic, Google, Groq, Mistral, Ollama, Bedrock, Azure)
+  - Streaming responses with configurable `emit_thinking` for thinking block toggle
   - Tool/function calling support (for v0.2+)
+  - Graph workflows for future agent features
+  - MCP support for tool servers
   - Async/await native
-- **Fallback consideration:** `async-openai` for OpenAI-compatible endpoints if Rig doesn't cover edge cases
+- **Repository:** https://github.com/janfeddersen-wq/serdesAI
 
 ---
 
