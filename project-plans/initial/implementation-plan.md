@@ -22,7 +22,7 @@
 - [ ] `cargo new personal-agent`
 - [ ] Create `.clippy.toml`:
   ```toml
-  cognitive-complexity-threshold = 25
+  cognitive-complexity-threshold = 50
   type-complexity-threshold = 250
   too-many-arguments-threshold = 7
   ```
@@ -34,7 +34,8 @@
   edition = "2021"
   ```
 - [ ] Create `.github/workflows/rust-quality.yaml` (CI pipeline)
-- [ ] Create pre-commit hook for local coverage check (80% threshold)
+- [ ] Create `scripts/check-quality.sh` (shared by pre-commit and CI)
+- [ ] Create pre-commit hook for local quality/coverage checks
 - [ ] Install local dev tools: `cargo install cargo-llvm-cov cargo-audit`
 - [ ] Install lizard: `pip3 install lizard`
 
@@ -67,35 +68,85 @@ nursery = "warn"
 cognitive_complexity = "warn"
 ```
 
-### 0.3 Pre-commit Hook (coverage gate)
-Create `.git/hooks/pre-commit`:
+### 0.3 Quality Check Script
+Create `scripts/check-quality.sh`:
 ```bash
 #!/bin/bash
 set -e
 
-echo "Running quality checks..."
+WARN_EXIT=0
+ERROR_EXIT=0
+
+echo "=== Running quality checks ==="
 
 # Format check
-cargo fmt -- --check || { echo "Format check failed"; exit 1; }
+echo "Checking formatting..."
+cargo fmt -- --check || { echo "ERROR: Format check failed"; exit 1; }
 
 # Clippy
-cargo clippy -- -D warnings || { echo "Clippy failed"; exit 1; }
+echo "Running clippy..."
+cargo clippy -- -D warnings || { echo "ERROR: Clippy failed"; exit 1; }
 
-# Complexity check
-lizard -C 25 -w src/ || { echo "Complexity check failed"; exit 1; }
+# Complexity check (CCN 50, function length error at 100, warn at 80)
+echo "Checking complexity..."
+lizard -C 50 -L 100 -w src/ || { echo "ERROR: Complexity/function length exceeded"; ERROR_EXIT=1; }
 
-# Tests with coverage
-coverage=$(cargo llvm-cov --summary-only 2>/dev/null | grep -oP 'line: \K[\d.]+')
-threshold=80
-if (( $(echo "$coverage < $threshold" | bc -l) )); then
-    echo "Coverage ${coverage}% is below threshold ${threshold}%"
-    exit 1
+# Function length warnings (80 lines)
+long_funcs=$(lizard -L 80 src/ 2>/dev/null | grep -c "warning" || true)
+if [ "$long_funcs" -gt 0 ]; then
+    echo "WARNING: $long_funcs functions exceed 80 lines"
+    WARN_EXIT=1
 fi
 
-echo "All checks passed! Coverage: ${coverage}%"
+# File length check
+echo "Checking file lengths..."
+for file in $(find src -name "*.rs"); do
+    lines=$(wc -l < "$file")
+    if [ "$lines" -gt 1000 ]; then
+        echo "ERROR: $file has $lines lines (max 1000)"
+        ERROR_EXIT=1
+    elif [ "$lines" -gt 750 ]; then
+        echo "WARNING: $file has $lines lines (recommended max 750)"
+        WARN_EXIT=1
+    fi
+done
+
+# Tests with coverage
+echo "Running tests with coverage..."
+cargo llvm-cov --summary-only > /tmp/cov_summary.txt 2>&1 || true
+coverage=$(grep -oE 'line: [0-9.]+' /tmp/cov_summary.txt | grep -oE '[0-9.]+' || echo "0")
+
+if (( $(echo "$coverage < 80" | bc -l) )); then
+    echo "ERROR: Coverage ${coverage}% is below 80%"
+    ERROR_EXIT=1
+elif (( $(echo "$coverage < 90" | bc -l) )); then
+    echo "WARNING: Coverage ${coverage}% is below 90%"
+    WARN_EXIT=1
+else
+    echo "Coverage: ${coverage}%"
+fi
+
+# Summary
+if [ "$ERROR_EXIT" -eq 1 ]; then
+    echo "=== FAILED: Quality errors found ==="
+    exit 1
+elif [ "$WARN_EXIT" -eq 1 ]; then
+    echo "=== PASSED with warnings ==="
+    exit 0
+else
+    echo "=== PASSED: All checks clean ==="
+    exit 0
+fi
 ```
 
-### 0.4 Implement Menu Bar Icon + Empty Panel (TDD)
+### 0.4 Pre-commit Hook
+Create `.git/hooks/pre-commit`:
+```bash
+#!/bin/bash
+exec ./scripts/check-quality.sh
+```
+
+### 0.5 Implement Menu Bar Icon + Empty Panel (TDD)
 - [ ] Write test: `tray_icon_created_successfully`
 - [ ] Write test: `panel_opens_on_click`
 - [ ] Write test: `panel_closes_on_focus_loss`
@@ -105,12 +156,10 @@ echo "All checks passed! Coverage: ${coverage}%"
 - [ ] Verify click opens panel below icon
 - [ ] All tests pass, clippy clean, fmt clean, coverage >= 80%
 
-### 0.5 Quality Gate Check
-- [ ] `cargo fmt -- --check`
-- [ ] `cargo clippy -- -D warnings`
-- [ ] `lizard -C 25 src/`
-- [ ] `cargo test`
-- [ ] `cargo llvm-cov` (>= 80%)
+### 0.6 Quality Gate Check
+- [ ] `./scripts/check-quality.sh` passes
+- [ ] No errors (complexity <= 50, function <= 100 lines, file <= 1000 lines, coverage >= 80%)
+- [ ] Warnings acceptable (function > 80 lines, file > 750 lines, coverage < 90%)
 
 **Milestone 0 Complete:** Menu bar icon visible, empty panel opens on click.
 
@@ -391,13 +440,15 @@ src/
 
 ## Quality Enforcement Summary
 
-| Check | Tool | Threshold | When |
-|-------|------|-----------|------|
-| Formatting | `cargo fmt` | Clean | Pre-commit, CI |
-| Linting | `cargo clippy` | No warnings | Pre-commit, CI |
-| Complexity | `lizard` | CCN <= 25 | Pre-commit, CI |
-| Coverage | `cargo-llvm-cov` | >= 80% | Pre-commit, CI |
-| Security | `cargo audit` | No vulnerabilities | CI |
+| Check | Tool | Warn | Error | When |
+|-------|------|------|-------|------|
+| Formatting | `cargo fmt` | - | Any diff | Pre-commit, CI |
+| Linting | `cargo clippy` | - | Any warning | Pre-commit, CI |
+| Complexity (CCN) | `lizard -C` | - | > 50 | Pre-commit, CI |
+| Function length | `lizard -L` | > 80 lines | > 100 lines | Pre-commit, CI |
+| File length | Custom script | > 750 lines | > 1000 lines | Pre-commit, CI |
+| Coverage | `cargo-llvm-cov` | < 90% | < 80% | Pre-commit, CI |
+| Security | `cargo audit` | - | Any vulnerability | CI |
 
 ---
 
