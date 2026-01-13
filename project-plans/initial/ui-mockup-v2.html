@@ -1,0 +1,1468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PersonalAgent UI Mockup v2</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+      background: #0d0d0d;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+
+    h1 {
+      color: #666;
+      font-size: 14px;
+      font-weight: 400;
+      margin-bottom: 30px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+
+    .mockup-container {
+      display: flex;
+      gap: 40px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .mockup-label {
+      color: #555;
+      font-size: 11px;
+      text-align: center;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* Color palette - all dark, minimal accent */
+    :root {
+      --bg-darkest: #0d0d0d;
+      --bg-darker: #1a1a1a;
+      --bg-dark: #242424;
+      --bg-medium: #2e2e2e;
+      --bg-light: #3a3a3a;
+      --bg-lighter: #444;
+      --text-primary: #e5e5e5;
+      --text-secondary: #888;
+      --text-muted: #555;
+      --border: #333;
+      --accent: #6e6e6e;
+      --accent-hover: #888;
+      --success: #4a9f4a;
+      --danger: #a84040;
+    }
+
+    /* ============================================
+       POPOVER BASE
+       ============================================ */
+    .popover {
+      width: 400px;
+      height: 500px;
+      background: var(--bg-darker);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+      position: relative;
+    }
+
+    .popover::before {
+      content: '';
+      position: absolute;
+      top: -8px;
+      right: 20px;
+      width: 16px;
+      height: 16px;
+      background: var(--bg-dark);
+      border-left: 1px solid var(--border);
+      border-top: 1px solid var(--border);
+      transform: rotate(45deg);
+    }
+
+    /* ============================================
+       TOP BAR
+       ============================================ */
+    .top-bar {
+      background: var(--bg-dark);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      min-height: 48px;
+    }
+
+    .top-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .top-bar-right {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Conversation title - editable */
+    .conversation-header {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .conversation-name {
+      color: var(--text-primary);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 2px 6px;
+      margin: -2px -6px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+    }
+
+    .conversation-name:hover {
+      background: var(--bg-medium);
+      border-color: var(--border);
+    }
+
+    .conversation-name.editing {
+      background: var(--bg-darkest);
+      border-color: var(--accent);
+      outline: none;
+    }
+
+    .conversation-model {
+      color: var(--text-muted);
+      font-size: 10px;
+      padding-left: 6px;
+    }
+
+    /* Profile quick-switch */
+    .profile-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-medium);
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      transition: all 0.15s;
+    }
+
+    .profile-badge:hover {
+      background: var(--bg-light);
+      border-color: var(--accent);
+    }
+
+    .profile-badge-name {
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+
+    .profile-badge-chevron {
+      color: var(--text-muted);
+      font-size: 8px;
+    }
+
+    /* Icon buttons */
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      transition: all 0.15s;
+    }
+
+    .icon-btn:hover {
+      background: var(--bg-medium);
+      border-color: var(--border);
+      color: var(--text-primary);
+    }
+
+    .icon-btn.active {
+      background: var(--bg-light);
+      color: var(--text-primary);
+    }
+
+    /* Back button */
+    .back-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+
+    .back-btn:hover {
+      background: var(--bg-medium);
+      color: var(--text-primary);
+    }
+
+    .view-title {
+      color: var(--text-primary);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    /* ============================================
+       CHAT AREA
+       ============================================ */
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .message {
+      max-width: 88%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .message.user {
+      background: var(--bg-light);
+      color: var(--text-primary);
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.assistant {
+      background: var(--bg-dark);
+      color: var(--text-secondary);
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+      border: 1px solid var(--border);
+    }
+
+    .message code {
+      background: var(--bg-darkest);
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 11px;
+      border: 1px solid var(--border);
+    }
+
+    .message.assistant .streaming-cursor {
+      display: inline-block;
+      width: 2px;
+      height: 13px;
+      background: var(--text-secondary);
+      margin-left: 2px;
+      animation: blink 1s infinite;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+
+    .timestamp {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 6px 0;
+    }
+
+    /* ============================================
+       INPUT AREA
+       ============================================ */
+    .input-area {
+      padding: 10px 14px;
+      background: var(--bg-dark);
+      border-top: 1px solid var(--border);
+    }
+
+    .input-wrapper {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    .input-field {
+      flex: 1;
+      background: var(--bg-darkest);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text-primary);
+      font-size: 13px;
+      font-family: inherit;
+      resize: none;
+      min-height: 38px;
+      max-height: 100px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .input-field:focus {
+      border-color: var(--accent);
+    }
+
+    .input-field::placeholder {
+      color: var(--text-muted);
+    }
+
+    .send-btn {
+      width: 38px;
+      height: 38px;
+      background: var(--bg-light);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      transition: all 0.15s;
+    }
+
+    .send-btn:hover {
+      background: var(--bg-lighter);
+      color: var(--text-primary);
+    }
+
+    /* ============================================
+       SCROLLABLE CONTENT
+       ============================================ */
+    .scroll-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px;
+    }
+
+    /* ============================================
+       SETTINGS COMPONENTS
+       ============================================ */
+    .settings-section {
+      margin-bottom: 20px;
+    }
+
+    .section-title {
+      color: var(--text-muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      padding-left: 2px;
+    }
+
+    .settings-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 6px;
+    }
+
+    .settings-label {
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+
+    .settings-value {
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .settings-value.editable {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+
+    .settings-value.editable:hover {
+      background: var(--bg-medium);
+      color: var(--text-secondary);
+    }
+
+    /* Toggle */
+    .toggle {
+      width: 36px;
+      height: 20px;
+      background: var(--bg-light);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      position: relative;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .toggle.on {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      background: var(--text-secondary);
+      border-radius: 50%;
+      top: 1px;
+      left: 1px;
+      transition: all 0.2s;
+    }
+
+    .toggle.on::after {
+      left: 17px;
+      background: var(--text-primary);
+    }
+
+    /* ============================================
+       PROFILE CARDS
+       ============================================ */
+    .profile-card {
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .profile-card:hover {
+      background: var(--bg-medium);
+      border-color: var(--accent);
+    }
+
+    .profile-card.active {
+      border-color: var(--success);
+    }
+
+    .profile-card.active .check-mark {
+      color: var(--success);
+    }
+
+    .profile-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .profile-card-name {
+      color: var(--text-primary);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .profile-card-model {
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
+    .check-mark {
+      color: transparent;
+      font-size: 12px;
+    }
+
+    .add-btn {
+      width: 100%;
+      padding: 10px;
+      background: transparent;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .add-btn:hover {
+      border-color: var(--accent);
+      color: var(--text-secondary);
+    }
+
+    /* ============================================
+       CONVERSATION LIST
+       ============================================ */
+    .conversation-item {
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .conversation-item:hover {
+      background: var(--bg-medium);
+      border-color: var(--accent);
+    }
+
+    .conversation-item.active {
+      border-color: var(--text-secondary);
+    }
+
+    .conversation-title {
+      color: var(--text-primary);
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .conversation-preview {
+      color: var(--text-muted);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .conversation-meta {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+    }
+
+    .conversation-date,
+    .conversation-model-tag {
+      color: var(--text-muted);
+      font-size: 9px;
+    }
+
+    /* ============================================
+       FORM COMPONENTS
+       ============================================ */
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-label {
+      display: block;
+      color: var(--text-muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .form-input {
+      width: 100%;
+      background: var(--bg-darkest);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 9px 11px;
+      color: var(--text-primary);
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .form-input:focus {
+      border-color: var(--accent);
+    }
+
+    .form-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .form-select {
+      width: 100%;
+      background: var(--bg-darkest);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 9px 11px;
+      color: var(--text-primary);
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%23555' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+    }
+
+    .form-select:focus {
+      border-color: var(--accent);
+    }
+
+    /* Radio group for auth type */
+    .radio-group {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .radio-option {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+
+    .radio-dot {
+      width: 14px;
+      height: 14px;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .radio-dot.selected {
+      border-color: var(--accent);
+    }
+
+    .radio-dot.selected::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+    }
+
+    /* Slider */
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .slider {
+      flex: 1;
+      height: 4px;
+      background: var(--bg-light);
+      border-radius: 2px;
+      position: relative;
+    }
+
+    .slider-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+    }
+
+    .slider-thumb {
+      position: absolute;
+      top: -5px;
+      width: 14px;
+      height: 14px;
+      background: var(--text-secondary);
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .slider-value {
+      color: var(--text-muted);
+      font-size: 11px;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    /* Buttons */
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 9px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      transition: all 0.15s;
+    }
+
+    .btn-primary {
+      background: var(--bg-light);
+      color: var(--text-primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--bg-lighter);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-secondary);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-dark);
+    }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border-color: var(--danger);
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: var(--text-primary);
+    }
+
+    /* ============================================
+       PROVIDER/MODEL PICKER
+       ============================================ */
+    .search-input {
+      width: 100%;
+      background: var(--bg-darkest);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 9px 11px;
+      color: var(--text-primary);
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent);
+      outline: none;
+    }
+
+    .provider-list {
+      max-height: 180px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .provider-item {
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+
+    .provider-item:last-child {
+      border-bottom: none;
+    }
+
+    .provider-item:hover {
+      background: var(--bg-medium);
+    }
+
+    .provider-item.selected {
+      background: var(--bg-dark);
+    }
+
+    .provider-name {
+      color: var(--text-primary);
+      font-size: 12px;
+    }
+
+    .model-count {
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
+    /* Model list (shown after provider selected) */
+    .model-list {
+      max-height: 140px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+
+    .model-item {
+      padding: 8px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+
+    .model-item:last-child {
+      border-bottom: none;
+    }
+
+    .model-item:hover {
+      background: var(--bg-medium);
+    }
+
+    .model-item.selected {
+      background: var(--bg-dark);
+    }
+
+    .model-name {
+      color: var(--text-primary);
+      font-size: 12px;
+      margin-bottom: 2px;
+    }
+
+    .model-meta {
+      display: flex;
+      gap: 8px;
+    }
+
+    .model-tag {
+      color: var(--text-muted);
+      font-size: 9px;
+      background: var(--bg-light);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    /* ============================================
+       PROFILE QUICK-SWITCH DROPDOWN
+       ============================================ */
+    .dropdown-overlay {
+      position: absolute;
+      top: 48px;
+      left: 10px;
+      right: 10px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      z-index: 100;
+      padding: 8px;
+    }
+
+    .dropdown-item {
+      padding: 8px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.1s;
+    }
+
+    .dropdown-item:hover {
+      background: var(--bg-medium);
+    }
+
+    .dropdown-item.active {
+      background: var(--bg-light);
+    }
+
+    .dropdown-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 6px 0;
+    }
+
+    /* ============================================
+       TOOLTIPS
+       ============================================ */
+    .tooltip {
+      position: relative;
+    }
+
+    .tooltip::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: -28px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-light);
+      color: var(--text-secondary);
+      font-size: 10px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s;
+    }
+
+    .tooltip:hover::after {
+      opacity: 1;
+    }
+
+    /* Thinking toggle active state */
+    .thinking-toggle.active {
+      background: var(--bg-medium);
+      color: var(--text-primary);
+    }
+
+    /* Thinking block in chat */
+    .thinking-block {
+      background: var(--bg-darkest);
+      border: 1px solid var(--border);
+      border-left: 2px solid var(--text-muted);
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+      max-height: 80px;
+      overflow-y: auto;
+    }
+
+    .thinking-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      font-style: normal;
+    }
+
+    /* ============================================
+       ANNOTATIONS
+       ============================================ */
+    .annotation {
+      position: absolute;
+      background: #2a2a1a;
+      border: 1px solid #4a4a2a;
+      color: #aa9;
+      font-size: 10px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      max-width: 180px;
+      line-height: 1.4;
+    }
+
+    .annotation::before {
+      content: '';
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      background: #2a2a1a;
+      border-left: 1px solid #4a4a2a;
+      border-top: 1px solid #4a4a2a;
+    }
+
+    .annotation.left::before {
+      right: -5px;
+      top: 10px;
+      transform: rotate(135deg);
+    }
+
+    .annotation.right::before {
+      left: -5px;
+      top: 10px;
+      transform: rotate(-45deg);
+    }
+  </style>
+</head>
+<body>
+  <h1>PersonalAgent UI Mockup v2</h1>
+  
+  <div class="mockup-container">
+
+    <!-- ============================================
+         MAIN CHAT VIEW
+         ============================================ -->
+    <div style="position: relative;">
+      <div class="mockup-label">Main Chat View</div>
+      <div class="popover">
+        <div class="top-bar">
+          <div class="top-bar-left">
+            <div class="conversation-header">
+              <div class="conversation-name" title="Click to rename">Menu bar app in Rust</div>
+              <div class="conversation-model">Claude Sonnet 4</div>
+            </div>
+          </div>
+          <div class="top-bar-right">
+            <button class="icon-btn tooltip thinking-toggle" data-tip="Show Thinking" title="Show/Hide Thinking">T</button>
+            <button class="icon-btn tooltip" data-tip="Save" title="Save conversation">S</button>
+            <button class="icon-btn tooltip" data-tip="History" title="Conversations">H</button>
+            <button class="icon-btn tooltip" data-tip="New" title="New chat">+</button>
+            <button class="icon-btn tooltip" data-tip="Settings" title="Settings">G</button>
+          </div>
+        </div>
+
+        <div class="chat-area">
+          <div class="timestamp">Today, 2:34 PM</div>
+          
+          <div class="message user">
+            How do I create a menu bar app in Rust?
+          </div>
+          
+          <div class="message assistant">
+            To create a menu bar app in Rust for macOS, you'll want to use a combination of crates:
+            <br><br>
+            1. <code>tray-icon</code> - For the system tray icon
+            <br>
+            2. <code>muda</code> - For native menus
+            <br>
+            3. <code>egui</code> + <code>eframe</code> - For the custom UI panel
+          </div>
+          
+          <div class="message user">
+            Show me an example
+          </div>
+          
+          <div class="message assistant">
+            <div class="thinking-block">
+              <div class="thinking-label">Thinking</div>
+              The user wants a code example. I should show them how to set up the basic structure with tray-icon and egui. Let me include the Cargo.toml dependencies and a minimal main.rs...
+            </div>
+            Here's a minimal example...<span class="streaming-cursor"></span>
+          </div>
+        </div>
+
+        <div class="input-area">
+          <div class="input-wrapper">
+            <textarea class="input-field" placeholder="Message..." rows="1"></textarea>
+            <button class="send-btn">^</button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Annotation -->
+      <div class="annotation left" style="right: -200px; top: 8px;">
+        Click title to rename conversation. Auto-named from timestamp initially.
+      </div>
+    </div>
+
+    <!-- ============================================
+         CHAT VIEW WITH PROFILE SWITCHER OPEN
+         ============================================ -->
+    <div style="position: relative;">
+      <div class="mockup-label">Profile Quick-Switch</div>
+      <div class="popover">
+        <div class="top-bar">
+          <div class="top-bar-left">
+            <div class="profile-badge">
+              <span class="profile-badge-name">Claude Sonnet 4</span>
+              <span class="profile-badge-chevron">v</span>
+            </div>
+          </div>
+          <div class="top-bar-right">
+            <button class="icon-btn">S</button>
+            <button class="icon-btn">H</button>
+            <button class="icon-btn">+</button>
+            <button class="icon-btn">G</button>
+          </div>
+        </div>
+
+        <!-- Dropdown overlay -->
+        <div class="dropdown-overlay">
+          <div class="dropdown-item active">
+            <div class="profile-info">
+              <span class="profile-card-name">Claude Sonnet 4</span>
+              <span class="profile-card-model">anthropic</span>
+            </div>
+            <span style="color: var(--success);">*</span>
+          </div>
+          <div class="dropdown-item">
+            <div class="profile-info">
+              <span class="profile-card-name">GPT-4o</span>
+              <span class="profile-card-model">openai</span>
+            </div>
+          </div>
+          <div class="dropdown-item">
+            <div class="profile-info">
+              <span class="profile-card-name">Local Llama</span>
+              <span class="profile-card-model">ollama</span>
+            </div>
+          </div>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-item">
+            <span style="color: var(--text-muted); font-size: 11px;">Manage Profiles...</span>
+          </div>
+        </div>
+
+        <div class="chat-area" style="filter: blur(2px); opacity: 0.3;">
+          <div class="message user">How do I create a menu bar app?</div>
+          <div class="message assistant">To create a menu bar app...</div>
+        </div>
+
+        <div class="input-area" style="filter: blur(2px); opacity: 0.3;">
+          <div class="input-wrapper">
+            <textarea class="input-field" placeholder="Message..." rows="1"></textarea>
+            <button class="send-btn">^</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="annotation left" style="right: -200px; top: 60px;">
+        Quick switch between profiles. "Manage Profiles" goes to settings.
+      </div>
+    </div>
+
+    <!-- ============================================
+         CONVERSATIONS LIST
+         ============================================ -->
+    <div>
+      <div class="mockup-label">Conversations History</div>
+      <div class="popover">
+        <div class="top-bar">
+          <button class="back-btn">&lt; Back</button>
+          <span class="view-title">Conversations</span>
+          <button class="icon-btn">+</button>
+        </div>
+
+        <div class="scroll-content">
+          <div class="conversation-item active">
+            <div class="conversation-title">PersonalAgent</div>
+            <div class="conversation-preview">Here's a minimal example to get started...</div>
+            <div class="conversation-meta">
+              <span class="conversation-date">Today, 2:34 PM</span>
+              <span class="conversation-model-tag">Claude Sonnet</span>
+            </div>
+          </div>
+
+          <div class="conversation-item">
+            <div class="conversation-title">20260112154530789</div>
+            <div class="conversation-preview">The key patterns for async Rust include...</div>
+            <div class="conversation-meta">
+              <span class="conversation-date">Yesterday</span>
+              <span class="conversation-model-tag">GPT-4o</span>
+            </div>
+          </div>
+
+          <div class="conversation-item">
+            <div class="conversation-title">Database schema design</div>
+            <div class="conversation-preview">For a normalized schema, you'd want to...</div>
+            <div class="conversation-meta">
+              <span class="conversation-date">Jan 10</span>
+              <span class="conversation-model-tag">Claude</span>
+            </div>
+          </div>
+
+          <div class="conversation-item">
+            <div class="conversation-title">20260108164523456</div>
+            <div class="conversation-preview">When using useEffect, remember to...</div>
+            <div class="conversation-meta">
+              <span class="conversation-date">Jan 8</span>
+              <span class="conversation-model-tag">Llama</span>
+            </div>
+          </div>
+
+          <div class="conversation-item">
+            <div class="conversation-title">K8s deployment help</div>
+            <div class="conversation-preview">Your deployment YAML should include...</div>
+            <div class="conversation-meta">
+              <span class="conversation-date">Jan 5</span>
+              <span class="conversation-model-tag">GPT-4o</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         SETTINGS VIEW
+         ============================================ -->
+    <div>
+      <div class="mockup-label">Settings</div>
+      <div class="popover">
+        <div class="top-bar">
+          <button class="back-btn">&lt; Back</button>
+          <span class="view-title">Settings</span>
+          <span style="width: 28px;"></span>
+        </div>
+
+        <div class="scroll-content">
+          <div class="settings-section">
+            <div class="section-title">Appearance</div>
+            <div class="settings-row">
+              <span class="settings-label">Dark Mode</span>
+              <div class="toggle on"></div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="section-title">Keyboard</div>
+            <div class="settings-row">
+              <span class="settings-label">Global Hotkey</span>
+              <span class="settings-value editable">Cmd+Shift+Space</span>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="section-title">Context Management</div>
+            <div class="settings-row">
+              <span class="settings-label">Summarize at</span>
+              <span class="settings-value editable">80%</span>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">Preserve top</span>
+              <span class="settings-value editable">20%</span>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">Preserve bottom</span>
+              <span class="settings-value editable">20%</span>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">Summary ratio</span>
+              <span class="settings-value editable">50%</span>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="section-title">Model Profiles</div>
+            <div class="profile-card active">
+              <div class="profile-info">
+                <span class="profile-card-name">Claude Sonnet 4</span>
+                <span class="profile-card-model">anthropic / claude-sonnet-4</span>
+              </div>
+              <span class="check-mark">*</span>
+            </div>
+            <div class="profile-card">
+              <div class="profile-info">
+                <span class="profile-card-name">GPT-4o</span>
+                <span class="profile-card-model">openai / gpt-4o</span>
+              </div>
+              <span class="check-mark"></span>
+            </div>
+            <div class="profile-card">
+              <div class="profile-info">
+                <span class="profile-card-name">Local Llama</span>
+                <span class="profile-card-model">ollama / llama3</span>
+              </div>
+              <span class="check-mark"></span>
+            </div>
+            <button class="add-btn">+ Add Profile</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         PROFILE EDITOR - Provider Selection
+         ============================================ -->
+    <div style="position: relative;">
+      <div class="mockup-label">Profile Editor (1/2)</div>
+      <div class="popover">
+        <div class="top-bar">
+          <button class="back-btn">&lt; Cancel</button>
+          <span class="view-title">New Profile</span>
+          <span style="width: 50px;"></span>
+        </div>
+
+        <div class="scroll-content">
+          <div class="form-group">
+            <label class="form-label">Profile Name</label>
+            <input type="text" class="form-input" placeholder="My Claude Profile" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Provider</label>
+            <input type="text" class="search-input" placeholder="Search providers..." value="anth" />
+            <div class="provider-list">
+              <div class="provider-item selected">
+                <span class="provider-name">Anthropic</span>
+                <span class="model-count">12 models</span>
+              </div>
+              <div class="provider-item">
+                <span class="provider-name">Anthropic (Bedrock)</span>
+                <span class="model-count">8 models</span>
+              </div>
+              <div class="provider-item">
+                <span class="provider-name">Anthropic (Vertex)</span>
+                <span class="model-count">6 models</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Model</label>
+            <div class="model-list">
+              <div class="model-item selected">
+                <div class="model-name">Claude Sonnet 4</div>
+                <div class="model-meta">
+                  <span class="model-tag">tools</span>
+                  <span class="model-tag">200k ctx</span>
+                  <span class="model-tag">$3/$15</span>
+                </div>
+              </div>
+              <div class="model-item">
+                <div class="model-name">Claude Opus 4</div>
+                <div class="model-meta">
+                  <span class="model-tag">tools</span>
+                  <span class="model-tag">200k ctx</span>
+                  <span class="model-tag">$15/$75</span>
+                </div>
+              </div>
+              <div class="model-item">
+                <div class="model-name">Claude Haiku 4</div>
+                <div class="model-meta">
+                  <span class="model-tag">tools</span>
+                  <span class="model-tag">200k ctx</span>
+                  <span class="model-tag">$0.25/$1.25</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="text-align: center; padding: 8px;">
+            <span style="color: var(--text-muted); font-size: 11px; cursor: pointer;">
+              + Use custom endpoint instead
+            </span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="annotation left" style="right: -200px; top: 100px;">
+        Searchable list from models.dev. Shows provider + model count.
+      </div>
+      <div class="annotation left" style="right: -200px; top: 280px;">
+        Models filtered by provider. Shows capabilities and pricing.
+      </div>
+    </div>
+
+    <!-- ============================================
+         PROFILE EDITOR - Auth & Parameters
+         ============================================ -->
+    <div style="position: relative;">
+      <div class="mockup-label">Profile Editor (2/2)</div>
+      <div class="popover">
+        <div class="top-bar">
+          <button class="back-btn">&lt; Cancel</button>
+          <span class="view-title">Edit Profile</span>
+          <span style="width: 50px;"></span>
+        </div>
+
+        <div class="scroll-content">
+          <div class="form-group">
+            <label class="form-label">Profile Name</label>
+            <input type="text" class="form-input" value="Claude Sonnet 4" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Provider / Model</label>
+            <div class="settings-row" style="cursor: pointer;">
+              <span class="settings-label">Anthropic / claude-sonnet-4</span>
+              <span class="settings-value">Change</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Authentication</label>
+            <div class="radio-group">
+              <label class="radio-option">
+                <span class="radio-dot selected"></span>
+                API Key
+              </label>
+              <label class="radio-option">
+                <span class="radio-dot"></span>
+                Key File
+              </label>
+            </div>
+            <input type="password" class="form-input" value="sk-ant-xxxxxxxxxxxx" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Base URL (optional)</label>
+            <input type="text" class="form-input" placeholder="https://api.anthropic.com/v1" />
+          </div>
+
+          <div class="settings-section" style="margin-top: 16px;">
+            <div class="section-title">Model Parameters</div>
+            
+            <div class="form-group">
+              <label class="form-label">Temperature</label>
+              <div class="slider-row">
+                <div class="slider">
+                  <div class="slider-fill" style="width: 35%;"></div>
+                  <div class="slider-thumb" style="left: calc(35% - 7px);"></div>
+                </div>
+                <span class="slider-value">0.7</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Top P</label>
+              <div class="slider-row">
+                <div class="slider">
+                  <div class="slider-fill" style="width: 95%;"></div>
+                  <div class="slider-thumb" style="left: calc(95% - 7px);"></div>
+                </div>
+                <span class="slider-value">0.95</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Max Output Tokens</label>
+              <input type="text" class="form-input" value="4096" />
+            </div>
+
+<div class="form-group">
+              <label class="form-label">Thinking Budget (Claude)</label>
+              <input type="text" class="form-input" value="10000" placeholder="Tokens for reasoning" />
+            </div>
+
+            <div class="settings-row">
+              <span class="settings-label">Enable Thinking</span>
+              <div class="toggle on"></div>
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn btn-danger">Delete</button>
+            <button class="btn btn-primary">Save</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="annotation left" style="right: -200px; top: 150px;">
+        Toggle between direct key entry or path to keyfile.
+      </div>
+      <div class="annotation left" style="right: -200px; top: 340px;">
+        Model-specific params. Shows only what the model supports.
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

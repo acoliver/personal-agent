@@ -1,0 +1,20 @@
+# Research/reference repos
+research/
+
+# Rust
+target/
+Cargo.lock
+
+# macOS
+.DS_Store
+*.xcuserstate
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+*.app
+*.dmg
