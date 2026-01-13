@@ -5,6 +5,16 @@
 
 ---
 
+## Reference Documents
+
+- **Requirements:** `project-plans/initial/requirements.md`
+- **UI Mockup:** `project-plans/initial/ui-mockup-v2.html` (open in browser to view)
+- **Icon Assets:** `assets/MenuIcon.imageset/` (16, 32, 64 px PNGs)
+- **SerdesAI Source:** `research/serdesAI/` (cloned for reference)
+- **BarTranslate Reference:** `research/BarTranslate/` (macOS menu bar app example)
+
+---
+
 ## Development Philosophy
 
 - **Test-First Development (TDD)**: Write tests before implementation
@@ -464,3 +474,119 @@ src/
 - Code signing & notarization for distribution
 - Light mode theme option
 - OpenAI/Anthropic OAuth integration (for paid tiers)
+
+---
+
+## Appendix A: Key Technical Details
+
+### A.1 models.dev API Structure
+```json
+{
+  "provider_id": {
+    "id": "provider_id",
+    "env": ["ENV_VAR_NAME"],
+    "api": "https://api.example.com/v1",
+    "name": "Provider Display Name",
+    "doc": "https://docs.example.com",
+    "models": {
+      "model_id": {
+        "id": "model_id",
+        "name": "Model Display Name",
+        "family": "model-family",
+        "tool_call": true,
+        "reasoning": true,
+        "structured_output": true,
+        "temperature": true,
+        "knowledge": "2024-08",
+        "release_date": "2025-01-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "cost": { "input": 1.0, "output": 5.0 },
+        "limit": { "context": 200000, "output": 8192 }
+      }
+    }
+  }
+}
+```
+
+### A.2 Config File Structure
+Location: `~/Library/Application Support/PersonalAgent/config.json`
+```json
+{
+  "version": "1.0",
+  "theme": "dark",
+  "global_hotkey": "Cmd+Shift+Space",
+  "default_profile": "uuid",
+  "context_management": {
+    "trigger_threshold": 0.80,
+    "preserve_top": 0.20,
+    "preserve_bottom": 0.20,
+    "summary_target_ratio": 0.50
+  },
+  "profiles": [
+    {
+      "id": "uuid",
+      "name": "Profile Name",
+      "provider_id": "anthropic",
+      "model_id": "claude-sonnet-4",
+      "base_url": "https://api.anthropic.com/v1",
+      "auth": { "type": "key", "value": "sk-..." },
+      "parameters": {
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 4096,
+        "thinking_budget": 10000,
+        "enable_thinking": true,
+        "show_thinking": true
+      }
+    }
+  ]
+}
+```
+
+### A.3 Conversation File Structure
+Location: `~/Library/Application Support/PersonalAgent/conversations/YYYYMMDDHHMMSSmmm.json`
+```json
+{
+  "id": "YYYYMMDDHHMMSSmmm",
+  "name": "Optional custom name",
+  "created_at": "2026-01-13T14:30:00Z",
+  "updated_at": "2026-01-13T15:45:00Z",
+  "profile_id": "uuid",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello",
+      "timestamp": "2026-01-13T14:30:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Hi there!",
+      "thinking_content": "User greeted me, I should respond friendly...",
+      "timestamp": "2026-01-13T14:30:05Z"
+    }
+  ]
+}
+```
+
+### A.4 UI Theme Colors (Dark Mode)
+```rust
+// From ui-mockup-v2.html CSS
+const BG_DARKEST: Color32 = Color32::from_rgb(13, 13, 13);    // #0d0d0d
+const BG_DARKER: Color32 = Color32::from_rgb(26, 26, 26);     // #1a1a1a
+const BG_DARK: Color32 = Color32::from_rgb(36, 36, 36);       // #242424
+const BG_MEDIUM: Color32 = Color32::from_rgb(46, 46, 46);     // #2e2e2e
+const BG_LIGHT: Color32 = Color32::from_rgb(58, 58, 58);      // #3a3a3a
+const BG_LIGHTER: Color32 = Color32::from_rgb(68, 68, 68);    // #444444
+const TEXT_PRIMARY: Color32 = Color32::from_rgb(229, 229, 229); // #e5e5e5
+const TEXT_SECONDARY: Color32 = Color32::from_rgb(136, 136, 136); // #888888
+const TEXT_MUTED: Color32 = Color32::from_rgb(85, 85, 85);    // #555555
+const BORDER: Color32 = Color32::from_rgb(51, 51, 51);        // #333333
+const ACCENT: Color32 = Color32::from_rgb(110, 110, 110);     // #6e6e6e
+const SUCCESS: Color32 = Color32::from_rgb(74, 159, 74);      // #4a9f4a
+const DANGER: Color32 = Color32::from_rgb(168, 64, 64);       // #a84040
+```
+
+### A.5 Panel Dimensions
+- Width: 400px
+- Height: 500px
+- Positioned below menu bar icon with arrow pointing up
