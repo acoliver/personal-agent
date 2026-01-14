@@ -22,12 +22,17 @@ PersonalAgent is a macOS menu bar application written in Rust that provides a co
 - **Rust** (latest stable)
 
 ### 2.3 GUI Framework
-- **Recommended:** `eframe` + `egui` + `muda` (pure Rust stack)
-  - `eframe`: Native window management with egui integration
-  - `egui`: Immediate-mode GUI framework for custom UI rendering
-  - `muda`: Cross-platform native menu API for menu bar integration
-  - `tray-icon`: System tray icon management (re-exports muda)
-- **Rationale:** Pure Rust solution, native menu bar integration, highly customizable UI, active ecosystem, good performance
+- **Recommended:** `objc2` + `objc2-app-kit` + `objc2-foundation` (native macOS via Rust)
+  - `objc2`: Safe Rust bindings to Objective-C runtime
+  - `objc2-app-kit`: Rust bindings to AppKit (NSApplication, NSStatusItem, NSPopover, etc.)
+  - `objc2-foundation`: Rust bindings to Foundation framework
+- **Architecture:** Same as BarTranslate (Swift) but in Rust:
+  - `NSStatusItem` for menu bar icon
+  - `NSPopover` with `Transient` behavior for dropdown panel
+  - `NSViewController` to host content view
+- **Rationale:** Native macOS behavior (proper popover with arrow, correct positioning, auto-dismiss), pure Rust, identical to how Swift menu bar apps work
+
+**Note:** The original plan used `eframe` + `egui` + `tray-icon`, but this creates a regular window instead of a native popover, causing incorrect positioning and behavior. The objc2 approach provides true native menu bar app functionality.
 
 ### 2.4 LLM Integration Library
 - **Primary:** `serdes-ai` (SerdesAI - PydanticAI port to Rust)

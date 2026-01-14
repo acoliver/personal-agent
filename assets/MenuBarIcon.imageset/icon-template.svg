@@ -1,0 +1,9 @@
+<svg width="16" height="16" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Menu bar template icon: black silhouette with transparency -->
+  <!-- Outer ring -->
+  <circle cx="100" cy="100" r="90" fill="black"/>
+  <!-- Inner cutout for eye effect -->
+  <circle cx="100" cy="100" r="70" fill="black"/>
+  <!-- Pupil/center dot -->
+  <circle cx="100" cy="100" r="25" fill="black"/>
+</svg>

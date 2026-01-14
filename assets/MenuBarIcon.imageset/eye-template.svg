@@ -1,0 +1,12 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Menu bar template: solid black eye shape -->
+  <!-- Outer ring -->
+  <circle cx="100" cy="100" r="85" fill="black"/>
+  <!-- Inner ring (slightly smaller, creates outline effect) -->
+  <circle cx="100" cy="100" r="65" fill="white"/>
+  <!-- Glowing inner part (the eye) -->
+  <circle cx="100" cy="100" r="55" fill="black"/>
+  <!-- Pupil highlight cutout -->
+  <circle cx="100" cy="100" r="20" fill="white"/>
+  <circle cx="100" cy="100" r="12" fill="black"/>
+</svg>
