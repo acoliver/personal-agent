@@ -11,7 +11,7 @@ mod theme;
 
 pub use chat_view::ChatViewController;
 pub use history_view::HistoryViewController;
-pub use mcp_add_view::McpAddViewController;
+pub use mcp_add_view::{McpAddViewController, SELECTED_MCP_CONFIG};
 pub use mcp_configure_view::McpConfigureViewController;
 pub use model_selector::ModelSelectorViewController;
 pub use profile_editor_demo::ProfileEditorDemoViewController;

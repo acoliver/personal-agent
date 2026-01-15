@@ -20,7 +20,7 @@ use personal_agent::mcp::{McpAuthType, McpConfig, McpPackage, McpPackageType, Mc
 use personal_agent::mcp::secrets::SecretsManager;
 use uuid::Uuid;
 
-use super::mcp_add_view::{ParsedMcp, PARSED_MCP};
+use super::mcp_add_view::{ParsedMcp, PARSED_MCP, SELECTED_MCP_CONFIG};
 
 fn log_to_file(message: &str) {
     let log_path = dirs::home_dir()
@@ -56,7 +56,59 @@ define_class!(
             log_to_file("loadView started");
             let mtm = MainThreadMarker::new().unwrap();
 
-            // Get parsed MCP from thread-local
+            // Check if we have a selected config from registry search
+            let selected_config = SELECTED_MCP_CONFIG.with(|cell| cell.borrow().clone());
+            
+            if let Some(mcp_config) = selected_config {
+                // Use the registry config - save it directly
+                log_to_file(&format!("Using selected registry config: {}", mcp_config.name));
+                
+                let config_path = match Config::default_path() {
+                    Ok(path) => path,
+                    Err(e) => {
+                        log_to_file(&format!("ERROR: Failed to get config path: {e}"));
+                        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(400.0, 500.0));
+                        let placeholder = NSView::initWithFrame(NSView::alloc(mtm), frame);
+                        self.setView(&placeholder);
+                        return;
+                    }
+                };
+                
+                let mut config = match Config::load(&config_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log_to_file(&format!("ERROR: Failed to load config: {e}"));
+                        Config::default()
+                    }
+                };
+                
+                config.mcps.push(mcp_config);
+                
+                if let Err(e) = config.save(&config_path) {
+                    log_to_file(&format!("ERROR: Failed to save config: {e}"));
+                }
+                
+                log_to_file("MCP saved successfully");
+                
+                // Clear the thread-local
+                SELECTED_MCP_CONFIG.with(|cell| {
+                    *cell.borrow_mut() = None;
+                });
+                
+                // Navigate back to settings
+                use objc2_foundation::NSNotificationCenter;
+                let center = NSNotificationCenter::defaultCenter();
+                let name = NSString::from_str("PersonalAgentShowSettingsView");
+                unsafe { center.postNotificationName_object(&name, None); }
+                
+                // We still need to set a view, so create a simple placeholder
+                let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(400.0, 500.0));
+                let placeholder = NSView::initWithFrame(NSView::alloc(mtm), frame);
+                self.setView(&placeholder);
+                return;
+            }
+
+            // Get parsed MCP from thread-local (manual URL entry)
             let parsed_mcp = PARSED_MCP.with(|cell| cell.borrow().clone());
             *self.ivars().parsed_mcp.borrow_mut() = parsed_mcp.clone();
 
