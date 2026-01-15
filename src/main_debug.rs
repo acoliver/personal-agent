@@ -230,7 +230,7 @@ fn create_menu() -> Result<Menu, Box<dyn std::error::Error>> {
 }
 
 fn load_icon() -> Result<Icon, Box<dyn std::error::Error>> {
-    let icon_data = include_bytes!("../../assets/MenuIcon.imageset/icon-32.png");
+    let icon_data = include_bytes!("../assets/MenuIcon.imageset/icon-32.png");
     tracing::info!("Icon data size: {} bytes", icon_data.len());
     
     load_icon_from_bytes(icon_data)

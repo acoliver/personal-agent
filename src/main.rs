@@ -134,7 +134,7 @@ fn create_tray_icon_with_menu(menu: Menu) -> Result<TrayIcon, Box<dyn std::error
 fn load_icon() -> Result<Icon, Box<dyn std::error::Error>> {
     // Load from the assets directory at project root (two levels up from src/)
     // These are the proper template icons with correct transparency
-    load_icon_from_bytes(include_bytes!("../../assets/MenuIcon.imageset/icon-32.png"))
+    load_icon_from_bytes(include_bytes!("../assets/MenuIcon.imageset/icon-32.png"))
 }
 
 /// Load icon from raw PNG bytes
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_load_icon_from_valid_bytes() {
-        let icon_data = include_bytes!("../../assets/MenuIcon.imageset/icon-32.png");
+        let icon_data = include_bytes!("../assets/MenuIcon.imageset/icon-32.png");
         let result = load_icon_from_bytes(icon_data);
         assert!(result.is_ok(), "Should load icon from valid PNG data");
     }
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_icon_loading_pipeline() {
-        let bytes = include_bytes!("../../assets/MenuIcon.imageset/icon-32.png");
+        let bytes = include_bytes!("../assets/MenuIcon.imageset/icon-32.png");
         let icon = load_icon_from_bytes(bytes).expect("Should load icon");
         drop(icon);
 
@@ -661,7 +661,7 @@ mod tests {
 
     #[test]
     fn test_icon_bytes_valid_png() {
-        let bytes = include_bytes!("../../assets/MenuIcon.imageset/icon-32.png");
+        let bytes = include_bytes!("../assets/MenuIcon.imageset/icon-32.png");
         // PNG files start with specific magic bytes
         assert_eq!(&bytes[0..4], &[0x89, 0x50, 0x4E, 0x47]);
     }

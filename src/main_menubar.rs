@@ -88,7 +88,7 @@ define_class!(
             if let Some(button) = status_item.button(mtm) {
                 // Load the colored icon (red eye on transparent background)
                 // Use 32px for retina, 16px for standard - macOS will pick appropriately
-                let icon_data = include_bytes!("../../assets/MenuBarIcon.imageset/icon-32.png");
+                let icon_data = include_bytes!("../assets/MenuBarIcon.imageset/icon-32.png");
                 if let Some(image) = load_image(icon_data) {
                     // Set the size to 17.6x17.6 points (10% larger than standard 16x16)
                     image.setSize(NSSize::new(17.6, 17.6));
