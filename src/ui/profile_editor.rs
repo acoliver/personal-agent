@@ -1496,6 +1496,7 @@ impl ProfileEditorViewController {
                 base_url,
                 auth,
                 parameters,
+                system_prompt: "You are a helpful assistant, be direct and to the point. Respond in English.".to_string(),
             }
         } else {
             // Creating new profile
@@ -1507,6 +1508,7 @@ impl ProfileEditorViewController {
                 base_url,
                 auth,
                 parameters,
+                system_prompt: "You are a helpful assistant, be direct and to the point. Respond in English.".to_string(),
             }
         };
         

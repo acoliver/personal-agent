@@ -1,69 +1,131 @@
-# PersonalAgent - Phase 0
+# PersonalAgent
 
-Minimal viable macOS menu bar application with tray icon and empty panel.
+A native macOS menu bar application for conversational AI. PersonalAgent lives in your system tray and provides quick access to various LLM providers through a clean, minimal interface.
 
-## Phase 0 Features
+## Features
 
-- [OK] Menu bar icon visible in macOS system tray
-- [OK] Click icon to show/hide empty panel (400x500px)
-- [OK] Dark theme background (#0d0d0d)
-- [OK] Quit option in tray menu
-- [OK] Quality gates: formatting, clippy, complexity checks, 80%+ test coverage
+- **Menu Bar App** - Click the icon in your macOS menu bar to open a chat panel
+- **Multiple Providers** - Support for OpenAI, Anthropic, and OpenAI-compatible APIs (like Synthetic, GLM, etc.)
+- **Model Profiles** - Create and switch between different model configurations
+- **Streaming Responses** - Real-time streaming of AI responses
+- **Thinking/Reasoning** - Display model thinking content for supported models (Claude, GLM-4, etc.)
+- **Conversation History** - Persistent storage of chat conversations
+- **Dark Theme** - Native dark mode UI that fits with macOS
 
-## Build & Run
+## Installation
+
+### From Source
 
 ```bash
+git clone https://github.com/acoliver/personal-agent.git
+cd personal-agent
 cargo build --release
-cargo run
 ```
 
-## Run Tests
+The binary will be at `target/release/personal_agent_menubar`.
+
+### Running
 
 ```bash
-cargo test
+./target/release/personal_agent_menubar
 ```
 
-## Quality Checks
+Look for "PA" in your menu bar. Click to open the chat panel.
 
-```bash
-./scripts/check-quality.sh
-```
+## Configuration
 
-Checks:
-- Code formatting (`cargo fmt`)
-- Clippy lints (`cargo clippy`)
-- Code complexity (lizard)
-- Test coverage (>= 80%)
+Configuration is stored at `~/Library/Application Support/PersonalAgent/config.json`.
+
+### Setting Up a Profile
+
+1. Click the gear icon () to open settings
+2. Click "+" to add a new profile
+3. Select a provider and model from the models.dev registry, or configure manually
+4. Enter your API key
+5. Optionally configure a custom system prompt
+6. Save the profile
+
+### API Keys
+
+API keys are read from the profile configuration. For security, you can also use keyfiles or environment variables depending on the provider.
+
+## Usage
+
+1. Click the PA icon in your menu bar
+2. Select a profile from the dropdown (or use the default)
+3. Type your message and press Enter or click Send
+4. View streaming responses in real-time
+
+### Keyboard Shortcuts
+
+- `Cmd+V` - Paste text
+- `Cmd+C` - Copy text
+- `Cmd+A` - Select all
+- `Cmd+Q` - Quit (from Edit menu)
+
+### Thinking Mode
+
+For models that support reasoning/thinking (like Claude with extended thinking or GLM-4):
+- Enable "Thinking" in the profile settings
+- Toggle the T* button to show/hide thinking content
+- Thinking appears in a separate, dimmer bubble above responses
 
 ## Project Structure
 
 ```
-personal-agent/
+personalAgent/
 ├── src/
-│   └── main.rs          # Main application entry point
-├── assets/
-│   └── icon_32.png      # Tray icon (32x32px)
-├── scripts/
-│   └── check-quality.sh # Quality gate script
-├── Cargo.toml           # Dependencies and lints
-├── .clippy.toml         # Clippy configuration
-├── .rustfmt.toml        # Rustfmt configuration
-└── .git/hooks/
-    └── pre-commit       # Pre-commit quality check
+│   ├── main_menubar.rs    # Application entry point
+│   ├── lib.rs             # Library exports
+│   ├── config/            # Configuration management
+│   ├── models/            # Data models (profiles, conversations)
+│   ├── storage/           # Conversation persistence
+│   ├── llm/               # LLM client integration
+│   └── ui/                # UI components
+│       ├── chat_view.rs   # Main chat interface
+│       ├── settings_view.rs
+│       ├── profile_editor*.rs
+│       └── theme.rs       # Color theme
+├── assets/                # Icons and images
+└── research/
+    └── serdesAI/          # LLM communication library
 ```
 
 ## Dependencies
 
-- `eframe` - Native window management
-- `egui` - Immediate-mode GUI framework
-- `tray-icon` - System tray icon management
-- `image` - Icon loading
-- `tracing` - Logging
+- **objc2** - Rust bindings for macOS Cocoa APIs
+- **serdes-ai** - LLM provider abstraction (local fork)
+- **uuid** - Profile and conversation IDs
+- **chrono** - Timestamps
+- **serde** - Configuration serialization
 
-## Next Steps (Phase 1)
+## Development
 
-- Full dependency setup
-- Configuration system
-- Model profiles
-- Conversation storage
-- models.dev integration
+```bash
+# Build debug
+cargo build --bin personal_agent_menubar
+
+# Build release
+cargo build --release --bin personal_agent_menubar
+
+# Run tests
+cargo test
+
+# Check formatting
+cargo fmt --check
+
+# Run clippy
+cargo clippy
+```
+
+### Debug Logging
+
+Debug logs are written to `~/Library/Application Support/PersonalAgent/debug.log`.
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions welcome! Please open an issue or PR on GitHub.

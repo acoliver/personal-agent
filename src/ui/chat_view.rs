@@ -248,21 +248,25 @@ define_class!(
                                     });
                                     
                                     if let Some(profile) = profile {
-                                        // Build messages from conversation
-                                        let llm_messages: Vec<LlmMessage> = self.ivars()
-                                            .conversation
-                                            .borrow()
-                                            .as_ref()
-                                            .map(|c| {
-                                                c.messages.iter().map(|m| {
-                                                    match m.role {
-                                                        personal_agent::models::MessageRole::User => LlmMessage::user(&m.content),
-                                                        personal_agent::models::MessageRole::Assistant => LlmMessage::assistant(&m.content),
-                                                        personal_agent::models::MessageRole::System => LlmMessage::system(&m.content),
-                                                    }
-                                                }).collect()
-                                            })
-                                            .unwrap_or_default();
+                                        // Build messages from conversation, prepending system prompt
+                                        let mut llm_messages: Vec<LlmMessage> = Vec::new();
+                                        
+                                        // Add system prompt from profile if not empty
+                                        if !profile.system_prompt.is_empty() {
+                                            llm_messages.push(LlmMessage::system(&profile.system_prompt));
+                                        }
+                                        
+                                        // Add conversation messages
+                                        if let Some(conv) = self.ivars().conversation.borrow().as_ref() {
+                                            for m in &conv.messages {
+                                                let msg = match m.role {
+                                                    personal_agent::models::MessageRole::User => LlmMessage::user(&m.content),
+                                                    personal_agent::models::MessageRole::Assistant => LlmMessage::assistant(&m.content),
+                                                    personal_agent::models::MessageRole::System => LlmMessage::system(&m.content),
+                                                };
+                                                llm_messages.push(msg);
+                                            }
+                                        }
                                         
                                         // Show empty assistant message placeholder
                                         self.add_message_to_store("", false);
@@ -1111,24 +1115,16 @@ fn check_streaming_done(&self) -> bool {
             None
         };
         
-        // Build display text with thinking if enabled
-        let show_thinking = self.should_show_thinking();
-        let display_text = match (&thinking_text, show_thinking) {
-            (Some(thinking), true) => format!("*Thinking:*
-{thinking}
-
----
-
-{final_text}"),
-            _ => final_text.clone(),
-        };
-        
-        // Update the last message
+        // Update the last message with final text (no thinking inline anymore)
         if let Some(last_msg) = self.ivars().messages.borrow_mut().last_mut() {
             if !last_msg.is_user {
-                last_msg.text = display_text;
+                last_msg.text = final_text.clone();
             }
         }
+        
+        // Rebuild messages to show thinking as separate bubble if enabled
+        let show_thinking = self.should_show_thinking();
+        self.rebuild_messages_with_thinking(&thinking_text, show_thinking);
         
         // Create message with thinking content
         let mut assistant_msg = ConvMessage::assistant(final_text);
@@ -1153,11 +1149,15 @@ fn check_streaming_done(&self) -> bool {
         // Mark streaming as done
         *self.ivars().is_streaming.borrow_mut() = false;
         
-        // Final rebuild
-        self.rebuild_messages();
+        // Note: We already called rebuild_messages_with_thinking above, no need to call again
     }
 
     fn rebuild_messages(&self) {
+        self.rebuild_messages_with_thinking(&None, false);
+    }
+    
+    /// Rebuild messages with optional thinking bubble
+    fn rebuild_messages_with_thinking(&self, thinking_text: &Option<String>, show_thinking: bool) {
         let mtm = MainThreadMarker::new().unwrap();
         
         let message_count = self.ivars().messages.borrow().len();
@@ -1184,7 +1184,24 @@ fn check_streaming_done(&self) -> bool {
             // For stack view, just add message views - stack handles positioning
             if let Some(stack) = container.downcast_ref::<NSStackView>() {
                 log_to_file(&format!("Adding {} message bubbles to stack", messages.len()));
-                for msg in messages.iter() {
+                
+                let msg_count = messages.len();
+                for (i, msg) in messages.iter().enumerate() {
+                    // Check if this is the last assistant message and we have thinking
+                    let is_last_assistant = i == msg_count - 1 && !msg.is_user;
+                    
+                    // Add thinking bubble before last assistant message if enabled
+                    if is_last_assistant && show_thinking {
+                        if let Some(thinking) = thinking_text {
+                            if !thinking.is_empty() {
+                                let thinking_view = self.create_thinking_bubble(thinking, mtm);
+                                unsafe {
+                                    stack.addArrangedSubview(&thinking_view);
+                                }
+                            }
+                        }
+                    }
+                    
                     let msg_view = self.create_message_bubble(&msg.text, msg.is_user, mtm);
                     unsafe {
                         stack.addArrangedSubview(&msg_view);
@@ -1199,10 +1216,64 @@ fn check_streaming_done(&self) -> bool {
         }
     }
     
+    /// Create a collapsible thinking bubble
+    fn create_thinking_bubble(&self, text: &str, mtm: MainThreadMarker) -> Retained<NSView> {
+        // Create container for thinking with header and content
+        let container = NSStackView::new(mtm);
+        container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+        container.setSpacing(4.0);
+        container.setTranslatesAutoresizingMaskIntoConstraints(false);
+        
+        // Create header row with "Thinking..." label (clickable to collapse)
+        let header = NSTextField::labelWithString(&NSString::from_str("Thinking..."), mtm);
+        header.setFont(Some(&NSFont::boldSystemFontOfSize(11.0)));
+        header.setTextColor(Some(&Theme::text_secondary_color()));
+        header.setTranslatesAutoresizingMaskIntoConstraints(false);
+        
+        unsafe {
+            container.addArrangedSubview(&header);
+        }
+        
+        // Create the actual thinking content bubble (dimmer style)
+        let content_bubble = self.create_message_bubble_styled(text, false, true, mtm);
+        unsafe {
+            container.addArrangedSubview(&content_bubble);
+        }
+        
+        // Create horizontal container for alignment (left-aligned like assistant)
+        let row = NSStackView::new(mtm);
+        row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        row.setSpacing(0.0);
+        row.setTranslatesAutoresizingMaskIntoConstraints(false);
+        row.setDistribution(NSStackViewDistribution::Fill);
+        
+        let spacer = NSView::new(mtm);
+        spacer.setTranslatesAutoresizingMaskIntoConstraints(false);
+        spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+        
+        unsafe {
+            row.addArrangedSubview(&container);
+            row.addArrangedSubview(&spacer);
+        }
+        
+        Retained::from(&*row as &NSView)
+    }
+    
     fn create_message_bubble(
         &self,
         text: &str,
         is_user: bool,
+        mtm: MainThreadMarker,
+    ) -> Retained<NSView> {
+        self.create_message_bubble_styled(text, is_user, false, mtm)
+    }
+    
+    /// Create a message bubble with optional thinking style
+    fn create_message_bubble_styled(
+        &self,
+        text: &str,
+        is_user: bool,
+        is_thinking: bool,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
         // Create horizontal container for alignment
@@ -1229,6 +1300,9 @@ fn check_streaming_done(&self) -> bool {
             if is_user {
                 // User messages: green-tinted background #2a4a2a
                 set_layer_background_color(&layer, 42.0 / 255.0, 74.0 / 255.0, 42.0 / 255.0);
+            } else if is_thinking {
+                // Thinking messages: dimmer purple-tinted background #2a2a3a with lower opacity
+                set_layer_background_color(&layer, 42.0 / 255.0, 42.0 / 255.0, 58.0 / 255.0);
             } else {
                 // Assistant messages: dark gray #1a1a1a
                 set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
@@ -1238,8 +1312,13 @@ fn check_streaming_done(&self) -> bool {
         
         // Create wrapping label - this provides the intrinsic content size
         let label = NSTextField::wrappingLabelWithString(&NSString::from_str(text), mtm);
-        label.setFont(Some(&NSFont::systemFontOfSize(13.0)));
-        label.setTextColor(Some(&Theme::text_primary()));
+        label.setFont(Some(&NSFont::systemFontOfSize(if is_thinking { 12.0 } else { 13.0 })));
+        if is_thinking {
+            // Dimmer text for thinking
+            label.setTextColor(Some(&Theme::text_secondary_color()));
+        } else {
+            label.setTextColor(Some(&Theme::text_primary()));
+        }
         label.setTranslatesAutoresizingMaskIntoConstraints(false);
         
         // Constrain label width for wrapping
@@ -1262,7 +1341,7 @@ fn check_streaming_done(&self) -> bool {
             row.addArrangedSubview(&spacer);
             row.addArrangedSubview(&bubble);
         } else {
-            // Assistant messages: left-aligned
+            // Assistant/thinking messages: left-aligned
             row.addArrangedSubview(&bubble);
             row.addArrangedSubview(&spacer);
         }

@@ -48,6 +48,7 @@ pub struct ProfileEditorDemoIvars {
     base_url_input: RefCell<Option<Retained<NSTextField>>>,
     auth_type_popup: RefCell<Option<Retained<NSPopUpButton>>>,
     auth_value_input: RefCell<Option<Retained<NSTextField>>>,
+    system_prompt_input: RefCell<Option<Retained<NSTextField>>>,
     temperature_stepper: RefCell<Option<Retained<NSStepper>>>,
     temperature_label: RefCell<Option<Retained<NSTextField>>>,
     max_tokens_input: RefCell<Option<Retained<NSTextField>>>,
@@ -76,6 +77,7 @@ impl Default for ProfileEditorDemoIvars {
             base_url_input: RefCell::new(None),
             auth_type_popup: RefCell::new(None),
             auth_value_input: RefCell::new(None),
+            system_prompt_input: RefCell::new(None),
             temperature_stepper: RefCell::new(None),
             temperature_label: RefCell::new(None),
             max_tokens_input: RefCell::new(None),
@@ -264,6 +266,13 @@ define_class!(
                 false
             };
             
+            // Get system prompt
+            let system_prompt = if let Some(field) = &*self.ivars().system_prompt_input.borrow() {
+                field.stringValue().to_string().trim().to_string()
+            } else {
+                "You are a helpful assistant, be direct and to the point. Respond in English.".to_string()
+            };
+            
             let parameters = ModelParameters {
                 temperature,
                 top_p: 0.95,
@@ -285,6 +294,7 @@ define_class!(
                 base_url,
                 auth,
                 parameters,
+                system_prompt,
             };
             log_to_file(&format!("  Created profile: {:?}", profile.id));
             
@@ -507,6 +517,12 @@ impl ProfileEditorDemoViewController {
         let auth_section = self.build_auth_section(mtm);
         form_stack.addArrangedSubview(&auth_section);
 
+        // System Prompt
+        let default_system_prompt = "You are a helpful assistant, be direct and to the point. Respond in English.";
+        let system_prompt_section = self.build_multiline_field("System Prompt", default_system_prompt, mtm);
+        form_stack.addArrangedSubview(&system_prompt_section.0);
+        *self.ivars().system_prompt_input.borrow_mut() = Some(system_prompt_section.1);
+
         // Parameters
         let params_section = self.build_parameters_section(mtm);
         form_stack.addArrangedSubview(&params_section);
@@ -542,6 +558,38 @@ impl ProfileEditorDemoViewController {
         input.setTranslatesAutoresizingMaskIntoConstraints(false);
         let width = input.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
         width.setActive(true);
+        container.addArrangedSubview(&input);
+
+        (Retained::from(&*container as &NSView), input)
+    }
+    
+    /// Build a multiline text field (for system prompt)
+    fn build_multiline_field(&self, label: &str, default_text: &str, mtm: MainThreadMarker) -> (Retained<NSView>, Retained<NSTextField>) {
+        let container = NSStackView::new(mtm);
+        container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+        container.setSpacing(4.0);
+        container.setTranslatesAutoresizingMaskIntoConstraints(false);
+
+        let label_field = NSTextField::labelWithString(&NSString::from_str(label), mtm);
+        label_field.setTextColor(Some(&Theme::text_primary()));
+        label_field.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        container.addArrangedSubview(&label_field);
+
+        // Create a text field that allows multiple lines
+        let input = NSTextField::new(mtm);
+        input.setStringValue(&NSString::from_str(default_text));
+        input.setTranslatesAutoresizingMaskIntoConstraints(false);
+        unsafe {
+            input.setEditable(true);
+            input.setSelectable(true);
+        }
+        
+        // Set width and height constraints
+        let width = input.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
+        width.setActive(true);
+        let height = input.heightAnchor().constraintGreaterThanOrEqualToConstant(60.0);
+        height.setActive(true);
+        
         container.addArrangedSubview(&input);
 
         (Retained::from(&*container as &NSView), input)

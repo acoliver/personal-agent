@@ -12,6 +12,13 @@ pub struct ModelProfile {
     pub base_url: String,
     pub auth: AuthConfig,
     pub parameters: ModelParameters,
+    /// System prompt to prepend to conversations
+    #[serde(default = "default_system_prompt")]
+    pub system_prompt: String,
+}
+
+fn default_system_prompt() -> String {
+    "You are a helpful assistant, be direct and to the point. Respond in English.".to_string()
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -51,6 +58,7 @@ impl Default for ModelProfile {
             base_url: "https://api.openai.com/v1".to_string(),
             auth: AuthConfig::Key { value: String::new() },
             parameters: ModelParameters::default(),
+            system_prompt: default_system_prompt(),
         }
     }
 }
@@ -86,6 +94,7 @@ impl ModelProfile {
             base_url,
             auth,
             parameters: ModelParameters::default(),
+            system_prompt: default_system_prompt(),
         }
     }
 
