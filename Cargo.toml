@@ -20,15 +20,19 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
+    "NSAlert",
     "NSAppearance",
     "NSApplication",
     "NSColor",
+    "NSComboBox",
+    "NSControl",
     "NSEvent",
     "NSFont",
     "NSImage",
     "NSMenu",
     "NSMenuItem",
     "NSPopover",
+    "NSPopUpButton",
     "NSResponder",
     "NSRunningApplication",
     "NSStatusBar",

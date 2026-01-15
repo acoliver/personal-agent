@@ -35,11 +35,14 @@ impl Conversation {
     #[must_use]
     pub fn new(profile_id: Uuid) -> Self {
         let now = Utc::now();
+        // Default title to timestamp format YYYYMMDDHHMMSSmmm
+        let default_title = now.format("%Y%m%d%H%M%S%3f").to_string();
+        
         Self {
             id: Uuid::new_v4(),
             created_at: now,
             updated_at: now,
-            title: None,
+            title: Some(default_title),
             profile_id,
             messages: Vec::new(),
         }

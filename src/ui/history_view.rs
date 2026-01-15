@@ -410,9 +410,9 @@ impl HistoryViewController {
         let items: Vec<ConversationItem> = conversations
             .iter()
             .map(|conv| {
-                // Use timestamp format for untitled conversations: YYYYMMDDHHmmss
+                // Use timestamp format for untitled conversations: YYYYMMDDHHMMSSmmm
                 let title = conv.title.clone().unwrap_or_else(|| {
-                    conv.created_at.format("%Y%m%d%H%M%S").to_string()
+                    conv.created_at.format("%Y%m%d%H%M%S%3f").to_string()
                 });
                 let date = conv.created_at.format("%Y-%m-%d %H:%M").to_string();
                 let filename = conv.filename();

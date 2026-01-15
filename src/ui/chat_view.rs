@@ -18,7 +18,7 @@ use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSScrollView,
     NSFont, NSBezelStyle, NSStackView, NSUserInterfaceLayoutOrientation,
     NSLayoutConstraintOrientation, NSStackViewDistribution, NSImage,
-    NSImageSymbolConfiguration, NSFontWeightBold,
+    NSImageSymbolConfiguration, NSFontWeightBold, NSComboBox,
 };
 use objc2_quartz_core::CALayer;
 use uuid::Uuid;
@@ -82,8 +82,12 @@ pub struct ChatViewIvars {
     messages_container: RefCell<Option<Retained<NSView>>>,
     input_field: RefCell<Option<Retained<NSTextField>>>,
     conversation: RefCell<Option<Conversation>>,
-    title_button: RefCell<Option<Retained<NSButton>>>,
+    /// Title popup button for conversation selection
+    title_popup: RefCell<Option<Retained<objc2_app_kit::NSPopUpButton>>>,
+    /// Title edit field (shown when renaming)
     title_edit_field: RefCell<Option<Retained<NSTextField>>>,
+    /// Rename button
+    rename_button: RefCell<Option<Retained<NSButton>>>,
     model_label: RefCell<Option<Retained<NSTextField>>>,
     thinking_button: RefCell<Option<Retained<NSButton>>>,
     /// Shared streaming response text for updating from background thread
@@ -92,6 +96,10 @@ pub struct ChatViewIvars {
     streaming_thinking: Arc<Mutex<String>>,
     /// Flag to indicate streaming is in progress
     is_streaming: RefCell<bool>,
+    /// Stop button for canceling streaming
+    stop_button: RefCell<Option<Retained<NSButton>>>,
+    /// Flag to signal cancellation
+    cancel_streaming: Arc<std::sync::atomic::AtomicBool>,
 }
 
 // ============================================================================
@@ -192,6 +200,13 @@ define_class!(
             // Force layout to happen so we can see the actual sizes
             main_view.layoutSubtreeIfNeeded();
             
+            // Focus the input field by default
+            if let Some(input) = &*self.ivars().input_field.borrow() {
+                if let Some(window) = main_view.window() {
+                    window.makeFirstResponder(Some(input));
+                }
+            }
+            
             // Debug: Print frame information after layout
             println!("
 === ChatViewController Frame Debug ===");
@@ -275,6 +290,13 @@ define_class!(
                                         // Mark as streaming
                                         *self.ivars().is_streaming.borrow_mut() = true;
                                         
+                                        // Enable stop button
+                                        if let Some(btn) = &*self.ivars().stop_button.borrow() {
+                                            btn.setEnabled(true);
+                                        }
+                                        // Reset cancel flag
+                                        self.ivars().cancel_streaming.store(false, std::sync::atomic::Ordering::SeqCst);
+                                        
                                         // Clear the streaming buffers
                                         if let Ok(mut buf) = self.ivars().streaming_response.lock() {
                                             buf.clear();
@@ -286,6 +308,7 @@ define_class!(
                                         // Clone what we need for the background thread
                                         let streaming_response = Arc::clone(&self.ivars().streaming_response);
                                         let streaming_thinking = Arc::clone(&self.ivars().streaming_thinking);
+                                        let cancel_flag = Arc::clone(&self.ivars().cancel_streaming);
                                         let profile_clone = profile;
                                         
                                         // Spawn background thread for streaming
@@ -301,7 +324,22 @@ define_class!(
                                                         Ok(client) => {
                                                             let streaming_response_clone = Arc::clone(&streaming_response);
                                                             let streaming_thinking_clone = Arc::clone(&streaming_thinking);
+                                                            let cancel_flag_clone = Arc::clone(&cancel_flag);
                                                             let result = client.request_stream(&llm_messages, |event| {
+                                                                // Check for cancellation
+                                                                if cancel_flag_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                                                                    // Only add cancelled message once (check for EOT marker)
+                                                                    if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                                        if !buf.contains('␄') {
+                                                                            log_to_file("Streaming cancelled by user");
+                                                                            buf.push_str("
+[Cancelled]");
+                                                                            buf.push('␄'); // EOT marker
+                                                                        }
+                                                                    }
+                                                                    return;
+                                                                }
+                                                                
                                                                 match event {
                                                                     StreamEvent::TextDelta(delta) => {
                                                                         if let Ok(mut buf) = streaming_response_clone.lock() {
@@ -519,78 +557,127 @@ define_class!(
             }
         }
         
+        #[unsafe(method(stopStreaming:))]
+        fn stop_streaming(&self, _sender: Option<&NSObject>) {
+            log_to_file("ChatView: Stop streaming clicked");
+            // Set the cancel flag
+            self.ivars().cancel_streaming.store(true, std::sync::atomic::Ordering::SeqCst);
+            // Disable the stop button
+            if let Some(btn) = &*self.ivars().stop_button.borrow() {
+                btn.setEnabled(false);
+            }
+        }
+        
         #[unsafe(method(quitApp:))]
         fn quit_app(&self, _sender: Option<&NSObject>) {
             log_to_file("Quit app clicked");
             std::process::exit(0);
         }
         
-        #[unsafe(method(titleClicked:))]
-        fn title_clicked(&self, _sender: Option<&NSObject>) {
-            log_to_file("ChatView: Title clicked, entering edit mode");
+        #[unsafe(method(titlePopupChanged:))]
+        fn title_popup_changed(&self, _sender: Option<&NSObject>) {
+            log_to_file("ChatView: titlePopupChanged: action fired");
             
-            // Hide button, show edit field
-            if let Some(title_button) = &*self.ivars().title_button.borrow() {
-                title_button.setHidden(true);
+            // Get the selected title from the popup
+            let popup = self.ivars().title_popup.borrow();
+            let Some(popup) = popup.as_ref() else { return };
+            
+            let selected_title = popup.titleOfSelectedItem()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            
+            log_to_file(&format!("ChatView: Popup selected: {}", selected_title));
+            drop(popup);
+            
+            if selected_title.is_empty() {
+                return;
             }
-            if let Some(title_edit) = &*self.ivars().title_edit_field.borrow() {
-                title_edit.setHidden(false);
-                // Focus the edit field
-                if let Some(window) = title_edit.window() {
-                    window.makeFirstResponder(Some(title_edit));
+            
+            // Load the selected conversation
+            self.load_conversation_by_title(&selected_title);
+        }
+        
+        #[unsafe(method(renameConversation:))]
+        fn rename_conversation(&self, _sender: Option<&NSObject>) {
+            log_to_file("ChatView: Rename conversation clicked");
+            
+            // Get current title
+            let current_title = if let Some(conv) = &*self.ivars().conversation.borrow() {
+                conv.title.clone().unwrap_or_else(|| conv.created_at.format("%Y%m%d%H%M%S%3f").to_string())
+            } else {
+                return;
+            };
+            
+            // Hide popup, show edit field
+            if let Some(popup) = &*self.ivars().title_popup.borrow() {
+                popup.setHidden(true);
+            }
+            if let Some(edit_field) = &*self.ivars().title_edit_field.borrow() {
+                edit_field.setStringValue(&NSString::from_str(&current_title));
+                edit_field.setHidden(false);
+                // Focus the edit field and select all text
+                if let Some(window) = edit_field.window() {
+                    window.makeFirstResponder(Some(edit_field));
                 }
-                // Select all text
-                unsafe { title_edit.selectText(None); }
+                unsafe {
+                    edit_field.selectText(None);
+                }
+            }
+            // Change R button to checkmark (done)
+            if let Some(btn) = &*self.ivars().rename_button.borrow() {
+                btn.setTitle(&NSString::from_str("ok"));
+                unsafe {
+                    btn.setAction(Some(sel!(titleEditDone:)));
+                }
             }
         }
         
-        #[unsafe(method(titleEditingEnded:))]
-        fn title_editing_ended(&self, _sender: Option<&NSObject>) {
-            log_to_file("ChatView: Title editing ended");
+        #[unsafe(method(titleEditDone:))]
+        fn title_edit_done(&self, _sender: Option<&NSObject>) {
+            log_to_file("ChatView: Title edit done");
             
-            // Get the new title
-            let new_title = if let Some(title_edit) = &*self.ivars().title_edit_field.borrow() {
-                title_edit.stringValue().to_string().trim().to_string()
+            // Get the new title from edit field
+            let new_title = if let Some(edit_field) = &*self.ivars().title_edit_field.borrow() {
+                edit_field.stringValue().to_string().trim().to_string()
             } else {
-                String::new()
+                return;
             };
             
-            // If empty, revert to current button title
-            let final_title = if new_title.is_empty() {
-                if let Some(title_button) = &*self.ivars().title_button.borrow() {
-                    title_button.title().to_string()
-                } else {
-                    Local::now().format("%Y%m%d%H%M%S").to_string()
-                }
-            } else {
-                new_title
-            };
-            
-            // Update the button title and show it
-            if let Some(title_button) = &*self.ivars().title_button.borrow() {
-                title_button.setTitle(&NSString::from_str(&final_title));
-                title_button.setHidden(false);
-            }
-            // Hide the edit field and sync its value
-            if let Some(title_edit) = &*self.ivars().title_edit_field.borrow() {
-                title_edit.setHidden(true);
-                title_edit.setStringValue(&NSString::from_str(&final_title));
-            }
-            
-            // Update conversation title and save to disk
-            if let Some(ref mut conv) = *self.ivars().conversation.borrow_mut() {
-                conv.title = Some(final_title.clone());
-                // Save the updated conversation
-                if let Ok(storage) = ConversationStorage::with_default_path() {
-                    if let Err(e) = storage.save(conv) {
-                        log_to_file(&format!("ChatView: Failed to save conversation title: {e}"));
-                    } else {
-                        log_to_file(&format!("ChatView: Conversation saved with title: {final_title}"));
+            if !new_title.is_empty() {
+                log_to_file(&format!("ChatView: Renaming to: {}", new_title));
+                
+                // Update conversation title
+                if let Some(ref mut conv) = *self.ivars().conversation.borrow_mut() {
+                    conv.title = Some(new_title.clone());
+                    
+                    // Save the conversation
+                    if let Ok(storage) = ConversationStorage::with_default_path() {
+                        if let Err(e) = storage.save(conv) {
+                            log_to_file(&format!("ChatView: Failed to save renamed conversation: {e}"));
+                        } else {
+                            log_to_file(&format!("ChatView: Conversation renamed to: {new_title}"));
+                        }
                     }
                 }
             }
             
-            log_to_file(&format!("ChatView: Title updated to: {final_title}"));
+            // Hide edit field, show popup
+            if let Some(edit_field) = &*self.ivars().title_edit_field.borrow() {
+                edit_field.setHidden(true);
+            }
+            if let Some(popup) = &*self.ivars().title_popup.borrow() {
+                popup.setHidden(false);
+            }
+            // Change button back to R
+            if let Some(btn) = &*self.ivars().rename_button.borrow() {
+                btn.setTitle(&NSString::from_str("R"));
+                unsafe {
+                    btn.setAction(Some(sel!(renameConversation:)));
+                }
+            }
+            
+            // Update the UI
+            self.update_title_and_model();
         }
     }
 );
@@ -650,13 +737,16 @@ impl ChatViewController {
             messages_container: RefCell::new(None),
             input_field: RefCell::new(None),
             conversation: RefCell::new(Some(conversation)),
-            title_button: RefCell::new(None),
+            title_popup: RefCell::new(None),
             title_edit_field: RefCell::new(None),
+            rename_button: RefCell::new(None),
             model_label: RefCell::new(None),
             thinking_button: RefCell::new(None),
             streaming_response: Arc::new(Mutex::new(String::new())),
             streaming_thinking: Arc::new(Mutex::new(String::new())),
             is_streaming: RefCell::new(false),
+            stop_button: RefCell::new(None),
+            cancel_streaming: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         
         let this = Self::alloc(mtm).set_ivars(ivars);
@@ -728,57 +818,86 @@ impl ChatViewController {
             height_constraint.setActive(true);
         }
 
-        // Title: clickable button that shows conversation name (default: timestamp)
-        // Generate default title as timestamp
-        let default_title = Local::now().format("%Y%m%d%H%M%S").to_string();
+        // Title: Use NSPopUpButton - it's a proper dropdown that fires action on selection
+        // Generate default title as timestamp with milliseconds for uniqueness
+        let default_title = Local::now().format("%Y%m%d%H%M%S%3f").to_string();
         
-        // Create a button that looks like a label for clicking
-        let title_button = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str(&default_title),
-                Some(self),
-                Some(sel!(titleClicked:)),
-                mtm,
-            )
+        // Create NSPopUpButton for conversation selection
+        use objc2_app_kit::NSPopUpButton;
+        let title_popup = unsafe {
+            let popup = NSPopUpButton::new(mtm);
+            popup.setTranslatesAutoresizingMaskIntoConstraints(false);
+            popup.setPullsDown(false); // Regular popup menu, not pull-down
+            popup.setTarget(Some(self));
+            popup.setAction(Some(sel!(titlePopupChanged:)));
+            popup.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
+            popup
         };
-        title_button.setBezelStyle(NSBezelStyle::Inline);
-        title_button.setBordered(false);
-        unsafe {
-            title_button.setTranslatesAutoresizingMaskIntoConstraints(false);
-            title_button.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-        }
-        // Style it to look like a label
-        title_button.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
         
-        // Create editable title field (hidden by default, replaces button when editing)
-        let title_edit = NSTextField::initWithFrame(
-            NSTextField::alloc(mtm),
-            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(150.0, 22.0)),
-        );
+        // Create title edit field (hidden by default, shown when renaming)
+        let title_edit = NSTextField::new(mtm);
         title_edit.setStringValue(&NSString::from_str(&default_title));
-        title_edit.setTextColor(Some(&Theme::text_primary()));
-        title_edit.setBackgroundColor(Some(&Theme::bg_darker()));
         title_edit.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
-        title_edit.setDrawsBackground(true);
-        title_edit.setBordered(true);
         title_edit.setEditable(true);
-        title_edit.setSelectable(true);
+        title_edit.setBordered(true);
         title_edit.setHidden(true);
         unsafe {
             title_edit.setTranslatesAutoresizingMaskIntoConstraints(false);
-            title_edit.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-            // Set target/action for when editing ends (pressing Enter)
             title_edit.setTarget(Some(self));
-            title_edit.setAction(Some(sel!(titleEditingEnded:)));
+            title_edit.setAction(Some(sel!(titleEditDone:)));
+            let width = title_edit.widthAnchor().constraintGreaterThanOrEqualToConstant(120.0);
+            width.setActive(true);
         }
         
-        // Add button and edit field to top bar (edit field hidden initially)
+        // Create rename button (R) - placed next to dropdown
+        let rename_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str("R"),
+                Some(self),
+                Some(sel!(renameConversation:)),
+                mtm,
+            )
+        };
+        rename_btn.setBezelStyle(NSBezelStyle::Inline);
         unsafe {
-            top_bar.addArrangedSubview(&title_button);
-            top_bar.addArrangedSubview(&title_edit);
+            rename_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+            let width = rename_btn.widthAnchor().constraintEqualToConstant(28.0);
+            width.setActive(true);
+            let height = rename_btn.heightAnchor().constraintEqualToConstant(28.0);
+            height.setActive(true);
         }
-        *self.ivars().title_button.borrow_mut() = Some(title_button);
+        
+        // Create new conversation button (+) - placed next to R
+        let new_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str("+"),
+                Some(self),
+                Some(sel!(newConversation:)),
+                mtm,
+            )
+        };
+        new_btn.setBezelStyle(NSBezelStyle::Inline);
+        unsafe {
+            new_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+            let width = new_btn.widthAnchor().constraintEqualToConstant(28.0);
+            width.setActive(true);
+            let height = new_btn.heightAnchor().constraintEqualToConstant(28.0);
+            height.setActive(true);
+        }
+        
+        // Populate popup with existing conversations
+        self.populate_title_popup(&title_popup, &default_title);
+        
+        // Add popup, edit field, rename button, and new button to top bar
+        unsafe {
+            top_bar.addArrangedSubview(&title_popup);
+            top_bar.addArrangedSubview(&title_edit);
+            top_bar.addArrangedSubview(&rename_btn);
+            top_bar.addArrangedSubview(&new_btn);
+        }
+        *self.ivars().title_popup.borrow_mut() = Some(title_popup);
         *self.ivars().title_edit_field.borrow_mut() = Some(title_edit);
+        *self.ivars().rename_button.borrow_mut() = Some(rename_btn);
         
         // Spacer (flexible, low priority)
         let spacer = NSView::new(mtm);
@@ -790,11 +909,11 @@ impl ChatViewController {
             top_bar.addArrangedSubview(&spacer);
         }
         
-        // Icon buttons: T, H, +, Gear (28x28 each per wireframe)
+        // Icon buttons: T, H, Gear (28x28 each per wireframe)
+        // Note: R (rename) and + (new) buttons are now next to the title dropdown
         let button_configs: &[(&str, objc2::runtime::Sel)] = &[
             ("T", sel!(toggleThinking:)),
             ("H", sel!(showHistory:)),
-            ("+", sel!(newConversation:)),
         ];
 
         for &(label, action) in button_configs {
@@ -1028,6 +1147,30 @@ impl ChatViewController {
             input_stack.addArrangedSubview(&input);
         }
 
+        // Stop button (between input and send, disabled by default)
+        let stop_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str("X"),
+                Some(self),
+                Some(sel!(stopStreaming:)),
+                mtm,
+            )
+        };
+        stop_btn.setBezelStyle(NSBezelStyle::Rounded);
+        stop_btn.setEnabled(false); // Disabled until streaming starts
+        
+        unsafe {
+            stop_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+            stop_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = stop_btn.widthAnchor().constraintEqualToConstant(30.0);
+            width_constraint.setActive(true);
+        }
+        
+        unsafe {
+            input_stack.addArrangedSubview(&stop_btn);
+        }
+        *self.ivars().stop_button.borrow_mut() = Some(stop_btn);
+
         // Send button (fixed width >=60 per wireframe, high hugging priority)
         let send_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
@@ -1148,6 +1291,11 @@ fn check_streaming_done(&self) -> bool {
         
         // Mark streaming as done
         *self.ivars().is_streaming.borrow_mut() = false;
+        
+        // Disable stop button
+        if let Some(btn) = &*self.ivars().stop_button.borrow() {
+            btn.setEnabled(false);
+        }
         
         // Note: We already called rebuild_messages_with_thinking above, no need to call again
     }
@@ -1355,11 +1503,13 @@ fn check_streaming_done(&self) -> bool {
         
         if let Some(conversation) = &*self.ivars().conversation.borrow() {
             if let Ok(profile) = config.get_profile(&conversation.profile_id) {
-                // Update title button
-                if let Some(title_button) = &*self.ivars().title_button.borrow() {
-                    let title_text = conversation.title.clone()
-                        .unwrap_or_else(|| Local::now().format("%Y%m%d%H%M%S").to_string());
-                    title_button.setTitle(&NSString::from_str(&title_text));
+                // Get title text (use title or timestamp-based default)
+                let title_text = conversation.title.clone()
+                    .unwrap_or_else(|| conversation.created_at.format("%Y%m%d%H%M%S%3f").to_string());
+                
+                // Update title popup - repopulate and select
+                if let Some(popup) = &*self.ivars().title_popup.borrow() {
+                    self.populate_title_popup(popup, &title_text);
                 }
                 
                 // Update model label
@@ -1367,6 +1517,65 @@ fn check_streaming_done(&self) -> bool {
                     let model_text = format!("{} - {}", profile.name, profile.model_id);
                     model_label.setStringValue(&NSString::from_str(&model_text));
                 }
+            }
+        }
+    }
+    
+    /// Populate the title popup button with existing conversations
+    fn populate_title_popup(&self, popup: &objc2_app_kit::NSPopUpButton, current_title: &str) {
+        use objc2_app_kit::NSPopUpButton;
+        
+        // Load all conversations from storage
+        if let Ok(storage) = ConversationStorage::with_default_path() {
+            if let Ok(conversations) = storage.load_all() {
+                // Sort by updated_at descending (most recent first)
+                let mut sorted: Vec<_> = conversations.into_iter().collect();
+                sorted.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                
+                // Clear and add items to popup
+                unsafe {
+                    popup.removeAllItems();
+                    
+                    // Add current/new conversation first if not in list
+                    let has_current = sorted.iter().any(|c| {
+                        c.title.as_deref() == Some(current_title)
+                    });
+                    if !has_current && !current_title.is_empty() {
+                        popup.addItemWithTitle(&NSString::from_str(current_title));
+                    }
+                    
+                    for conv in sorted.iter().take(20) { // Limit to 20 recent
+                        let title = conv.title.clone()
+                            .unwrap_or_else(|| conv.created_at.format("%Y%m%d%H%M%S%3f").to_string());
+                        popup.addItemWithTitle(&NSString::from_str(&title));
+                    }
+                    
+                    // Select the current title
+                    popup.selectItemWithTitle(&NSString::from_str(current_title));
+                }
+                log_to_file(&format!("Populated title popup with {} conversations", sorted.len().min(20)));
+            }
+        }
+    }
+    
+    /// Load a conversation by its title
+    fn load_conversation_by_title(&self, title: &str) {
+        log_to_file(&format!("Loading conversation by title: {title}"));
+        
+        if let Ok(storage) = ConversationStorage::with_default_path() {
+            if let Ok(conversations) = storage.load_all() {
+                // Find the conversation with matching title
+                for conv in conversations {
+                    // Match by title or by timestamp format
+                    let conv_title = conv.title.clone()
+                        .unwrap_or_else(|| conv.created_at.format("%Y%m%d%H%M%S%3f").to_string());
+                    if conv_title == title {
+                        log_to_file(&format!("Found conversation: {} ({})", conv.id, conv_title));
+                        self.load_conversation(conv);
+                        return;
+                    }
+                }
+                log_to_file(&format!("No conversation found with title: {title}"));
             }
         }
     }

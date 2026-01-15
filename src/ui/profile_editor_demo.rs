@@ -37,6 +37,8 @@ fn log_to_file(message: &str) {
 }
 
 pub struct ProfileEditorDemoIvars {
+    /// If editing an existing profile, this is its ID
+    editing_profile_id: RefCell<Option<Uuid>>,
     preselected_provider: RefCell<Option<String>>,
     preselected_model: RefCell<Option<String>>,
     preselected_base_url: RefCell<Option<String>>,
@@ -59,6 +61,10 @@ pub struct ProfileEditorDemoIvars {
 
 impl Default for ProfileEditorDemoIvars {
     fn default() -> Self {
+        // Check for editing existing profile from settings view
+        use super::settings_view::EDITING_PROFILE_ID;
+        let editing_profile_id = EDITING_PROFILE_ID.with(std::cell::Cell::take);
+        
         // Check for pre-selected model from model selector
         let preselected_provider = SELECTED_MODEL_PROVIDER.with(std::cell::Cell::take);
         let preselected_model = SELECTED_MODEL_ID.with(std::cell::Cell::take);
@@ -66,6 +72,7 @@ impl Default for ProfileEditorDemoIvars {
         let preselected_context = SELECTED_MODEL_CONTEXT.with(std::cell::Cell::take);
         
         Self {
+            editing_profile_id: RefCell::new(editing_profile_id),
             preselected_provider: RefCell::new(preselected_provider),
             preselected_model: RefCell::new(preselected_model),
             preselected_base_url: RefCell::new(preselected_base_url),
@@ -285,9 +292,11 @@ define_class!(
             // Get base URL from registry or use empty (will be looked up at runtime)
             let base_url = String::new();
             
-            // Create profile
+            // Check if editing existing profile or creating new
+            let editing_id = self.ivars().editing_profile_id.borrow().clone();
+            
             let profile = ModelProfile {
-                id: Uuid::new_v4(),
+                id: editing_id.unwrap_or_else(Uuid::new_v4),
                 name,
                 provider_id,
                 model_id,
@@ -296,7 +305,7 @@ define_class!(
                 parameters,
                 system_prompt,
             };
-            log_to_file(&format!("  Created profile: {:?}", profile.id));
+            log_to_file(&format!("  Profile ID: {:?} (editing: {})", profile.id, editing_id.is_some()));
             
             // Load and save config
             let config_path = match Config::default_path() {
@@ -314,6 +323,12 @@ define_class!(
                     Config::default()
                 }
             };
+            
+            // If editing, remove old profile first
+            if editing_id.is_some() {
+                config.profiles.retain(|p| p.id != profile.id);
+                log_to_file(&format!("  Removed old profile, remaining: {}", config.profiles.len()));
+            }
             
             // Add profile
             config.add_profile(profile.clone());
@@ -449,12 +464,38 @@ impl ProfileEditorDemoViewController {
         form_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
         form_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
 
-        // Get preselected values (from model selector)
-        let preselected_provider = self.ivars().preselected_provider.borrow().clone();
-        let preselected_model = self.ivars().preselected_model.borrow().clone();
+        // Check if editing existing profile
+        let editing_profile = if let Some(editing_id) = &*self.ivars().editing_profile_id.borrow() {
+            // Load profile from config
+            if let Ok(config_path) = Config::default_path() {
+                if let Ok(config) = Config::load(&config_path) {
+                    config.profiles.into_iter().find(|p| p.id == *editing_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         
-        // Profile Name - default to model name if we have one
-        let default_name = if let Some(ref model_id) = preselected_model {
+        // Get preselected values (from model selector OR editing profile)
+        let preselected_provider = if let Some(ref profile) = editing_profile {
+            Some(profile.provider_id.clone())
+        } else {
+            self.ivars().preselected_provider.borrow().clone()
+        };
+        let preselected_model = if let Some(ref profile) = editing_profile {
+            Some(profile.model_id.clone())
+        } else {
+            self.ivars().preselected_model.borrow().clone()
+        };
+        
+        // Profile Name - use editing profile name, or default to model name
+        let default_name = if let Some(ref profile) = editing_profile {
+            profile.name.clone()
+        } else if let Some(ref model_id) = preselected_model {
             model_id.clone()
         } else {
             "My Profile".to_string()
@@ -505,21 +546,33 @@ impl ProfileEditorDemoViewController {
                 preselected_model.as_deref().unwrap_or("?")));
         }
 
-        // Base URL - use preselected if available
-        let default_base_url = self.ivars().preselected_base_url.borrow()
-            .clone()
-            .unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
+        // Base URL - use editing profile, preselected, or default
+        let default_base_url = if let Some(ref profile) = editing_profile {
+            if profile.base_url.is_empty() {
+                "https://api.anthropic.com/v1".to_string()
+            } else {
+                profile.base_url.clone()
+            }
+        } else {
+            self.ivars().preselected_base_url.borrow()
+                .clone()
+                .unwrap_or_else(|| "https://api.anthropic.com/v1".to_string())
+        };
         let url_section = self.build_form_field("Base URL", &default_base_url, mtm);
         form_stack.addArrangedSubview(&url_section.0);
         *self.ivars().base_url_input.borrow_mut() = Some(url_section.1);
 
-        // Authentication
-        let auth_section = self.build_auth_section(mtm);
+        // Authentication - use editing profile auth if available
+        let auth_section = self.build_auth_section_with_profile(mtm, editing_profile.as_ref());
         form_stack.addArrangedSubview(&auth_section);
 
-        // System Prompt
-        let default_system_prompt = "You are a helpful assistant, be direct and to the point. Respond in English.";
-        let system_prompt_section = self.build_multiline_field("System Prompt", default_system_prompt, mtm);
+        // System Prompt - use editing profile or default
+        let default_system_prompt = if let Some(ref profile) = editing_profile {
+            profile.system_prompt.clone()
+        } else {
+            "You are a helpful assistant, be direct and to the point. Respond in English.".to_string()
+        };
+        let system_prompt_section = self.build_multiline_field("System Prompt", &default_system_prompt, mtm);
         form_stack.addArrangedSubview(&system_prompt_section.0);
         *self.ivars().system_prompt_input.borrow_mut() = Some(system_prompt_section.1);
 
@@ -618,6 +671,10 @@ impl ProfileEditorDemoViewController {
     }
 
     fn build_auth_section(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+        self.build_auth_section_with_profile(mtm, None)
+    }
+    
+    fn build_auth_section_with_profile(&self, mtm: MainThreadMarker, profile: Option<&ModelProfile>) -> Retained<NSView> {
         let container = NSStackView::new(mtm);
         container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
         container.setSpacing(8.0);
@@ -636,6 +693,18 @@ impl ProfileEditorDemoViewController {
             auth_popup.setTarget(Some(self));
             auth_popup.setAction(Some(sel!(authTypeChanged:)));
         }
+        
+        // Set auth type from profile
+        let (auth_index, auth_value_str) = if let Some(profile) = profile {
+            match &profile.auth {
+                AuthConfig::Key { value } => (0, value.clone()),
+                AuthConfig::Keyfile { path } => (1, path.clone()),
+            }
+        } else {
+            (0, String::new())
+        };
+        auth_popup.selectItemAtIndex(auth_index);
+        
         let width = auth_popup.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
         width.setActive(true);
         container.addArrangedSubview(&auth_popup);
@@ -643,6 +712,9 @@ impl ProfileEditorDemoViewController {
 
         let auth_value = NSTextField::new(mtm);
         auth_value.setPlaceholderString(Some(&NSString::from_str("sk-...")));
+        if !auth_value_str.is_empty() {
+            auth_value.setStringValue(&NSString::from_str(&auth_value_str));
+        }
         let value_width = auth_value.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
         value_width.setActive(true);
         container.addArrangedSubview(&auth_value);
