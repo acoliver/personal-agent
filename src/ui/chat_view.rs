@@ -17,7 +17,8 @@ use objc2_foundation::{
 use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSScrollView,
     NSFont, NSBezelStyle, NSStackView, NSUserInterfaceLayoutOrientation,
-    NSLayoutConstraintOrientation, NSStackViewDistribution,
+    NSLayoutConstraintOrientation, NSStackViewDistribution, NSImage,
+    NSImageSymbolConfiguration, NSFontWeightBold,
 };
 use objc2_quartz_core::CALayer;
 use uuid::Uuid;
@@ -514,6 +515,12 @@ define_class!(
             }
         }
         
+        #[unsafe(method(quitApp:))]
+        fn quit_app(&self, _sender: Option<&NSObject>) {
+            log_to_file("Quit app clicked");
+            std::process::exit(0);
+        }
+        
         #[unsafe(method(titleClicked:))]
         fn title_clicked(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Title clicked, entering edit mode");
@@ -800,10 +807,16 @@ impl ChatViewController {
             }
         }
 
-        // Settings gear icon button (using "G" as text placeholder)
-        let gear_btn = self.create_gear_button_for_stack(mtm);
+        // Settings gear icon button
+        let gear_btn = self.create_symbol_button("gearshape", sel!(showSettings:), mtm);
         unsafe {
             top_bar.addArrangedSubview(&gear_btn);
+        }
+        
+        // Power/quit button
+        let power_btn = self.create_symbol_button("power", sel!(quitApp:), mtm);
+        unsafe {
+            top_bar.addArrangedSubview(&power_btn);
         }
 
         Retained::from(&*top_bar as &NSView)
@@ -842,16 +855,50 @@ impl ChatViewController {
         btn
     }
 
-    fn create_gear_button_for_stack(&self, mtm: MainThreadMarker) -> Retained<NSButton> {
-        // Create a button with the gear text
+    /// Create a button with an SF Symbol icon
+    fn create_symbol_button(
+        &self,
+        symbol_name: &str,
+        action: objc2::runtime::Sel,
+        mtm: MainThreadMarker,
+    ) -> Retained<NSButton> {
         let btn = unsafe {
             NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("G"),
+                &NSString::from_str(""),
                 Some(self),
-                Some(sel!(showSettings:)),
+                Some(action),
                 mtm,
             )
         };
+        
+        // Try to set SF Symbol image
+        unsafe {
+            let symbol_name_ns = NSString::from_str(symbol_name);
+            if let Some(image) = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                &symbol_name_ns,
+                None,
+            ) {
+                // Configure the symbol to be bold and a good size
+                let config = NSImageSymbolConfiguration::configurationWithPointSize_weight(
+                    14.0,
+                    NSFontWeightBold,
+                );
+                if let Some(configured_image) = image.imageWithSymbolConfiguration(&config) {
+                    btn.setImage(Some(&configured_image));
+                } else {
+                    btn.setImage(Some(&image));
+                }
+            } else {
+                // Fallback to text if symbol not available
+                let fallback = match symbol_name {
+                    "gearshape" => "",
+                    "power" => "",
+                    _ => "?",
+                };
+                btn.setTitle(&NSString::from_str(fallback));
+            }
+        }
+        
         btn.setBordered(false);
         btn.setWantsLayer(true);
         if let Some(layer) = btn.layer() {

@@ -132,6 +132,31 @@ impl LlmClient {
         }
     }
 
+    /// Build a model with extended configuration (thinking support, etc.)
+    fn build_model(
+        &self,
+        provider: &str,
+        base_url: Option<&str>,
+    ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        use serdes_ai::ExtendedModelConfig;
+        
+        let mut config = ExtendedModelConfig::new()
+            .with_api_key(&self.api_key);
+        
+        if let Some(url) = base_url {
+            config = config.with_base_url(url);
+        }
+        
+        // Enable thinking if profile has it enabled
+        if self.profile.parameters.enable_thinking {
+            let budget = self.profile.parameters.thinking_budget.map(u64::from);
+            config = config.with_thinking(budget);
+        }
+        
+        serdes_ai::build_model_extended(provider, &self.profile.model_id, config)
+            .map_err(|e| LlmError::SerdesAi(e.to_string()))
+    }
+
     /// Make a non-streaming request
     pub async fn request(&self, messages: &[Message]) -> StdResult<String, LlmError> {
         // Set API key in environment for SerdesAI
@@ -164,14 +189,8 @@ impl LlmClient {
         // Determine provider type from registry
         let provider = self.get_serdes_provider();
         
-        // Build the model with custom base URL if needed
-        let model = serdes_ai::models::build_model_with_config(
-            provider,
-            &self.profile.model_id,
-            Some(&self.api_key),
-            base_url,
-            None,
-        ).map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+        // Build the model with extended config for thinking support
+        let model = self.build_model(provider, base_url)?;
 
         // Make the request using the model directly
         let response = model
@@ -233,14 +252,8 @@ impl LlmClient {
         // Determine provider type from registry
         let provider = self.get_serdes_provider();
         
-        // Build the model with custom base URL if needed
-        let model = serdes_ai::models::build_model_with_config(
-            provider,
-            &self.profile.model_id,
-            Some(&self.api_key),
-            base_url,
-            None,
-        ).map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+        // Build the model with extended config for thinking support
+        let model = self.build_model(provider, base_url)?;
 
         // Use the model directly for streaming
         let mut stream = model.request_stream(&model_requests, &self.model_settings(), &Default::default())
