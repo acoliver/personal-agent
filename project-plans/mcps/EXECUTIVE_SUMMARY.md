@@ -6,7 +6,7 @@ Adding **MCP (Model Context Protocol)** support to PersonalAgent, enabling the A
 
 ## Timeline
 
-**Total: 10-13 weeks (48-65 days)**
+**Total: 11-15 weeks (55-75 days)**
 
 | Milestone | Duration | Deliverable |
 |-----------|----------|-------------|
@@ -15,7 +15,8 @@ Adding **MCP (Model Context Protocol)** support to PersonalAgent, enabling the A
 | **M3: Basic UI** | Week 5-6 | Add/Configure MCP screens |
 | **M4: Agent Integration** | Week 7-8 | Tool routing + Chat display |
 | **M5: Registry Search** | Week 9-10 | Official + Smithery search |
-| **M6: Production Ready** | Week 11-13 | Error recovery, status indicators |
+| **M6: Production Ready** | Week 11-12 | Error recovery, status indicators |
+| **M7: OAuth** | Week 13-15 | OAuth flow for GitHub, Google, etc. |
 
 ## Phase 0 (Immediate): SerdesAI PR
 
@@ -76,16 +77,22 @@ pub async fn spawn_with_env(
 - [ ] Select "Both" → Results merged, deduplicated
 - [ ] Click search result → Populates configure screen
 
-### M6: Production Ready (Week 11-13)
+### M6: Production Ready (Week 11-12)
 **Success Criteria**:
 - [ ] MCP crash → Auto-restart (max 3 times)
 - [ ] 30 min idle → MCP cleaned up
 - [ ] Status badges show Connected/Idle/Error
 - [ ] Delete MCP → Credentials cleaned up
 
-## Deferred (Phase 7+)
+### M7: OAuth Authentication (Week 13-15)
+**Success Criteria**:
+- [ ] Click "Authorize with GitHub" → Opens browser
+- [ ] Complete OAuth → Status shows "Connected as @username"
+- [ ] Token refresh works when expired
+- [ ] OAuth tokens stored securely
 
-- **OAuth authentication** - API key first
+## Deferred (Phase 8+)
+
 - **HTTP transport MCPs** - stdio first
 - **configSchema dynamic UI** - JSON editor fallback
 - **Tool filtering** - All tools enabled by default

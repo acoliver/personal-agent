@@ -16,9 +16,8 @@ This document outlines a test-first implementation plan for adding MCP (Model Co
 ## Deferred to Future Phases
 
 The following SPEC requirements are explicitly deferred:
-- **OAuth authentication** - Phase 7 (future)
-- **configSchema UI rendering** - Phase 7 (future) - MCPs with custom config will show raw JSON editor as fallback
-- **HTTP transport MCPs** - Phase 7 (future)
+- **configSchema UI rendering** - Phase 8 (future) - MCPs with custom config will show raw JSON editor as fallback
+- **HTTP transport MCPs** - Phase 8 (future)
 
 ---
 
@@ -1732,8 +1731,9 @@ fn test_toast_mcp_restart_failed() {
 | **4: Agent Integration** | 7-9 days | Phase 2, 3 | Tool routing, display, system prompt |
 | **5: Registry Search** | 7-10 days | Phase 3 | Official + Smithery |
 | **6: Polish** | 10-14 days | All | Lifecycle, errors, status |
+| **7: OAuth** | 7-10 days | Phase 6 | OAuth flow for GitHub, Google, etc. |
 
-**Total: 48-65 days (10-13 weeks)**
+**Total: 55-75 days (11-15 weeks)**
 
 **Revised from original 37-52 days based on review feedback to account for:**
 - Multiple env vars per MCP support
@@ -1742,6 +1742,7 @@ fn test_toast_mcp_restart_failed() {
 - Lifecycle edge cases (disable, delete, last_used)
 - Tool call display states
 - System prompt builder
+- OAuth authentication flow
 
 ### Parallel Work
 
@@ -1771,9 +1772,346 @@ Phase 0 (SerdesAI PR) → Phase 2 (Spawning) → Phase 4 (Agent) → Phase 6 (Po
 
 ---
 
-## Out of Scope (Future - Phase 7+)
+---
 
-- **OAuth authentication** - Requires OAuth app registration with providers
+## Phase 7: OAuth Authentication
+
+**Duration**: 7-10 days  
+**Dependencies**: Phase 6  
+**Deliverable**: OAuth flow for MCPs that require it (GitHub, Google, etc.)
+
+### Tests to Write FIRST
+
+```rust
+// src/mcp/oauth.rs - tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_oauth_authorize_url() {
+        let config = OAuthConfig {
+            client_id: "test_client_id".to_string(),
+            auth_url: "https://github.com/login/oauth/authorize".to_string(),
+            scope: "repo,read:org".to_string(),
+        };
+        
+        let (url, state) = build_authorize_url(&config, "personalagent://oauth/callback");
+        
+        assert!(url.contains("client_id=test_client_id"));
+        assert!(url.contains("redirect_uri=personalagent"));
+        assert!(url.contains("scope=repo,read:org"));
+        assert!(url.contains(&format!("state={}", state)));
+        assert_eq!(state.len(), 32); // Random state should be 32 chars
+    }
+
+    #[test]
+    fn test_parse_oauth_callback_url() {
+        let url = "personalagent://oauth/callback?code=abc123&state=xyz789";
+        let result = parse_callback_url(url).unwrap();
+        
+        assert_eq!(result.code, "abc123");
+        assert_eq!(result.state, "xyz789");
+    }
+
+    #[test]
+    fn test_parse_oauth_callback_error() {
+        let url = "personalagent://oauth/callback?error=access_denied&error_description=User+denied";
+        let result = parse_callback_url(url);
+        
+        assert!(matches!(result, Err(OAuthError::AccessDenied(_))));
+    }
+
+    #[test]
+    fn test_validate_state_matches() {
+        let original_state = "abc123xyz";
+        let callback_state = "abc123xyz";
+        
+        assert!(validate_state(original_state, callback_state));
+    }
+
+    #[test]
+    fn test_validate_state_mismatch_fails() {
+        let original_state = "abc123xyz";
+        let callback_state = "different";
+        
+        assert!(!validate_state(original_state, callback_state));
+    }
+
+    #[tokio::test]
+    async fn test_exchange_code_for_token() {
+        let server = MockServer::start().await;
+        
+        Mock::given(method("POST"))
+            .and(path("/login/oauth/access_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "gho_xxxxxxxxxxxx",
+                "token_type": "bearer",
+                "scope": "repo,read:org",
+                "refresh_token": "ghr_yyyyyyyyyyyy",
+                "expires_in": 28800
+            })))
+            .mount(&server)
+            .await;
+        
+        let config = OAuthConfig {
+            client_id: "test_id".to_string(),
+            client_secret: "test_secret".to_string(),
+            token_url: format!("{}/login/oauth/access_token", server.uri()),
+            ..Default::default()
+        };
+        
+        let tokens = exchange_code(&config, "auth_code_123").await.unwrap();
+        
+        assert_eq!(tokens.access_token, "gho_xxxxxxxxxxxx");
+        assert_eq!(tokens.refresh_token, Some("ghr_yyyyyyyyyyyy".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token() {
+        let server = MockServer::start().await;
+        
+        Mock::given(method("POST"))
+            .and(path("/login/oauth/access_token"))
+            .and(body_contains("grant_type=refresh_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "gho_new_token",
+                "token_type": "bearer",
+                "refresh_token": "ghr_new_refresh",
+                "expires_in": 28800
+            })))
+            .mount(&server)
+            .await;
+        
+        let config = OAuthConfig {
+            token_url: format!("{}/login/oauth/access_token", server.uri()),
+            ..Default::default()
+        };
+        
+        let old_tokens = OAuthTokens {
+            access_token: "old".to_string(),
+            refresh_token: Some("ghr_old_refresh".to_string()),
+            expires_at: Some(Utc::now() - Duration::hours(1)), // Expired
+            ..Default::default()
+        };
+        
+        let new_tokens = refresh_tokens(&config, &old_tokens).await.unwrap();
+        
+        assert_eq!(new_tokens.access_token, "gho_new_token");
+    }
+
+    #[test]
+    fn test_token_is_expired() {
+        let tokens = OAuthTokens {
+            access_token: "test".to_string(),
+            expires_at: Some(Utc::now() - Duration::hours(1)),
+            ..Default::default()
+        };
+        
+        assert!(tokens.is_expired());
+    }
+
+    #[test]
+    fn test_token_not_expired() {
+        let tokens = OAuthTokens {
+            access_token: "test".to_string(),
+            expires_at: Some(Utc::now() + Duration::hours(1)),
+            ..Default::default()
+        };
+        
+        assert!(!tokens.is_expired());
+    }
+
+    #[test]
+    fn test_token_no_expiry_never_expires() {
+        let tokens = OAuthTokens {
+            access_token: "test".to_string(),
+            expires_at: None,
+            ..Default::default()
+        };
+        
+        assert!(!tokens.is_expired());
+    }
+}
+
+// URL scheme handler tests
+#[cfg(test)]
+mod url_scheme_tests {
+    use super::*;
+
+    #[test]
+    fn test_url_scheme_registered() {
+        // This would be an integration test on macOS
+        // Verifies personalagent:// scheme is handled
+    }
+}
+```
+
+```rust
+// src/ui/mcp_oauth_view.rs - tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_oauth_state_not_connected() {
+        let state = OAuthViewState {
+            status: OAuthStatus::NotConnected,
+            provider_name: "GitHub".to_string(),
+            ..Default::default()
+        };
+        
+        assert_eq!(state.button_text(), "Authorize with GitHub");
+        assert_eq!(state.status_text(), "Not connected");
+        assert!(!state.is_connected());
+    }
+
+    #[test]
+    fn test_oauth_state_authorizing() {
+        let state = OAuthViewState {
+            status: OAuthStatus::Authorizing,
+            provider_name: "GitHub".to_string(),
+            ..Default::default()
+        };
+        
+        assert!(state.show_spinner());
+        assert_eq!(state.status_text(), "Waiting for authorization...");
+        assert!(!state.button_enabled());
+    }
+
+    #[test]
+    fn test_oauth_state_connected() {
+        let state = OAuthViewState {
+            status: OAuthStatus::Connected {
+                username: Some("@acoliver".to_string()),
+            },
+            provider_name: "GitHub".to_string(),
+            ..Default::default()
+        };
+        
+        assert_eq!(state.button_text(), "Reauthorize with GitHub");
+        assert_eq!(state.status_text(), "Connected as @acoliver");
+        assert!(state.is_connected());
+    }
+
+    #[test]
+    fn test_oauth_state_error() {
+        let state = OAuthViewState {
+            status: OAuthStatus::Error {
+                message: "Authorization denied".to_string(),
+            },
+            provider_name: "GitHub".to_string(),
+            ..Default::default()
+        };
+        
+        assert_eq!(state.status_text(), "Error: Authorization denied");
+        assert!(state.show_retry_button());
+    }
+
+    #[test]
+    fn test_oauth_timeout() {
+        let state = OAuthViewState {
+            status: OAuthStatus::Timeout,
+            provider_name: "GitHub".to_string(),
+            ..Default::default()
+        };
+        
+        assert_eq!(state.status_text(), "Authorization timed out after 2 minutes");
+        assert!(state.show_retry_button());
+    }
+}
+```
+
+### Implementation Tasks
+
+1. **Create `src/mcp/oauth.rs`**:
+   - `build_authorize_url()` - Generate OAuth URL with state
+   - `parse_callback_url()` - Parse code and state from callback
+   - `validate_state()` - CSRF protection
+   - `exchange_code()` - Exchange auth code for tokens
+   - `refresh_tokens()` - Refresh expired tokens
+   - `OAuthTokens` struct with expiry checking
+
+2. **Register Custom URL Scheme**:
+   - Add `CFBundleURLTypes` to `Info.plist` for bundled app
+   - Implement Apple Event handler for `personalagent://` URLs
+   - Route callbacks to OAuth flow
+
+3. **Token Storage**:
+   - Store OAuth tokens in `secrets/mcp_{uuid}.oauth`
+   - JSON format with access_token, refresh_token, expires_at
+   - Auto-refresh before expiry
+
+4. **Update Configure UI**:
+   - Detect OAuth auth type from registry metadata
+   - Show "Authorize with {Provider}" button
+   - Handle authorization flow in background
+   - Display connected status with username
+
+5. **Update McpManager**:
+   - Check token expiry before spawning
+   - Auto-refresh if needed
+   - Inject access_token as env var
+
+### OAuth Provider Configurations
+
+```rust
+// Built-in OAuth configs for common providers
+pub fn github_oauth_config() -> OAuthConfig {
+    OAuthConfig {
+        provider: "github".to_string(),
+        auth_url: "https://github.com/login/oauth/authorize".to_string(),
+        token_url: "https://github.com/login/oauth/access_token".to_string(),
+        scope: "repo,read:org".to_string(),
+        // client_id/secret loaded from env or embedded
+    }
+}
+
+pub fn google_oauth_config() -> OAuthConfig {
+    OAuthConfig {
+        provider: "google".to_string(),
+        auth_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+        token_url: "https://oauth2.googleapis.com/token".to_string(),
+        scope: "https://www.googleapis.com/auth/calendar".to_string(),
+    }
+}
+```
+
+### OAuth App Registration
+
+For OAuth to work, we need client_id/client_secret for each provider:
+
+| Provider | Registration URL | Notes |
+|----------|------------------|-------|
+| GitHub | https://github.com/settings/developers | Create OAuth App |
+| Google | https://console.cloud.google.com | Create OAuth 2.0 credentials |
+
+**Options for client credentials**:
+1. **Embed in binary** - Acceptable for open-source, extractable but functional
+2. **User provides own** - Power user option, add to settings
+3. **Backend proxy** - Requires server infrastructure (future)
+
+For Phase 7, we'll use option 1 (embedded) with option 2 as fallback.
+
+### Success Criteria
+
+- [ ] OAuth authorize URL generated correctly with state
+- [ ] Custom URL scheme `personalagent://` registered and working
+- [ ] Callback URL parsed correctly, state validated
+- [ ] Token exchange works (tested with mock server)
+- [ ] Token refresh works when expired
+- [ ] Tokens stored securely in secrets/
+- [ ] Configure UI shows OAuth flow
+- [ ] Connected status displays username
+- [ ] McpManager injects access_token correctly
+- [ ] End-to-end flow works with real GitHub OAuth
+
+---
+
+## Out of Scope (Future - Phase 8+)
+
 - **HTTP transport MCP servers** - Smithery hosted servers
 - **configSchema-driven dynamic UI** - Will use JSON editor as fallback
 - **Custom MCP tool filtering** - Per-MCP enable/disable specific tools
