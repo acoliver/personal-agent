@@ -6,6 +6,7 @@
 pub mod config;
 pub mod error;
 pub mod llm;
+pub mod mcp;
 pub mod models;
 pub mod registry;
 pub mod storage;

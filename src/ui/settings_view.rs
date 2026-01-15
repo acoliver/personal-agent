@@ -19,7 +19,8 @@ use objc2_quartz_core::CALayer;
 use uuid::Uuid;
 
 use super::theme::Theme;
-use personal_agent::config::{Config, McpConfig};
+use personal_agent::config::Config;
+use personal_agent::mcp::McpConfig;
 
 fn log_to_file(message: &str) {
     let log_path = dirs::home_dir()
@@ -1250,7 +1251,19 @@ impl SettingsViewController {
         click_btn.setTag(index as isize);
         
         // Label
-        let text = format!("{} - {}", mcp.name, mcp.description);
+        // Show MCP name and source type
+        let source_type = match &mcp.source {
+            personal_agent::mcp::McpSource::Official { name, version } => {
+                format!("Official: {} v{}", name, version)
+            }
+            personal_agent::mcp::McpSource::Smithery { qualified_name } => {
+                format!("Smithery: {}", qualified_name)
+            }
+            personal_agent::mcp::McpSource::Manual { url } => {
+                format!("Manual: {}", url)
+            }
+        };
+        let text = format!("{} - {}", mcp.name, source_type);
         let label = NSTextField::labelWithString(&NSString::from_str(&text), mtm);
         label.setTextColor(Some(&Theme::text_primary()));
         label.setFont(Some(&NSFont::systemFontOfSize(12.0)));

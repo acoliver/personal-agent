@@ -9,16 +9,6 @@ use crate::error::{AppError, Result};
 use crate::models::ModelProfile;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct McpConfig {
-    pub id: Uuid,
-    pub name: String,
-    pub description: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub version: String,
     pub theme: String,
@@ -30,7 +20,7 @@ pub struct Config {
     pub context_management: ContextManagement,
     pub profiles: Vec<ModelProfile>,
     #[serde(default)]
-    pub mcps: Vec<McpConfig>,
+    pub mcps: Vec<crate::mcp::McpConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -181,7 +171,7 @@ impl Config {
     }
 
     /// Add an MCP to the configuration
-    pub fn add_mcp(&mut self, mcp: McpConfig) {
+    pub fn add_mcp(&mut self, mcp: crate::mcp::McpConfig) {
         self.mcps.push(mcp);
     }
 
@@ -199,7 +189,7 @@ impl Config {
     }
 
     /// Get enabled MCPs
-    pub fn get_enabled_mcps(&self) -> Vec<&McpConfig> {
+    pub fn get_enabled_mcps(&self) -> Vec<&crate::mcp::McpConfig> {
         self.mcps.iter().filter(|m| m.enabled).collect()
     }
 }

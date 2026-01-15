@@ -2,4 +2,4 @@
 
 mod settings;
 
-pub use settings::{Config, ContextManagement, McpConfig};
+pub use settings::{Config, ContextManagement};
