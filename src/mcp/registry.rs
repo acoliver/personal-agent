@@ -1,0 +1,449 @@
+//! MCP Registry client for discovering servers
+
+use serde::Deserialize;
+use crate::mcp::{McpConfig, McpSource, McpPackage, McpPackageType, McpTransport, McpAuthType, EnvVarConfig, RegistryEnvVar, detect_auth_type};
+use uuid::Uuid;
+
+/// Response from the official MCP registry
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpRegistryResponse {
+    pub servers: Vec<McpRegistryServerWrapper>,
+}
+
+/// Wrapper for a server entry
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpRegistryServerWrapper {
+    pub server: McpRegistryServer,
+    #[serde(rename = "_meta")]
+    pub meta: serde_json::Value,
+}
+
+/// Server definition from the official MCP registry
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpRegistryServer {
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub repository: McpRegistryRepository,
+    pub version: String,
+    #[serde(default)]
+    pub packages: Vec<McpRegistryPackage>,
+    #[serde(default)]
+    pub remotes: Vec<McpRegistryRemote>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct McpRegistryRepository {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpRegistryPackage {
+    #[serde(rename = "registryType")]
+    pub registry_type: String,
+    pub identifier: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    pub transport: McpRegistryTransport,
+    #[serde(default, rename = "environmentVariables")]
+    pub environment_variables: Vec<McpRegistryEnvVar>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpRegistryTransport {
+    #[serde(rename = "type")]
+    pub transport_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpRegistryRemote {
+    #[serde(rename = "type")]
+    pub remote_type: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpRegistryEnvVar {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default, rename = "isSecret")]
+    pub is_secret: bool,
+    #[serde(default, rename = "isRequired")]
+    pub is_required: bool,
+}
+
+/// Search results
+#[derive(Debug, Clone)]
+pub struct McpSearchResult {
+    pub entries: Vec<McpRegistryServerWrapper>,
+    pub source: McpRegistrySource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum McpRegistrySource {
+    Official,
+    Smithery,
+}
+
+/// MCP Registry client
+pub struct McpRegistry {
+    http_client: reqwest::Client,
+    official_url: String,
+    smithery_url: String,
+}
+
+impl McpRegistry {
+    pub fn new() -> Self {
+        Self {
+            http_client: reqwest::Client::new(),
+            official_url: "https://registry.modelcontextprotocol.io/v0.1/servers".to_string(),
+            smithery_url: "https://smithery.ai/api/servers".to_string(),
+        }
+    }
+
+    /// Fetch all servers from official registry
+    pub async fn fetch_official(&self) -> Result<Vec<McpRegistryServerWrapper>, String> {
+        let response = self.http_client
+            .get(&self.official_url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch official registry: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Official registry returned {}", response.status()));
+        }
+
+        let registry_response: McpRegistryResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse official registry: {e}"))?;
+
+        Ok(registry_response.servers)
+    }
+
+    /// Search registries by query
+    pub async fn search(&self, query: &str) -> Result<McpSearchResult, String> {
+        // Fetch from official registry
+        let all_entries = self.fetch_official().await?;
+        
+        let query_lower = query.to_lowercase();
+        let filtered: Vec<McpRegistryServerWrapper> = all_entries
+            .into_iter()
+            .filter(|e| {
+                e.server.name.to_lowercase().contains(&query_lower) ||
+                e.server.description.to_lowercase().contains(&query_lower) ||
+                e.server.repository.url.as_ref()
+                    .map(|u| u.to_lowercase().contains(&query_lower))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        Ok(McpSearchResult {
+            entries: filtered,
+            source: McpRegistrySource::Official,
+        })
+    }
+
+    /// Convert registry server to McpConfig
+    pub fn entry_to_config(wrapper: &McpRegistryServerWrapper) -> Result<McpConfig, String> {
+        let server = &wrapper.server;
+        
+        // Prefer packages over remotes
+        if let Some(package) = server.packages.first() {
+            // Convert package type
+            let package_type = match package.registry_type.as_str() {
+                "npm" => McpPackageType::Npm,
+                "oci" => McpPackageType::Docker,
+                _ => return Err(format!("Unsupported registry type: {}", package.registry_type)),
+            };
+
+            // Convert transport type
+            let transport = match package.transport.transport_type.as_str() {
+                "stdio" => McpTransport::Stdio,
+                "http" | "streamable-http" => McpTransport::Http,
+                _ => return Err(format!("Unsupported transport type: {}", package.transport.transport_type)),
+            };
+
+            // Convert env vars
+            let env_vars: Vec<EnvVarConfig> = package.environment_variables
+                .iter()
+                .map(|v| EnvVarConfig {
+                    name: v.name.clone(),
+                    required: v.is_required,
+                })
+                .collect();
+
+            // Detect auth type from env vars
+            let registry_env_vars: Vec<RegistryEnvVar> = package.environment_variables
+                .iter()
+                .map(|v| RegistryEnvVar {
+                    name: v.name.clone(),
+                    is_secret: v.is_secret,
+                    is_required: v.is_required,
+                })
+                .collect();
+            
+            let auth_type = detect_auth_type(&registry_env_vars);
+            
+            // Determine runtime hint based on package type
+            let runtime_hint = match package_type {
+                McpPackageType::Npm => Some("npx".to_string()),
+                McpPackageType::Docker => Some("docker".to_string()),
+                McpPackageType::Http => None,
+            };
+
+            Ok(McpConfig {
+                id: Uuid::new_v4(),
+                name: server.name.clone(),
+                enabled: true,
+                source: McpSource::Official {
+                    name: server.name.clone(),
+                    version: server.version.clone(),
+                },
+                package: McpPackage {
+                    package_type,
+                    identifier: package.identifier.clone(),
+                    runtime_hint,
+                },
+                transport,
+                auth_type,
+                env_vars,
+                keyfile_path: None,
+                config: serde_json::json!({}),
+            })
+        } else if let Some(remote) = server.remotes.first() {
+            // Handle remote servers
+            let transport = match remote.remote_type.as_str() {
+                "http" | "streamable-http" => McpTransport::Http,
+                _ => return Err(format!("Unsupported remote type: {}", remote.remote_type)),
+            };
+
+            Ok(McpConfig {
+                id: Uuid::new_v4(),
+                name: server.name.clone(),
+                enabled: true,
+                source: McpSource::Manual {
+                    url: remote.url.clone(),
+                },
+                package: McpPackage {
+                    package_type: McpPackageType::Http,
+                    identifier: remote.url.clone(),
+                    runtime_hint: None,
+                },
+                transport,
+                auth_type: McpAuthType::None,
+                env_vars: vec![],
+                keyfile_path: None,
+                config: serde_json::json!({}),
+            })
+        } else {
+            Err("Server has neither packages nor remotes".to_string())
+        }
+    }
+}
+
+impl Default for McpRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_entry_to_config_npm() {
+        let wrapper = McpRegistryServerWrapper {
+            server: McpRegistryServer {
+                name: "test/mcp-server".to_string(),
+                description: "Test MCP server".to_string(),
+                repository: McpRegistryRepository {
+                    url: Some("https://github.com/test/mcp-server".to_string()),
+                    source: Some("github".to_string()),
+                },
+                version: "1.0.0".to_string(),
+                packages: vec![McpRegistryPackage {
+                    registry_type: "npm".to_string(),
+                    identifier: "@test/mcp-server".to_string(),
+                    version: Some("1.0.0".to_string()),
+                    transport: McpRegistryTransport {
+                        transport_type: "stdio".to_string(),
+                    },
+                    environment_variables: vec![
+                        McpRegistryEnvVar {
+                            name: "API_KEY".to_string(),
+                            description: Some("API key for authentication".to_string()),
+                            is_secret: true,
+                            is_required: true,
+                        }
+                    ],
+                }],
+                remotes: vec![],
+            },
+            meta: serde_json::json!({}),
+        };
+
+        let config = McpRegistry::entry_to_config(&wrapper).unwrap();
+        
+        assert_eq!(config.name, "test/mcp-server");
+        assert_eq!(config.package.package_type, McpPackageType::Npm);
+        assert_eq!(config.package.identifier, "@test/mcp-server");
+        assert_eq!(config.transport, McpTransport::Stdio);
+        assert_eq!(config.auth_type, McpAuthType::ApiKey);
+        assert_eq!(config.env_vars.len(), 1);
+        assert_eq!(config.env_vars[0].name, "API_KEY");
+        assert!(config.env_vars[0].required);
+    }
+
+    #[test]
+    fn test_entry_to_config_docker() {
+        let wrapper = McpRegistryServerWrapper {
+            server: McpRegistryServer {
+                name: "test/docker-server".to_string(),
+                description: "Test Docker server".to_string(),
+                repository: McpRegistryRepository::default(),
+                version: "2.0.0".to_string(),
+                packages: vec![McpRegistryPackage {
+                    registry_type: "oci".to_string(),
+                    identifier: "docker.io/test/server:2.0.0".to_string(),
+                    version: Some("2.0.0".to_string()),
+                    transport: McpRegistryTransport {
+                        transport_type: "stdio".to_string(),
+                    },
+                    environment_variables: vec![],
+                }],
+                remotes: vec![],
+            },
+            meta: serde_json::json!({}),
+        };
+
+        let config = McpRegistry::entry_to_config(&wrapper).unwrap();
+        
+        assert_eq!(config.package.package_type, McpPackageType::Docker);
+        assert_eq!(config.package.identifier, "docker.io/test/server:2.0.0");
+        assert_eq!(config.auth_type, McpAuthType::None);
+    }
+
+    #[test]
+    fn test_entry_to_config_remote() {
+        let wrapper = McpRegistryServerWrapper {
+            server: McpRegistryServer {
+                name: "test/remote-server".to_string(),
+                description: "Test remote server".to_string(),
+                repository: McpRegistryRepository::default(),
+                version: "1.0.0".to_string(),
+                packages: vec![],
+                remotes: vec![McpRegistryRemote {
+                    remote_type: "streamable-http".to_string(),
+                    url: "https://example.com/mcp".to_string(),
+                }],
+            },
+            meta: serde_json::json!({}),
+        };
+
+        let config = McpRegistry::entry_to_config(&wrapper).unwrap();
+        
+        assert_eq!(config.package.package_type, McpPackageType::Http);
+        assert_eq!(config.transport, McpTransport::Http);
+        assert_eq!(config.package.identifier, "https://example.com/mcp");
+    }
+
+    #[test]
+    fn test_entry_to_config_oauth() {
+        let wrapper = McpRegistryServerWrapper {
+            server: McpRegistryServer {
+                name: "test/oauth-server".to_string(),
+                description: "Test OAuth server".to_string(),
+                repository: McpRegistryRepository::default(),
+                version: "1.0.0".to_string(),
+                packages: vec![McpRegistryPackage {
+                    registry_type: "npm".to_string(),
+                    identifier: "@test/oauth-server".to_string(),
+                    version: Some("1.0.0".to_string()),
+                    transport: McpRegistryTransport {
+                        transport_type: "stdio".to_string(),
+                    },
+                    environment_variables: vec![
+                        McpRegistryEnvVar {
+                            name: "CLIENT_ID".to_string(),
+                            description: Some("OAuth client ID".to_string()),
+                            is_secret: false,
+                            is_required: true,
+                        },
+                        McpRegistryEnvVar {
+                            name: "CLIENT_SECRET".to_string(),
+                            description: Some("OAuth client secret".to_string()),
+                            is_secret: true,
+                            is_required: true,
+                        },
+                    ],
+                }],
+                remotes: vec![],
+            },
+            meta: serde_json::json!({}),
+        };
+
+        let config = McpRegistry::entry_to_config(&wrapper).unwrap();
+        
+        assert_eq!(config.auth_type, McpAuthType::OAuth);
+        assert_eq!(config.env_vars.len(), 2);
+    }
+
+    #[test]
+    fn test_entry_to_config_no_package_no_remote() {
+        let wrapper = McpRegistryServerWrapper {
+            server: McpRegistryServer {
+                name: "test/invalid-server".to_string(),
+                description: "Invalid server".to_string(),
+                repository: McpRegistryRepository::default(),
+                version: "1.0.0".to_string(),
+                packages: vec![],
+                remotes: vec![],
+            },
+            meta: serde_json::json!({}),
+        };
+
+        let result = McpRegistry::entry_to_config(&wrapper);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("neither packages nor remotes"));
+    }
+
+    #[test]
+    fn test_entry_to_config_unsupported_registry_type() {
+        let wrapper = McpRegistryServerWrapper {
+            server: McpRegistryServer {
+                name: "test/unsupported".to_string(),
+                description: "Unsupported registry type".to_string(),
+                repository: McpRegistryRepository::default(),
+                version: "1.0.0".to_string(),
+                packages: vec![McpRegistryPackage {
+                    registry_type: "pypi".to_string(),
+                    identifier: "test-package".to_string(),
+                    version: Some("1.0.0".to_string()),
+                    transport: McpRegistryTransport {
+                        transport_type: "stdio".to_string(),
+                    },
+                    environment_variables: vec![],
+                }],
+                remotes: vec![],
+            },
+            meta: serde_json::json!({}),
+        };
+
+        let result = McpRegistry::entry_to_config(&wrapper);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported registry type"));
+    }
+
+    #[test]
+    fn test_registry_source_equality() {
+        assert_eq!(McpRegistrySource::Official, McpRegistrySource::Official);
+        assert_eq!(McpRegistrySource::Smithery, McpRegistrySource::Smithery);
+        assert_ne!(McpRegistrySource::Official, McpRegistrySource::Smithery);
+    }
+}
