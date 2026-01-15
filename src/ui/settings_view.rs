@@ -352,26 +352,25 @@ define_class!(
         fn add_mcp_clicked(&self, _sender: Option<&NSObject>) {
             log_to_file("Add MCP clicked");
             
-            use objc2_app_kit::NSAlert;
-            let mtm = MainThreadMarker::new().unwrap();
-            
-            let alert = NSAlert::new(mtm);
-            alert.setMessageText(&NSString::from_str("MCP Editor"));
-            alert.setInformativeText(&NSString::from_str("MCP editor coming soon."));
-            alert.addButtonWithTitle(&NSString::from_str("OK"));
-            unsafe { alert.runModal() };
+            use objc2_foundation::NSNotificationCenter;
+            let center = NSNotificationCenter::defaultCenter();
+            let name = NSString::from_str("PersonalAgentShowAddMcp");
+            unsafe {
+                center.postNotificationName_object(&name, None);
+            }
         }
 
         #[unsafe(method(editMcpClicked:))]
         fn edit_mcp_clicked(&self, _sender: Option<&NSObject>) {
             log_to_file("Edit MCP clicked");
             
+            // TODO: Implement edit flow - similar to add but pre-populate with existing MCP data
             use objc2_app_kit::NSAlert;
             let mtm = MainThreadMarker::new().unwrap();
             
             let alert = NSAlert::new(mtm);
-            alert.setMessageText(&NSString::from_str("MCP Editor"));
-            alert.setInformativeText(&NSString::from_str("MCP editor coming soon."));
+            alert.setMessageText(&NSString::from_str("Edit MCP"));
+            alert.setInformativeText(&NSString::from_str("Edit MCP not yet implemented."));
             alert.addButtonWithTitle(&NSString::from_str("OK"));
             unsafe { alert.runModal() };
         }

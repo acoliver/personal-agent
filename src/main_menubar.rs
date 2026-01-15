@@ -18,7 +18,7 @@ use objc2_app_kit::{
 };
 
 mod ui;
-use ui::{ChatViewController, HistoryViewController, ModelSelectorViewController, ProfileEditorDemoViewController, SettingsViewController};
+use ui::{ChatViewController, HistoryViewController, McpAddViewController, McpConfigureViewController, ModelSelectorViewController, ProfileEditorDemoViewController, SettingsViewController};
 use ui::history_view::LOADED_CONVERSATION_JSON;
 
 // Thread-local storage for selected model from model selector
@@ -35,6 +35,8 @@ thread_local! {
     static SETTINGS_VIEW_CONTROLLER: Cell<Option<Retained<SettingsViewController>>> = const { Cell::new(None) };
     static MODEL_SELECTOR_VIEW_CONTROLLER: Cell<Option<Retained<ModelSelectorViewController>>> = const { Cell::new(None) };
     static PROFILE_EDITOR_VIEW_CONTROLLER: Cell<Option<Retained<ProfileEditorDemoViewController>>> = const { Cell::new(None) };
+    static MCP_ADD_VIEW_CONTROLLER: Cell<Option<Retained<McpAddViewController>>> = const { Cell::new(None) };
+    static MCP_CONFIGURE_VIEW_CONTROLLER: Cell<Option<Retained<McpConfigureViewController>>> = const { Cell::new(None) };
 }
 
 // PopoverContentViewController is now replaced by ChatViewController from ui module
@@ -124,6 +126,8 @@ define_class!(
             let settings_view = SettingsViewController::new(mtm);
             let model_selector_view = ModelSelectorViewController::new(mtm);
             let profile_editor_view = ProfileEditorDemoViewController::new(mtm);
+            let mcp_add_view = McpAddViewController::new(mtm);
+            let mcp_configure_view = McpConfigureViewController::new(mtm);
             
             // Set initial content to chat view
             popover.setContentViewController(Some(&chat_view));
@@ -136,6 +140,8 @@ define_class!(
             SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
             MODEL_SELECTOR_VIEW_CONTROLLER.set(Some(model_selector_view));
             PROFILE_EDITOR_VIEW_CONTROLLER.set(Some(profile_editor_view));
+            MCP_ADD_VIEW_CONTROLLER.set(Some(mcp_add_view));
+            MCP_CONFIGURE_VIEW_CONTROLLER.set(Some(mcp_configure_view));
 
             // Make this an accessory app (no dock icon, no main menu)
             let app = NSApplication::sharedApplication(mtm);
@@ -186,6 +192,18 @@ define_class!(
                     self,
                     sel!(loadConversation:),
                     Some(&NSString::from_str("PersonalAgentLoadConversation")),
+                    None,
+                );
+                center.addObserver_selector_name_object(
+                    self,
+                    sel!(showAddMcp:),
+                    Some(&NSString::from_str("PersonalAgentShowAddMcp")),
+                    None,
+                );
+                center.addObserver_selector_name_object(
+                    self,
+                    sel!(showConfigureMcp:),
+                    Some(&NSString::from_str("PersonalAgentShowConfigureMcp")),
                     None,
                 );
             }
@@ -348,6 +366,38 @@ define_class!(
                     }
                 }
             }
+        }
+
+        #[unsafe(method(showAddMcp:))]
+        fn show_add_mcp(&self, _notification: &NSNotification) {
+            // Create a NEW MCP add view instance
+            let mtm = MainThreadMarker::new().unwrap();
+            let new_mcp_add_view = McpAddViewController::new(mtm);
+            
+            let popover = POPOVER.take();
+            
+            if let Some(ref popover) = popover {
+                popover.setContentViewController(Some(&new_mcp_add_view));
+            }
+            
+            POPOVER.set(popover);
+            MCP_ADD_VIEW_CONTROLLER.set(Some(new_mcp_add_view));
+        }
+
+        #[unsafe(method(showConfigureMcp:))]
+        fn show_configure_mcp(&self, _notification: &NSNotification) {
+            // Create a NEW MCP configure view instance (picks up PARSED_MCP from thread-local)
+            let mtm = MainThreadMarker::new().unwrap();
+            let new_mcp_configure_view = McpConfigureViewController::new(mtm);
+            
+            let popover = POPOVER.take();
+            
+            if let Some(ref popover) = popover {
+                popover.setContentViewController(Some(&new_mcp_configure_view));
+            }
+            
+            POPOVER.set(popover);
+            MCP_CONFIGURE_VIEW_CONTROLLER.set(Some(new_mcp_configure_view));
         }
     }
 );

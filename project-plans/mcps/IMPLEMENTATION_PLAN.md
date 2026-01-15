@@ -4,7 +4,7 @@
 
 This document outlines a test-first implementation plan for adding MCP (Model Context Protocol) support to PersonalAgent. Each phase has tests written BEFORE implementation with clear success criteria.
 
-**Total Estimated Timeline**: 10-14 weeks (50-70 days)
+**Total Estimated Timeline**:  ()
 
 ## Revision History
 
@@ -23,7 +23,7 @@ The following SPEC requirements are explicitly deferred:
 
 ## Phase 0: SerdesAI Environment Variable PR (DRAFT)
 
-**Duration**: 3-4 days  
+  
 **Status**: BLOCKER - Must complete before Phase 3  
 **Deliverable**: Draft PR to SerdesAI repo
 
@@ -155,7 +155,7 @@ DRAFT - Will mark ready once used in downstream project (PersonalAgent)
 
 ## Phase 1: Data Models & Storage
 
-**Duration**: 5-7 days  
+  
 **Dependencies**: None (can start in parallel with Phase 0)  
 **Deliverable**: `src/mcp/` module with types and storage
 
@@ -520,7 +520,7 @@ pub struct EnvVarConfig {
 
 ## Phase 2: MCP Spawning & Manager
 
-**Duration**: 5-7 days  
+  
 **Dependencies**: Phase 0 (SerdesAI PR), Phase 1  
 **Deliverable**: `src/mcp/manager.rs` that can spawn MCPs with credentials
 
@@ -896,7 +896,7 @@ async fn test_tool_call_updates_last_used() {
 
 ## Phase 3: UI - Add MCP Flow
 
-**Duration**: 7-10 days  
+  
 **Dependencies**: Phase 1  
 **Deliverable**: Add MCP and Configure MCP screens
 
@@ -1078,7 +1078,7 @@ mod tests {
 
 ## Phase 4: Agent Integration
 
-**Duration**: 5-7 days  
+  
 **Dependencies**: Phase 2, Phase 3  
 **Deliverable**: Agent can use MCP tools
 
@@ -1319,7 +1319,7 @@ async fn test_tool_call_mcp_error_response() {
 
 ## Phase 5: Registry Search
 
-**Duration**: 7-10 days  
+  
 **Dependencies**: Phase 3  
 **Deliverable**: Search Official + Smithery registries
 
@@ -1473,7 +1473,7 @@ mod tests {
 
 ## Phase 6: Polish & Error Recovery
 
-**Duration**: 10-14 days  
+  
 **Dependencies**: All previous phases  
 **Deliverable**: Production-ready MCP support
 
@@ -1724,18 +1724,18 @@ fn test_toast_mcp_restart_failed() {
 
 | Phase | Duration | Dependencies | Deliverable |
 |-------|----------|--------------|-------------|
-| **0: SerdesAI PR** | 3-4 days | None | Draft PR with spawn_with_env |
-| **1: Data Models** | 7-9 days | None | Types, config, secrets, auth detection |
-| **2: MCP Spawning** | 7-9 days | Phase 0, 1 | McpManager with error handling |
-| **3: UI Add MCP** | 7-10 days | Phase 1 | Add/Configure screens |
-| **4: Agent Integration** | 7-9 days | Phase 2, 3 | Tool routing, display, system prompt |
-| **5: Registry Search** | 7-10 days | Phase 3 | Official + Smithery |
-| **6: Polish** | 10-14 days | All | Lifecycle, errors, status |
-| **7: OAuth** | 7-10 days | Phase 6 | OAuth flow for GitHub, Google, etc. |
+| **0: SerdesAI PR** |  | None | Draft PR with spawn_with_env |
+| **1: Data Models** |  | None | Types, config, secrets, auth detection |
+| **2: MCP Spawning** |  | Phase 0, 1 | McpManager with error handling |
+| **3: UI Add MCP** |  | Phase 1 | Add/Configure screens |
+| **4: Agent Integration** |  | Phase 2, 3 | Tool routing, display, system prompt |
+| **5: Registry Search** |  | Phase 3 | Official + Smithery |
+| **6: Polish** |  | All | Lifecycle, errors, status |
+| **7: OAuth** |  | Phase 6 | OAuth flow for GitHub, Google, etc. |
 
-**Total: 55-75 days (11-15 weeks)**
+**Total:  ()**
 
-**Revised from original 37-52 days based on review feedback to account for:**
+**Revised from original  based on review feedback to account for:**
 - Multiple env vars per MCP support
 - Auth type detection from registry metadata
 - Comprehensive error handling
@@ -1776,7 +1776,7 @@ Phase 0 (SerdesAI PR) → Phase 2 (Spawning) → Phase 4 (Agent) → Phase 6 (Po
 
 ## Phase 7: OAuth Authentication
 
-**Duration**: 7-10 days  
+  
 **Dependencies**: Phase 6  
 **Deliverable**: OAuth flow for MCPs that require it (GitHub, Google, etc.)
 
@@ -2151,5 +2151,5 @@ tokio-test = "0.4"
 - Added comprehensive error handling tests
 - Added lifecycle tests (disable, delete, last_used)
 - Explicitly deferred configSchema UI to future phase
-- Extended timeline from 37-52 days to 48-65 days
-- Extended Phase 6 from 5-7 days to 10-14 days
+- Extended timeline from  to 
+- Extended Phase 6 from  to 
