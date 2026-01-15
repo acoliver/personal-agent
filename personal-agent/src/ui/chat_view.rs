@@ -2,7 +2,12 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
+use chrono::Local;
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, DefinedClass};
@@ -16,11 +21,25 @@ use objc2_app_kit::{
 };
 use objc2_quartz_core::CALayer;
 use uuid::Uuid;
+use dispatch::{Queue, QueuePriority};
 
 use super::theme::Theme;
 use personal_agent::config::Config;
 use personal_agent::models::{Conversation, Message as ConvMessage};
 use personal_agent::storage::ConversationStorage;
+use personal_agent::{LlmClient, LlmMessage, StreamEvent};
+
+/// Logging helper - writes to file
+fn log_to_file(message: &str) {
+    let log_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join("Library/Application Support/PersonalAgent/debug.log");
+    
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let _ = writeln!(file, "[{}] ChatView: {}", timestamp, message);
+    }
+}
 
 // ============================================================================
 // Message data structure
@@ -63,9 +82,16 @@ pub struct ChatViewIvars {
     messages_container: RefCell<Option<Retained<NSView>>>,
     input_field: RefCell<Option<Retained<NSTextField>>>,
     conversation: RefCell<Option<Conversation>>,
-    title_label: RefCell<Option<Retained<NSTextField>>>,
+    title_button: RefCell<Option<Retained<NSButton>>>,
+    title_edit_field: RefCell<Option<Retained<NSTextField>>>,
     model_label: RefCell<Option<Retained<NSTextField>>>,
     thinking_button: RefCell<Option<Retained<NSButton>>>,
+    /// Shared streaming response text for updating from background thread
+    streaming_response: Arc<Mutex<String>>,
+    /// Shared streaming thinking text for updating from background thread
+    streaming_thinking: Arc<Mutex<String>>,
+    /// Flag to indicate streaming is in progress
+    is_streaming: RefCell<bool>,
 }
 
 // ============================================================================
@@ -160,7 +186,8 @@ define_class!(
             self.setView(&main_view);
             
             // Add initial sample messages
-            self.add_sample_messages();
+            // Load messages from the current conversation (if any)
+            self.load_initial_messages();
             
             // Force layout to happen so we can see the actual sizes
             main_view.layoutSubtreeIfNeeded();
@@ -179,11 +206,23 @@ define_class!(
 
         #[unsafe(method(sendMessage:))]
         fn send_message(&self, _sender: Option<&NSObject>) {
+            log_to_file("send_message called");
+            
+            // Don't allow new messages while streaming
+            if *self.ivars().is_streaming.borrow() {
+                log_to_file("Already streaming, ignoring");
+                return;
+            }
+            
             if let Some(input) = &*self.ivars().input_field.borrow() {
                 let text = input.stringValue();
                 let text_str = text.to_string();
                 
+                log_to_file(&format!("Input text: '{}'", text_str));
+                
                 if !text_str.trim().is_empty() {
+                    log_to_file("Text not empty, adding message");
+                    
                     // Add user message to UI
                     self.add_message_to_store(&text_str, true);
                     
@@ -193,26 +232,196 @@ define_class!(
                     // Add user message to conversation
                     if let Some(ref mut conversation) = *self.ivars().conversation.borrow_mut() {
                         conversation.add_message(ConvMessage::user(text_str.clone()));
+                        log_to_file(&format!("Added message to conversation, now has {} messages", conversation.messages.len()));
+                    } else {
+                        log_to_file("ERROR: No conversation object!");
                     }
                     
-                    // Show "Thinking..." placeholder
-                    // NOTE: Async streaming integration needed for Phase 4
-                    // For now, this is a synchronous placeholder
-                    let thinking_msg = "[Thinking... (async LLM integration pending)]";
-                    self.add_message_to_store(thinking_msg, false);
+                    // Get the current profile
+                    let config = Config::load(&Config::default_path().unwrap_or_default()).ok();
+                    let profile = config.as_ref().and_then(|c| {
+                        c.default_profile.and_then(|id| {
+                            c.profiles.iter().find(|p| p.id == id).cloned()
+                        }).or_else(|| c.profiles.first().cloned())
+                    });
                     
-                    // Rebuild chat area to show new messages
-                    self.rebuild_messages();
-                    
-                    // Save the user message to storage
-                    if let Some(ref conversation) = *self.ivars().conversation.borrow() {
-                        if let Ok(storage) = ConversationStorage::with_default_path() {
-                            if let Err(e) = storage.save(conversation) {
-                                eprintln!("Failed to save conversation: {}", e);
-                            }
+                    if let Some(profile) = profile {
+                        // Build messages from conversation
+                        let llm_messages: Vec<LlmMessage> = self.ivars()
+                            .conversation
+                            .borrow()
+                            .as_ref()
+                            .map(|c| {
+                                c.messages.iter().map(|m| {
+                                    match m.role {
+                                        personal_agent::models::MessageRole::User => LlmMessage::user(&m.content),
+                                        personal_agent::models::MessageRole::Assistant => LlmMessage::assistant(&m.content),
+                                        personal_agent::models::MessageRole::System => LlmMessage::system(&m.content),
+                                    }
+                                }).collect()
+                            })
+                            .unwrap_or_default();
+                        
+                        // Show empty assistant message placeholder
+                        self.add_message_to_store("", false);
+                        self.rebuild_messages();
+                        
+                        // Mark as streaming
+                        *self.ivars().is_streaming.borrow_mut() = true;
+                        
+                        // Clear the streaming buffers
+                        if let Ok(mut buf) = self.ivars().streaming_response.lock() {
+                            buf.clear();
                         }
+                        if let Ok(mut buf) = self.ivars().streaming_thinking.lock() {
+                            buf.clear();
+                        }
+                        
+                        // Clone what we need for the background thread
+                        let streaming_response = Arc::clone(&self.ivars().streaming_response);
+                        let streaming_thinking = Arc::clone(&self.ivars().streaming_thinking);
+                        let profile_clone = profile.clone();
+                        
+                        // Spawn background thread for streaming
+                        log_to_file("Starting streaming request in background...");
+                        thread::spawn(move || {
+                            let rt = tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build();
+                            
+                            if let Ok(rt) = rt {
+                                rt.block_on(async {
+                                    match LlmClient::from_profile(&profile_clone) {
+                                        Ok(client) => {
+                                            let streaming_response_clone = Arc::clone(&streaming_response);
+                                            let streaming_thinking_clone = Arc::clone(&streaming_thinking);
+                                            let result = client.request_stream(&llm_messages, |event| {
+                                                match event {
+                                                    StreamEvent::TextDelta(delta) => {
+                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                            buf.push_str(&delta);
+                                                        }
+                                                    }
+                                                    StreamEvent::ThinkingDelta(delta) => {
+                                                        if let Ok(mut buf) = streaming_thinking_clone.lock() {
+                                                            buf.push_str(&delta);
+                                                        }
+                                                    }
+                                                    StreamEvent::Complete => {
+                                                        log_to_file("Streaming complete");
+                                                        // Add completion marker
+                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                            buf.push_str("␄"); // EOT marker
+                                                        }
+                                                    }
+                                                    StreamEvent::Error(e) => {
+                                                        log_to_file(&format!("Stream error: {}", e));
+                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                            buf.push_str(&format!("
+[Error: {}]", e));
+                                                        }
+                                                    }
+                                                }
+                                            }).await;
+                                            
+                                            if let Err(e) = result {
+                                                log_to_file(&format!("Stream request failed: {}", e));
+                                                if let Ok(mut buf) = streaming_response.lock() {
+                                                    buf.push_str(&format!("[Error: {}]", e));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log_to_file(&format!("Failed to create client: {}", e));
+                                            if let Ok(mut buf) = streaming_response.lock() {
+                                                buf.push_str(&format!("[Error: {}]", e));
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                        
+                        // Start a timer to poll for updates
+                        self.schedule_streaming_update();
+                        
+                    } else {
+                        log_to_file("No profile configured");
+                        self.add_message_to_store("[No profile configured - go to Settings]", false);
+                        self.rebuild_messages();
                     }
+                } else {
+                    log_to_file("Text is empty, ignoring");
                 }
+            } else {
+                log_to_file("ERROR: No input field reference!");
+            }
+        }
+        
+        #[unsafe(method(checkStreamingStatus:))]
+        fn check_streaming_status(&self, _sender: Option<&NSObject>) {
+            if !*self.ivars().is_streaming.borrow() {
+                return;
+            }
+            
+            // Get current streaming text
+            let current_text = if let Ok(buf) = self.ivars().streaming_response.lock() {
+                buf.clone()
+            } else {
+                return;
+            };
+            
+            // Get current thinking text
+            let current_thinking = if let Ok(buf) = self.ivars().streaming_thinking.lock() {
+                buf.clone()
+            } else {
+                String::new()
+            };
+            
+            // Check if thinking should be shown
+            let show_thinking = self.should_show_thinking();
+            
+            // Build the display text
+            let display_text = if show_thinking && !current_thinking.is_empty() {
+                if current_text.is_empty() {
+                    format!(" *Thinking...*
+{}
+
+▌", current_thinking)
+                } else {
+                    format!(" *Thinking:*
+{}
+
+---
+
+{}▌", current_thinking, current_text)
+                }
+            } else if current_text.is_empty() {
+                "▌".to_string() // Show cursor while waiting
+            } else {
+                format!("{}▌", current_text) // Show cursor at end while streaming
+            };
+            
+            // Update the last message in the store
+            if let Some(last_msg) = self.ivars().messages.borrow_mut().last_mut() {
+                if !last_msg.is_user {
+                    last_msg.text = display_text;
+                }
+            }
+            
+            // Rebuild UI to show updated text
+            self.rebuild_messages();
+            
+            // Check if streaming is complete by seeing if the buffer has stabilized
+            // We need a way to know when streaming is done - check thread status
+            // For now, use a simple heuristic based on content
+            let is_done = self.check_streaming_done();
+            
+            if is_done {
+                self.finalize_streaming();
+            } else {
+                // Continue polling
+                self.schedule_streaming_update();
             }
         }
 
@@ -255,31 +464,6 @@ define_class!(
             }
         }
 
-        #[unsafe(method(saveConversation:))]
-        fn save_conversation(&self, _sender: Option<&NSObject>) {
-            // Get current conversation
-            if let Some(ref conversation) = *self.ivars().conversation.borrow() {
-                // Save to storage
-                match ConversationStorage::with_default_path() {
-                    Ok(storage) => {
-                        match storage.save(conversation) {
-                            Ok(()) => {
-                                println!("Conversation saved successfully");
-                                // Flash the button to show success (visual feedback)
-                                // TODO: Add visual feedback animation
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to save conversation: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to create storage: {}", e);
-                    }
-                }
-            }
-        }
-
         #[unsafe(method(showHistory:))]
         fn show_history(&self, _sender: Option<&NSObject>) {
             println!("Show history clicked");
@@ -294,7 +478,7 @@ define_class!(
 
         #[unsafe(method(newConversation:))]
         fn new_conversation(&self, _sender: Option<&NSObject>) {
-            println!("New conversation clicked");
+            log_to_file("New conversation clicked");
             
             // Get the current profile ID (or use default)
             let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
@@ -302,13 +486,21 @@ define_class!(
                 config.profiles.first().map(|p| p.id).unwrap_or_else(Uuid::new_v4)
             });
             
+            log_to_file(&format!("Using profile_id: {}", profile_id));
+            
             // Clear messages and create new conversation
             self.ivars().messages.borrow_mut().clear();
             let new_conversation = Conversation::new(profile_id);
+            
+            // Save the new conversation ID as active
+            Self::save_active_conversation_id(new_conversation.id);
+            
             *self.ivars().conversation.borrow_mut() = Some(new_conversation);
             
+            log_to_file("Cleared messages, rebuilding view");
             self.rebuild_messages();
             self.update_title_and_model();
+            log_to_file("New conversation setup complete");
         }
 
         #[unsafe(method(showSettings:))]
@@ -322,27 +514,139 @@ define_class!(
                 center.postNotificationName_object(&name, None);
             }
         }
+        
+        #[unsafe(method(titleClicked:))]
+        fn title_clicked(&self, _sender: Option<&NSObject>) {
+            log_to_file("ChatView: Title clicked, entering edit mode");
+            
+            // Hide button, show edit field
+            if let Some(title_button) = &*self.ivars().title_button.borrow() {
+                title_button.setHidden(true);
+            }
+            if let Some(title_edit) = &*self.ivars().title_edit_field.borrow() {
+                title_edit.setHidden(false);
+                // Focus the edit field
+                if let Some(window) = title_edit.window() {
+                    window.makeFirstResponder(Some(title_edit));
+                }
+                // Select all text
+                unsafe { title_edit.selectText(None); }
+            }
+        }
+        
+        #[unsafe(method(titleEditingEnded:))]
+        fn title_editing_ended(&self, _sender: Option<&NSObject>) {
+            log_to_file("ChatView: Title editing ended");
+            
+            // Get the new title
+            let new_title = if let Some(title_edit) = &*self.ivars().title_edit_field.borrow() {
+                title_edit.stringValue().to_string().trim().to_string()
+            } else {
+                String::new()
+            };
+            
+            // If empty, revert to current button title
+            let final_title = if new_title.is_empty() {
+                if let Some(title_button) = &*self.ivars().title_button.borrow() {
+                    title_button.title().to_string()
+                } else {
+                    Local::now().format("%Y%m%d%H%M%S").to_string()
+                }
+            } else {
+                new_title
+            };
+            
+            // Update the button title and show it
+            if let Some(title_button) = &*self.ivars().title_button.borrow() {
+                title_button.setTitle(&NSString::from_str(&final_title));
+                title_button.setHidden(false);
+            }
+            // Hide the edit field and sync its value
+            if let Some(title_edit) = &*self.ivars().title_edit_field.borrow() {
+                title_edit.setHidden(true);
+                title_edit.setStringValue(&NSString::from_str(&final_title));
+            }
+            
+            // Update conversation title and save to disk
+            if let Some(ref mut conv) = *self.ivars().conversation.borrow_mut() {
+                conv.title = Some(final_title.clone());
+                // Save the updated conversation
+                if let Ok(storage) = ConversationStorage::with_default_path() {
+                    if let Err(e) = storage.save(conv) {
+                        log_to_file(&format!("ChatView: Failed to save conversation title: {}", e));
+                    } else {
+                        log_to_file(&format!("ChatView: Conversation saved with title: {}", final_title));
+                    }
+                }
+            }
+            
+            log_to_file(&format!("ChatView: Title updated to: {}", final_title));
+        }
     }
 );
 
 impl ChatViewController {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        // Load config and create conversation with active profile
+        // Load config and try to load the active conversation
         let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
         let profile_id = config.default_profile.unwrap_or_else(|| {
             config.profiles.first().map(|p| p.id).unwrap_or_else(Uuid::new_v4)
         });
-        let conversation = Conversation::new(profile_id);
         
+        // Try to load the active conversation from config, or fall back to most recent
+        let conversation = if let Ok(storage) = ConversationStorage::with_default_path() {
+            // First, try to load the active conversation from config
+            if let Some(active_id) = config.active_conversation_id {
+                log_to_file(&format!("ChatView: Trying to load active conversation: {}", active_id));
+                // Find the file for this conversation ID
+                if let Ok(filenames) = storage.list() {
+                    for filename in &filenames {
+                        if let Ok(conv) = storage.load(filename) {
+                            if conv.id == active_id {
+                                log_to_file(&format!("ChatView: Loaded active conversation: {:?}", conv.title));
+                                return Self::create_with_conversation(mtm, conv);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Fall back to most recent conversation
+            if let Ok(filenames) = storage.list() {
+                if let Some(newest) = filenames.first() {
+                    if let Ok(conv) = storage.load(newest) {
+                        log_to_file(&format!("ChatView: Loaded most recent conversation: {:?}", conv.title));
+                        conv
+                    } else {
+                        Conversation::new(profile_id)
+                    }
+                } else {
+                    Conversation::new(profile_id)
+                }
+            } else {
+                Conversation::new(profile_id)
+            }
+        } else {
+            Conversation::new(profile_id)
+        };
+        
+        Self::create_with_conversation(mtm, conversation)
+    }
+    
+    fn create_with_conversation(mtm: MainThreadMarker, conversation: Conversation) -> Retained<Self> {
         let ivars = ChatViewIvars {
             messages: Rc::new(RefCell::new(Vec::new())),
             scroll_view: RefCell::new(None),
             messages_container: RefCell::new(None),
             input_field: RefCell::new(None),
             conversation: RefCell::new(Some(conversation)),
-            title_label: RefCell::new(None),
+            title_button: RefCell::new(None),
+            title_edit_field: RefCell::new(None),
             model_label: RefCell::new(None),
             thinking_button: RefCell::new(None),
+            streaming_response: Arc::new(Mutex::new(String::new())),
+            streaming_thinking: Arc::new(Mutex::new(String::new())),
+            is_streaming: RefCell::new(false),
         };
         
         let this = Self::alloc(mtm).set_ivars(ivars);
@@ -360,12 +664,29 @@ impl ChatViewController {
             self.add_message_to_store(&msg.content, is_user);
         }
         
+        // Save active conversation ID to config
+        Self::save_active_conversation_id(conversation.id);
+        
         // Store the conversation
         *self.ivars().conversation.borrow_mut() = Some(conversation);
         
         // Rebuild the UI
         self.rebuild_messages();
         self.update_title_and_model();
+    }
+    
+    /// Save the active conversation ID to config
+    fn save_active_conversation_id(conversation_id: Uuid) {
+        if let Ok(config_path) = Config::default_path() {
+            if let Ok(mut config) = Config::load(&config_path) {
+                config.active_conversation_id = Some(conversation_id);
+                if let Err(e) = config.save(&config_path) {
+                    log_to_file(&format!("Failed to save active conversation ID: {}", e));
+                } else {
+                    log_to_file(&format!("Saved active conversation ID: {}", conversation_id));
+                }
+            }
+        }
     }
 
     fn build_top_bar_stack(&self, mtm: MainThreadMarker) -> Retained<NSView> {
@@ -397,33 +718,57 @@ impl ChatViewController {
             height_constraint.setActive(true);
         }
 
-        // Icon: 24x24 red eye icon (using text "I" as placeholder)
-        let icon = NSTextField::labelWithString(&NSString::from_str("I"), mtm);
-        icon.setTextColor(Some(&Theme::text_primary()));
-        icon.setFont(Some(&NSFont::boldSystemFontOfSize(18.0)));
+        // Title: clickable button that shows conversation name (default: timestamp)
+        // Generate default title as timestamp
+        let default_title = Local::now().format("%Y%m%d%H%M%S").to_string();
+        
+        // Create a button that looks like a label for clicking
+        let title_button = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str(&default_title),
+                Some(self),
+                Some(sel!(titleClicked:)),
+                mtm,
+            )
+        };
+        title_button.setBezelStyle(NSBezelStyle::Inline);
+        title_button.setBordered(false);
         unsafe {
-            icon.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let width_constraint = icon.widthAnchor().constraintEqualToConstant(24.0);
-            let height_constraint = icon.heightAnchor().constraintEqualToConstant(24.0);
-            width_constraint.setActive(true);
-            height_constraint.setActive(true);
-            icon.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            title_button.setTranslatesAutoresizingMaskIntoConstraints(false);
+            title_button.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
         }
+        // Style it to look like a label
+        title_button.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
+        
+        // Create editable title field (hidden by default, replaces button when editing)
+        let title_edit = NSTextField::initWithFrame(
+            NSTextField::alloc(mtm),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(150.0, 22.0)),
+        );
+        title_edit.setStringValue(&NSString::from_str(&default_title));
+        title_edit.setTextColor(Some(&Theme::text_primary()));
+        title_edit.setBackgroundColor(Some(&Theme::bg_darker()));
+        title_edit.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
+        title_edit.setDrawsBackground(true);
+        title_edit.setBordered(true);
+        title_edit.setEditable(true);
+        title_edit.setSelectable(true);
+        title_edit.setHidden(true);
         unsafe {
-            top_bar.addArrangedSubview(&icon);
+            title_edit.setTranslatesAutoresizingMaskIntoConstraints(false);
+            title_edit.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            // Set target/action for when editing ends (pressing Enter)
+            title_edit.setTarget(Some(self));
+            title_edit.setAction(Some(sel!(titleEditingEnded:)));
         }
         
-        // Title: "PersonalAgent"
-        let title = NSTextField::labelWithString(&NSString::from_str("PersonalAgent"), mtm);
-        title.setTextColor(Some(&Theme::text_primary()));
-        title.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
+        // Add button and edit field to top bar (edit field hidden initially)
         unsafe {
-            title.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            top_bar.addArrangedSubview(&title_button);
+            top_bar.addArrangedSubview(&title_edit);
         }
-        unsafe {
-            top_bar.addArrangedSubview(&title);
-        }
-        *self.ivars().title_label.borrow_mut() = Some(title);
+        *self.ivars().title_button.borrow_mut() = Some(title_button);
+        *self.ivars().title_edit_field.borrow_mut() = Some(title_edit);
         
         // Spacer (flexible, low priority)
         let spacer = NSView::new(mtm);
@@ -435,10 +780,9 @@ impl ChatViewController {
             top_bar.addArrangedSubview(&spacer);
         }
         
-        // Icon buttons: T, S, H, +, Gear (28x28 each per wireframe)
+        // Icon buttons: T, H, +, Gear (28x28 each per wireframe)
         let button_configs: &[(&str, objc2::runtime::Sel)] = &[
             ("T", sel!(toggleThinking:)),
-            ("S", sel!(saveConversation:)),
             ("H", sel!(showHistory:)),
             ("+", sel!(newConversation:)),
         ];
@@ -561,8 +905,17 @@ impl ChatViewController {
         if let Some(layer) = messages_stack.layer() {
             set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
         }
+        
+        // CRITICAL: Set translatesAutoresizingMaskIntoConstraints to false for proper Auto Layout
+        messages_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
 
         scroll_view.setDocumentView(Some(&messages_stack));
+        
+        // CRITICAL: Constrain messages_stack width to scroll view's content width
+        // This is required for the stack to know its width and lay out content properly
+        let content_view = scroll_view.contentView();
+        let width_constraint = messages_stack.widthAnchor().constraintEqualToAnchor(&content_view.widthAnchor());
+        width_constraint.setActive(true);
 
         // Store references
         *self.ivars().scroll_view.borrow_mut() = Some(scroll_view.clone());
@@ -654,15 +1007,17 @@ impl ChatViewController {
         Retained::from(&*input_stack as &NSView)
     }
 
-    fn add_sample_messages(&self) {
-        self.add_message_to_store("How do I create a menu bar app in Rust?", true);
-        self.add_message_to_store(
-            "To create a menu bar app in Rust for macOS, you'll want to use native Cocoa bindings via objc2.",
-            false,
-        );
-        self.add_message_to_store("Show me an example", true);
-        
+    fn load_initial_messages(&self) {
+        // Load messages from the current conversation into the message store
+        if let Some(conversation) = &*self.ivars().conversation.borrow() {
+            log_to_file(&format!("Loading {} messages from conversation", conversation.messages.len()));
+            for msg in &conversation.messages {
+                let is_user = matches!(msg.role, personal_agent::models::MessageRole::User);
+                self.add_message_to_store(&msg.content, is_user);
+            }
+        }
         self.rebuild_messages();
+        self.update_title_and_model();
     }
 
     fn add_message_to_store(&self, text: &str, is_user: bool) {
@@ -671,13 +1026,104 @@ impl ChatViewController {
             is_user,
         });
     }
+    
+    fn schedule_streaming_update(&self) {
+        // Use performSelector:withObject:afterDelay: to schedule UI update on main thread
+        // This is a simple polling approach - update every 100ms
+        unsafe {
+            let delay: f64 = 0.1; // 100ms
+            let _: () = msg_send![self, performSelector:sel!(checkStreamingStatus:) withObject:std::ptr::null::<NSObject>() afterDelay:delay];
+        }
+    }
+    
+fn check_streaming_done(&self) -> bool {
+        // Check if the streaming thread has finished
+        // We use a special marker that the streaming thread sets when complete
+        if let Ok(buf) = self.ivars().streaming_response.lock() {
+            // Check for error markers or completion marker
+            buf.contains("[Error:") || buf.ends_with("␄") // EOT marker
+        } else {
+            true // Assume done if we can't lock
+        }
+    }
+    
+    fn finalize_streaming(&self) {
+        log_to_file("Finalizing streaming response");
+        
+        // Get the final text and remove the EOT marker
+        let final_text = if let Ok(buf) = self.ivars().streaming_response.lock() {
+            buf.trim_end_matches('␄').to_string()
+        } else {
+            "[Error: Failed to get response]".to_string()
+        };
+        
+        // Get the thinking text
+        let thinking_text = if let Ok(buf) = self.ivars().streaming_thinking.lock() {
+            let t = buf.clone();
+            if t.is_empty() { None } else { Some(t) }
+        } else {
+            None
+        };
+        
+        // Build display text with thinking if enabled
+        let show_thinking = self.should_show_thinking();
+        let display_text = if show_thinking && thinking_text.is_some() {
+            format!("*Thinking:*
+{}
+
+---
+
+{}", thinking_text.as_ref().unwrap(), final_text)
+        } else {
+            final_text.clone()
+        };
+        
+        // Update the last message
+        if let Some(last_msg) = self.ivars().messages.borrow_mut().last_mut() {
+            if !last_msg.is_user {
+                last_msg.text = display_text;
+            }
+        }
+        
+        // Create message with thinking content
+        let mut assistant_msg = ConvMessage::assistant(final_text);
+        assistant_msg.thinking_content = thinking_text;
+        
+        // Add to conversation and save
+        if let Some(ref mut conv) = *self.ivars().conversation.borrow_mut() {
+            conv.add_message(assistant_msg);
+        }
+        
+        // Save conversation
+        if let Some(ref conversation) = *self.ivars().conversation.borrow() {
+            if let Ok(storage) = ConversationStorage::with_default_path() {
+                if let Err(e) = storage.save(conversation) {
+                    log_to_file(&format!("Failed to save conversation: {}", e));
+                } else {
+                    log_to_file("Conversation saved successfully");
+                }
+            }
+        }
+        
+        // Mark streaming as done
+        *self.ivars().is_streaming.borrow_mut() = false;
+        
+        // Final rebuild
+        self.rebuild_messages();
+    }
 
     fn rebuild_messages(&self) {
         let mtm = MainThreadMarker::new().unwrap();
         
+        let message_count = self.ivars().messages.borrow().len();
+        log_to_file(&format!("rebuild_messages called, {} messages in store", message_count));
+        
         if let Some(container) = &*self.ivars().messages_container.borrow() {
+            log_to_file("Container found, clearing old views");
+            
             // Clear existing subviews (for stack view, remove arranged subviews)
             let subviews = container.subviews();
+            log_to_file(&format!("Removing {} existing subviews", subviews.len()));
             for view in subviews.iter() {
                 // Check if container is a stack view
                 if let Some(stack) = container.downcast_ref::<NSStackView>() {
@@ -692,13 +1138,19 @@ impl ChatViewController {
             
             // For stack view, just add message views - stack handles positioning
             if let Some(stack) = container.downcast_ref::<NSStackView>() {
+                log_to_file(&format!("Adding {} message bubbles to stack", messages.len()));
                 for msg in messages.iter() {
                     let msg_view = self.create_message_bubble(&msg.text, msg.is_user, mtm);
                     unsafe {
                         stack.addArrangedSubview(&msg_view);
                     }
                 }
+                log_to_file("All message bubbles added");
+            } else {
+                log_to_file("ERROR: Container is not an NSStackView!");
             }
+        } else {
+            log_to_file("ERROR: No messages_container reference!");
         }
     }
     
@@ -708,74 +1160,66 @@ impl ChatViewController {
         is_user: bool,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
-        // Create horizontal container for alignment (user messages right-aligned, assistant left-aligned)
+        // Create horizontal container for alignment
         let row = NSStackView::new(mtm);
-        unsafe {
-            row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-            row.setSpacing(0.0);
-            row.setTranslatesAutoresizingMaskIntoConstraints(false);
-            row.setDistribution(NSStackViewDistribution::Fill);
-        }
+        row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        row.setSpacing(0.0);
+        row.setTranslatesAutoresizingMaskIntoConstraints(false);
+        row.setDistribution(NSStackViewDistribution::Fill);
         
         // Max bubble width: 300 per wireframe
         let max_width = 300.0;
         
-        // Create message bubble
-        let bubble = NSView::initWithFrame(
-            NSView::alloc(mtm),
-            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(max_width, 60.0)),
-        );
+        // Create message bubble as a stack view (gets intrinsic size from content)
+        let bubble = NSStackView::new(mtm);
+        bubble.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+        bubble.setSpacing(0.0);
+        bubble.setTranslatesAutoresizingMaskIntoConstraints(false);
+        bubble.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+            top: 10.0, left: 10.0, bottom: 10.0, right: 10.0
+        });
+        
         bubble.setWantsLayer(true);
         if let Some(layer) = bubble.layer() {
             if is_user {
-                // User messages: green-tinted background #2a4a2a per wireframe
-                let (r, g, b) = (42.0 / 255.0, 74.0 / 255.0, 42.0 / 255.0);
-                set_layer_background_color(&layer, r, g, b);
+                // User messages: green-tinted background #2a4a2a
+                set_layer_background_color(&layer, 42.0 / 255.0, 74.0 / 255.0, 42.0 / 255.0);
             } else {
-                // Assistant messages: dark gray background #1a1a1a per wireframe
+                // Assistant messages: dark gray #1a1a1a
                 set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
             }
             set_layer_corner_radius(&layer, 12.0);
         }
         
-        // Create label inside bubble with padding
-        let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
-        label.setFrame(NSRect::new(
-            NSPoint::new(10.0, 10.0),
-            NSSize::new(max_width - 20.0, 40.0),
-        ));
+        // Create wrapping label - this provides the intrinsic content size
+        let label = NSTextField::wrappingLabelWithString(&NSString::from_str(text), mtm);
         label.setFont(Some(&NSFont::systemFontOfSize(13.0)));
-        unsafe {
-            label.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
-        }
         label.setTextColor(Some(&Theme::text_primary()));
-        bubble.addSubview(&label);
+        label.setTranslatesAutoresizingMaskIntoConstraints(false);
         
-        // Set fixed width constraint on bubble
-        unsafe {
-            bubble.setTranslatesAutoresizingMaskIntoConstraints(false);
-            bubble.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-            let width_constraint = bubble.widthAnchor().constraintLessThanOrEqualToConstant(max_width);
-            width_constraint.setActive(true);
-        }
+        // Constrain label width for wrapping
+        let label_width = label.widthAnchor().constraintLessThanOrEqualToConstant(max_width - 20.0);
+        label_width.setActive(true);
+        
+        bubble.addArrangedSubview(&label);
+        
+        // Constrain bubble max width
+        let bubble_width = bubble.widthAnchor().constraintLessThanOrEqualToConstant(max_width);
+        bubble_width.setActive(true);
         
         // Add spacer and bubble to row based on alignment
+        let spacer = NSView::new(mtm);
+        spacer.setTranslatesAutoresizingMaskIntoConstraints(false);
+        spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+        
         if is_user {
-            // User messages: right-aligned (spacer on left, bubble on right)
-            let spacer = NSView::new(mtm);
-            unsafe {
-                spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
-                row.addArrangedSubview(&spacer);
-                row.addArrangedSubview(&bubble);
-            }
+            // User messages: right-aligned
+            row.addArrangedSubview(&spacer);
+            row.addArrangedSubview(&bubble);
         } else {
-            // Assistant messages: left-aligned (bubble on left, spacer on right)
-            let spacer = NSView::new(mtm);
-            unsafe {
-                spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
-                row.addArrangedSubview(&bubble);
-                row.addArrangedSubview(&spacer);
-            }
+            // Assistant messages: left-aligned
+            row.addArrangedSubview(&bubble);
+            row.addArrangedSubview(&spacer);
         }
 
         Retained::from(&*row as &NSView)
@@ -787,11 +1231,11 @@ impl ChatViewController {
         
         if let Some(conversation) = &*self.ivars().conversation.borrow() {
             if let Ok(profile) = config.get_profile(&conversation.profile_id) {
-                // Update title label
-                if let Some(title_label) = &*self.ivars().title_label.borrow() {
+                // Update title button
+                if let Some(title_button) = &*self.ivars().title_button.borrow() {
                     let title_text = conversation.title.clone()
-                        .unwrap_or_else(|| "New Conversation".to_string());
-                    title_label.setStringValue(&NSString::from_str(&title_text));
+                        .unwrap_or_else(|| Local::now().format("%Y%m%d%H%M%S").to_string());
+                    title_button.setTitle(&NSString::from_str(&title_text));
                 }
                 
                 // Update model label
@@ -821,5 +1265,17 @@ impl ChatViewController {
                 }
             }
         }
+    }
+    
+    /// Check if thinking should be shown based on profile settings
+    fn should_show_thinking(&self) -> bool {
+        let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
+        
+        if let Some(conversation) = &*self.ivars().conversation.borrow() {
+            if let Ok(profile) = config.get_profile(&conversation.profile_id) {
+                return profile.parameters.show_thinking;
+            }
+        }
+        false
     }
 }

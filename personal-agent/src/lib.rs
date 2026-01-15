@@ -13,7 +13,7 @@ pub mod storage;
 // Re-export commonly used types
 pub use config::{Config, ContextManagement};
 pub use error::{AppError, Result};
-pub use llm::{ChatStreamEvent, LLMClient};
+pub use llm::{LlmClient, LlmError, Message as LlmMessage, Role as LlmRole, StreamEvent};
 pub use models::{AuthConfig, Conversation, Message, MessageRole, ModelParameters, ModelProfile};
 pub use registry::{ModelInfo, ModelRegistry, RegistryManager};
 pub use storage::ConversationStorage;

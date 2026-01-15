@@ -1,10 +1,55 @@
-//! Dark theme color definitions
+//! Dark theme color definitions and common UI components
 
 use objc2::rc::Retained;
-use objc2_app_kit::NSColor;
+use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly, DefinedClass};
+use objc2_app_kit::{NSColor, NSStackView};
+use objc2_foundation::NSObjectProtocol;
 
 /// Dark theme colors matching the UI mockup
 pub struct Theme;
+
+// =============================================================================
+// FlippedStackView - A NSStackView subclass with flipped coordinates
+// =============================================================================
+// 
+// macOS uses a non-flipped coordinate system by default (origin at bottom-left).
+// This causes content in scroll views to appear at the BOTTOM and scroll position
+// defaults to showing the bottom of content.
+//
+// By overriding isFlipped to return true, the coordinate system becomes:
+// - Origin at TOP-LEFT
+// - Y increases DOWNWARD
+// - Content appears at TOP
+// - scrollPoint(0,0) shows the TOP
+//
+// This matches iOS behavior and is more intuitive for most UI layouts.
+// =============================================================================
+
+pub struct FlippedStackViewIvars;
+
+define_class!(
+    #[unsafe(super(NSStackView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FlippedStackView"]
+    #[ivars = FlippedStackViewIvars]
+    pub struct FlippedStackView;
+
+    unsafe impl NSObjectProtocol for FlippedStackView {}
+
+    impl FlippedStackView {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+    }
+);
+
+impl FlippedStackView {
+    pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = mtm.alloc::<Self>().set_ivars(FlippedStackViewIvars);
+        unsafe { msg_send![super(this), init] }
+    }
+}
 
 impl Theme {
     // RGB values normalized to 0.0-1.0

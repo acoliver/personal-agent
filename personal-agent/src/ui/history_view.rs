@@ -1,6 +1,8 @@
 //! History view for browsing and loading conversations
 
 use std::cell::{RefCell, Cell};
+use std::fs::OpenOptions;
+use std::io::Write;
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
@@ -11,12 +13,25 @@ use objc2_foundation::{
 use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle,
     NSStackView, NSUserInterfaceLayoutOrientation, NSStackViewDistribution, NSLayoutConstraintOrientation,
+    NSButtonType,
 };
 use objc2_quartz_core::CALayer;
 
 use super::theme::Theme;
 use personal_agent::storage::ConversationStorage;
 use personal_agent::models::Conversation;
+
+/// Logging helper - writes to file
+fn log_to_file(message: &str) {
+    let log_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join("Library/Application Support/PersonalAgent/debug.log");
+    
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let _ = writeln!(file, "[{}] HistoryView: {}", timestamp, message);
+    }
+}
 
 // Thread-local storage for passing conversation data between views
 thread_local! {
@@ -188,8 +203,6 @@ define_class!(
 
         #[unsafe(method(deleteConversation:))]
         fn delete_conversation(&self, sender: Option<&NSObject>) {
-            use objc2_app_kit::NSAlert;
-            
             // Get the button's tag (conversation index)
             if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
                 let tag = button.tag();
@@ -197,31 +210,18 @@ define_class!(
                 
                 if let Some(conversation) = conversations.get(tag as usize) {
                     let filename = conversation.filename.clone();
-                    drop(conversations); // Release borrow before showing alert
+                    drop(conversations); // Release borrow before delete
                     
-                    let mtm = MainThreadMarker::new().unwrap();
+                    // Delete immediately - no confirmation dialog
+                    println!("Deleting conversation: {}", filename);
                     
-                    // Show confirmation dialog
-                    let alert = NSAlert::new(mtm);
-                    alert.setMessageText(&NSString::from_str("Delete Conversation?"));
-                    alert.setInformativeText(&NSString::from_str("This cannot be undone."));
-                    alert.addButtonWithTitle(&NSString::from_str("Delete"));
-                    alert.addButtonWithTitle(&NSString::from_str("Cancel"));
-                    
-                    let response = unsafe { alert.runModal() };
-                    
-                    // NSAlertFirstButtonReturn = 1000
-                    if response == 1000 {
-                        println!("Deleting conversation: {}", filename);
-                        
-                        // Delete the conversation file
-                        if let Ok(storage) = ConversationStorage::with_default_path() {
-                            if let Err(e) = storage.delete(&filename) {
-                                eprintln!("Failed to delete conversation: {}", e);
-                            } else {
-                                // Reload the list
-                                self.load_conversations();
-                            }
+                    // Delete the conversation file
+                    if let Ok(storage) = ConversationStorage::with_default_path() {
+                        if let Err(e) = storage.delete(&filename) {
+                            eprintln!("Failed to delete conversation: {}", e);
+                        } else {
+                            // Reload the list
+                            self.load_conversations();
                         }
                     }
                 }
@@ -332,21 +332,40 @@ impl HistoryViewController {
             min_height.setActive(true);
         }
 
-        // Create vertical stack for conversations inside scroll view
-        let convs_stack = NSStackView::new(mtm);
+        // Create FLIPPED vertical stack for conversations inside scroll view
+        // FlippedStackView overrides isFlipped to return true, which:
+        // - Makes origin at TOP-LEFT instead of BOTTOM-LEFT
+        // - Content appears at TOP and scrolls DOWN
+        // - scrollPoint(0,0) shows the TOP of content
+        let convs_stack = super::FlippedStackView::new(mtm);
         unsafe {
             convs_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-            convs_stack.setSpacing(8.0);
-            convs_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
+            convs_stack.setSpacing(1.0);
+            convs_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Width);
+            // Fill distribution works correctly with flipped coordinates
             convs_stack.setDistribution(NSStackViewDistribution::Fill);
+            convs_stack.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+                top: 0.0,
+                left: 0.0,
+                bottom: 0.0,
+                right: 0.0,
+            });
         }
         
         convs_stack.setWantsLayer(true);
         if let Some(layer) = convs_stack.layer() {
             set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
         }
+        
+        // CRITICAL: Set translatesAutoresizingMaskIntoConstraints for proper Auto Layout
+        convs_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
 
         scroll_view.setDocumentView(Some(&convs_stack));
+        
+        // CRITICAL: Constrain stack width to scroll view's content width (minus padding)
+        let content_view = scroll_view.contentView();
+        let width_constraint = convs_stack.widthAnchor().constraintEqualToAnchor_constant(&content_view.widthAnchor(), -24.0);
+        width_constraint.setActive(true);
 
         // Store references
         *self.ivars().scroll_view.borrow_mut() = Some(scroll_view.clone());
@@ -355,34 +374,52 @@ impl HistoryViewController {
         scroll_view
     }
 
+    pub fn reload_conversations(&self) {
+        self.load_conversations();
+    }
+    
     fn load_conversations(&self) {
         let mtm = MainThreadMarker::new().unwrap();
+        
+        log_to_file("load_conversations called");
         
         // Load conversations from storage
         let storage = match ConversationStorage::with_default_path() {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Failed to create conversation storage: {}", e);
+                log_to_file(&format!("Failed to create conversation storage: {}", e));
                 return;
             }
         };
         
         let conversations = match storage.load_all() {
-            Ok(convs) => convs,
+            Ok(convs) => {
+                log_to_file(&format!("Loaded {} conversations", convs.len()));
+                convs
+            }
             Err(e) => {
-                eprintln!("Failed to load conversations: {}", e);
+                log_to_file(&format!("Failed to load conversations: {}", e));
                 Vec::new()
             }
         };
+        
+        // Sort conversations by date (newest first)
+        let mut conversations = conversations;
+        conversations.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         
         // Convert to display items
         let items: Vec<ConversationItem> = conversations
             .iter()
             .map(|conv| {
-                let title = conv.title.clone().unwrap_or_else(|| "Untitled Conversation".to_string());
+                // Use timestamp format for untitled conversations: YYYYMMDDHHmmss
+                let title = conv.title.clone().unwrap_or_else(|| {
+                    conv.created_at.format("%Y%m%d%H%M%S").to_string()
+                });
                 let date = conv.created_at.format("%Y-%m-%d %H:%M").to_string();
                 let filename = conv.filename();
                 let message_count = conv.messages.len();
+                
+                log_to_file(&format!("Conversation: title='{}', date='{}', messages={}", title, date, message_count));
                 
                 ConversationItem {
                     filename,
@@ -395,7 +432,10 @@ impl HistoryViewController {
         
         *self.ivars().conversations.borrow_mut() = items.clone();
         
+        log_to_file(&format!("Container ref valid: {}", self.ivars().conversations_container.borrow().is_some()));
+        
         if let Some(container) = &*self.ivars().conversations_container.borrow() {
+            log_to_file(&format!("Adding {} items to container", items.len()));
             // Clear existing subviews (for stack view, remove arranged subviews)
             let subviews = container.subviews();
             for view in subviews.iter() {
@@ -430,11 +470,17 @@ impl HistoryViewController {
                     );
                     message.setTextColor(Some(&Theme::text_secondary_color()));
                     message.setFont(Some(&NSFont::systemFontOfSize(13.0)));
-                    unsafe {
-                        stack.addArrangedSubview(&message);
-                    }
+                    stack.addArrangedSubview(&message);
                 }
             }
+        }
+        
+        // Scroll to top after loading - force layout first
+        if let Some(scroll_view) = &*self.ivars().scroll_view.borrow() {
+            scroll_view.layoutSubtreeIfNeeded();
+            let clip_view = scroll_view.contentView();
+            clip_view.scrollToPoint(NSPoint::new(0.0, 0.0));
+            scroll_view.reflectScrolledClipView(&clip_view);
         }
     }
 
@@ -446,96 +492,117 @@ impl HistoryViewController {
         index: usize,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
-        let width = 380.0;
-        let height = 80.0;
-
-        // Create card container
-        let card = NSView::initWithFrame(
-            NSView::alloc(mtm),
-            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height)),
-        );
-        card.setWantsLayer(true);
-        if let Some(layer) = card.layer() {
-            set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
-            set_layer_corner_radius(&layer, 8.0);
-        }
+        log_to_file(&format!("Creating row {}: {}", index, title));
         
-        // Set fixed height constraint
+        // Create a container view to hold the clickable button and delete button
+        let container = NSView::new(mtm);
+        container.setTranslatesAutoresizingMaskIntoConstraints(false);
         unsafe {
-            card.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let height_constraint = card.heightAnchor().constraintEqualToConstant(height);
+            let height_constraint = container.heightAnchor().constraintEqualToConstant(40.0);
             height_constraint.setActive(true);
         }
-
-        // Left side: vertical stack for labels
-        let labels_stack = NSStackView::new(mtm);
-        labels_stack.setFrame(NSRect::new(
-            NSPoint::new(12.0, 12.0),
-            NSSize::new(240.0, 56.0),
-        ));
+        
+        // Create the main row button (clickable area)
+        let row_button = NSButton::new(mtm);
+        row_button.setButtonType(NSButtonType::MomentaryPushIn);
+        row_button.setBezelStyle(NSBezelStyle::Rounded);
+        row_button.setBordered(false);
+        row_button.setTitle(&NSString::from_str("")); // Clear default "Button" title
+        row_button.setTag(index as isize);
         unsafe {
-            labels_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-            labels_stack.setSpacing(4.0);
-            labels_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
+            row_button.setTarget(Some(self));
+            row_button.setAction(Some(sel!(conversationSelected:)));
+            row_button.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
-
-        // Conversation title
+        
+        // Set button background
+        row_button.setWantsLayer(true);
+        if let Some(layer) = row_button.layer() {
+            // Alternate row colors for table look
+            if index % 2 == 0 {
+                set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
+            } else {
+                set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
+            }
+        }
+        
+        // Create horizontal stack inside the button for content layout
+        let content_stack = NSStackView::new(mtm);
+        content_stack.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        content_stack.setSpacing(8.0);
+        content_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
+        content_stack.setDistribution(NSStackViewDistribution::Fill);
+        content_stack.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+            top: 8.0, left: 8.0, bottom: 8.0, right: 8.0
+        });
+        
+        // Note: content stack needs to allow button clicks to pass through
+        // NSStackView doesn't have setUserInteractionEnabled, but text fields can be set non-editable
+        
+        // Title (flexible width)
         let title_label = NSTextField::labelWithString(&NSString::from_str(title), mtm);
         title_label.setTextColor(Some(&Theme::text_primary()));
-        title_label.setFont(Some(&NSFont::boldSystemFontOfSize(14.0)));
+        title_label.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+        title_label.setEditable(false);
+        title_label.setBordered(false);
+        title_label.setDrawsBackground(false);
         unsafe {
-            labels_stack.addArrangedSubview(&title_label);
+            title_label.setTranslatesAutoresizingMaskIntoConstraints(false);
+            title_label.setContentHuggingPriority_forOrientation(250.0, NSLayoutConstraintOrientation::Horizontal);
         }
+        content_stack.addArrangedSubview(&title_label);
 
-        // Date
+        // Date (fixed width ~120px)
         let date_label = NSTextField::labelWithString(&NSString::from_str(date), mtm);
         date_label.setTextColor(Some(&Theme::text_secondary_color()));
-        date_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        date_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+        date_label.setEditable(false);
+        date_label.setBordered(false);
+        date_label.setDrawsBackground(false);
         unsafe {
-            labels_stack.addArrangedSubview(&date_label);
+            date_label.setTranslatesAutoresizingMaskIntoConstraints(false);
+            date_label.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = date_label.widthAnchor().constraintEqualToConstant(120.0);
+            width_constraint.setActive(true);
         }
+        content_stack.addArrangedSubview(&date_label);
 
-        // Message count
-        let count_text = format!("{} messages", message_count);
+        // Message count (fixed width ~40px)
+        let count_text = format!("{}", message_count);
         let count_label = NSTextField::labelWithString(&NSString::from_str(&count_text), mtm);
         count_label.setTextColor(Some(&Theme::text_secondary_color()));
         count_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+        count_label.setAlignment(objc2_app_kit::NSTextAlignment::Right);
+        count_label.setEditable(false);
+        count_label.setBordered(false);
+        count_label.setDrawsBackground(false);
         unsafe {
-            labels_stack.addArrangedSubview(&count_label);
+            count_label.setTranslatesAutoresizingMaskIntoConstraints(false);
+            count_label.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = count_label.widthAnchor().constraintEqualToConstant(40.0);
+            width_constraint.setActive(true);
         }
+        content_stack.addArrangedSubview(&count_label);
         
-        card.addSubview(&labels_stack);
-
-        // Right side: horizontal stack for buttons
-        let buttons_stack = NSStackView::new(mtm);
-        buttons_stack.setFrame(NSRect::new(
-            NSPoint::new(260.0, 26.0),
-            NSSize::new(110.0, 28.0),
-        ));
+        // Add content stack to button
+        row_button.addSubview(&content_stack);
+        
+        // Constrain content stack to fill button
         unsafe {
-            buttons_stack.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-            buttons_stack.setSpacing(5.0);
+            let leading = content_stack.leadingAnchor().constraintEqualToAnchor(&row_button.leadingAnchor());
+            let trailing = content_stack.trailingAnchor().constraintEqualToAnchor(&row_button.trailingAnchor());
+            let top = content_stack.topAnchor().constraintEqualToAnchor(&row_button.topAnchor());
+            let bottom = content_stack.bottomAnchor().constraintEqualToAnchor(&row_button.bottomAnchor());
+            leading.setActive(true);
+            trailing.setActive(true);
+            top.setActive(true);
+            bottom.setActive(true);
         }
 
-        // Load button
-        let load_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("Load"),
-                Some(self),
-                Some(sel!(conversationSelected:)),
-                mtm,
-            )
-        };
-        load_btn.setBezelStyle(NSBezelStyle::Rounded);
-        load_btn.setTag(index as isize);
-        unsafe {
-            buttons_stack.addArrangedSubview(&load_btn);
-        }
-
-        // Delete button
+        // Delete button (compact, positioned on the right)
         let delete_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("Delete"),
+                &NSString::from_str("X"),
                 Some(self),
                 Some(sel!(deleteConversation:)),
                 mtm,
@@ -544,11 +611,37 @@ impl HistoryViewController {
         delete_btn.setBezelStyle(NSBezelStyle::Rounded);
         delete_btn.setTag(index as isize);
         unsafe {
-            buttons_stack.addArrangedSubview(&delete_btn);
+            delete_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+            delete_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = delete_btn.widthAnchor().constraintEqualToConstant(30.0);
+            width_constraint.setActive(true);
         }
         
-        card.addSubview(&buttons_stack);
+        // Add both views to container
+        container.addSubview(&row_button);
+        container.addSubview(&delete_btn);
+        
+        // Position row button to fill most of the width
+        unsafe {
+            let leading = row_button.leadingAnchor().constraintEqualToAnchor(&container.leadingAnchor());
+            let trailing = row_button.trailingAnchor().constraintEqualToAnchor_constant(&delete_btn.leadingAnchor(), -4.0);
+            let top = row_button.topAnchor().constraintEqualToAnchor(&container.topAnchor());
+            let bottom = row_button.bottomAnchor().constraintEqualToAnchor(&container.bottomAnchor());
+            leading.setActive(true);
+            trailing.setActive(true);
+            top.setActive(true);
+            bottom.setActive(true);
+        }
+        
+        // Position delete button on the right
+        unsafe {
+            let trailing = delete_btn.trailingAnchor().constraintEqualToAnchor(&container.trailingAnchor());
+            let center_y = delete_btn.centerYAnchor().constraintEqualToAnchor(&container.centerYAnchor());
+            trailing.setActive(true);
+            center_y.setActive(true);
+        }
 
-        card
+        log_to_file(&format!("Row {} created successfully", index));
+        Retained::from(&*container as &NSView)
     }
 }

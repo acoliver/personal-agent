@@ -1,13 +1,8 @@
-//! LLM integration module
+//! LLM integration using SerdesAI
 //!
-//! This module provides integration with the `SerdesAI` library for LLM interactions.
+//! This module provides the bridge between PersonalAgent's config/profile system
+//! and the SerdesAI library for making LLM requests.
 
 mod client;
-mod error;
-mod events;
-mod stream;
 
-pub use client::LLMClient;
-pub use error::{LlmError, LlmResult};
-pub use events::ChatStreamEvent;
-pub use stream::send_message_stream;
+pub use client::{LlmClient, LlmError, Message, Role, StreamEvent};

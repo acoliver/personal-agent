@@ -14,6 +14,9 @@ pub struct Config {
     pub theme: String,
     pub global_hotkey: String,
     pub default_profile: Option<Uuid>,
+    /// The currently active conversation ID (restored on app restart)
+    #[serde(default)]
+    pub active_conversation_id: Option<Uuid>,
     pub context_management: ContextManagement,
     pub profiles: Vec<ModelProfile>,
 }
@@ -33,6 +36,7 @@ impl Default for Config {
             theme: "dark".to_string(),
             global_hotkey: "Cmd+Shift+Space".to_string(),
             default_profile: None,
+            active_conversation_id: None,
             context_management: ContextManagement::default(),
             profiles: Vec::new(),
         }

@@ -1,6 +1,8 @@
 //! Settings view for managing model profiles and configuration
 
 use std::cell::{Cell, RefCell};
+use std::fs::OpenOptions;
+use std::io::Write;
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
@@ -18,6 +20,17 @@ use uuid::Uuid;
 use super::theme::Theme;
 use personal_agent::config::Config;
 use personal_agent::models::AuthConfig;
+
+fn log_to_file(message: &str) {
+    let log_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join("Library/Application Support/PersonalAgent/debug.log");
+    
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let _ = writeln!(file, "[{}] SettingsView: {}", timestamp, message);
+    }
+}
 
 // Thread-local storage for passing profile ID to profile editor
 thread_local! {
@@ -176,10 +189,10 @@ define_class!(
 
         #[unsafe(method(addProfileClicked:))]
         fn add_profile_clicked(&self, _sender: Option<&NSObject>) {
-            // Post notification to show profile editor
+            // Post notification to show model selector
             use objc2_foundation::NSNotificationCenter;
             let center = NSNotificationCenter::defaultCenter();
-            let name = NSString::from_str("PersonalAgentShowProfileEditor");
+            let name = NSString::from_str("PersonalAgentShowModelSelector");
             unsafe {
                 center.postNotificationName_object(&name, None);
             }
@@ -350,6 +363,11 @@ impl SettingsViewController {
         let this = Self::alloc(mtm).set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
     }
+    
+    /// Reload profiles from config - called when returning from profile editor
+    pub fn reload_profiles(&self) {
+        self.load_profiles();
+    }
 
     fn build_top_bar_stack(&self, mtm: MainThreadMarker) -> Retained<NSView> {
         // Create horizontal stack for top bar (fixed height 44px per wireframe)
@@ -462,20 +480,36 @@ impl SettingsViewController {
         }
 
         // Create vertical stack for profiles inside scroll view
-        let profiles_stack = NSStackView::new(mtm);
+        // Use FlippedStackView so content starts at TOP (not bottom)
+        let profiles_stack = super::FlippedStackView::new(mtm);
         unsafe {
             profiles_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-            profiles_stack.setSpacing(8.0);
-            profiles_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
+            profiles_stack.setSpacing(1.0);
+            profiles_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Width);
+            // Fill distribution works correctly with flipped coordinates
             profiles_stack.setDistribution(NSStackViewDistribution::Fill);
+            profiles_stack.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+                top: 0.0,
+                left: 0.0,
+                bottom: 0.0,
+                right: 0.0,
+            });
         }
         
         profiles_stack.setWantsLayer(true);
         if let Some(layer) = profiles_stack.layer() {
             set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
         }
+        
+        // CRITICAL: Set translatesAutoresizingMaskIntoConstraints for proper Auto Layout
+        profiles_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
 
         scroll_view.setDocumentView(Some(&profiles_stack));
+        
+        // CRITICAL: Constrain stack width to scroll view's content width (minus padding)
+        let content_view = scroll_view.contentView();
+        let width_constraint = profiles_stack.widthAnchor().constraintEqualToAnchor_constant(&content_view.widthAnchor(), -24.0);
+        width_constraint.setActive(true);
 
         // Store references
         *self.ivars().scroll_view.borrow_mut() = Some(scroll_view.clone());
@@ -546,8 +580,11 @@ impl SettingsViewController {
     fn load_profiles(&self) {
         let mtm = MainThreadMarker::new().unwrap();
         
+        log_to_file("load_profiles called");
+        
         // Load config
         let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
+        log_to_file(&format!("Config has {} profiles", config.profiles.len()));
         
         if let Some(container) = &*self.ivars().profiles_container.borrow() {
             // Clear existing subviews (for stack view, remove arranged subviews)
@@ -593,6 +630,14 @@ impl SettingsViewController {
                 }
             }
         }
+        
+        // Scroll to top after loading - force layout first
+        if let Some(scroll_view) = &*self.ivars().scroll_view.borrow() {
+            scroll_view.layoutSubtreeIfNeeded();
+            let clip_view = scroll_view.contentView();
+            clip_view.scrollToPoint(NSPoint::new(0.0, 0.0));
+            scroll_view.reflectScrolledClipView(&clip_view);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -605,109 +650,81 @@ impl SettingsViewController {
         index: usize,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
-        let width = 380.0;
-        let height = 80.0;
-
-        // Create card container
-        let card = NSView::initWithFrame(
-            NSView::alloc(mtm),
-            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height)),
-        );
-        card.setWantsLayer(true);
-        if let Some(layer) = card.layer() {
-            set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
-            set_layer_corner_radius(&layer, 8.0);
-        }
+        log_to_file(&format!("Creating profile row {}: {}", index, name));
         
-        // Set fixed height constraint
+        // Table row as horizontal stack - NO CARD STYLING
+        let row = NSStackView::new(mtm);
+        row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        row.setSpacing(8.0);
+        row.setTranslatesAutoresizingMaskIntoConstraints(false);
+        row.setDistribution(NSStackViewDistribution::Fill);
+        row.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+            top: 8.0, left: 8.0, bottom: 8.0, right: 8.0
+        });
+        
+        // Simple background color - no rounded corners
+        row.setWantsLayer(true);
+        if let Some(layer) = row.layer() {
+            // Alternate row colors for table look
+            if index % 2 == 0 {
+                set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
+            } else {
+                set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
+            }
+            // NO corner radius - simple table rows
+        }
+
+        // Fixed height for consistent table rows
         unsafe {
-            card.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let height_constraint = card.heightAnchor().constraintEqualToConstant(height);
+            let height_constraint = row.heightAnchor().constraintEqualToConstant(40.0);
             height_constraint.setActive(true);
         }
 
-        // Left side: vertical stack for labels
-        let labels_stack = NSStackView::new(mtm);
-        labels_stack.setFrame(NSRect::new(
-            NSPoint::new(12.0, 10.0),
-            NSSize::new(260.0, 60.0),
-        ));
-        unsafe {
-            labels_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-            labels_stack.setSpacing(4.0);
-            labels_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
-        }
-
-        // Profile name
+        // Profile name (flexible width)
         let name_label = NSTextField::labelWithString(&NSString::from_str(name), mtm);
         name_label.setTextColor(Some(&Theme::text_primary()));
-        name_label.setFont(Some(&NSFont::boldSystemFontOfSize(14.0)));
+        name_label.setFont(Some(&NSFont::systemFontOfSize(13.0)));
         unsafe {
-            labels_stack.addArrangedSubview(&name_label);
+            name_label.setTranslatesAutoresizingMaskIntoConstraints(false);
+            name_label.setContentHuggingPriority_forOrientation(250.0, NSLayoutConstraintOrientation::Horizontal);
         }
+        row.addArrangedSubview(&name_label);
 
-        // Provider and model
+        // Provider:model (fixed width ~140px)
         let model_text = format!("{}:{}", provider, model);
         let model_label = NSTextField::labelWithString(&NSString::from_str(&model_text), mtm);
         model_label.setTextColor(Some(&Theme::text_secondary_color()));
-        model_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        model_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
         unsafe {
-            labels_stack.addArrangedSubview(&model_label);
+            model_label.setTranslatesAutoresizingMaskIntoConstraints(false);
+            model_label.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = model_label.widthAnchor().constraintEqualToConstant(140.0);
+            width_constraint.setActive(true);
         }
+        row.addArrangedSubview(&model_label);
 
-        // API key status
+        // Auth status icon/text (fixed width ~20px)
         let key_status = match auth {
             AuthConfig::Key { value } => {
-                if value.is_empty() {
-                    "No API key"
-                } else {
-                    "API key configured"
-                }
+                if value.is_empty() { "" } else { "[OK]" }
             }
             AuthConfig::Keyfile { path } => {
-                if path.is_empty() {
-                    "No keyfile"
-                } else {
-                    "Keyfile configured"
-                }
+                if path.is_empty() { "" } else { "[OK]" }
             }
         };
         let status_label = NSTextField::labelWithString(&NSString::from_str(key_status), mtm);
         status_label.setTextColor(Some(&Theme::text_secondary_color()));
-        status_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+        status_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        status_label.setAlignment(objc2_app_kit::NSTextAlignment::Center);
         unsafe {
-            labels_stack.addArrangedSubview(&status_label);
+            status_label.setTranslatesAutoresizingMaskIntoConstraints(false);
+            status_label.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = status_label.widthAnchor().constraintEqualToConstant(20.0);
+            width_constraint.setActive(true);
         }
-        
-        card.addSubview(&labels_stack);
+        row.addArrangedSubview(&status_label);
 
-        // Right side: vertical stack for buttons
-        let buttons_stack = NSStackView::new(mtm);
-        buttons_stack.setFrame(NSRect::new(
-            NSPoint::new(280.0, 15.0),
-            NSSize::new(80.0, 60.0),
-        ));
-        unsafe {
-            buttons_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-            buttons_stack.setSpacing(5.0);
-        }
-
-        // Edit button
-        let edit_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("Edit"),
-                Some(self),
-                Some(sel!(profileEditClicked:)),
-                mtm,
-            )
-        };
-        edit_btn.setBezelStyle(NSBezelStyle::Rounded);
-        edit_btn.setTag(index as isize);
-        unsafe {
-            buttons_stack.addArrangedSubview(&edit_btn);
-        }
-
-        // Select button
+        // Select button (compact)
         let select_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
                 &NSString::from_str("Select"),
@@ -719,10 +736,33 @@ impl SettingsViewController {
         select_btn.setBezelStyle(NSBezelStyle::Rounded);
         select_btn.setTag(index as isize);
         unsafe {
-            buttons_stack.addArrangedSubview(&select_btn);
+            select_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+            select_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = select_btn.widthAnchor().constraintEqualToConstant(55.0);
+            width_constraint.setActive(true);
         }
+        row.addArrangedSubview(&select_btn);
 
-        // Del button
+        // Edit button (compact)
+        let edit_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str("Edit"),
+                Some(self),
+                Some(sel!(profileEditClicked:)),
+                mtm,
+            )
+        };
+        edit_btn.setBezelStyle(NSBezelStyle::Rounded);
+        edit_btn.setTag(index as isize);
+        unsafe {
+            edit_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+            edit_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = edit_btn.widthAnchor().constraintEqualToConstant(45.0);
+            width_constraint.setActive(true);
+        }
+        row.addArrangedSubview(&edit_btn);
+
+        // Del button (compact)
         let del_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
                 &NSString::from_str("Del"),
@@ -734,11 +774,14 @@ impl SettingsViewController {
         del_btn.setBezelStyle(NSBezelStyle::Rounded);
         del_btn.setTag(index as isize);
         unsafe {
-            buttons_stack.addArrangedSubview(&del_btn);
+            del_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+            del_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            let width_constraint = del_btn.widthAnchor().constraintEqualToConstant(40.0);
+            width_constraint.setActive(true);
         }
-        
-        card.addSubview(&buttons_stack);
+        row.addArrangedSubview(&del_btn);
 
-        card
+        log_to_file(&format!("Profile row {} created", index));
+        Retained::from(&*row as &NSView)
     }
 }

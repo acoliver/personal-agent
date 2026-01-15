@@ -9,7 +9,7 @@ use objc2_foundation::{
     NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
 use objc2_app_kit::{
-    NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle, NSSegmentedControl,
+    NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle, NSPopUpButton,
     NSSlider, NSButtonType, NSTextFieldBezelStyle, NSStackView, NSUserInterfaceLayoutOrientation,
     NSStackViewDistribution, NSLayoutConstraintOrientation,
 };
@@ -17,6 +17,7 @@ use objc2_quartz_core::CALayer;
 use uuid::Uuid;
 
 use super::theme::Theme;
+use super::model_selector::{SELECTED_MODEL_PROVIDER, SELECTED_MODEL_ID};
 use personal_agent::config::Config;
 use personal_agent::models::{AuthConfig, ModelParameters, ModelProfile};
 use personal_agent::registry::{ModelRegistry, RegistryManager};
@@ -43,13 +44,18 @@ pub struct ProfileEditorIvars {
     // Profile being edited (None = creating new)
     editing_profile_id: RefCell<Option<Uuid>>,
     
+    // Pre-selected model from model selector (if any)
+    preselected_provider: RefCell<Option<String>>,
+    preselected_model: RefCell<Option<String>>,
+    selected_model_label: RefCell<Option<Retained<NSTextField>>>,
+    
     // Basic Info fields
     name_field: RefCell<Option<Retained<NSTextField>>>,
     provider_picker: RefCell<Option<Retained<NSView>>>, // Container for provider list
     model_picker: RefCell<Option<Retained<NSView>>>, // Container for model list
     
     // Auth fields
-    auth_type_toggle: RefCell<Option<Retained<NSSegmentedControl>>>,
+    auth_type_popup: RefCell<Option<Retained<NSPopUpButton>>>,
     api_key_field: RefCell<Option<Retained<NSTextField>>>,
     key_file_field: RefCell<Option<Retained<NSTextField>>>,
     base_url_field: RefCell<Option<Retained<NSTextField>>>,
@@ -145,6 +151,13 @@ define_class!(
             
             // Load registry and populate fields
             self.load_registry();
+            
+            // Scroll to top after view is loaded
+            if let Some(scroll_view) = &*self.ivars().scroll_view.borrow() {
+                let clip_view = scroll_view.contentView();
+                clip_view.scrollToPoint(NSPoint::new(0.0, 0.0));
+                scroll_view.reflectScrolledClipView(&clip_view);
+            }
         }
 
         #[unsafe(method(providerSelected:))]
@@ -265,8 +278,8 @@ define_class!(
 
         #[unsafe(method(authTypeChanged:))]
         fn auth_type_changed(&self, sender: Option<&NSObject>) {
-            if let Some(segmented) = sender.and_then(|s| s.downcast_ref::<NSSegmentedControl>()) {
-                let selected = segmented.selectedSegment();
+            if let Some(popup) = sender.and_then(|s| s.downcast_ref::<NSPopUpButton>()) {
+                let selected = popup.indexOfSelectedItem();
                 // 0 = API Key, 1 = Key File, 2 = None
                 if selected == 0 {
                     self.update_auth_fields_visibility(true);
@@ -308,12 +321,23 @@ define_class!(
 
 impl ProfileEditorViewController {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        // Check if there's a pre-selected model from model selector
+        let preselected_provider = SELECTED_MODEL_PROVIDER.with(|cell| {
+            cell.take()
+        });
+        let preselected_model = SELECTED_MODEL_ID.with(|cell| {
+            cell.take()
+        });
+        
         let ivars = ProfileEditorIvars {
             editing_profile_id: RefCell::new(None),
+            preselected_provider: RefCell::new(preselected_provider.clone()),
+            preselected_model: RefCell::new(preselected_model.clone()),
+            selected_model_label: RefCell::new(None),
             name_field: RefCell::new(None),
             provider_picker: RefCell::new(None),
             model_picker: RefCell::new(None),
-            auth_type_toggle: RefCell::new(None),
+            auth_type_popup: RefCell::new(None),
             api_key_field: RefCell::new(None),
             key_file_field: RefCell::new(None),
             base_url_field: RefCell::new(None),
@@ -326,8 +350,8 @@ impl ProfileEditorViewController {
             enable_thinking_button: RefCell::new(None),
             show_thinking_button: RefCell::new(None),
             registry: RefCell::new(None),
-            selected_provider: RefCell::new(None),
-            selected_model: RefCell::new(None),
+            selected_provider: RefCell::new(preselected_provider),
+            selected_model: RefCell::new(preselected_model),
             scroll_view: RefCell::new(None),
             content_stack: RefCell::new(None),
             delete_button: RefCell::new(None),
@@ -361,8 +385,8 @@ impl ProfileEditorViewController {
         // Set auth fields based on type
         match &profile.auth {
             AuthConfig::Key { value } => {
-                if let Some(toggle) = &*self.ivars().auth_type_toggle.borrow() {
-                    toggle.setSelectedSegment(0);
+                if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
+                    popup.selectItemAtIndex(0);
                 }
                 if let Some(field) = &*self.ivars().api_key_field.borrow() {
                     field.setStringValue(&NSString::from_str(value));
@@ -370,8 +394,8 @@ impl ProfileEditorViewController {
                 self.update_auth_fields_visibility(true);
             }
             AuthConfig::Keyfile { path } => {
-                if let Some(toggle) = &*self.ivars().auth_type_toggle.borrow() {
-                    toggle.setSelectedSegment(1);
+                if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
+                    popup.selectItemAtIndex(1);
                 }
                 if let Some(field) = &*self.ivars().key_file_field.borrow() {
                     field.setStringValue(&NSString::from_str(path));
@@ -591,6 +615,20 @@ impl ProfileEditorViewController {
             section.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
         }
 
+        // Show selected model info if available
+        if let Some(provider_id) = &*self.ivars().preselected_provider.borrow() {
+            if let Some(model_id) = &*self.ivars().preselected_model.borrow() {
+                let selected_text = format!("Selected: {}:{}", provider_id, model_id);
+                let selected_label = NSTextField::labelWithString(&NSString::from_str(&selected_text), mtm);
+                selected_label.setTextColor(Some(&Theme::text_primary()));
+                selected_label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
+                unsafe {
+                    section.addArrangedSubview(&selected_label);
+                }
+                *self.ivars().selected_model_label.borrow_mut() = Some(selected_label);
+            }
+        }
+
         // Label
         let label = self.build_section_label("PROFILE NAME", mtm);
         unsafe {
@@ -734,33 +772,31 @@ impl ProfileEditorViewController {
             section.addArrangedSubview(&label);
         }
 
-        // Auth type toggle (horizontal)
-        let auth_toggle_row = NSStackView::new(mtm);
+        // Auth type popup button (dropdown)
+        let auth_popup_row = NSStackView::new(mtm);
         unsafe {
-            auth_toggle_row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-            auth_toggle_row.setSpacing(8.0);
+            auth_popup_row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+            auth_popup_row.setSpacing(8.0);
         }
 
-        let auth_toggle = NSSegmentedControl::initWithFrame(
-            NSSegmentedControl::alloc(mtm),
-            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(250.0, 24.0)),
-        );
-        auth_toggle.setSegmentCount(3);
-        auth_toggle.setLabel_forSegment(&NSString::from_str("API Key"), 0);
-        auth_toggle.setLabel_forSegment(&NSString::from_str("Key File"), 1);
-        auth_toggle.setLabel_forSegment(&NSString::from_str("None"), 2);
-        auth_toggle.setSelectedSegment(0);
+        let auth_popup = NSPopUpButton::new(mtm);
+        auth_popup.addItemWithTitle(&NSString::from_str("API Key"));
+        auth_popup.addItemWithTitle(&NSString::from_str("Key File"));
+        auth_popup.addItemWithTitle(&NSString::from_str("None"));
         unsafe {
-            auth_toggle.setTarget(Some(self));
-            auth_toggle.setAction(Some(sel!(authTypeChanged:)));
+            auth_popup.setTarget(Some(self));
+            auth_popup.setAction(Some(sel!(authTypeChanged:)));
+            auth_popup.setTranslatesAutoresizingMaskIntoConstraints(false);
+            let width_constraint = auth_popup.widthAnchor().constraintEqualToConstant(150.0);
+            width_constraint.setActive(true);
         }
         unsafe {
-            auth_toggle_row.addArrangedSubview(&auth_toggle);
+            auth_popup_row.addArrangedSubview(&auth_popup);
         }
-        *self.ivars().auth_type_toggle.borrow_mut() = Some(auth_toggle);
+        *self.ivars().auth_type_popup.borrow_mut() = Some(auth_popup);
 
         unsafe {
-            section.addArrangedSubview(&auth_toggle_row);
+            section.addArrangedSubview(&auth_popup_row);
         }
 
         // API Key field
@@ -773,6 +809,9 @@ impl ProfileEditorViewController {
         api_key_field.setTextColor(Some(&Theme::text_primary()));
         api_key_field.setDrawsBackground(true);
         api_key_field.setBordered(true);
+        // Enable editing and selection for copy/paste
+        api_key_field.setEditable(true);
+        api_key_field.setSelectable(true);
         unsafe {
             api_key_field.setTranslatesAutoresizingMaskIntoConstraints(false);
             let width_constraint = api_key_field.widthAnchor().constraintEqualToConstant(372.0);
@@ -1081,10 +1120,45 @@ impl ProfileEditorViewController {
             Ok(reg) => {
                 *self.ivars().registry.borrow_mut() = Some(reg);
                 self.populate_provider_list();
+                
+                // If there's a pre-selected model, populate the model list and auto-fill base URL
+                if let Some(provider_id) = &*self.ivars().preselected_provider.borrow() {
+                    self.populate_model_list();
+                    self.update_provider_button_states(provider_id);
+                    
+                    if let Some(model_id) = &*self.ivars().preselected_model.borrow() {
+                        self.update_model_button_states(model_id);
+                        self.auto_fill_base_url(provider_id);
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("Failed to load registry: {}", e);
                 self.show_registry_error();
+            }
+        }
+    }
+    
+    fn auto_fill_base_url(&self, provider_id: &str) {
+        if let Some(base_url_field) = &*self.ivars().base_url_field.borrow() {
+            // Check if base URL is already filled
+            let current_url = base_url_field.stringValue().to_string();
+            if !current_url.trim().is_empty() {
+                return; // Don't overwrite existing URL
+            }
+            
+            // Get provider from registry
+            if let Some(registry) = &*self.ivars().registry.borrow() {
+                if let Some(provider) = registry.get_provider(provider_id) {
+                    // Use the api field from provider info if available
+                    if let Some(api) = &provider.api {
+                        base_url_field.setStringValue(&NSString::from_str(api));
+                    } else {
+                        // Fallback to default format
+                        let default_url = format!("https://api.{}.com/v1", provider_id);
+                        base_url_field.setStringValue(&NSString::from_str(&default_url));
+                    }
+                }
             }
         }
     }
@@ -1321,23 +1395,27 @@ impl ProfileEditorViewController {
         };
         
         // Get auth config
-        let auth = if let Some(toggle) = &*self.ivars().auth_type_toggle.borrow() {
-            if toggle.selectedSegment() == 0 {
-                // API Key
+        let auth = if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
+            let selected = popup.indexOfSelectedItem();
+            if selected == 0 {
+                // API Key - trim whitespace and newlines
                 let value = if let Some(field) = &*self.ivars().api_key_field.borrow() {
-                    field.stringValue().to_string()
+                    field.stringValue().to_string().trim().to_string()
                 } else {
                     String::new()
                 };
                 AuthConfig::Key { value }
-            } else {
-                // Key File
+            } else if selected == 1 {
+                // Key File - trim whitespace and newlines
                 let path = if let Some(field) = &*self.ivars().key_file_field.borrow() {
-                    field.stringValue().to_string()
+                    field.stringValue().to_string().trim().to_string()
                 } else {
                     String::new()
                 };
                 AuthConfig::Keyfile { path }
+            } else {
+                // None - use empty API key
+                AuthConfig::Key { value: String::new() }
             }
         } else {
             AuthConfig::Key { value: String::new() }
