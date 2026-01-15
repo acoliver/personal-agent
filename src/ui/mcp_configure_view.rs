@@ -131,7 +131,7 @@ define_class!(
         fn save_clicked(&self, _sender: Option<&NSObject>) {
             log_to_file("Save clicked");
             
-            // Get name
+            // Validate and get name
             let name = if let Some(field) = &*self.ivars().name_input.borrow() {
                 field.stringValue().to_string().trim().to_string()
             } else {
@@ -140,6 +140,7 @@ define_class!(
             
             if name.is_empty() {
                 log_to_file("ERROR: Name is empty");
+                self.show_error("Validation Error", "MCP name is required");
                 return;
             }
             
@@ -177,6 +178,7 @@ define_class!(
             let parsed = self.ivars().parsed_mcp.borrow();
             let Some(ref parsed) = *parsed else {
                 log_to_file("ERROR: No parsed MCP data");
+                self.show_error("Configuration Error", "No MCP data to save");
                 return;
             };
             
@@ -248,14 +250,7 @@ define_class!(
                 
                 if let Err(e) = secrets_manager.store_api_key(mcp_id, &api_key) {
                     log_to_file(&format!("ERROR: Failed to store API key: {e}"));
-                    
-                    use objc2_app_kit::NSAlert;
-                    let mtm = MainThreadMarker::new().unwrap();
-                    let alert = NSAlert::new(mtm);
-                    alert.setMessageText(&NSString::from_str("Failed to store API key"));
-                    alert.setInformativeText(&NSString::from_str(&format!("{e}")));
-                    alert.addButtonWithTitle(&NSString::from_str("OK"));
-                    unsafe { alert.runModal() };
+                    self.show_error("Failed to store API key", &format!("{e}"));
                     return;
                 }
             }
@@ -281,14 +276,7 @@ define_class!(
             
             if let Err(e) = config.save(&config_path) {
                 log_to_file(&format!("ERROR: Failed to save config: {e}"));
-                
-                use objc2_app_kit::NSAlert;
-                let mtm = MainThreadMarker::new().unwrap();
-                let alert = NSAlert::new(mtm);
-                alert.setMessageText(&NSString::from_str("Failed to save configuration"));
-                alert.setInformativeText(&NSString::from_str(&format!("{e}")));
-                alert.addButtonWithTitle(&NSString::from_str("OK"));
-                unsafe { alert.runModal() };
+                self.show_error("Failed to save configuration", &format!("{e}"));
                 return;
             }
             
@@ -330,6 +318,16 @@ impl McpConfigureViewController {
         };
         let this = mtm.alloc::<Self>().set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
+    }
+
+    fn show_error(&self, title: &str, message: &str) {
+        use objc2_app_kit::NSAlert;
+        let mtm = MainThreadMarker::new().unwrap();
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str(title));
+        alert.setInformativeText(&NSString::from_str(message));
+        alert.addButtonWithTitle(&NSString::from_str("OK"));
+        unsafe { alert.runModal() };
     }
 
     fn build_top_bar(&self, mtm: MainThreadMarker) -> Retained<NSView> {

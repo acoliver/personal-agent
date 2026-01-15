@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::mcp::{McpConfig, McpManager, McpTransport, SecretsManager};
+use crate::mcp::{McpConfig, McpManager, McpTransport, SecretsManager, McpStatus, McpStatusManager};
 
 /// Active MCP connection
 pub struct McpConnection {
@@ -27,6 +27,7 @@ pub struct McpTool {
 pub struct McpRuntime {
     manager: McpManager,
     connections: HashMap<Uuid, McpConnection>,
+    status_manager: McpStatusManager,
 }
 
 impl McpRuntime {
@@ -34,12 +35,19 @@ impl McpRuntime {
         Self {
             manager: McpManager::new(secrets),
             connections: HashMap::new(),
+            status_manager: McpStatusManager::new(),
         }
+    }
+
+    /// Get a clone of the status manager for UI access
+    pub fn status_manager(&self) -> McpStatusManager {
+        self.status_manager.clone()
     }
 
     /// Start an MCP server
     pub async fn start_mcp(&mut self, config: &McpConfig) -> Result<(), String> {
         if !config.enabled {
+            self.status_manager.set_status(config.id, McpStatus::Stopped);
             return Err("MCP is disabled".to_string());
         }
 
@@ -47,9 +55,15 @@ impl McpRuntime {
             return Ok(()); // Already running
         }
 
+        // Update status to Starting
+        self.status_manager.set_status(config.id, McpStatus::Starting);
+
         // Build environment
         let _env = self.manager.build_env(config)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                self.status_manager.set_status(config.id, McpStatus::Error(e.to_string()));
+                e.to_string()
+            })?;
 
         // Build command
         let (cmd, _args) = McpManager::build_command(config);
@@ -62,6 +76,7 @@ impl McpRuntime {
                 config: config.clone(),
                 tools: Vec::new(),
             });
+            self.status_manager.set_status(config.id, McpStatus::Running);
             return Ok(());
         }
 
@@ -76,6 +91,7 @@ impl McpRuntime {
             config: config.clone(),
             tools: Vec::new(), // Would be populated from MCP server
         });
+        self.status_manager.set_status(config.id, McpStatus::Running);
 
         Ok(())
     }
@@ -83,6 +99,7 @@ impl McpRuntime {
     /// Stop an MCP server
     pub fn stop_mcp(&mut self, id: &Uuid) -> Result<(), String> {
         self.connections.remove(id);
+        self.status_manager.set_status(*id, McpStatus::Stopped);
         self.manager.stop(id).map_err(|e| e.to_string())
     }
 
@@ -402,5 +419,68 @@ mod tests {
         // Cleanup shouldn't remove anything yet (no idle timeout)
         runtime.cleanup_idle();
         assert_eq!(runtime.active_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_graceful_shutdown() {
+        let mut runtime = create_test_runtime();
+        let config = create_test_mcp_config(true);
+        let id = config.id;
+
+        runtime.start_mcp(&config).await.unwrap();
+        assert!(runtime.has_active_mcps());
+
+        // Stop should succeed
+        let result = runtime.stop_mcp(&id);
+        assert!(result.is_ok());
+        assert!(!runtime.has_active_mcps());
+    }
+
+    #[tokio::test]
+    async fn test_error_propagation() {
+        let mut runtime = create_test_runtime();
+        let mut config = create_test_mcp_config(true);
+        
+        // Set invalid package type that would cause error
+        config.package.package_type = McpPackageType::Docker;
+        config.package.identifier = "".to_string(); // Empty identifier should fail
+
+        let result = runtime.start_mcp(&config).await;
+        // Currently, this doesn't fail because we're not actually spawning
+        // But when SerdesAI is integrated, this should propagate errors
+        assert!(result.is_ok()); // Placeholder until actual spawning
+    }
+
+    #[tokio::test]
+    async fn test_multiple_simultaneous_starts() {
+        let mut runtime = create_test_runtime();
+        let config1 = create_test_mcp_config(true);
+        let config2 = create_test_mcp_config(true);
+        let config3 = create_test_mcp_config(true);
+
+        runtime.start_mcp(&config1).await.unwrap();
+        runtime.start_mcp(&config2).await.unwrap();
+        runtime.start_mcp(&config3).await.unwrap();
+
+        assert_eq!(runtime.active_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_start_stop_restart() {
+        let mut runtime = create_test_runtime();
+        let config = create_test_mcp_config(true);
+        let id = config.id;
+
+        // Start
+        runtime.start_mcp(&config).await.unwrap();
+        assert!(runtime.has_active_mcps());
+
+        // Stop
+        runtime.stop_mcp(&id).unwrap();
+        assert!(!runtime.has_active_mcps());
+
+        // Restart
+        runtime.start_mcp(&config).await.unwrap();
+        assert!(runtime.has_active_mcps());
     }
 }

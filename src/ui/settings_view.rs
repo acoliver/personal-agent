@@ -1249,6 +1249,33 @@ impl SettingsViewController {
         click_btn.setBordered(false);
         click_btn.setTag(index as isize);
         
+        // Status indicator (colored dot)
+        let status_view = NSView::new(mtm);
+        status_view.setWantsLayer(true);
+        unsafe {
+            status_view.setTranslatesAutoresizingMaskIntoConstraints(false);
+            let width = status_view.widthAnchor().constraintEqualToConstant(8.0);
+            width.setActive(true);
+            let height = status_view.heightAnchor().constraintEqualToConstant(8.0);
+            height.setActive(true);
+        }
+        
+        if let Some(layer) = status_view.layer() {
+            // For now, show green if enabled, gray if disabled
+            // TODO: Connect to McpRuntime to get actual status
+            let (r, g, b) = if mcp.enabled {
+                (0.0, 0.8, 0.0) // Green
+            } else {
+                (0.5, 0.5, 0.5) // Gray
+            };
+            set_layer_background_color(&layer, r, g, b);
+            set_layer_corner_radius(&layer, 4.0);
+        }
+        
+        unsafe {
+            container.addArrangedSubview(&status_view);
+        }
+        
         // Label
         // Show MCP name and source type
         let source_type = match &mcp.source {
