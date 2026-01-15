@@ -19,7 +19,6 @@ use objc2_quartz_core::CALayer;
 
 use super::theme::Theme;
 use personal_agent::storage::ConversationStorage;
-use personal_agent::models::Conversation;
 
 /// Logging helper - writes to file
 fn log_to_file(message: &str) {
@@ -29,7 +28,7 @@ fn log_to_file(message: &str) {
     
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let _ = writeln!(file, "[{}] HistoryView: {}", timestamp, message);
+        let _ = writeln!(file, "[{timestamp}] HistoryView: {message}");
     }
 }
 
@@ -193,7 +192,7 @@ define_class!(
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Failed to load conversation: {}", e);
+                                eprintln!("Failed to load conversation: {e}");
                             }
                         }
                     }
@@ -213,12 +212,12 @@ define_class!(
                     drop(conversations); // Release borrow before delete
                     
                     // Delete immediately - no confirmation dialog
-                    println!("Deleting conversation: {}", filename);
+                    println!("Deleting conversation: {filename}");
                     
                     // Delete the conversation file
                     if let Ok(storage) = ConversationStorage::with_default_path() {
                         if let Err(e) = storage.delete(&filename) {
-                            eprintln!("Failed to delete conversation: {}", e);
+                            eprintln!("Failed to delete conversation: {e}");
                         } else {
                             // Reload the list
                             self.load_conversations();
@@ -387,7 +386,7 @@ impl HistoryViewController {
         let storage = match ConversationStorage::with_default_path() {
             Ok(s) => s,
             Err(e) => {
-                log_to_file(&format!("Failed to create conversation storage: {}", e));
+                log_to_file(&format!("Failed to create conversation storage: {e}"));
                 return;
             }
         };
@@ -398,7 +397,7 @@ impl HistoryViewController {
                 convs
             }
             Err(e) => {
-                log_to_file(&format!("Failed to load conversations: {}", e));
+                log_to_file(&format!("Failed to load conversations: {e}"));
                 Vec::new()
             }
         };
@@ -419,7 +418,7 @@ impl HistoryViewController {
                 let filename = conv.filename();
                 let message_count = conv.messages.len();
                 
-                log_to_file(&format!("Conversation: title='{}', date='{}', messages={}", title, date, message_count));
+                log_to_file(&format!("Conversation: title='{title}', date='{date}', messages={message_count}"));
                 
                 ConversationItem {
                     filename,
@@ -438,7 +437,7 @@ impl HistoryViewController {
             log_to_file(&format!("Adding {} items to container", items.len()));
             // Clear existing subviews (for stack view, remove arranged subviews)
             let subviews = container.subviews();
-            for view in subviews.iter() {
+            for view in &subviews {
                 if let Some(stack) = container.downcast_ref::<NSStackView>() {
                     unsafe {
                         stack.removeArrangedSubview(&view);
@@ -492,7 +491,7 @@ impl HistoryViewController {
         index: usize,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
-        log_to_file(&format!("Creating row {}: {}", index, title));
+        log_to_file(&format!("Creating row {index}: {title}"));
         
         // Create a container view to hold the clickable button and delete button
         let container = NSView::new(mtm);
@@ -519,7 +518,7 @@ impl HistoryViewController {
         row_button.setWantsLayer(true);
         if let Some(layer) = row_button.layer() {
             // Alternate row colors for table look
-            if index % 2 == 0 {
+            if index.is_multiple_of(2) {
                 set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
             } else {
                 set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
@@ -568,7 +567,7 @@ impl HistoryViewController {
         content_stack.addArrangedSubview(&date_label);
 
         // Message count (fixed width ~40px)
-        let count_text = format!("{}", message_count);
+        let count_text = format!("{message_count}");
         let count_label = NSTextField::labelWithString(&NSString::from_str(&count_text), mtm);
         count_label.setTextColor(Some(&Theme::text_secondary_color()));
         count_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
@@ -641,7 +640,7 @@ impl HistoryViewController {
             center_y.setActive(true);
         }
 
-        log_to_file(&format!("Row {} created successfully", index));
+        log_to_file(&format!("Row {index} created successfully"));
         Retained::from(&*container as &NSView)
     }
 }

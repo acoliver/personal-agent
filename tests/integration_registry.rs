@@ -4,6 +4,7 @@ use personal_agent::RegistryManager;
 use tempfile::TempDir;
 
 #[tokio::test]
+#[ignore] // Requires network access
 async fn test_full_registry_workflow() {
     let temp_dir = TempDir::new().unwrap();
     let cache_path = temp_dir.path().join("test_cache.json");

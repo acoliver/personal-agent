@@ -6,7 +6,7 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObject;
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, DefinedClass};
 use objc2_foundation::{
-    NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSDictionary, NSNumber,
+    NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
 use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle,
@@ -237,7 +237,7 @@ define_class!(
                         if model_index < models.len() {
                             let model_id = &models[model_index].id;
                             
-                            println!("Selected model: {}:{}", provider_id, model_id);
+                            println!("Selected model: {provider_id}:{model_id}");
                             
                             // Post notification with selection
                             self.post_model_selected_notification(provider_id, model_id);
@@ -571,7 +571,7 @@ impl ModelSelectorViewController {
         let manager = match RegistryManager::new() {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("Failed to create registry manager: {}", e);
+                eprintln!("Failed to create registry manager: {e}");
                 return;
             }
         };
@@ -579,7 +579,7 @@ impl ModelSelectorViewController {
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("Failed to create runtime: {}", e);
+                eprintln!("Failed to create runtime: {e}");
                 return;
             }
         };
@@ -595,7 +595,7 @@ impl ModelSelectorViewController {
                 self.populate_model_list();
             }
             Err(e) => {
-                eprintln!("Failed to load registry: {}", e);
+                eprintln!("Failed to load registry: {e}");
                 self.show_error("Failed to load registry");
             }
         }
@@ -621,7 +621,7 @@ impl ModelSelectorViewController {
         if let Some(container) = &*self.ivars().models_container.borrow() {
             // Clear existing views
             let subviews = container.subviews();
-            for view in subviews.iter() {
+            for view in &subviews {
                 if let Some(stack) = container.downcast_ref::<NSStackView>() {
                     unsafe {
                         stack.removeArrangedSubview(&view);
@@ -645,7 +645,7 @@ impl ModelSelectorViewController {
                     
                     // Update status label
                     if let Some(status_label) = &*self.ivars().status_label.borrow() {
-                        let status_text = format!("{} models from {} providers", total_models, total_providers);
+                        let status_text = format!("{total_models} models from {total_providers} providers");
                         status_label.setStringValue(&NSString::from_str(&status_text));
                     }
                     
@@ -738,8 +738,7 @@ impl ModelSelectorViewController {
         if filters.require_vision {
             let has_vision = model.modalities
                 .as_ref()
-                .map(|m| m.input.iter().any(|input| input == "image"))
-                .unwrap_or(false);
+                .is_some_and(|m| m.input.iter().any(|input| input == "image"));
             if !has_vision {
                 return false;
             }
@@ -936,7 +935,7 @@ impl ModelSelectorViewController {
             }
         }
         
-        println!("Model selected notification: {}:{}", provider_id, model_id);
+        println!("Model selected notification: {provider_id}:{model_id}");
         
         unsafe {
             center.postNotificationName_object(&name, None);
@@ -967,16 +966,15 @@ fn format_cost(input: f64, output: f64) -> String {
         let output_per_m = output * 1_000_000.0;
         
         // Round to 1 decimal, drop trailing zeros
-        let input_str = format!("{:.1}", input_per_m).trim_end_matches(".0").to_string();
-        let output_str = format!("{:.1}", output_per_m).trim_end_matches(".0").to_string();
+        let input_str = format!("{input_per_m:.1}").trim_end_matches(".0").to_string();
+        let output_str = format!("{output_per_m:.1}").trim_end_matches(".0").to_string();
         
-        format!("{}/{}", input_str, output_str)
+        format!("{input_str}/{output_str}")
     }
 }
 
 fn has_vision(model: &ModelInfo) -> bool {
     model.modalities
         .as_ref()
-        .map(|m| m.input.iter().any(|input| input == "image"))
-        .unwrap_or(false)
+        .is_some_and(|m| m.input.iter().any(|input| input == "image"))
 }

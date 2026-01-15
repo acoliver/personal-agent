@@ -32,7 +32,7 @@ fn log_to_file(message: &str) {
     
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let _ = writeln!(file, "[{}] {}", timestamp, message);
+        let _ = writeln!(file, "[{timestamp}] {message}");
     }
 }
 
@@ -59,10 +59,10 @@ pub struct ProfileEditorDemoIvars {
 impl Default for ProfileEditorDemoIvars {
     fn default() -> Self {
         // Check for pre-selected model from model selector
-        let preselected_provider = SELECTED_MODEL_PROVIDER.with(|cell| cell.take());
-        let preselected_model = SELECTED_MODEL_ID.with(|cell| cell.take());
-        let preselected_base_url = SELECTED_MODEL_BASE_URL.with(|cell| cell.take());
-        let preselected_context = SELECTED_MODEL_CONTEXT.with(|cell| cell.take());
+        let preselected_provider = SELECTED_MODEL_PROVIDER.with(std::cell::Cell::take);
+        let preselected_model = SELECTED_MODEL_ID.with(std::cell::Cell::take);
+        let preselected_base_url = SELECTED_MODEL_BASE_URL.with(std::cell::Cell::take);
+        let preselected_context = SELECTED_MODEL_CONTEXT.with(std::cell::Cell::take);
         
         Self {
             preselected_provider: RefCell::new(preselected_provider),
@@ -174,7 +174,7 @@ define_class!(
             } else {
                 String::new()
             };
-            log_to_file(&format!("  Name: {}", name));
+            log_to_file(&format!("  Name: {name}"));
             
             if name.is_empty() {
                 log_to_file("  ERROR: Name is empty");
@@ -184,7 +184,7 @@ define_class!(
             // Get provider
             let provider_id = if let Some(popup) = &*self.ivars().provider_popup.borrow() {
                 let index = popup.indexOfSelectedItem();
-                log_to_file(&format!("  Provider index: {}", index));
+                log_to_file(&format!("  Provider index: {index}"));
                 if let Some(item) = popup.itemAtIndex(index) {
                     item.title().to_string()
                 } else {
@@ -193,7 +193,7 @@ define_class!(
             } else {
                 String::new()
             };
-            log_to_file(&format!("  Provider ID: {}", provider_id));
+            log_to_file(&format!("  Provider ID: {provider_id}"));
             
             // Get model
             let model_id = if let Some(popup) = &*self.ivars().model_popup.borrow() {
@@ -206,7 +206,7 @@ define_class!(
             } else {
                 String::new()
             };
-            log_to_file(&format!("  Model ID: {}", model_id));
+            log_to_file(&format!("  Model ID: {model_id}"));
             
             // Get auth config
             let auth = if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
@@ -227,7 +227,7 @@ define_class!(
             } else {
                 AuthConfig::Key { value: String::new() }
             };
-            log_to_file(&format!("  Auth: {:?}", auth));
+            log_to_file(&format!("  Auth: {auth:?}"));
             
             // Get parameters
             let temperature = if let Some(stepper) = &*self.ivars().temperature_stepper.borrow() {
@@ -292,7 +292,7 @@ define_class!(
             let config_path = match Config::default_path() {
                 Ok(path) => path,
                 Err(e) => {
-                    log_to_file(&format!("  ERROR: Failed to get config path: {}", e));
+                    log_to_file(&format!("  ERROR: Failed to get config path: {e}"));
                     return;
                 }
             };
@@ -300,7 +300,7 @@ define_class!(
             let mut config = match Config::load(&config_path) {
                 Ok(c) => c,
                 Err(e) => {
-                    log_to_file(&format!("  ERROR: Failed to load config: {}", e));
+                    log_to_file(&format!("  ERROR: Failed to load config: {e}"));
                     Config::default()
                 }
             };
@@ -315,7 +315,7 @@ define_class!(
             
             // Save
             if let Err(e) = config.save(&config_path) {
-                log_to_file(&format!("  ERROR: Failed to save config: {}", e));
+                log_to_file(&format!("  ERROR: Failed to save config: {e}"));
                 return;
             }
             
@@ -358,7 +358,7 @@ define_class!(
             if let Some(stepper) = &*self.ivars().temperature_stepper.borrow() {
                 let value = stepper.doubleValue();
                 if let Some(label) = &*self.ivars().temperature_label.borrow() {
-                    label.setStringValue(&NSString::from_str(&format!("{:.2}", value)));
+                    label.setStringValue(&NSString::from_str(&format!("{value:.2}")));
                 }
             }
         }
@@ -471,11 +471,8 @@ impl ProfileEditorDemoViewController {
         if let Some(provider) = provider_to_select {
             let provider_popup = &provider_section.1;
             // Find and select the matching item
-            for i in 0..providers.len() {
-                if providers[i] == provider {
-                    provider_popup.selectItemAtIndex(i as isize);
-                    break;
-                }
+            if let Some(idx) = providers.iter().position(|p| *p == provider) {
+                provider_popup.selectItemAtIndex(idx as isize);
             }
         }
         *self.ivars().provider_popup.borrow_mut() = Some(provider_section.1);

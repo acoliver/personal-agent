@@ -28,7 +28,7 @@ fn log_to_file(message: &str) {
     
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let _ = writeln!(file, "[{}] SettingsView: {}", timestamp, message);
+        let _ = writeln!(file, "[{timestamp}] SettingsView: {message}");
     }
 }
 
@@ -165,7 +165,7 @@ define_class!(
                 let runtime = match tokio::runtime::Runtime::new() {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("Failed to create runtime: {}", e);
+                        eprintln!("Failed to create runtime: {e}");
                         return;
                     }
                 };
@@ -175,10 +175,10 @@ define_class!(
                         Ok(manager) => {
                             match manager.refresh().await {
                                 Ok(_) => println!("Registry refreshed successfully"),
-                                Err(e) => eprintln!("Failed to refresh registry: {}", e),
+                                Err(e) => eprintln!("Failed to refresh registry: {e}"),
                             }
                         }
-                        Err(e) => eprintln!("Failed to create registry manager: {}", e),
+                        Err(e) => eprintln!("Failed to create registry manager: {e}"),
                     }
                 });
             });
@@ -203,13 +203,13 @@ define_class!(
             // Get the button's tag (profile index)
             if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
                 let tag = button.tag();
-                println!("Profile edit clicked: tag {}", tag);
+                println!("Profile edit clicked: tag {tag}");
                 
                 // Load the config
                 let config_path = match Config::default_path() {
                     Ok(path) => path,
                     Err(e) => {
-                        eprintln!("Failed to get config path: {}", e);
+                        eprintln!("Failed to get config path: {e}");
                         return;
                     }
                 };
@@ -217,7 +217,7 @@ define_class!(
                 let config = match Config::load(&config_path) {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("Failed to load config: {}", e);
+                        eprintln!("Failed to load config: {e}");
                         return;
                     }
                 };
@@ -243,13 +243,13 @@ define_class!(
             // Get the button's tag (profile index)
             if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
                 let tag = button.tag();
-                println!("Profile selected: tag {}", tag);
+                println!("Profile selected: tag {tag}");
                 
                 // Load the config
                 let config_path = match Config::default_path() {
                     Ok(path) => path,
                     Err(e) => {
-                        eprintln!("Failed to get config path: {}", e);
+                        eprintln!("Failed to get config path: {e}");
                         return;
                     }
                 };
@@ -257,7 +257,7 @@ define_class!(
                 let mut config = match Config::load(&config_path) {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("Failed to load config: {}", e);
+                        eprintln!("Failed to load config: {e}");
                         return;
                     }
                 };
@@ -271,7 +271,7 @@ define_class!(
                     
                     // Save the config
                     if let Err(e) = config.save(&config_path) {
-                        eprintln!("Failed to save config: {}", e);
+                        eprintln!("Failed to save config: {e}");
                     } else {
                         println!("Active profile set to: {}", profile.name);
                     }
@@ -294,7 +294,7 @@ define_class!(
             // Get the button's tag (profile index)
             if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
                 let tag = button.tag();
-                println!("Delete profile requested: tag {}", tag);
+                println!("Delete profile requested: tag {tag}");
                 
                 let mtm = MainThreadMarker::new().unwrap();
                 
@@ -313,7 +313,7 @@ define_class!(
                     let config_path = match Config::default_path() {
                         Ok(path) => path,
                         Err(e) => {
-                            eprintln!("Failed to get config path: {}", e);
+                            eprintln!("Failed to get config path: {e}");
                             return;
                         }
                     };
@@ -321,7 +321,7 @@ define_class!(
                     let mut config = match Config::load(&config_path) {
                         Ok(c) => c,
                         Err(e) => {
-                            eprintln!("Failed to load config: {}", e);
+                            eprintln!("Failed to load config: {e}");
                             return;
                         }
                     };
@@ -332,13 +332,13 @@ define_class!(
                         
                         // Remove the profile
                         if let Err(e) = config.remove_profile(&profile_id) {
-                            eprintln!("Failed to remove profile: {}", e);
+                            eprintln!("Failed to remove profile: {e}");
                             return;
                         }
                         
                         // Save the config
                         if let Err(e) = config.save(&config_path) {
-                            eprintln!("Failed to save config: {}", e);
+                            eprintln!("Failed to save config: {e}");
                             return;
                         }
                         
@@ -589,7 +589,7 @@ impl SettingsViewController {
         if let Some(container) = &*self.ivars().profiles_container.borrow() {
             // Clear existing subviews (for stack view, remove arranged subviews)
             let subviews = container.subviews();
-            for view in subviews.iter() {
+            for view in &subviews {
                 if let Some(stack) = container.downcast_ref::<NSStackView>() {
                     unsafe {
                         stack.removeArrangedSubview(&view);
@@ -650,7 +650,7 @@ impl SettingsViewController {
         index: usize,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
-        log_to_file(&format!("Creating profile row {}: {}", index, name));
+        log_to_file(&format!("Creating profile row {index}: {name}"));
         
         // Table row as horizontal stack - NO CARD STYLING
         let row = NSStackView::new(mtm);
@@ -666,7 +666,7 @@ impl SettingsViewController {
         row.setWantsLayer(true);
         if let Some(layer) = row.layer() {
             // Alternate row colors for table look
-            if index % 2 == 0 {
+            if index.is_multiple_of(2) {
                 set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
             } else {
                 set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
@@ -691,7 +691,7 @@ impl SettingsViewController {
         row.addArrangedSubview(&name_label);
 
         // Provider:model (fixed width ~140px)
-        let model_text = format!("{}:{}", provider, model);
+        let model_text = format!("{provider}:{model}");
         let model_label = NSTextField::labelWithString(&NSString::from_str(&model_text), mtm);
         model_label.setTextColor(Some(&Theme::text_secondary_color()));
         model_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
@@ -781,7 +781,7 @@ impl SettingsViewController {
         }
         row.addArrangedSubview(&del_btn);
 
-        log_to_file(&format!("Profile row {} created", index));
+        log_to_file(&format!("Profile row {index} created"));
         Retained::from(&*row as &NSView)
     }
 }

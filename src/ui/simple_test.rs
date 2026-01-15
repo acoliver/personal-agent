@@ -1,12 +1,12 @@
-//! Simple test view to debug NSStackView layout
+//! Simple test view to debug `NSStackView` layout
 
 use objc2::rc::Retained;
-use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, DefinedClass};
+use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
 use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSColor, NSFont, NSStackView,
     NSUserInterfaceLayoutOrientation, NSStackViewDistribution, NSLayoutConstraintOrientation,
-    NSScrollView, NSTextView,
+    NSScrollView,
 };
 use objc2_core_graphics::CGColor;
 
@@ -186,7 +186,7 @@ impl SimpleTestViewController {
         };
         
         // History button  
-        let history_btn = unsafe {
+        let _history_btn = unsafe {
             NSButton::buttonWithTitle_target_action(&NSString::from_str("[H]"), None, None, mtm)
         };
         

@@ -16,12 +16,11 @@ use objc2_foundation::{
 };
 use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSScrollView,
-    NSFont, NSBezelStyle, NSLineBreakMode, NSStackView, NSUserInterfaceLayoutOrientation,
-    NSLayoutConstraintOrientation, NSStackViewDistribution, NSLayoutPriority,
+    NSFont, NSBezelStyle, NSStackView, NSUserInterfaceLayoutOrientation,
+    NSLayoutConstraintOrientation, NSStackViewDistribution,
 };
 use objc2_quartz_core::CALayer;
 use uuid::Uuid;
-use dispatch::{Queue, QueuePriority};
 
 use super::theme::Theme;
 use personal_agent::config::Config;
@@ -37,7 +36,7 @@ fn log_to_file(message: &str) {
     
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let _ = writeln!(file, "[{}] ChatView: {}", timestamp, message);
+        let _ = writeln!(file, "[{timestamp}] ChatView: {message}");
     }
 }
 
@@ -218,141 +217,141 @@ define_class!(
                 let text = input.stringValue();
                 let text_str = text.to_string();
                 
-                log_to_file(&format!("Input text: '{}'", text_str));
+                log_to_file(&format!("Input text: '{text_str}'"));
                 
-                if !text_str.trim().is_empty() {
-                    log_to_file("Text not empty, adding message");
-                    
-                    // Add user message to UI
-                    self.add_message_to_store(&text_str, true);
-                    
-                    // Clear input
-                    input.setStringValue(&NSString::new());
-                    
-                    // Add user message to conversation
-                    if let Some(ref mut conversation) = *self.ivars().conversation.borrow_mut() {
-                        conversation.add_message(ConvMessage::user(text_str.clone()));
-                        log_to_file(&format!("Added message to conversation, now has {} messages", conversation.messages.len()));
-                    } else {
-                        log_to_file("ERROR: No conversation object!");
-                    }
-                    
-                    // Get the current profile
-                    let config = Config::load(&Config::default_path().unwrap_or_default()).ok();
-                    let profile = config.as_ref().and_then(|c| {
-                        c.default_profile.and_then(|id| {
-                            c.profiles.iter().find(|p| p.id == id).cloned()
-                        }).or_else(|| c.profiles.first().cloned())
-                    });
-                    
-                    if let Some(profile) = profile {
-                        // Build messages from conversation
-                        let llm_messages: Vec<LlmMessage> = self.ivars()
-                            .conversation
-                            .borrow()
-                            .as_ref()
-                            .map(|c| {
-                                c.messages.iter().map(|m| {
-                                    match m.role {
-                                        personal_agent::models::MessageRole::User => LlmMessage::user(&m.content),
-                                        personal_agent::models::MessageRole::Assistant => LlmMessage::assistant(&m.content),
-                                        personal_agent::models::MessageRole::System => LlmMessage::system(&m.content),
+                if text_str.trim().is_empty() {
+                                    log_to_file("Text is empty, ignoring");
+                                } else {
+                                    log_to_file("Text not empty, adding message");
+                                    
+                                    // Add user message to UI
+                                    self.add_message_to_store(&text_str, true);
+                                    
+                                    // Clear input
+                                    input.setStringValue(&NSString::new());
+                                    
+                                    // Add user message to conversation
+                                    if let Some(ref mut conversation) = *self.ivars().conversation.borrow_mut() {
+                                        conversation.add_message(ConvMessage::user(text_str));
+                                        log_to_file(&format!("Added message to conversation, now has {} messages", conversation.messages.len()));
+                                    } else {
+                                        log_to_file("ERROR: No conversation object!");
                                     }
-                                }).collect()
-                            })
-                            .unwrap_or_default();
-                        
-                        // Show empty assistant message placeholder
-                        self.add_message_to_store("", false);
-                        self.rebuild_messages();
-                        
-                        // Mark as streaming
-                        *self.ivars().is_streaming.borrow_mut() = true;
-                        
-                        // Clear the streaming buffers
-                        if let Ok(mut buf) = self.ivars().streaming_response.lock() {
-                            buf.clear();
-                        }
-                        if let Ok(mut buf) = self.ivars().streaming_thinking.lock() {
-                            buf.clear();
-                        }
-                        
-                        // Clone what we need for the background thread
-                        let streaming_response = Arc::clone(&self.ivars().streaming_response);
-                        let streaming_thinking = Arc::clone(&self.ivars().streaming_thinking);
-                        let profile_clone = profile.clone();
-                        
-                        // Spawn background thread for streaming
-                        log_to_file("Starting streaming request in background...");
-                        thread::spawn(move || {
-                            let rt = tokio::runtime::Builder::new_current_thread()
-                                .enable_all()
-                                .build();
-                            
-                            if let Ok(rt) = rt {
-                                rt.block_on(async {
-                                    match LlmClient::from_profile(&profile_clone) {
-                                        Ok(client) => {
-                                            let streaming_response_clone = Arc::clone(&streaming_response);
-                                            let streaming_thinking_clone = Arc::clone(&streaming_thinking);
-                                            let result = client.request_stream(&llm_messages, |event| {
-                                                match event {
-                                                    StreamEvent::TextDelta(delta) => {
-                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
-                                                            buf.push_str(&delta);
-                                                        }
+                                    
+                                    // Get the current profile
+                                    let config = Config::load(Config::default_path().unwrap_or_default()).ok();
+                                    let profile = config.as_ref().and_then(|c| {
+                                        c.default_profile.and_then(|id| {
+                                            c.profiles.iter().find(|p| p.id == id).cloned()
+                                        }).or_else(|| c.profiles.first().cloned())
+                                    });
+                                    
+                                    if let Some(profile) = profile {
+                                        // Build messages from conversation
+                                        let llm_messages: Vec<LlmMessage> = self.ivars()
+                                            .conversation
+                                            .borrow()
+                                            .as_ref()
+                                            .map(|c| {
+                                                c.messages.iter().map(|m| {
+                                                    match m.role {
+                                                        personal_agent::models::MessageRole::User => LlmMessage::user(&m.content),
+                                                        personal_agent::models::MessageRole::Assistant => LlmMessage::assistant(&m.content),
+                                                        personal_agent::models::MessageRole::System => LlmMessage::system(&m.content),
                                                     }
-                                                    StreamEvent::ThinkingDelta(delta) => {
-                                                        if let Ok(mut buf) = streaming_thinking_clone.lock() {
-                                                            buf.push_str(&delta);
-                                                        }
-                                                    }
-                                                    StreamEvent::Complete => {
-                                                        log_to_file("Streaming complete");
-                                                        // Add completion marker
-                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
-                                                            buf.push_str("␄"); // EOT marker
-                                                        }
-                                                    }
-                                                    StreamEvent::Error(e) => {
-                                                        log_to_file(&format!("Stream error: {}", e));
-                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
-                                                            buf.push_str(&format!("
-[Error: {}]", e));
-                                                        }
-                                                    }
-                                                }
-                                            }).await;
+                                                }).collect()
+                                            })
+                                            .unwrap_or_default();
+                                        
+                                        // Show empty assistant message placeholder
+                                        self.add_message_to_store("", false);
+                                        self.rebuild_messages();
+                                        
+                                        // Mark as streaming
+                                        *self.ivars().is_streaming.borrow_mut() = true;
+                                        
+                                        // Clear the streaming buffers
+                                        if let Ok(mut buf) = self.ivars().streaming_response.lock() {
+                                            buf.clear();
+                                        }
+                                        if let Ok(mut buf) = self.ivars().streaming_thinking.lock() {
+                                            buf.clear();
+                                        }
+                                        
+                                        // Clone what we need for the background thread
+                                        let streaming_response = Arc::clone(&self.ivars().streaming_response);
+                                        let streaming_thinking = Arc::clone(&self.ivars().streaming_thinking);
+                                        let profile_clone = profile;
+                                        
+                                        // Spawn background thread for streaming
+                                        log_to_file("Starting streaming request in background...");
+                                        thread::spawn(move || {
+                                            let rt = tokio::runtime::Builder::new_current_thread()
+                                                .enable_all()
+                                                .build();
                                             
-                                            if let Err(e) = result {
-                                                log_to_file(&format!("Stream request failed: {}", e));
-                                                if let Ok(mut buf) = streaming_response.lock() {
-                                                    buf.push_str(&format!("[Error: {}]", e));
-                                                }
+                                            if let Ok(rt) = rt {
+                                                rt.block_on(async {
+                                                    match LlmClient::from_profile(&profile_clone) {
+                                                        Ok(client) => {
+                                                            let streaming_response_clone = Arc::clone(&streaming_response);
+                                                            let streaming_thinking_clone = Arc::clone(&streaming_thinking);
+                                                            let result = client.request_stream(&llm_messages, |event| {
+                                                                match event {
+                                                                    StreamEvent::TextDelta(delta) => {
+                                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                                            buf.push_str(&delta);
+                                                                        }
+                                                                    }
+                                                                    StreamEvent::ThinkingDelta(delta) => {
+                                                                        if let Ok(mut buf) = streaming_thinking_clone.lock() {
+                                                                            buf.push_str(&delta);
+                                                                        }
+                                                                    }
+                                                                    StreamEvent::Complete => {
+                                                                        log_to_file("Streaming complete");
+                                                                        // Add completion marker
+                                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                                            buf.push('␄'); // EOT marker
+                                                                        }
+                                                                    }
+                                                                    StreamEvent::Error(e) => {
+                                                                        log_to_file(&format!("Stream error: {e}"));
+                                                                        if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                                            buf.push_str(&format!("
+                [Error: {e}]"));
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }).await;
+                                                            
+                                                            if let Err(e) = result {
+                                                                log_to_file(&format!("Stream request failed: {e}"));
+                                                                if let Ok(mut buf) = streaming_response.lock() {
+                                                                    buf.push_str(&format!("[Error: {e}]"));
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            log_to_file(&format!("Failed to create client: {e}"));
+                                                            if let Ok(mut buf) = streaming_response.lock() {
+                                                                buf.push_str(&format!("[Error: {e}]"));
+                                                            }
+                                                        }
+                                                    }
+                                                });
                                             }
-                                        }
-                                        Err(e) => {
-                                            log_to_file(&format!("Failed to create client: {}", e));
-                                            if let Ok(mut buf) = streaming_response.lock() {
-                                                buf.push_str(&format!("[Error: {}]", e));
-                                            }
-                                        }
+                                        });
+                                        
+                                        // Start a timer to poll for updates
+                                        self.schedule_streaming_update();
+                                        
+                                    } else {
+                                        log_to_file("No profile configured");
+                                        self.add_message_to_store("[No profile configured - go to Settings]", false);
+                                        self.rebuild_messages();
                                     }
-                                });
-                            }
-                        });
-                        
-                        // Start a timer to poll for updates
-                        self.schedule_streaming_update();
-                        
-                    } else {
-                        log_to_file("No profile configured");
-                        self.add_message_to_store("[No profile configured - go to Settings]", false);
-                        self.rebuild_messages();
-                    }
-                } else {
-                    log_to_file("Text is empty, ignoring");
-                }
+                                }
             } else {
                 log_to_file("ERROR: No input field reference!");
             }
@@ -385,21 +384,21 @@ define_class!(
             let display_text = if show_thinking && !current_thinking.is_empty() {
                 if current_text.is_empty() {
                     format!(" *Thinking...*
-{}
+{current_thinking}
 
-▌", current_thinking)
+▌")
                 } else {
                     format!(" *Thinking:*
-{}
+{current_thinking}
 
 ---
 
-{}▌", current_thinking, current_text)
+{current_text}▌")
                 }
             } else if current_text.is_empty() {
                 "▌".to_string() // Show cursor while waiting
             } else {
-                format!("{}▌", current_text) // Show cursor at end while streaming
+                format!("{current_text}▌") // Show cursor at end while streaming
             };
             
             // Update the last message in the store
@@ -431,7 +430,7 @@ define_class!(
             let config_path = match Config::default_path() {
                 Ok(path) => path,
                 Err(e) => {
-                    eprintln!("Failed to get config path: {}", e);
+                    eprintln!("Failed to get config path: {e}");
                     return;
                 }
             };
@@ -439,7 +438,7 @@ define_class!(
             let mut config = match Config::load(&config_path) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Failed to load config: {}", e);
+                    eprintln!("Failed to load config: {e}");
                     return;
                 }
             };
@@ -454,9 +453,9 @@ define_class!(
                     
                     // Save config
                     if let Err(e) = config.save(&config_path) {
-                        eprintln!("Failed to save config: {}", e);
+                        eprintln!("Failed to save config: {e}");
                     } else {
-                        println!("Thinking display toggled to: {}", new_state);
+                        println!("Thinking display toggled to: {new_state}");
                         // Update button appearance
                         self.update_thinking_button_state();
                     }
@@ -483,10 +482,10 @@ define_class!(
             // Get the current profile ID (or use default)
             let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
             let profile_id = config.default_profile.unwrap_or_else(|| {
-                config.profiles.first().map(|p| p.id).unwrap_or_else(Uuid::new_v4)
+                config.profiles.first().map_or_else(Uuid::new_v4, |p| p.id)
             });
             
-            log_to_file(&format!("Using profile_id: {}", profile_id));
+            log_to_file(&format!("Using profile_id: {profile_id}"));
             
             // Clear messages and create new conversation
             self.ivars().messages.borrow_mut().clear();
@@ -573,14 +572,14 @@ define_class!(
                 // Save the updated conversation
                 if let Ok(storage) = ConversationStorage::with_default_path() {
                     if let Err(e) = storage.save(conv) {
-                        log_to_file(&format!("ChatView: Failed to save conversation title: {}", e));
+                        log_to_file(&format!("ChatView: Failed to save conversation title: {e}"));
                     } else {
-                        log_to_file(&format!("ChatView: Conversation saved with title: {}", final_title));
+                        log_to_file(&format!("ChatView: Conversation saved with title: {final_title}"));
                     }
                 }
             }
             
-            log_to_file(&format!("ChatView: Title updated to: {}", final_title));
+            log_to_file(&format!("ChatView: Title updated to: {final_title}"));
         }
     }
 );
@@ -590,14 +589,14 @@ impl ChatViewController {
         // Load config and try to load the active conversation
         let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
         let profile_id = config.default_profile.unwrap_or_else(|| {
-            config.profiles.first().map(|p| p.id).unwrap_or_else(Uuid::new_v4)
+            config.profiles.first().map_or_else(Uuid::new_v4, |p| p.id)
         });
         
         // Try to load the active conversation from config, or fall back to most recent
         let conversation = if let Ok(storage) = ConversationStorage::with_default_path() {
             // First, try to load the active conversation from config
             if let Some(active_id) = config.active_conversation_id {
-                log_to_file(&format!("ChatView: Trying to load active conversation: {}", active_id));
+                log_to_file(&format!("ChatView: Trying to load active conversation: {active_id}"));
                 // Find the file for this conversation ID
                 if let Ok(filenames) = storage.list() {
                     for filename in &filenames {
@@ -681,9 +680,9 @@ impl ChatViewController {
             if let Ok(mut config) = Config::load(&config_path) {
                 config.active_conversation_id = Some(conversation_id);
                 if let Err(e) = config.save(&config_path) {
-                    log_to_file(&format!("Failed to save active conversation ID: {}", e));
+                    log_to_file(&format!("Failed to save active conversation ID: {e}"));
                 } else {
-                    log_to_file(&format!("Saved active conversation ID: {}", conversation_id));
+                    log_to_file(&format!("Saved active conversation ID: {conversation_id}"));
                 }
             }
         }
@@ -787,7 +786,7 @@ impl ChatViewController {
             ("+", sel!(newConversation:)),
         ];
 
-        for &(label, action) in button_configs.iter() {
+        for &(label, action) in button_configs {
             let btn = self.create_icon_button_for_stack(label, action, mtm);
             
             // Store reference to thinking button so we can update its appearance
@@ -1067,15 +1066,14 @@ fn check_streaming_done(&self) -> bool {
         
         // Build display text with thinking if enabled
         let show_thinking = self.should_show_thinking();
-        let display_text = if show_thinking && thinking_text.is_some() {
-            format!("*Thinking:*
-{}
+        let display_text = match (&thinking_text, show_thinking) {
+            (Some(thinking), true) => format!("*Thinking:*
+{thinking}
 
 ---
 
-{}", thinking_text.as_ref().unwrap(), final_text)
-        } else {
-            final_text.clone()
+{final_text}"),
+            _ => final_text.clone(),
         };
         
         // Update the last message
@@ -1098,7 +1096,7 @@ fn check_streaming_done(&self) -> bool {
         if let Some(ref conversation) = *self.ivars().conversation.borrow() {
             if let Ok(storage) = ConversationStorage::with_default_path() {
                 if let Err(e) = storage.save(conversation) {
-                    log_to_file(&format!("Failed to save conversation: {}", e));
+                    log_to_file(&format!("Failed to save conversation: {e}"));
                 } else {
                     log_to_file("Conversation saved successfully");
                 }
@@ -1116,7 +1114,7 @@ fn check_streaming_done(&self) -> bool {
         let mtm = MainThreadMarker::new().unwrap();
         
         let message_count = self.ivars().messages.borrow().len();
-        log_to_file(&format!("rebuild_messages called, {} messages in store", message_count));
+        log_to_file(&format!("rebuild_messages called, {message_count} messages in store"));
         
         if let Some(container) = &*self.ivars().messages_container.borrow() {
             log_to_file("Container found, clearing old views");
@@ -1124,7 +1122,7 @@ fn check_streaming_done(&self) -> bool {
             // Clear existing subviews (for stack view, remove arranged subviews)
             let subviews = container.subviews();
             log_to_file(&format!("Removing {} existing subviews", subviews.len()));
-            for view in subviews.iter() {
+            for view in &subviews {
                 // Check if container is a stack view
                 if let Some(stack) = container.downcast_ref::<NSStackView>() {
                     unsafe {

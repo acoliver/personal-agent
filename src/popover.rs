@@ -7,7 +7,6 @@
 //! Note: This module uses unsafe blocks to interface with Objective-C APIs.
 //! Safety is ensured by following objc2 patterns and macOS threading requirements.
 
-#![cfg(target_os = "macos")]
 #![allow(unsafe_code)]
 
 use objc2::rc::Retained;
@@ -21,7 +20,7 @@ use std::cell::RefCell;
 thread_local! {
     /// Thread-local state for the popover bridge
     /// This is safe because NSPopover must only be accessed from the main thread
-    static POPOVER_STATE: RefCell<Option<PopoverBridgeState>> = RefCell::new(None);
+    static POPOVER_STATE: RefCell<Option<PopoverBridgeState>> = const { RefCell::new(None) };
 }
 
 /// Shared state for the popover bridge

@@ -1,7 +1,7 @@
 //! Dark theme color definitions and common UI components
 
 use objc2::rc::Retained;
-use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly, DefinedClass};
+use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSColor, NSStackView};
 use objc2_foundation::NSObjectProtocol;
 

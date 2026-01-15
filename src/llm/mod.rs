@@ -1,7 +1,7 @@
-//! LLM integration using SerdesAI
+//! LLM integration using `SerdesAI`
 //!
-//! This module provides the bridge between PersonalAgent's config/profile system
-//! and the SerdesAI library for making LLM requests.
+//! This module provides the bridge between `PersonalAgent`'s config/profile system
+//! and the `SerdesAI` library for making LLM requests.
 
 mod client;
 

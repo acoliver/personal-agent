@@ -1,6 +1,6 @@
 //! LLM client for making requests to AI providers
 //!
-//! This module bridges PersonalAgent's profile system with SerdesAI,
+//! This module bridges `PersonalAgent`'s profile system with `SerdesAI`,
 //! using models.dev registry data for provider configuration.
 
 use crate::models::{AuthConfig, ModelProfile};
@@ -24,7 +24,7 @@ pub enum LlmError {
         source: std::io::Error,
     },
 
-    /// SerdesAI error
+    /// `SerdesAI` error
     #[error("LLM error: {0}")]
     SerdesAi(String),
 
@@ -50,7 +50,7 @@ pub enum StreamEvent {
     Error(String),
 }
 
-/// LLM client that uses SerdesAI
+/// LLM client that uses `SerdesAI`
 pub struct LlmClient {
     profile: ModelProfile,
     api_key: String,
@@ -115,7 +115,7 @@ impl LlmClient {
         Ok(key)
     }
 
-    /// Get the model spec string for SerdesAI (e.g., "openai:gpt-4o")
+    /// Get the model spec string for `SerdesAI` (e.g., "openai:gpt-4o")
     fn model_spec(&self) -> String {
         // Use get_serdes_provider to handle OpenAI-compatible providers
         let provider = self.get_serdes_provider();
@@ -124,11 +124,12 @@ impl LlmClient {
 
     /// Build model settings from profile parameters
     fn model_settings(&self) -> ModelSettings {
-        let mut settings = ModelSettings::default();
-        settings.temperature = Some(self.profile.parameters.temperature);
-        settings.top_p = Some(self.profile.parameters.top_p);
-        settings.max_tokens = Some(self.profile.parameters.max_tokens as u64);
-        settings
+        ModelSettings {
+            temperature: Some(self.profile.parameters.temperature),
+            top_p: Some(self.profile.parameters.top_p),
+            max_tokens: Some(u64::from(self.profile.parameters.max_tokens)),
+            ..ModelSettings::default()
+        }
     }
 
     /// Make a non-streaming request
@@ -154,10 +155,10 @@ impl LlmClient {
             .collect();
 
         // Determine base URL: profile override > registry > none
-        let base_url = if !self.profile.base_url.is_empty() {
-            Some(self.profile.base_url.as_str())
-        } else {
+        let base_url = if self.profile.base_url.is_empty() {
             self.registry_base_url.as_deref()
+        } else {
+            Some(self.profile.base_url.as_str())
         };
 
         // Determine provider type from registry
@@ -223,10 +224,10 @@ impl LlmClient {
             .collect();
 
         // Determine base URL: profile override > registry > none
-        let base_url = if !self.profile.base_url.is_empty() {
-            Some(self.profile.base_url.as_str())
-        } else {
+        let base_url = if self.profile.base_url.is_empty() {
             self.registry_base_url.as_deref()
+        } else {
+            Some(self.profile.base_url.as_str())
         };
 
         // Determine provider type from registry
@@ -321,10 +322,10 @@ impl LlmClient {
         "OPENAI_API_KEY".to_string()
     }
     
-    /// Determine the provider type for SerdesAI
+    /// Determine the provider type for `SerdesAI`
     /// 
     /// Uses models.dev registry `npm` field to detect OpenAI-compatible providers:
-    /// - `@ai-sdk/openai-compatible` -> use "openai" provider with custom base_url
+    /// - `@ai-sdk/openai-compatible` -> use "openai" provider with custom `base_url`
     /// - `@ai-sdk/openai` -> native openai
     /// - `@ai-sdk/anthropic` -> native anthropic
     fn get_serdes_provider(&self) -> &str {

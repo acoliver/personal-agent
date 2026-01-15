@@ -10,7 +10,7 @@ use objc2_foundation::{
 };
 use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle, NSPopUpButton,
-    NSSlider, NSButtonType, NSTextFieldBezelStyle, NSStackView, NSUserInterfaceLayoutOrientation,
+    NSSlider, NSButtonType, NSStackView, NSUserInterfaceLayoutOrientation,
     NSStackViewDistribution, NSLayoutConstraintOrientation,
 };
 use objc2_quartz_core::CALayer;
@@ -239,7 +239,7 @@ define_class!(
                 let config_path = match Config::default_path() {
                     Ok(path) => path,
                     Err(e) => {
-                        eprintln!("Failed to get config path: {}", e);
+                        eprintln!("Failed to get config path: {e}");
                         return;
                     }
                 };
@@ -247,20 +247,20 @@ define_class!(
                 let mut config = match Config::load(&config_path) {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("Failed to load config: {}", e);
+                        eprintln!("Failed to load config: {e}");
                         return;
                     }
                 };
                 
                 // Remove profile
                 if let Err(e) = config.remove_profile(&profile_id) {
-                    eprintln!("Failed to remove profile: {}", e);
+                    eprintln!("Failed to remove profile: {e}");
                     return;
                 }
                 
                 // Save config
                 if let Err(e) = config.save(&config_path) {
-                    eprintln!("Failed to save config: {}", e);
+                    eprintln!("Failed to save config: {e}");
                     return;
                 }
                 
@@ -302,7 +302,7 @@ define_class!(
             if let Some(slider) = sender.and_then(|s| s.downcast_ref::<NSSlider>()) {
                 let value = slider.doubleValue();
                 if let Some(label) = &*self.ivars().temperature_label.borrow() {
-                    label.setStringValue(&NSString::from_str(&format!("{:.2}", value)));
+                    label.setStringValue(&NSString::from_str(&format!("{value:.2}")));
                 }
             }
         }
@@ -312,7 +312,7 @@ define_class!(
             if let Some(slider) = sender.and_then(|s| s.downcast_ref::<NSSlider>()) {
                 let value = slider.doubleValue();
                 if let Some(label) = &*self.ivars().top_p_label.borrow() {
-                    label.setStringValue(&NSString::from_str(&format!("{:.2}", value)));
+                    label.setStringValue(&NSString::from_str(&format!("{value:.2}")));
                 }
             }
         }
@@ -431,11 +431,11 @@ impl ProfileEditorViewController {
         }
         
         if let Some(button) = &*self.ivars().enable_thinking_button.borrow() {
-            button.setState(if profile.parameters.enable_thinking { 1 } else { 0 });
+            button.setState(isize::from(profile.parameters.enable_thinking));
         }
         
         if let Some(button) = &*self.ivars().show_thinking_button.borrow() {
-            button.setState(if profile.parameters.show_thinking { 1 } else { 0 });
+            button.setState(isize::from(profile.parameters.show_thinking));
         }
     }
 
@@ -618,7 +618,7 @@ impl ProfileEditorViewController {
         // Show selected model info if available
         if let Some(provider_id) = &*self.ivars().preselected_provider.borrow() {
             if let Some(model_id) = &*self.ivars().preselected_model.borrow() {
-                let selected_text = format!("Selected: {}:{}", provider_id, model_id);
+                let selected_text = format!("Selected: {provider_id}:{model_id}");
                 let selected_label = NSTextField::labelWithString(&NSString::from_str(&selected_text), mtm);
                 selected_label.setTextColor(Some(&Theme::text_primary()));
                 selected_label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
@@ -1064,7 +1064,7 @@ impl ProfileEditorViewController {
         }
 
         // Value label (fixed width)
-        let value_label = NSTextField::labelWithString(&NSString::from_str(&format!("{:.2}", initial_value)), mtm);
+        let value_label = NSTextField::labelWithString(&NSString::from_str(&format!("{initial_value:.2}")), mtm);
         value_label.setTextColor(Some(&Theme::text_primary()));
         value_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         value_label.setAlignment(objc2_app_kit::NSTextAlignment::Right);
@@ -1098,7 +1098,7 @@ impl ProfileEditorViewController {
         let manager = match RegistryManager::new() {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("Failed to create registry manager: {}", e);
+                eprintln!("Failed to create registry manager: {e}");
                 return;
             }
         };
@@ -1107,7 +1107,7 @@ impl ProfileEditorViewController {
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("Failed to create runtime: {}", e);
+                eprintln!("Failed to create runtime: {e}");
                 return;
             }
         };
@@ -1133,7 +1133,7 @@ impl ProfileEditorViewController {
                 }
             }
             Err(e) => {
-                eprintln!("Failed to load registry: {}", e);
+                eprintln!("Failed to load registry: {e}");
                 self.show_registry_error();
             }
         }
@@ -1155,7 +1155,7 @@ impl ProfileEditorViewController {
                         base_url_field.setStringValue(&NSString::from_str(api));
                     } else {
                         // Fallback to default format
-                        let default_url = format!("https://api.{}.com/v1", provider_id);
+                        let default_url = format!("https://api.{provider_id}.com/v1");
                         base_url_field.setStringValue(&NSString::from_str(&default_url));
                     }
                 }
@@ -1169,7 +1169,7 @@ impl ProfileEditorViewController {
         if let Some(container) = &*self.ivars().provider_picker.borrow() {
             // Clear existing subviews
             let subviews = container.subviews();
-            for view in subviews.iter() {
+            for view in &subviews {
                 if let Some(stack) = container.downcast_ref::<NSStackView>() {
                     unsafe {
                         stack.removeArrangedSubview(&view);
@@ -1226,7 +1226,7 @@ impl ProfileEditorViewController {
         if let Some(container) = &*self.ivars().model_picker.borrow() {
             // Clear existing subviews
             let subviews = container.subviews();
-            for view in subviews.iter() {
+            for view in &subviews {
                 if let Some(stack) = container.downcast_ref::<NSStackView>() {
                     unsafe {
                         stack.removeArrangedSubview(&view);
@@ -1292,7 +1292,7 @@ impl ProfileEditorViewController {
     
     fn update_provider_button_states(&self, selected_provider: &str) {
         if let Some(container) = &*self.ivars().provider_picker.borrow() {
-            for view in container.subviews().iter() {
+            for view in &container.subviews() {
                 if let Some(button) = view.downcast_ref::<NSButton>() {
                     let title = button.title().to_string();
                     
@@ -1313,7 +1313,7 @@ impl ProfileEditorViewController {
     
     fn update_model_button_states(&self, selected_model: &str) {
         if let Some(container) = &*self.ivars().model_picker.borrow() {
-            for view in container.subviews().iter() {
+            for view in &container.subviews() {
                 if let Some(button) = view.downcast_ref::<NSButton>() {
                     let title = button.title().to_string();
                     
@@ -1426,12 +1426,12 @@ impl ProfileEditorViewController {
             let url = field.stringValue().to_string();
             if url.trim().is_empty() {
                 // Default based on provider
-                format!("https://api.{}.com/v1", provider_id)
+                format!("https://api.{provider_id}.com/v1")
             } else {
                 url
             }
         } else {
-            format!("https://api.{}.com/v1", provider_id)
+            format!("https://api.{provider_id}.com/v1")
         };
         
         // Get parameters
@@ -1514,7 +1514,7 @@ impl ProfileEditorViewController {
         let config_path = match Config::default_path() {
             Ok(path) => path,
             Err(e) => {
-                eprintln!("Failed to get config path: {}", e);
+                eprintln!("Failed to get config path: {e}");
                 return false;
             }
         };
@@ -1522,15 +1522,15 @@ impl ProfileEditorViewController {
         let mut config = match Config::load(&config_path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to load config: {}", e);
+                eprintln!("Failed to load config: {e}");
                 return false;
             }
         };
         
         if self.ivars().editing_profile_id.borrow().is_some() {
             // Update existing
-            if let Err(e) = config.update_profile(profile.clone()) {
-                eprintln!("Failed to update profile: {}", e);
+            if let Err(e) = config.update_profile(profile) {
+                eprintln!("Failed to update profile: {e}");
                 return false;
             }
         } else {
@@ -1545,7 +1545,7 @@ impl ProfileEditorViewController {
         
         // Save config
         if let Err(e) = config.save(&config_path) {
-            eprintln!("Failed to save config: {}", e);
+            eprintln!("Failed to save config: {e}");
             return false;
         }
         

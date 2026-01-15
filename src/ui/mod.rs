@@ -10,8 +10,6 @@ mod theme;
 pub use chat_view::ChatViewController;
 pub use history_view::HistoryViewController;
 pub use model_selector::ModelSelectorViewController;
-pub use profile_editor::ProfileEditorViewController;
 pub use profile_editor_demo::ProfileEditorDemoViewController;
 pub use settings_view::SettingsViewController;
-pub use simple_test::SimpleTestViewController;
 pub use theme::{Theme, FlippedStackView};

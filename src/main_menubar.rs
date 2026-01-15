@@ -1,4 +1,4 @@
-//! Pure macOS menu bar app with NSPopover - like BarTranslate
+//! Pure macOS menu bar app with `NSPopover` - like `BarTranslate`
 //!
 //! This is a minimal implementation that uses native macOS APIs directly
 //! without trying to wrap an eframe window.
@@ -18,9 +18,8 @@ use objc2_app_kit::{
 };
 
 mod ui;
-use ui::{ChatViewController, HistoryViewController, ModelSelectorViewController, ProfileEditorViewController, ProfileEditorDemoViewController, SettingsViewController, SimpleTestViewController};
+use ui::{ChatViewController, HistoryViewController, ModelSelectorViewController, ProfileEditorDemoViewController, SettingsViewController};
 use ui::history_view::LOADED_CONVERSATION_JSON;
-use ui::settings_view::EDITING_PROFILE_ID;
 
 // Thread-local storage for selected model from model selector
 thread_local! {
@@ -40,7 +39,7 @@ thread_local! {
 
 // PopoverContentViewController is now replaced by ChatViewController from ui module
 
-/// Load PNG data as an NSImage (for menu bar icons)
+/// Load PNG data as an `NSImage` (for menu bar icons)
 /// NOT a template - we want to keep the original colors (red eye)
 fn load_image(png_data: &[u8]) -> Option<Retained<NSImage>> {
     use objc2::AllocAnyThread;
@@ -318,7 +317,7 @@ define_class!(
         #[unsafe(method(loadConversation:))]
         fn load_conversation(&self, _notification: &NSNotification) {
             // Get conversation JSON from thread-local storage
-            let json_opt = LOADED_CONVERSATION_JSON.with(|cell| cell.take());
+            let json_opt = LOADED_CONVERSATION_JSON.with(std::cell::Cell::take);
             
             if let Some(json) = json_opt {
                 // Deserialize conversation
@@ -343,7 +342,7 @@ define_class!(
                         CHAT_VIEW_CONTROLLER.set(chat_view);
                     }
                     Err(e) => {
-                        eprintln!("Failed to deserialize conversation: {}", e);
+                        eprintln!("Failed to deserialize conversation: {e}");
                     }
                 }
             }
