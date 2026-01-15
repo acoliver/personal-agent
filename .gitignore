@@ -18,3 +18,4 @@ Cargo.lock
 # Build artifacts
 *.app
 *.dmg
+tmp/
