@@ -1,4 +1,4 @@
-//! Settings view for managing model profiles and configuration
+//! Settings view for managing model profiles and MCP configuration
 
 use std::cell::{Cell, RefCell};
 use std::fs::OpenOptions;
@@ -13,13 +13,13 @@ use objc2_foundation::{
 use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle,
     NSStackView, NSUserInterfaceLayoutOrientation, NSStackViewDistribution, NSLayoutConstraintOrientation,
+    NSSwitch, NSControlStateValueOn, NSControlStateValueOff,
 };
 use objc2_quartz_core::CALayer;
 use uuid::Uuid;
 
 use super::theme::Theme;
-use personal_agent::config::Config;
-use personal_agent::models::AuthConfig;
+use personal_agent::config::{Config, McpConfig};
 
 fn log_to_file(message: &str) {
     let log_path = dirs::home_dir()
@@ -51,15 +51,11 @@ fn set_layer_corner_radius(layer: &CALayer, radius: f64) {
     layer.setCornerRadius(radius);
 }
 
-// ============================================================================
-// Settings callback protocol
-// ============================================================================
-
-/// Callback trait for settings view actions
-pub trait SettingsDelegate {
-    fn settings_did_select_profile(&self, profile_id: String);
-    fn settings_did_request_refresh(&self);
-    fn settings_did_close(&self);
+fn set_layer_border(layer: &CALayer, width: f64, r: f64, g: f64, b: f64) {
+    use objc2_core_graphics::CGColor;
+    let color = CGColor::new_generic_rgb(r, g, b, 1.0);
+    layer.setBorderColor(Some(&color));
+    layer.setBorderWidth(width);
 }
 
 // ============================================================================
@@ -67,8 +63,22 @@ pub trait SettingsDelegate {
 // ============================================================================
 
 pub struct SettingsViewIvars {
-    profiles_container: RefCell<Option<Retained<NSView>>>,
     scroll_view: RefCell<Option<Retained<NSScrollView>>>,
+    profiles_list: RefCell<Option<Retained<super::FlippedStackView>>>,
+    profiles_toolbar: RefCell<Option<Retained<NSView>>>,
+    mcps_list: RefCell<Option<Retained<super::FlippedStackView>>>,
+    mcps_toolbar: RefCell<Option<Retained<NSView>>>,
+    hotkey_field: RefCell<Option<Retained<NSTextField>>>,
+    selected_profile_id: RefCell<Option<Uuid>>,
+    selected_mcp_id: RefCell<Option<Uuid>>,
+    // Store buttons for enable/disable control
+    profile_delete_btn: RefCell<Option<Retained<NSButton>>>,
+    profile_edit_btn: RefCell<Option<Retained<NSButton>>>,
+    mcp_delete_btn: RefCell<Option<Retained<NSButton>>>,
+    mcp_edit_btn: RefCell<Option<Retained<NSButton>>>,
+    // Maps to track UUID to index for tags
+    profile_uuid_map: RefCell<Vec<Uuid>>,
+    mcp_uuid_map: RefCell<Vec<Uuid>>,
 }
 
 // ============================================================================
@@ -103,19 +113,17 @@ define_class!(
                 main_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
                 main_stack.setSpacing(0.0);
                 main_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
-                main_stack.setDistribution(objc2_app_kit::NSStackViewDistribution::Fill);
+                main_stack.setDistribution(NSStackViewDistribution::Fill);
             }
             
             // Build the UI components
-            let top_bar = self.build_top_bar_stack(mtm);
-            let content_area = self.build_content_area_stack(mtm);
-            let bottom_area = self.build_bottom_buttons_stack(mtm);
+            let top_bar = self.build_top_bar(mtm);
+            let content_scroll = self.build_content_area(mtm);
             
             // Add to stack
             unsafe {
                 main_stack.addArrangedSubview(&top_bar);
-                main_stack.addArrangedSubview(&content_area);
-                main_stack.addArrangedSubview(&bottom_area);
+                main_stack.addArrangedSubview(&content_scroll);
             }
             
             // Add stack to main view
@@ -123,7 +131,6 @@ define_class!(
             
             // Set constraints to fill parent
             unsafe {
-                // Activate constraints individually
                 let leading = main_stack.leadingAnchor().constraintEqualToAnchor(&main_view.leadingAnchor());
                 leading.setActive(true);
                 
@@ -139,13 +146,18 @@ define_class!(
 
             self.setView(&main_view);
             
-            // Load profiles
+            // Load data
             self.load_profiles();
+            self.load_mcps();
+            self.load_hotkey();
         }
+
+        // ========================================================================
+        // Action handlers
+        // ========================================================================
 
         #[unsafe(method(backButtonClicked:))]
         fn back_button_clicked(&self, _sender: Option<&NSObject>) {
-            // Post notification to switch back to chat view
             use objc2_foundation::NSNotificationCenter;
             let center = NSNotificationCenter::defaultCenter();
             let name = NSString::from_str("PersonalAgentShowChatView");
@@ -156,9 +168,8 @@ define_class!(
 
         #[unsafe(method(refreshButtonClicked:))]
         fn refresh_button_clicked(&self, _sender: Option<&NSObject>) {
-            println!("Refresh models requested - fetching from models.dev");
+            log_to_file("Refresh models requested");
             
-            // Spawn async task to refresh registry
             use personal_agent::registry::RegistryManager;
             
             std::thread::spawn(|| {
@@ -183,13 +194,29 @@ define_class!(
                 });
             });
             
-            // Reload profiles (they'll pick up new registry next time editor is opened)
             self.load_profiles();
+        }
+
+        #[unsafe(method(profileRowClicked:))]
+        fn profile_row_clicked(&self, sender: Option<&NSObject>) {
+            if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
+                // Get profile UUID from tag
+                let tag = button.tag() as usize;
+                // Must drop borrow before calling select_profile (which calls load_profiles)
+                let uuid = {
+                    let uuid_map = self.ivars().profile_uuid_map.borrow();
+                    uuid_map.get(tag).copied()
+                };
+                if let Some(uuid) = uuid {
+                    log_to_file(&format!("Profile row clicked: {uuid}"));
+                    self.select_profile(uuid);
+                }
+            }
         }
 
         #[unsafe(method(addProfileClicked:))]
         fn add_profile_clicked(&self, _sender: Option<&NSObject>) {
-            // Post notification to show model selector
+            log_to_file("Add profile clicked");
             use objc2_foundation::NSNotificationCenter;
             let center = NSNotificationCenter::defaultCenter();
             let name = NSString::from_str("PersonalAgentShowModelSelector");
@@ -198,107 +225,30 @@ define_class!(
             }
         }
 
-        #[unsafe(method(profileEditClicked:))]
-        fn profile_edit_clicked(&self, sender: Option<&NSObject>) {
-            // Get the button's tag (profile index)
-            if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
-                let tag = button.tag();
-                println!("Profile edit clicked: tag {tag}");
+        #[unsafe(method(editProfileClicked:))]
+        fn edit_profile_clicked(&self, _sender: Option<&NSObject>) {
+            if let Some(profile_id) = *self.ivars().selected_profile_id.borrow() {
+                log_to_file(&format!("Edit profile clicked: {profile_id}"));
                 
-                // Load the config
-                let config_path = match Config::default_path() {
-                    Ok(path) => path,
-                    Err(e) => {
-                        eprintln!("Failed to get config path: {e}");
-                        return;
-                    }
-                };
+                EDITING_PROFILE_ID.set(Some(profile_id));
                 
-                let config = match Config::load(&config_path) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        eprintln!("Failed to load config: {e}");
-                        return;
-                    }
-                };
-                
-                // Get the profile from the selected index
-                if let Some(profile) = config.profiles.get(tag as usize) {
-                    // Store profile ID in thread-local storage for profile editor
-                    EDITING_PROFILE_ID.set(Some(profile.id));
-                    
-                    // Post notification to show profile editor
-                    use objc2_foundation::NSNotificationCenter;
-                    let center = NSNotificationCenter::defaultCenter();
-                    let name = NSString::from_str("PersonalAgentShowProfileEditor");
-                    unsafe {
-                        center.postNotificationName_object(&name, None);
-                    }
-                }
-            }
-        }
-
-        #[unsafe(method(profileSelected:))]
-        fn profile_selected(&self, sender: Option<&NSObject>) {
-            // Get the button's tag (profile index)
-            if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
-                let tag = button.tag();
-                println!("Profile selected: tag {tag}");
-                
-                // Load the config
-                let config_path = match Config::default_path() {
-                    Ok(path) => path,
-                    Err(e) => {
-                        eprintln!("Failed to get config path: {e}");
-                        return;
-                    }
-                };
-                
-                let mut config = match Config::load(&config_path) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        eprintln!("Failed to load config: {e}");
-                        return;
-                    }
-                };
-                
-                // Get the profile ID from the selected index
-                if let Some(profile) = config.profiles.get(tag as usize) {
-                    let profile_id = profile.id;
-                    
-                    // Set as active profile
-                    config.default_profile = Some(profile_id);
-                    
-                    // Save the config
-                    if let Err(e) = config.save(&config_path) {
-                        eprintln!("Failed to save config: {e}");
-                    } else {
-                        println!("Active profile set to: {}", profile.name);
-                    }
-                }
-                
-                // Post notification to go back to chat
                 use objc2_foundation::NSNotificationCenter;
                 let center = NSNotificationCenter::defaultCenter();
-                let name = NSString::from_str("PersonalAgentShowChatView");
+                let name = NSString::from_str("PersonalAgentShowProfileEditor");
                 unsafe {
                     center.postNotificationName_object(&name, None);
                 }
             }
         }
 
-        #[unsafe(method(deleteProfile:))]
-        fn delete_profile(&self, sender: Option<&NSObject>) {
-            use objc2_app_kit::NSAlert;
-            
-            // Get the button's tag (profile index)
-            if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
-                let tag = button.tag();
-                println!("Delete profile requested: tag {tag}");
+        #[unsafe(method(deleteProfileClicked:))]
+        fn delete_profile_clicked(&self, _sender: Option<&NSObject>) {
+            if let Some(profile_id) = *self.ivars().selected_profile_id.borrow() {
+                log_to_file(&format!("Delete profile clicked: {profile_id}"));
                 
+                use objc2_app_kit::NSAlert;
                 let mtm = MainThreadMarker::new().unwrap();
                 
-                // Show confirmation dialog
                 let alert = NSAlert::new(mtm);
                 alert.setMessageText(&NSString::from_str("Delete Profile?"));
                 alert.setInformativeText(&NSString::from_str("This action cannot be undone."));
@@ -309,7 +259,6 @@ define_class!(
                 
                 // NSAlertFirstButtonReturn = 1000
                 if response == 1000 {
-                    // Load the config
                     let config_path = match Config::default_path() {
                         Ok(path) => path,
                         Err(e) => {
@@ -326,27 +275,181 @@ define_class!(
                         }
                     };
                     
-                    // Get the profile ID from the selected index
-                    if let Some(profile) = config.profiles.get(tag as usize) {
-                        let profile_id = profile.id;
-                        
-                        // Remove the profile
-                        if let Err(e) = config.remove_profile(&profile_id) {
-                            eprintln!("Failed to remove profile: {e}");
+                    if let Err(e) = config.remove_profile(&profile_id) {
+                        eprintln!("Failed to remove profile: {e}");
+                        return;
+                    }
+                    
+                    // If deleted profile was default, set new default
+                    if config.default_profile == Some(profile_id) {
+                        config.default_profile = config.profiles.first().map(|p| p.id);
+                    }
+                    
+                    if let Err(e) = config.save(&config_path) {
+                        eprintln!("Failed to save config: {e}");
+                        return;
+                    }
+                    
+                    log_to_file("Profile deleted successfully");
+                    self.load_profiles();
+                }
+            }
+        }
+
+        #[unsafe(method(mcpRowClicked:))]
+        fn mcp_row_clicked(&self, sender: Option<&NSObject>) {
+            if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
+                // Get MCP UUID from tag
+                let tag = button.tag() as usize;
+                let uuid_map = self.ivars().mcp_uuid_map.borrow();
+                if let Some(&uuid) = uuid_map.get(tag) {
+                    log_to_file(&format!("MCP row clicked: {uuid}"));
+                    self.select_mcp(uuid);
+                }
+            }
+        }
+
+        #[unsafe(method(mcpToggled:))]
+        fn mcp_toggled(&self, sender: Option<&NSObject>) {
+            if let Some(switch) = sender.and_then(|s| s.downcast_ref::<NSSwitch>()) {
+                // Get MCP UUID from tag
+                let tag = switch.tag() as usize;
+                let uuid_map = self.ivars().mcp_uuid_map.borrow();
+                if let Some(&uuid) = uuid_map.get(tag) {
+                    let is_on = switch.state() == NSControlStateValueOn;
+                    log_to_file(&format!("MCP toggled: {uuid}, enabled: {is_on}"));
+                    
+                    let config_path = match Config::default_path() {
+                        Ok(path) => path,
+                        Err(e) => {
+                            eprintln!("Failed to get config path: {e}");
                             return;
                         }
+                    };
+                    
+                    let mut config = match Config::load(&config_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("Failed to load config: {e}");
+                            return;
+                        }
+                    };
+                    
+                    // Find and update the MCP
+                    if let Some(mcp) = config.mcps.iter_mut().find(|m| m.id == uuid) {
+                        mcp.enabled = is_on;
                         
-                        // Save the config
                         if let Err(e) = config.save(&config_path) {
                             eprintln!("Failed to save config: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        #[unsafe(method(addMcpClicked:))]
+        fn add_mcp_clicked(&self, _sender: Option<&NSObject>) {
+            log_to_file("Add MCP clicked");
+            
+            use objc2_app_kit::NSAlert;
+            let mtm = MainThreadMarker::new().unwrap();
+            
+            let alert = NSAlert::new(mtm);
+            alert.setMessageText(&NSString::from_str("MCP Editor"));
+            alert.setInformativeText(&NSString::from_str("MCP editor coming soon."));
+            alert.addButtonWithTitle(&NSString::from_str("OK"));
+            unsafe { alert.runModal() };
+        }
+
+        #[unsafe(method(editMcpClicked:))]
+        fn edit_mcp_clicked(&self, _sender: Option<&NSObject>) {
+            log_to_file("Edit MCP clicked");
+            
+            use objc2_app_kit::NSAlert;
+            let mtm = MainThreadMarker::new().unwrap();
+            
+            let alert = NSAlert::new(mtm);
+            alert.setMessageText(&NSString::from_str("MCP Editor"));
+            alert.setInformativeText(&NSString::from_str("MCP editor coming soon."));
+            alert.addButtonWithTitle(&NSString::from_str("OK"));
+            unsafe { alert.runModal() };
+        }
+
+        #[unsafe(method(deleteMcpClicked:))]
+        fn delete_mcp_clicked(&self, _sender: Option<&NSObject>) {
+            if let Some(mcp_id) = *self.ivars().selected_mcp_id.borrow() {
+                log_to_file(&format!("Delete MCP clicked: {mcp_id}"));
+                
+                use objc2_app_kit::NSAlert;
+                let mtm = MainThreadMarker::new().unwrap();
+                
+                let alert = NSAlert::new(mtm);
+                alert.setMessageText(&NSString::from_str("Delete MCP?"));
+                alert.setInformativeText(&NSString::from_str("This action cannot be undone."));
+                alert.addButtonWithTitle(&NSString::from_str("Delete"));
+                alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+                
+                let response = unsafe { alert.runModal() };
+                
+                if response == 1000 {
+                    let config_path = match Config::default_path() {
+                        Ok(path) => path,
+                        Err(e) => {
+                            eprintln!("Failed to get config path: {e}");
                             return;
                         }
-                        
-                        println!("Profile deleted successfully");
-                        
-                        // Reload profiles
-                        self.load_profiles();
+                    };
+                    
+                    let mut config = match Config::load(&config_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("Failed to load config: {e}");
+                            return;
+                        }
+                    };
+                    
+                    if let Err(e) = config.remove_mcp(&mcp_id) {
+                        eprintln!("Failed to remove MCP: {e}");
+                        return;
                     }
+                    
+                    if let Err(e) = config.save(&config_path) {
+                        eprintln!("Failed to save config: {e}");
+                        return;
+                    }
+                    
+                    log_to_file("MCP deleted successfully");
+                    self.load_mcps();
+                }
+            }
+        }
+
+        #[unsafe(method(hotkeyChanged:))]
+        fn hotkey_changed(&self, sender: Option<&NSObject>) {
+            if let Some(field) = sender.and_then(|s| s.downcast_ref::<NSTextField>()) {
+                let text = field.stringValue().to_string();
+                log_to_file(&format!("Hotkey changed: {text}"));
+                
+                let config_path = match Config::default_path() {
+                    Ok(path) => path,
+                    Err(e) => {
+                        eprintln!("Failed to get config path: {e}");
+                        return;
+                    }
+                };
+                
+                let mut config = match Config::load(&config_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Failed to load config: {e}");
+                        return;
+                    }
+                };
+                
+                config.global_hotkey = text;
+                
+                if let Err(e) = config.save(&config_path) {
+                    eprintln!("Failed to save config: {e}");
                 }
             }
         }
@@ -356,8 +459,20 @@ define_class!(
 impl SettingsViewController {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let ivars = SettingsViewIvars {
-            profiles_container: RefCell::new(None),
             scroll_view: RefCell::new(None),
+            profiles_list: RefCell::new(None),
+            profiles_toolbar: RefCell::new(None),
+            mcps_list: RefCell::new(None),
+            mcps_toolbar: RefCell::new(None),
+            hotkey_field: RefCell::new(None),
+            selected_profile_id: RefCell::new(None),
+            selected_mcp_id: RefCell::new(None),
+            profile_delete_btn: RefCell::new(None),
+            profile_edit_btn: RefCell::new(None),
+            mcp_delete_btn: RefCell::new(None),
+            mcp_edit_btn: RefCell::new(None),
+            profile_uuid_map: RefCell::new(Vec::new()),
+            mcp_uuid_map: RefCell::new(Vec::new()),
         };
         
         let this = Self::alloc(mtm).set_ivars(ivars);
@@ -369,8 +484,11 @@ impl SettingsViewController {
         self.load_profiles();
     }
 
-    fn build_top_bar_stack(&self, mtm: MainThreadMarker) -> Retained<NSView> {
-        // Create horizontal stack for top bar (fixed height 44px per wireframe)
+    // ========================================================================
+    // UI building methods
+    // ========================================================================
+
+    fn build_top_bar(&self, mtm: MainThreadMarker) -> Retained<NSView> {
         let top_bar = NSStackView::new(mtm);
         unsafe {
             top_bar.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
@@ -390,15 +508,13 @@ impl SettingsViewController {
             set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
         }
         
-        // CRITICAL: Set fixed height and high content hugging priority
         unsafe {
             top_bar.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
-            top_bar.setContentCompressionResistancePriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
             let height_constraint = top_bar.heightAnchor().constraintEqualToConstant(44.0);
             height_constraint.setActive(true);
         }
 
-        // Back button (w=40 per wireframe)
+        // Back button
         let back_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
                 &NSString::from_str("<"),
@@ -410,7 +526,6 @@ impl SettingsViewController {
         back_btn.setBezelStyle(NSBezelStyle::Rounded);
         unsafe {
             back_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            back_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
             let width_constraint = back_btn.widthAnchor().constraintEqualToConstant(40.0);
             width_constraint.setActive(true);
         }
@@ -423,20 +538,17 @@ impl SettingsViewController {
         title.setTextColor(Some(&Theme::text_primary()));
         title.setFont(Some(&NSFont::boldSystemFontOfSize(14.0)));
         unsafe {
-            title.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-        }
-        unsafe {
             top_bar.addArrangedSubview(&title);
         }
         
-        // Spacer (flexible)
+        // Spacer
         let spacer = NSView::new(mtm);
         unsafe {
             spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
             top_bar.addArrangedSubview(&spacer);
         }
         
-        // Refresh Models button (w=120 per wireframe)
+        // Refresh Models button
         let refresh_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
                 &NSString::from_str("Refresh Models"),
@@ -448,7 +560,6 @@ impl SettingsViewController {
         refresh_btn.setBezelStyle(NSBezelStyle::Rounded);
         unsafe {
             refresh_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            refresh_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
             let width_constraint = refresh_btn.widthAnchor().constraintEqualToConstant(120.0);
             width_constraint.setActive(true);
         }
@@ -459,329 +570,758 @@ impl SettingsViewController {
         Retained::from(&*top_bar as &NSView)
     }
 
-    fn build_content_area_stack(&self, mtm: MainThreadMarker) -> Retained<NSScrollView> {
-        // Create scroll view (flexible - takes remaining space)
+    fn build_content_area(&self, mtm: MainThreadMarker) -> Retained<NSScrollView> {
         let scroll_view = NSScrollView::new(mtm);
         scroll_view.setHasVerticalScroller(true);
         scroll_view.setDrawsBackground(false);
         unsafe {
             scroll_view.setAutohidesScrollers(true);
             scroll_view.setTranslatesAutoresizingMaskIntoConstraints(false);
-        }
-        
-        // CRITICAL: Set low content hugging priority so it expands to fill space
-        unsafe {
             scroll_view.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Vertical);
-            scroll_view.setContentCompressionResistancePriority_forOrientation(250.0, NSLayoutConstraintOrientation::Vertical);
-            
-            // Add minimum height constraint to prevent collapse
-            let min_height = scroll_view.heightAnchor().constraintGreaterThanOrEqualToConstant(100.0);
-            min_height.setActive(true);
         }
 
-        // Create vertical stack for profiles inside scroll view
-        // Use FlippedStackView so content starts at TOP (not bottom)
-        let profiles_stack = super::FlippedStackView::new(mtm);
+        // Create vertical stack for content
+        let content_stack = NSStackView::new(mtm);
         unsafe {
-            profiles_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-            profiles_stack.setSpacing(1.0);
-            profiles_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Width);
-            // Fill distribution works correctly with flipped coordinates
-            profiles_stack.setDistribution(NSStackViewDistribution::Fill);
-            profiles_stack.setEdgeInsets(objc2_foundation::NSEdgeInsets {
-                top: 0.0,
-                left: 0.0,
-                bottom: 0.0,
-                right: 0.0,
+            content_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+            content_stack.setSpacing(8.0);
+            content_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Width);
+            content_stack.setDistribution(NSStackViewDistribution::Fill);
+            content_stack.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+                top: 8.0,
+                left: 8.0,
+                bottom: 8.0,
+                right: 8.0,
             });
         }
         
-        profiles_stack.setWantsLayer(true);
-        if let Some(layer) = profiles_stack.layer() {
+        content_stack.setWantsLayer(true);
+        if let Some(layer) = content_stack.layer() {
             set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
         }
         
-        // CRITICAL: Set translatesAutoresizingMaskIntoConstraints for proper Auto Layout
-        profiles_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
+        content_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
 
-        scroll_view.setDocumentView(Some(&profiles_stack));
+        // Build sections
+        let profiles_section = self.build_profiles_section(mtm);
+        let separator1 = self.build_separator(mtm);
+        let mcps_section = self.build_mcps_section(mtm);
+        let separator2 = self.build_separator(mtm);
+        let hotkey_section = self.build_hotkey_section(mtm);
         
-        // CRITICAL: Constrain stack width to scroll view's content width (minus padding)
+        unsafe {
+            content_stack.addArrangedSubview(&profiles_section);
+            content_stack.addArrangedSubview(&separator1);
+            content_stack.addArrangedSubview(&mcps_section);
+            content_stack.addArrangedSubview(&separator2);
+            content_stack.addArrangedSubview(&hotkey_section);
+        }
+
+        scroll_view.setDocumentView(Some(&content_stack));
+        
         let content_view = scroll_view.contentView();
-        let width_constraint = profiles_stack.widthAnchor().constraintEqualToAnchor_constant(&content_view.widthAnchor(), -24.0);
+        let width_constraint = content_stack.widthAnchor().constraintEqualToAnchor(&content_view.widthAnchor());
         width_constraint.setActive(true);
 
-        // Store references
         *self.ivars().scroll_view.borrow_mut() = Some(scroll_view.clone());
-        *self.ivars().profiles_container.borrow_mut() = Some(Retained::from(&*profiles_stack as &NSView));
 
         scroll_view
     }
 
-    fn build_bottom_buttons_stack(&self, mtm: MainThreadMarker) -> Retained<NSView> {
-        // Create horizontal stack for bottom bar (fixed height 50px per wireframe)
-        let bottom_stack = NSStackView::new(mtm);
+    fn build_profiles_section(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+        // Use plain NSView with manual constraints for precise control
+        let section = NSView::new(mtm);
+        section.setTranslatesAutoresizingMaskIntoConstraints(false);
+        
+        // Section label
+        let label = NSTextField::labelWithString(&NSString::from_str("Profiles"), mtm);
+        label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
+        label.setTextColor(Some(&Theme::text_primary()));
+        label.setTranslatesAutoresizingMaskIntoConstraints(false);
+        section.addSubview(&label);
+        
+        // List box container
+        let (list_container, list_stack, toolbar) = self.build_list_box(120.0, mtm);
+        section.addSubview(&list_container);
+        
+        // Constraints
         unsafe {
-            bottom_stack.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-            bottom_stack.setSpacing(8.0);
-            bottom_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
-            bottom_stack.setDistribution(NSStackViewDistribution::Fill);
-            bottom_stack.setEdgeInsets(objc2_foundation::NSEdgeInsets {
-                top: 10.0,
-                left: 12.0,
-                bottom: 10.0,
-                right: 12.0,
+            // Label at top, left aligned
+            let label_top = label.topAnchor().constraintEqualToAnchor(&section.topAnchor());
+            label_top.setActive(true);
+            let label_left = label.leadingAnchor().constraintEqualToAnchor(&section.leadingAnchor());
+            label_left.setActive(true);
+            
+            // List container below label, full width
+            let lc_top = list_container.topAnchor().constraintEqualToAnchor_constant(&label.bottomAnchor(), 4.0);
+            lc_top.setActive(true);
+            let lc_left = list_container.leadingAnchor().constraintEqualToAnchor(&section.leadingAnchor());
+            lc_left.setActive(true);
+            let lc_right = list_container.trailingAnchor().constraintEqualToAnchor(&section.trailingAnchor());
+            lc_right.setActive(true);
+            let lc_bottom = list_container.bottomAnchor().constraintEqualToAnchor(&section.bottomAnchor());
+            lc_bottom.setActive(true);
+        }
+        
+        // Store references
+        *self.ivars().profiles_list.borrow_mut() = Some(list_stack);
+        *self.ivars().profiles_toolbar.borrow_mut() = Some(toolbar.clone());
+        
+        // Add toolbar buttons
+        self.setup_profiles_toolbar(&toolbar, mtm);
+        
+        section
+    }
+
+    fn build_mcps_section(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+        // Use plain NSView with manual constraints for precise control
+        let section = NSView::new(mtm);
+        section.setTranslatesAutoresizingMaskIntoConstraints(false);
+        
+        // Section label
+        let label = NSTextField::labelWithString(&NSString::from_str("MCPs"), mtm);
+        label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
+        label.setTextColor(Some(&Theme::text_primary()));
+        label.setTranslatesAutoresizingMaskIntoConstraints(false);
+        section.addSubview(&label);
+        
+        // List box container - same height as Profiles
+        let (list_container, list_stack, toolbar) = self.build_list_box(120.0, mtm);
+        section.addSubview(&list_container);
+        
+        // Constraints
+        unsafe {
+            // Label at top, left aligned
+            let label_top = label.topAnchor().constraintEqualToAnchor(&section.topAnchor());
+            label_top.setActive(true);
+            let label_left = label.leadingAnchor().constraintEqualToAnchor(&section.leadingAnchor());
+            label_left.setActive(true);
+            
+            // List container below label, full width
+            let lc_top = list_container.topAnchor().constraintEqualToAnchor_constant(&label.bottomAnchor(), 4.0);
+            lc_top.setActive(true);
+            let lc_left = list_container.leadingAnchor().constraintEqualToAnchor(&section.leadingAnchor());
+            lc_left.setActive(true);
+            let lc_right = list_container.trailingAnchor().constraintEqualToAnchor(&section.trailingAnchor());
+            lc_right.setActive(true);
+            let lc_bottom = list_container.bottomAnchor().constraintEqualToAnchor(&section.bottomAnchor());
+            lc_bottom.setActive(true);
+        }
+        
+        // Store references
+        *self.ivars().mcps_list.borrow_mut() = Some(list_stack);
+        *self.ivars().mcps_toolbar.borrow_mut() = Some(toolbar.clone());
+        
+        // Add toolbar buttons
+        self.setup_mcps_toolbar(&toolbar, mtm);
+        
+        section
+    }
+
+    fn build_hotkey_section(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+        let section = NSStackView::new(mtm);
+        unsafe {
+            section.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+            section.setSpacing(4.0);
+            section.setTranslatesAutoresizingMaskIntoConstraints(false);
+        }
+        
+        // Label
+        let label = NSTextField::labelWithString(&NSString::from_str("Global Hotkey:"), mtm);
+        label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        label.setTextColor(Some(&Theme::text_primary()));
+        unsafe {
+            label.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            section.addArrangedSubview(&label);
+        }
+        
+        // Text field
+        let field = NSTextField::new(mtm);
+        field.setBackgroundColor(Some(&Theme::bg_darker()));
+        field.setTextColor(Some(&Theme::text_primary()));
+        field.setDrawsBackground(true);
+        field.setBordered(true);
+        field.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        unsafe {
+            field.setTarget(Some(self));
+            field.setAction(Some(sel!(hotkeyChanged:)));
+            field.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+            section.addArrangedSubview(&field);
+        }
+        
+        *self.ivars().hotkey_field.borrow_mut() = Some(field);
+        
+        Retained::from(&*section as &NSView)
+    }
+
+    fn build_list_box(&self, height: f64, mtm: MainThreadMarker) -> (Retained<NSView>, Retained<super::FlippedStackView>, Retained<NSView>) {
+        // Container with border - use NSView not NSStackView so we can control layout more precisely
+        let container = NSView::new(mtm);
+        container.setTranslatesAutoresizingMaskIntoConstraints(false);
+        
+        container.setWantsLayer(true);
+        if let Some(layer) = container.layer() {
+            set_layer_background_color(&layer, Theme::BG_DARKER.0, Theme::BG_DARKER.1, Theme::BG_DARKER.2);
+            set_layer_corner_radius(&layer, 4.0);
+            set_layer_border(&layer, 1.0, 0.3, 0.3, 0.3);
+        }
+        
+        // Inner scroll view for list items
+        let scroll_view = NSScrollView::new(mtm);
+        scroll_view.setHasVerticalScroller(true);
+        scroll_view.setDrawsBackground(false);
+        scroll_view.setTranslatesAutoresizingMaskIntoConstraints(false);
+        unsafe {
+            scroll_view.setAutohidesScrollers(true);
+        }
+        
+        // List stack - use FlippedStackView so items start at TOP (not bottom)
+        let list_stack = super::FlippedStackView::new(mtm);
+        unsafe {
+            list_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+            list_stack.setSpacing(1.0);
+            list_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Width);
+            list_stack.setDistribution(NSStackViewDistribution::Fill);
+            list_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
+        }
+        
+        scroll_view.setDocumentView(Some(&list_stack));
+        
+        // Toolbar
+        let toolbar = NSStackView::new(mtm);
+        unsafe {
+            toolbar.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+            toolbar.setSpacing(4.0);
+            toolbar.setTranslatesAutoresizingMaskIntoConstraints(false);
+            toolbar.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+                top: 4.0,
+                left: 4.0,
+                bottom: 4.0,
+                right: 4.0,
             });
         }
         
-        bottom_stack.setWantsLayer(true);
-        if let Some(layer) = bottom_stack.layer() {
+        toolbar.setWantsLayer(true);
+        if let Some(layer) = toolbar.layer() {
             set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
         }
         
-        // CRITICAL: Set fixed height and high content hugging priority
+        // Add subviews to container
+        container.addSubview(&scroll_view);
+        container.addSubview(&toolbar);
+        
+        // Set up constraints manually for precise control
         unsafe {
-            bottom_stack.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
-            bottom_stack.setContentCompressionResistancePriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
-            let height_constraint = bottom_stack.heightAnchor().constraintEqualToConstant(50.0);
+            // Container height = scroll_view height + toolbar height
+            let container_height = container.heightAnchor().constraintEqualToConstant(height + 28.0);
+            container_height.setActive(true);
+            
+            // Scroll view: top, left, right of container, fixed height
+            let sv_top = scroll_view.topAnchor().constraintEqualToAnchor(&container.topAnchor());
+            sv_top.setActive(true);
+            let sv_left = scroll_view.leadingAnchor().constraintEqualToAnchor(&container.leadingAnchor());
+            sv_left.setActive(true);
+            let sv_right = scroll_view.trailingAnchor().constraintEqualToAnchor(&container.trailingAnchor());
+            sv_right.setActive(true);
+            let sv_height = scroll_view.heightAnchor().constraintEqualToConstant(height);
+            sv_height.setActive(true);
+            
+            // Toolbar: bottom, left, right of container, fixed height
+            let tb_bottom = toolbar.bottomAnchor().constraintEqualToAnchor(&container.bottomAnchor());
+            tb_bottom.setActive(true);
+            let tb_left = toolbar.leadingAnchor().constraintEqualToAnchor(&container.leadingAnchor());
+            tb_left.setActive(true);
+            let tb_right = toolbar.trailingAnchor().constraintEqualToAnchor(&container.trailingAnchor());
+            tb_right.setActive(true);
+            let tb_height = toolbar.heightAnchor().constraintEqualToConstant(28.0);
+            tb_height.setActive(true);
+            
+            // List stack width = scroll view content width
+            let content_view = scroll_view.contentView();
+            let ls_width = list_stack.widthAnchor().constraintEqualToAnchor(&content_view.widthAnchor());
+            ls_width.setActive(true);
+        }
+        
+        (container, list_stack, Retained::from(&*toolbar as &NSView))
+    }
+
+    fn build_separator(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+        let separator = NSView::new(mtm);
+        separator.setWantsLayer(true);
+        if let Some(layer) = separator.layer() {
+            set_layer_background_color(&layer, 0.3, 0.3, 0.3);
+        }
+        unsafe {
+            separator.setTranslatesAutoresizingMaskIntoConstraints(false);
+            let height_constraint = separator.heightAnchor().constraintEqualToConstant(1.0);
             height_constraint.setActive(true);
         }
-
-        // Spacer (flexible, pushes button to right)
-        let spacer = NSView::new(mtm);
-        unsafe {
-            spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
-            bottom_stack.addArrangedSubview(&spacer);
-        }
-
-        // Add Profile button (per wireframe)
-        let add_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("+ Add Profile"),
-                Some(self),
-                Some(sel!(addProfileClicked:)),
-                mtm,
-            )
-        };
-        add_btn.setBezelStyle(NSBezelStyle::Rounded);
-        unsafe {
-            add_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            add_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-            let width_constraint = add_btn.widthAnchor().constraintGreaterThanOrEqualToConstant(100.0);
-            width_constraint.setActive(true);
-        }
-        unsafe {
-            bottom_stack.addArrangedSubview(&add_btn);
-        }
-
-        Retained::from(&*bottom_stack as &NSView)
+        separator
     }
+
+    fn setup_profiles_toolbar(&self, toolbar: &NSView, mtm: MainThreadMarker) {
+        if let Some(toolbar_stack) = toolbar.downcast_ref::<NSStackView>() {
+            // Delete button
+            let delete_btn = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str("−"),
+                    Some(self),
+                    Some(sel!(deleteProfileClicked:)),
+                    mtm,
+                )
+            };
+            delete_btn.setBezelStyle(NSBezelStyle::Inline);
+            delete_btn.setEnabled(false);
+            unsafe {
+                delete_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+                let width_constraint = delete_btn.widthAnchor().constraintEqualToConstant(24.0);
+                width_constraint.setActive(true);
+            }
+            
+            // Add button
+            let add_btn = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str("+"),
+                    Some(self),
+                    Some(sel!(addProfileClicked:)),
+                    mtm,
+                )
+            };
+            add_btn.setBezelStyle(NSBezelStyle::Inline);
+            unsafe {
+                add_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+                let width_constraint = add_btn.widthAnchor().constraintEqualToConstant(24.0);
+                width_constraint.setActive(true);
+            }
+            
+            // Spacer
+            let spacer = NSView::new(mtm);
+            unsafe {
+                spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+            }
+            
+            // Edit button
+            let edit_btn = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str("Edit"),
+                    Some(self),
+                    Some(sel!(editProfileClicked:)),
+                    mtm,
+                )
+            };
+            edit_btn.setBezelStyle(NSBezelStyle::Inline);
+            edit_btn.setEnabled(false);
+            unsafe {
+                edit_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+                let width_constraint = edit_btn.widthAnchor().constraintEqualToConstant(40.0);
+                width_constraint.setActive(true);
+            }
+            
+            unsafe {
+                toolbar_stack.addArrangedSubview(&delete_btn);
+                toolbar_stack.addArrangedSubview(&add_btn);
+                toolbar_stack.addArrangedSubview(&spacer);
+                toolbar_stack.addArrangedSubview(&edit_btn);
+            }
+            
+            *self.ivars().profile_delete_btn.borrow_mut() = Some(delete_btn);
+            *self.ivars().profile_edit_btn.borrow_mut() = Some(edit_btn);
+        }
+    }
+
+    fn setup_mcps_toolbar(&self, toolbar: &NSView, mtm: MainThreadMarker) {
+        if let Some(toolbar_stack) = toolbar.downcast_ref::<NSStackView>() {
+            // Delete button
+            let delete_btn = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str("−"),
+                    Some(self),
+                    Some(sel!(deleteMcpClicked:)),
+                    mtm,
+                )
+            };
+            delete_btn.setBezelStyle(NSBezelStyle::Inline);
+            delete_btn.setEnabled(false);
+            unsafe {
+                delete_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+                let width_constraint = delete_btn.widthAnchor().constraintEqualToConstant(24.0);
+                width_constraint.setActive(true);
+            }
+            
+            // Add button
+            let add_btn = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str("+"),
+                    Some(self),
+                    Some(sel!(addMcpClicked:)),
+                    mtm,
+                )
+            };
+            add_btn.setBezelStyle(NSBezelStyle::Inline);
+            unsafe {
+                add_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+                let width_constraint = add_btn.widthAnchor().constraintEqualToConstant(24.0);
+                width_constraint.setActive(true);
+            }
+            
+            // Spacer
+            let spacer = NSView::new(mtm);
+            unsafe {
+                spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+            }
+            
+            // Edit button
+            let edit_btn = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str("Edit"),
+                    Some(self),
+                    Some(sel!(editMcpClicked:)),
+                    mtm,
+                )
+            };
+            edit_btn.setBezelStyle(NSBezelStyle::Inline);
+            edit_btn.setEnabled(false);
+            unsafe {
+                edit_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+                let width_constraint = edit_btn.widthAnchor().constraintEqualToConstant(40.0);
+                width_constraint.setActive(true);
+            }
+            
+            unsafe {
+                toolbar_stack.addArrangedSubview(&delete_btn);
+                toolbar_stack.addArrangedSubview(&add_btn);
+                toolbar_stack.addArrangedSubview(&spacer);
+                toolbar_stack.addArrangedSubview(&edit_btn);
+            }
+            
+            *self.ivars().mcp_delete_btn.borrow_mut() = Some(delete_btn);
+            *self.ivars().mcp_edit_btn.borrow_mut() = Some(edit_btn);
+        }
+    }
+
+    // ========================================================================
+    // Data loading and management
+    // ========================================================================
 
     fn load_profiles(&self) {
         let mtm = MainThreadMarker::new().unwrap();
         
         log_to_file("load_profiles called");
         
-        // Load config
         let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
         log_to_file(&format!("Config has {} profiles", config.profiles.len()));
         
-        if let Some(container) = &*self.ivars().profiles_container.borrow() {
-            // Clear existing subviews (for stack view, remove arranged subviews)
-            let subviews = container.subviews();
+        // Clear UUID map
+        self.ivars().profile_uuid_map.borrow_mut().clear();
+        
+        if let Some(list_stack) = &*self.ivars().profiles_list.borrow() {
+            // Clear existing rows
+            let subviews = list_stack.subviews();
             for view in &subviews {
-                if let Some(stack) = container.downcast_ref::<NSStackView>() {
-                    unsafe {
-                        stack.removeArrangedSubview(&view);
-                    }
+                unsafe {
+                    list_stack.removeArrangedSubview(&view);
                 }
                 view.removeFromSuperview();
             }
-
-            let profiles = &config.profiles;
             
-            // For stack view, just add profile views - stack handles positioning
-            if let Some(stack) = container.downcast_ref::<NSStackView>() {
-                for (index, profile) in profiles.iter().enumerate() {
-                    let profile_view = self.create_profile_card(
-                        &profile.name,
-                        &profile.provider_id,
-                        &profile.model_id,
-                        &profile.auth,
-                        index,
-                        mtm,
-                    );
-                    unsafe {
-                        stack.addArrangedSubview(&profile_view);
-                    }
+            if config.profiles.is_empty() {
+                // Show empty state
+                let message = NSTextField::labelWithString(
+                    &NSString::from_str("No profiles yet. Click + to add one."),
+                    mtm,
+                );
+                message.setTextColor(Some(&Theme::text_secondary_color()));
+                message.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+                message.setAlignment(objc2_app_kit::NSTextAlignment::Center);
+                unsafe {
+                    list_stack.addArrangedSubview(&message);
                 }
-                
-                // If no profiles, show a friendly message
-                if profiles.is_empty() {
-                    let message = NSTextField::labelWithString(
-                        &NSString::from_str("No profiles yet.\n\nCreate your first one!"),
-                        mtm,
-                    );
-                    message.setTextColor(Some(&Theme::text_secondary_color()));
-                    message.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+            } else {
+                // Add profile rows
+                for (index, profile) in config.profiles.iter().enumerate() {
+                    let is_selected = Some(profile.id) == config.default_profile;
+                    let row = self.create_profile_row(profile, is_selected, index, mtm);
                     unsafe {
-                        stack.addArrangedSubview(&message);
+                        list_stack.addArrangedSubview(&row);
+                    }
+                    
+                    // Store UUID in map
+                    self.ivars().profile_uuid_map.borrow_mut().push(profile.id);
+                    
+                    // Set selected profile
+                    if is_selected {
+                        *self.ivars().selected_profile_id.borrow_mut() = Some(profile.id);
                     }
                 }
             }
         }
         
-        // Scroll to top after loading - force layout first
-        if let Some(scroll_view) = &*self.ivars().scroll_view.borrow() {
-            scroll_view.layoutSubtreeIfNeeded();
-            let clip_view = scroll_view.contentView();
-            clip_view.scrollToPoint(NSPoint::new(0.0, 0.0));
-            scroll_view.reflectScrolledClipView(&clip_view);
+        // Update button states
+        self.update_profile_button_states();
+    }
+
+    fn load_mcps(&self) {
+        let mtm = MainThreadMarker::new().unwrap();
+        
+        log_to_file("load_mcps called");
+        
+        let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
+        log_to_file(&format!("Config has {} MCPs", config.mcps.len()));
+        
+        // Clear UUID map
+        self.ivars().mcp_uuid_map.borrow_mut().clear();
+        
+        if let Some(list_stack) = &*self.ivars().mcps_list.borrow() {
+            // Clear existing rows
+            let subviews = list_stack.subviews();
+            for view in &subviews {
+                unsafe {
+                    list_stack.removeArrangedSubview(&view);
+                }
+                view.removeFromSuperview();
+            }
+            
+            if config.mcps.is_empty() {
+                // Show empty state
+                let message = NSTextField::labelWithString(
+                    &NSString::from_str("No MCPs configured."),
+                    mtm,
+                );
+                message.setTextColor(Some(&Theme::text_secondary_color()));
+                message.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+                message.setAlignment(objc2_app_kit::NSTextAlignment::Center);
+                unsafe {
+                    list_stack.addArrangedSubview(&message);
+                }
+            } else {
+                // Add MCP rows
+                for (index, mcp) in config.mcps.iter().enumerate() {
+                    let row = self.create_mcp_row(mcp, index, mtm);
+                    unsafe {
+                        list_stack.addArrangedSubview(&row);
+                    }
+                    
+                    // Store UUID in map
+                    self.ivars().mcp_uuid_map.borrow_mut().push(mcp.id);
+                }
+            }
+        }
+        
+        // Update button states
+        self.update_mcp_button_states();
+    }
+
+    fn load_hotkey(&self) {
+        let config = Config::load(Config::default_path().unwrap()).unwrap_or_default();
+        
+        if let Some(field) = &*self.ivars().hotkey_field.borrow() {
+            field.setStringValue(&NSString::from_str(&config.global_hotkey));
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn create_profile_card(
+    fn create_profile_row(
         &self,
-        name: &str,
-        provider: &str,
-        model: &str,
-        auth: &AuthConfig,
+        profile: &personal_agent::models::ModelProfile,
+        is_selected: bool,
         index: usize,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
-        log_to_file(&format!("Creating profile row {index}: {name}"));
+        // Row as clickable button
+        let row_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str(""),
+                Some(self),
+                Some(sel!(profileRowClicked:)),
+                mtm,
+            )
+        };
+        row_btn.setBezelStyle(NSBezelStyle::Inline);
+        row_btn.setBordered(false);
+        row_btn.setTag(index as isize);
         
-        // Table row as horizontal stack - NO CARD STYLING
+        // Create row content stack
         let row = NSStackView::new(mtm);
-        row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-        row.setSpacing(8.0);
-        row.setTranslatesAutoresizingMaskIntoConstraints(false);
-        row.setDistribution(NSStackViewDistribution::Fill);
-        row.setEdgeInsets(objc2_foundation::NSEdgeInsets {
-            top: 8.0, left: 8.0, bottom: 8.0, right: 8.0
-        });
+        unsafe {
+            row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+            row.setSpacing(8.0);
+            row.setTranslatesAutoresizingMaskIntoConstraints(false);
+            row.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+                top: 4.0,
+                left: 8.0,
+                bottom: 4.0,
+                right: 8.0,
+            });
+        }
         
-        // Simple background color - no rounded corners
         row.setWantsLayer(true);
         if let Some(layer) = row.layer() {
-            // Alternate row colors for table look
-            if index.is_multiple_of(2) {
-                set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
+            if is_selected {
+                // Highlight selected row
+                set_layer_background_color(&layer, 0.2, 0.4, 0.6);
             } else {
-                set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
+                set_layer_background_color(&layer, Theme::BG_DARKER.0, Theme::BG_DARKER.1, Theme::BG_DARKER.2);
             }
-            // NO corner radius - simple table rows
         }
-
-        // Fixed height for consistent table rows
+        
         unsafe {
-            let height_constraint = row.heightAnchor().constraintEqualToConstant(40.0);
+            let height_constraint = row.heightAnchor().constraintEqualToConstant(24.0);
             height_constraint.setActive(true);
         }
-
-        // Profile name (flexible width)
-        let name_label = NSTextField::labelWithString(&NSString::from_str(name), mtm);
-        name_label.setTextColor(Some(&Theme::text_primary()));
-        name_label.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+        
+        // Indicator
+        let indicator = if is_selected { "▶ " } else { "  " };
+        let text = format!("{}{} ({}:{})", indicator, profile.name, profile.provider_id, profile.model_id);
+        
+        let label = NSTextField::labelWithString(&NSString::from_str(&text), mtm);
+        label.setTextColor(Some(&Theme::text_primary()));
+        label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         unsafe {
-            name_label.setTranslatesAutoresizingMaskIntoConstraints(false);
-            name_label.setContentHuggingPriority_forOrientation(250.0, NSLayoutConstraintOrientation::Horizontal);
+            label.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+            row.addArrangedSubview(&label);
         }
-        row.addArrangedSubview(&name_label);
-
-        // Provider:model (fixed width ~140px)
-        let model_text = format!("{provider}:{model}");
-        let model_label = NSTextField::labelWithString(&NSString::from_str(&model_text), mtm);
-        model_label.setTextColor(Some(&Theme::text_secondary_color()));
-        model_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+        
+        // Add row to button
+        row_btn.addSubview(&row);
+        
+        // Constrain row to fill button
         unsafe {
-            model_label.setTranslatesAutoresizingMaskIntoConstraints(false);
-            model_label.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-            let width_constraint = model_label.widthAnchor().constraintEqualToConstant(140.0);
-            width_constraint.setActive(true);
+            let leading = row.leadingAnchor().constraintEqualToAnchor(&row_btn.leadingAnchor());
+            leading.setActive(true);
+            let trailing = row.trailingAnchor().constraintEqualToAnchor(&row_btn.trailingAnchor());
+            trailing.setActive(true);
+            let top = row.topAnchor().constraintEqualToAnchor(&row_btn.topAnchor());
+            top.setActive(true);
+            let bottom = row.bottomAnchor().constraintEqualToAnchor(&row_btn.bottomAnchor());
+            bottom.setActive(true);
         }
-        row.addArrangedSubview(&model_label);
+        
+        Retained::from(&*row_btn as &NSView)
+    }
 
-        // Auth status icon/text (fixed width ~20px)
-        let key_status = match auth {
-            AuthConfig::Key { value } => {
-                if value.is_empty() { "" } else { "[OK]" }
+    fn create_mcp_row(
+        &self,
+        mcp: &McpConfig,
+        index: usize,
+        mtm: MainThreadMarker,
+    ) -> Retained<NSView> {
+        // Row container
+        let container = NSStackView::new(mtm);
+        unsafe {
+            container.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+            container.setSpacing(8.0);
+            container.setTranslatesAutoresizingMaskIntoConstraints(false);
+            container.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+                top: 4.0,
+                left: 8.0,
+                bottom: 4.0,
+                right: 8.0,
+            });
+        }
+        
+        container.setWantsLayer(true);
+        if let Some(layer) = container.layer() {
+            set_layer_background_color(&layer, Theme::BG_DARKER.0, Theme::BG_DARKER.1, Theme::BG_DARKER.2);
+        }
+        
+        unsafe {
+            let height_constraint = container.heightAnchor().constraintEqualToConstant(28.0);
+            height_constraint.setActive(true);
+        }
+        
+        // Clickable area for selection (invisible button)
+        let click_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str(""),
+                Some(self),
+                Some(sel!(mcpRowClicked:)),
+                mtm,
+            )
+        };
+        click_btn.setBezelStyle(NSBezelStyle::Inline);
+        click_btn.setBordered(false);
+        click_btn.setTag(index as isize);
+        
+        // Label
+        let text = format!("{} - {}", mcp.name, mcp.description);
+        let label = NSTextField::labelWithString(&NSString::from_str(&text), mtm);
+        label.setTextColor(Some(&Theme::text_primary()));
+        label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        unsafe {
+            label.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+            container.addArrangedSubview(&label);
+        }
+        
+        // Toggle switch
+        let toggle = NSSwitch::new(mtm);
+        toggle.setState(if mcp.enabled { NSControlStateValueOn } else { NSControlStateValueOff });
+        toggle.setTag(index as isize);
+        unsafe {
+            toggle.setTarget(Some(self));
+            toggle.setAction(Some(sel!(mcpToggled:)));
+            toggle.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            container.addArrangedSubview(&toggle);
+        }
+        
+        Retained::from(&*container as &NSView)
+    }
+
+    fn select_profile(&self, profile_id: Uuid) {
+        log_to_file(&format!("Selecting profile: {profile_id}"));
+        
+        // Update config
+        let config_path = match Config::default_path() {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("Failed to get config path: {e}");
+                return;
             }
-            AuthConfig::Keyfile { path } => {
-                if path.is_empty() { "" } else { "[OK]" }
+        };
+        
+        let mut config = match Config::load(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to load config: {e}");
+                return;
             }
         };
-        let status_label = NSTextField::labelWithString(&NSString::from_str(key_status), mtm);
-        status_label.setTextColor(Some(&Theme::text_secondary_color()));
-        status_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-        status_label.setAlignment(objc2_app_kit::NSTextAlignment::Center);
-        unsafe {
-            status_label.setTranslatesAutoresizingMaskIntoConstraints(false);
-            status_label.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-            let width_constraint = status_label.widthAnchor().constraintEqualToConstant(20.0);
-            width_constraint.setActive(true);
+        
+        config.default_profile = Some(profile_id);
+        
+        if let Err(e) = config.save(&config_path) {
+            eprintln!("Failed to save config: {e}");
+            return;
         }
-        row.addArrangedSubview(&status_label);
+        
+        // Update UI
+        *self.ivars().selected_profile_id.borrow_mut() = Some(profile_id);
+        self.load_profiles();
+    }
 
-        // Select button (compact)
-        let select_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("Select"),
-                Some(self),
-                Some(sel!(profileSelected:)),
-                mtm,
-            )
-        };
-        select_btn.setBezelStyle(NSBezelStyle::Rounded);
-        select_btn.setTag(index as isize);
-        unsafe {
-            select_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            select_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-            let width_constraint = select_btn.widthAnchor().constraintEqualToConstant(55.0);
-            width_constraint.setActive(true);
+    fn select_mcp(&self, mcp_id: Uuid) {
+        log_to_file(&format!("Selecting MCP: {mcp_id}"));
+        *self.ivars().selected_mcp_id.borrow_mut() = Some(mcp_id);
+        self.update_mcp_button_states();
+    }
+
+    fn update_profile_button_states(&self) {
+        let has_selection = self.ivars().selected_profile_id.borrow().is_some();
+        
+        if let Some(btn) = &*self.ivars().profile_delete_btn.borrow() {
+            btn.setEnabled(has_selection);
         }
-        row.addArrangedSubview(&select_btn);
-
-        // Edit button (compact)
-        let edit_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("Edit"),
-                Some(self),
-                Some(sel!(profileEditClicked:)),
-                mtm,
-            )
-        };
-        edit_btn.setBezelStyle(NSBezelStyle::Rounded);
-        edit_btn.setTag(index as isize);
-        unsafe {
-            edit_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            edit_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-            let width_constraint = edit_btn.widthAnchor().constraintEqualToConstant(45.0);
-            width_constraint.setActive(true);
+        if let Some(btn) = &*self.ivars().profile_edit_btn.borrow() {
+            btn.setEnabled(has_selection);
         }
-        row.addArrangedSubview(&edit_btn);
+    }
 
-        // Del button (compact)
-        let del_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("Del"),
-                Some(self),
-                Some(sel!(deleteProfile:)),
-                mtm,
-            )
-        };
-        del_btn.setBezelStyle(NSBezelStyle::Rounded);
-        del_btn.setTag(index as isize);
-        unsafe {
-            del_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            del_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
-            let width_constraint = del_btn.widthAnchor().constraintEqualToConstant(40.0);
-            width_constraint.setActive(true);
+    fn update_mcp_button_states(&self) {
+        let has_selection = self.ivars().selected_mcp_id.borrow().is_some();
+        
+        if let Some(btn) = &*self.ivars().mcp_delete_btn.borrow() {
+            btn.setEnabled(has_selection);
         }
-        row.addArrangedSubview(&del_btn);
-
-        log_to_file(&format!("Profile row {index} created"));
-        Retained::from(&*row as &NSView)
+        if let Some(btn) = &*self.ivars().mcp_edit_btn.borrow() {
+            btn.setEnabled(has_selection);
+        }
     }
 }

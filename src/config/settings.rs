@@ -9,6 +9,16 @@ use crate::error::{AppError, Result};
 use crate::models::ModelProfile;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpConfig {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub version: String,
     pub theme: String,
@@ -19,6 +29,8 @@ pub struct Config {
     pub active_conversation_id: Option<Uuid>,
     pub context_management: ContextManagement,
     pub profiles: Vec<ModelProfile>,
+    #[serde(default)]
+    pub mcps: Vec<McpConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,6 +51,7 @@ impl Default for Config {
             active_conversation_id: None,
             context_management: ContextManagement::default(),
             profiles: Vec::new(),
+            mcps: Vec::new(),
         }
     }
 }
@@ -165,6 +178,29 @@ impl Config {
         let existing = self.get_profile_mut(&profile.id)?;
         *existing = profile;
         Ok(())
+    }
+
+    /// Add an MCP to the configuration
+    pub fn add_mcp(&mut self, mcp: McpConfig) {
+        self.mcps.push(mcp);
+    }
+
+    /// Remove an MCP by ID
+    ///
+    /// # Errors
+    /// Returns error if MCP with given ID is not found
+    pub fn remove_mcp(&mut self, id: &Uuid) -> Result<()> {
+        let index = self.mcps.iter()
+            .position(|m| m.id == *id)
+            .ok_or_else(|| AppError::Config(format!("MCP not found: {id}")))?;
+        
+        self.mcps.remove(index);
+        Ok(())
+    }
+
+    /// Get enabled MCPs
+    pub fn get_enabled_mcps(&self) -> Vec<&McpConfig> {
+        self.mcps.iter().filter(|m| m.enabled).collect()
     }
 }
 

@@ -18,7 +18,7 @@ use objc2_app_kit::{
     NSView, NSViewController, NSTextField, NSButton, NSScrollView,
     NSFont, NSBezelStyle, NSStackView, NSUserInterfaceLayoutOrientation,
     NSLayoutConstraintOrientation, NSStackViewDistribution, NSImage,
-    NSImageSymbolConfiguration, NSFontWeightBold, NSComboBox,
+    NSImageSymbolConfiguration, NSFontWeightBold,
 };
 use objc2_quartz_core::CALayer;
 use uuid::Uuid;
