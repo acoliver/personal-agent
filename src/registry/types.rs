@@ -40,7 +40,7 @@ where
     deserializer.deserialize_any(BoolOrObjectVisitor)
 }
 
-/// Custom deserializer for provider field that can be string or object
+/// Custom deserializer for provider field that can be string, object, or null
 fn deserialize_provider<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
@@ -53,10 +53,17 @@ where
         type Value = Option<String>;
         
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a string or an object")
+            formatter.write_str("a string, an object, or null")
         }
         
         fn visit_none<E>(self) -> Result<Option<String>, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+        
+        fn visit_unit<E>(self) -> Result<Option<String>, E>
         where
             E: de::Error,
         {

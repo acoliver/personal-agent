@@ -124,7 +124,10 @@ mod tests {
 
         assert_eq!(conversation.profile_id, profile_id);
         assert_eq!(conversation.messages.len(), 0);
-        assert!(conversation.title.is_none());
+        // Title defaults to timestamp format YYYYMMDDHHMMSSmmm
+        assert!(conversation.title.is_some());
+        let title = conversation.title.as_ref().unwrap();
+        assert_eq!(title.len(), 17); // YYYYMMDDHHMMSSmmm = 17 chars
     }
 
     #[test]
