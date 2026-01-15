@@ -289,8 +289,13 @@ define_class!(
                 show_thinking,
             };
             
-            // Get base URL from registry or use empty (will be looked up at runtime)
-            let base_url = String::new();
+            // Get base URL from the input field - this is important for OpenAI-compatible providers
+            let base_url = if let Some(field) = &*self.ivars().base_url_input.borrow() {
+                field.stringValue().to_string().trim().to_string()
+            } else {
+                String::new()
+            };
+            log_to_file(&format!("  Base URL: {base_url}"));
             
             // Check if editing existing profile or creating new
             let editing_id = self.ivars().editing_profile_id.borrow().clone();
@@ -576,8 +581,8 @@ impl ProfileEditorDemoViewController {
         form_stack.addArrangedSubview(&system_prompt_section.0);
         *self.ivars().system_prompt_input.borrow_mut() = Some(system_prompt_section.1);
 
-        // Parameters
-        let params_section = self.build_parameters_section(mtm);
+        // Parameters - pass editing profile for loading saved values
+        let params_section = self.build_parameters_section_with_profile(mtm, editing_profile.as_ref());
         form_stack.addArrangedSubview(&params_section);
 
         scroll_view.setDocumentView(Some(&form_stack));
@@ -595,7 +600,7 @@ impl ProfileEditorDemoViewController {
         scroll_view
     }
 
-    fn build_form_field(&self, label: &str, placeholder: &str, mtm: MainThreadMarker) -> (Retained<NSView>, Retained<NSTextField>) {
+    fn build_form_field(&self, label: &str, default_value: &str, mtm: MainThreadMarker) -> (Retained<NSView>, Retained<NSTextField>) {
         let container = NSStackView::new(mtm);
         container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
         container.setSpacing(4.0);
@@ -607,7 +612,9 @@ impl ProfileEditorDemoViewController {
         container.addArrangedSubview(&label_field);
 
         let input = NSTextField::new(mtm);
-        input.setPlaceholderString(Some(&NSString::from_str(placeholder)));
+        // Set both placeholder and string value so field shows content immediately
+        input.setPlaceholderString(Some(&NSString::from_str(default_value)));
+        input.setStringValue(&NSString::from_str(default_value));
         input.setTranslatesAutoresizingMaskIntoConstraints(false);
         let width = input.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
         width.setActive(true);
@@ -724,6 +731,10 @@ impl ProfileEditorDemoViewController {
     }
 
     fn build_parameters_section(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+        self.build_parameters_section_with_profile(mtm, None)
+    }
+    
+    fn build_parameters_section_with_profile(&self, mtm: MainThreadMarker, profile: Option<&ModelProfile>) -> Retained<NSView> {
         let container = NSStackView::new(mtm);
         container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
         container.setSpacing(12.0);
@@ -733,6 +744,19 @@ impl ProfileEditorDemoViewController {
         header.setTextColor(Some(&Theme::text_primary()));
         header.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
         container.addArrangedSubview(&header);
+
+        // Get defaults from profile or fallbacks
+        let default_temp = profile.map(|p| p.parameters.temperature).unwrap_or(1.0);
+        let default_max_tokens = profile
+            .map(|p| p.parameters.max_tokens.to_string())
+            .or_else(|| self.ivars().preselected_context.borrow().map(|c| c.to_string()))
+            .unwrap_or_else(|| "4096".to_string());
+        let default_thinking_budget = profile
+            .and_then(|p| p.parameters.thinking_budget)
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "10000".to_string());
+        let default_enable_thinking = profile.is_some_and(|p| p.parameters.enable_thinking);
+        let default_show_thinking = profile.is_some_and(|p| p.parameters.show_thinking);
 
         // Temperature with stepper (up/down arrows)
         let temp_container = NSStackView::new(mtm);
@@ -747,7 +771,7 @@ impl ProfileEditorDemoViewController {
         temp_container.addArrangedSubview(&temp_label);
 
         // Value display
-        let value_label = NSTextField::labelWithString(&NSString::from_str("1.00"), mtm);
+        let value_label = NSTextField::labelWithString(&NSString::from_str(&format!("{default_temp:.2}")), mtm);
         value_label.setTextColor(Some(&Theme::text_primary()));
         value_label.setFont(Some(&NSFont::monospacedDigitSystemFontOfSize_weight(13.0, 0.0)));
         let value_width = value_label.widthAnchor().constraintEqualToConstant(45.0);
@@ -759,7 +783,7 @@ impl ProfileEditorDemoViewController {
         let stepper = NSStepper::new(mtm);
         stepper.setMinValue(0.0);
         stepper.setMaxValue(2.0);
-        stepper.setDoubleValue(1.0);
+        stepper.setDoubleValue(default_temp);
         stepper.setIncrement(0.1);
         stepper.setValueWraps(false);
         unsafe {
@@ -777,16 +801,13 @@ impl ProfileEditorDemoViewController {
 
         container.addArrangedSubview(&temp_container);
 
-        // Max Tokens - use preselected context if available
-        let default_max_tokens = self.ivars().preselected_context.borrow()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "4096".to_string());
+        // Max Tokens
         let (tokens_view, tokens_input) = self.build_form_field("Max Tokens", &default_max_tokens, mtm);
         container.addArrangedSubview(&tokens_view);
         *self.ivars().max_tokens_input.borrow_mut() = Some(tokens_input);
 
         // Thinking Budget
-        let (budget_view, budget_input) = self.build_form_field("Thinking Budget", "10000", mtm);
+        let (budget_view, budget_input) = self.build_form_field("Thinking Budget", &default_thinking_budget, mtm);
         container.addArrangedSubview(&budget_view);
         *self.ivars().thinking_budget_input.borrow_mut() = Some(budget_input);
 
@@ -796,6 +817,9 @@ impl ProfileEditorDemoViewController {
                 &NSString::from_str("Enable Thinking"), Some(self), Some(sel!(enableThinkingChanged:)), mtm,
             )
         };
+        if default_enable_thinking {
+            enable_cb.setState(NSControlStateValueOn);
+        }
         container.addArrangedSubview(&enable_cb);
         *self.ivars().enable_thinking_checkbox.borrow_mut() = Some(enable_cb);
 
@@ -805,6 +829,9 @@ impl ProfileEditorDemoViewController {
                 &NSString::from_str("Show Thinking"), None, None, mtm,
             )
         };
+        if default_show_thinking {
+            show_cb.setState(NSControlStateValueOn);
+        }
         container.addArrangedSubview(&show_cb);
         *self.ivars().show_thinking_checkbox.borrow_mut() = Some(show_cb);
 

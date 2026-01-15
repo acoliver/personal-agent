@@ -580,15 +580,15 @@ impl SettingsViewController {
             scroll_view.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Vertical);
         }
 
-        // Create vertical stack for content
-        let content_stack = NSStackView::new(mtm);
+        // Create vertical stack for content - use FlippedStackView so content starts at TOP
+        let content_stack = super::FlippedStackView::new(mtm);
         unsafe {
             content_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
             content_stack.setSpacing(8.0);
             content_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Width);
             content_stack.setDistribution(NSStackViewDistribution::Fill);
             content_stack.setEdgeInsets(objc2_foundation::NSEdgeInsets {
-                top: 8.0,
+                top: 4.0,
                 left: 8.0,
                 bottom: 8.0,
                 right: 8.0,
@@ -622,6 +622,14 @@ impl SettingsViewController {
         let content_view = scroll_view.contentView();
         let width_constraint = content_stack.widthAnchor().constraintEqualToAnchor(&content_view.widthAnchor());
         width_constraint.setActive(true);
+        
+        // Force sections to match content_stack width
+        unsafe {
+            let profiles_width = profiles_section.widthAnchor().constraintEqualToAnchor_constant(&content_stack.widthAnchor(), -16.0);
+            profiles_width.setActive(true);
+            let mcps_width = mcps_section.widthAnchor().constraintEqualToAnchor_constant(&content_stack.widthAnchor(), -16.0);
+            mcps_width.setActive(true);
+        }
 
         *self.ivars().scroll_view.borrow_mut() = Some(scroll_view.clone());
 

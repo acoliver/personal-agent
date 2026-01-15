@@ -278,18 +278,20 @@ define_class!(
 
         #[unsafe(method(showProfileEditor:))]
         fn show_profile_editor(&self, _notification: &NSNotification) {
-            let popover = POPOVER.take();
-            let profile_editor_view = PROFILE_EDITOR_VIEW_CONTROLLER.take();
+            // Create a NEW profile editor instance to pick up EDITING_PROFILE_ID from thread-local
+            // (The settings view sets EDITING_PROFILE_ID before posting this notification)
+            let mtm = MainThreadMarker::new().unwrap();
+            let new_profile_editor = ProfileEditorDemoViewController::new(mtm);
             
-            if let (Some(ref popover), Some(ref profile_editor_view)) = (&popover, &profile_editor_view) {
-                // Check if coming from model selector with pre-selected model
-                // For now, just show editor with default values
-                // TODO: Pass selected model to editor
-                popover.setContentViewController(Some(profile_editor_view));
+            let popover = POPOVER.take();
+            
+            if let Some(ref popover) = popover {
+                popover.setContentViewController(Some(&new_profile_editor));
             }
             
             POPOVER.set(popover);
-            PROFILE_EDITOR_VIEW_CONTROLLER.set(profile_editor_view);
+            // Update the stored reference
+            PROFILE_EDITOR_VIEW_CONTROLLER.set(Some(new_profile_editor));
         }
 
         #[unsafe(method(modelSelected:))]

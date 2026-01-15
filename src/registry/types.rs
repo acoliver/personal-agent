@@ -1,9 +1,116 @@
 //! Type definitions for the models.dev registry
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
+/// Custom deserializer for fields that can be bool or object (interleaved)
+fn deserialize_bool_or_object<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    
+    struct BoolOrObjectVisitor;
+    
+    impl<'de> Visitor<'de> for BoolOrObjectVisitor {
+        type Value = bool;
+        
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a boolean or an object")
+        }
+        
+        fn visit_bool<E>(self, v: bool) -> Result<bool, E>
+        where
+            E: de::Error,
+        {
+            Ok(v)
+        }
+        
+        fn visit_map<M>(self, mut _map: M) -> Result<bool, M::Error>
+        where
+            M: de::MapAccess<'de>,
+        {
+            // If it's an object (like {"field": "reasoning_content"}), treat as true
+            // Just consume the map
+            while let Some((_, _)) = _map.next_entry::<String, serde_json::Value>()? {}
+            Ok(true)
+        }
+    }
+    
+    deserializer.deserialize_any(BoolOrObjectVisitor)
+}
+
+/// Custom deserializer for provider field that can be string or object
+fn deserialize_provider<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    
+    struct ProviderVisitor;
+    
+    impl<'de> Visitor<'de> for ProviderVisitor {
+        type Value = Option<String>;
+        
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or an object")
+        }
+        
+        fn visit_none<E>(self) -> Result<Option<String>, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+        
+        fn visit_some<D>(self, deserializer: D) -> Result<Option<String>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_any(ProviderVisitor)
+        }
+        
+        fn visit_str<E>(self, v: &str) -> Result<Option<String>, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(v.to_string()))
+        }
+        
+        fn visit_string<E>(self, v: String) -> Result<Option<String>, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(v))
+        }
+        
+        fn visit_map<M>(self, mut _map: M) -> Result<Option<String>, M::Error>
+        where
+            M: de::MapAccess<'de>,
+        {
+            // If it's an object (like {"npm": "@ai-sdk/anthropic"}), ignore it
+            while let Some((_, _)) = _map.next_entry::<String, serde_json::Value>()? {}
+            Ok(None)
+        }
+    }
+    
+    deserializer.deserialize_any(ProviderVisitor)
+}
+
 /// Top-level registry containing all providers
+/// 
+/// When loading from cache, the data structure is:
+/// ```json
+/// {
+///   "cached_at": "...",
+///   "data": {
+///     "provider_id": { ... provider ... },
+///     ...
+///   }
+/// }
+/// ```
+/// 
+/// The `data` field deserializes into this struct via `#[serde(flatten)]`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelRegistry {
     /// Map of provider ID to provider information
@@ -61,10 +168,11 @@ pub struct ModelInfo {
     #[serde(default)]
     pub temperature: bool,
     /// Whether the model supports interleaved content
-    #[serde(default)]
+    /// Can be a boolean or an object with a "field" key
+    #[serde(default, deserialize_with = "deserialize_bool_or_object")]
     pub interleaved: bool,
-    /// Provider name for the model
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Provider name for the model (can be string or object with npm field)
+    #[serde(default, deserialize_with = "deserialize_provider")]
     pub provider: Option<String>,
     /// Model status (e.g., "active", "deprecated")
     #[serde(skip_serializing_if = "Option::is_none")]
