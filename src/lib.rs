@@ -3,6 +3,7 @@
 //! This library provides the core functionality for the `PersonalAgent` application,
 //! including configuration management, model profiles, conversation storage, and more.
 
+pub mod agent;
 pub mod config;
 pub mod error;
 pub mod llm;
