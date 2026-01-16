@@ -123,32 +123,6 @@ define_class!(
         fn load_view(&self) {
             println!("DEBUG - ChatViewController loadView called");
             
-            // Initialize MCP service in background
-            log_to_file("Initializing MCP service...");
-            thread::spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build();
-                
-                if let Ok(rt) = rt {
-                    rt.block_on(async {
-                        let service_arc = McpService::global();
-                        let result = {
-                            let mut svc = service_arc.lock().expect("Failed to acquire lock on McpService during initialization");
-                            svc.initialize().await
-                        };
-                        
-                        match result {
-                            Ok(()) => {
-                                let count = service_arc.lock().expect("Failed to acquire lock on McpService to get active count").active_count();
-                                log_to_file(&format!("MCP initialized: {} active", count));
-                            }
-                            Err(e) => log_to_file(&format!("MCP init error: {e}")),
-                        }
-                    });
-                }
-            });
-            
             let mtm = MainThreadMarker::new().unwrap();
 
             // Create main container (400x500 for popover content)
@@ -782,6 +756,32 @@ impl ChatViewController {
     }
     
     fn create_with_conversation(mtm: MainThreadMarker, conversation: Conversation) -> Retained<Self> {
+        // Initialize MCP service in background
+        log_to_file("Initializing MCP service...");
+        thread::spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            
+            if let Ok(rt) = rt {
+                rt.block_on(async {
+                    let service_arc = McpService::global();
+                    let result = {
+                        let mut svc = service_arc.lock().expect("Failed to acquire lock on McpService during initialization");
+                        svc.initialize().await
+                    };
+                    
+                    match result {
+                        Ok(()) => {
+                            let count = service_arc.lock().expect("Failed to acquire lock on McpService to get active count").active_count();
+                            log_to_file(&format!("MCP initialized: {} active", count));
+                        }
+                        Err(e) => log_to_file(&format!("MCP init error: {e}")),
+                    }
+                });
+            }
+        });
+        
         let ivars = ChatViewIvars {
             messages: Rc::new(RefCell::new(Vec::new())),
             scroll_view: RefCell::new(None),
