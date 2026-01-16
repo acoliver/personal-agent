@@ -440,10 +440,7 @@ impl LlmClient {
         "OPENAI_API_KEY".to_string()
     }
     
-    /// Create an Agent with MCP tools integrated
-    /// 
-    /// This builds a SerdesAI Agent with the current profile's model and system prompt,
-    /// and registers MCP tools as native Agent tools using a bridge executor.
+
     
     /// Parse a SerdesAI ModelResponse into our Message type
     fn parse_response(

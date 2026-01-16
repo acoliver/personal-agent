@@ -1307,7 +1307,9 @@ fn check_streaming_done(&self) -> bool {
         
         // Skip if currently executing tools (waiting for follow-up stream)
         if self.ivars().executing_tools.load(std::sync::atomic::Ordering::SeqCst) {
-            log_to_file("Skipping finalize_streaming - currently executing tools");
+            log_to_file("Skipping finalize_streaming - currently executing tools, re-scheduling poll");
+            // Keep polling while tools are executing
+            self.schedule_streaming_update();
             return;
         }
         
@@ -1541,6 +1543,7 @@ fn check_streaming_done(&self) -> bool {
                                 let streaming_tool_uses_clone = Arc::clone(&streaming_tool_uses);
                                 let cancel_flag_clone = Arc::clone(&cancel_flag);
                                 
+                                log_to_file("About to start follow-up stream...");
                                 let result = client.request_stream_with_tools(&llm_messages, &tools, |event| {
                                     // Check for cancellation
                                     if cancel_flag_clone.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1557,11 +1560,13 @@ fn check_streaming_done(&self) -> bool {
                                     
                                     match event {
                                         StreamEvent::TextDelta(delta) => {
+                                            log_to_file(&format!("Follow-up TextDelta: {} chars", delta.len()));
                                             if let Ok(mut buf) = streaming_response_clone.lock() {
                                                 buf.push_str(&delta);
                                             }
                                         }
                                         StreamEvent::ThinkingDelta(delta) => {
+                                            log_to_file(&format!("Follow-up ThinkingDelta: {} chars", delta.len()));
                                             if let Ok(mut buf) = streaming_thinking_clone.lock() {
                                                 buf.push_str(&delta);
                                             }
