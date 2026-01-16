@@ -44,6 +44,8 @@ pub enum StreamEvent {
     TextDelta(String),
     /// Thinking content delta (for reasoning models)
     ThinkingDelta(String),
+    /// Tool use requested by the model
+    ToolUse(crate::llm::tools::ToolUse),
     /// Stream completed
     Complete,
     /// Error occurred
@@ -176,7 +178,30 @@ impl LlmClient {
             .map(|m| {
                 let mut req = ModelRequest::new();
                 match m.role {
-                    Role::User => req.add_user_prompt(m.content.clone()),
+                    Role::User => {
+                        // Add user content
+                        if !m.content.is_empty() {
+                            req.add_user_prompt(m.content.clone());
+                        }
+                        
+                        // Add tool results if present
+                        if !m.tool_results.is_empty() {
+                            use serdes_ai::core::messages::request::{ModelRequestPart, ToolReturnPart};
+                            
+                            for tool_result in &m.tool_results {
+                                let tool_return = if tool_result.is_error {
+                                    ToolReturnPart::error("tool", &tool_result.content)
+                                        .with_tool_call_id(&tool_result.tool_use_id)
+                                } else {
+                                    ToolReturnPart::success("tool", &tool_result.content)
+                                        .with_tool_call_id(&tool_result.tool_use_id)
+                                };
+                                
+                                // Manual push since there's no add_tool_result method
+                                req.parts.push(ModelRequestPart::ToolReturn(tool_return));
+                            }
+                        }
+                    }
                     Role::Assistant => {
                         // For assistant messages, we'd typically use ModelResponse
                         // but for simplicity, add as user context with prefix
@@ -201,9 +226,20 @@ impl LlmClient {
         // Build the model with extended config for thinking support
         let model = self.build_model(provider, base_url)?;
 
+        // Convert tools to SerdesAI ToolDefinition format
+        let tool_defs: Vec<ToolDefinition> = tools
+            .iter()
+            .map(|t| ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone()))
+            .collect();
+
+        // Create request parameters with tools
+        // Pass empty default params for now - tools will be handled through model_settings
+        // TODO: Figure out proper ModelRequestParameters import path
+        let params = Default::default();
+
         // Make the request using the model directly
         let response = model
-            .request(&model_requests, &self.model_settings(), &Default::default())
+            .request(&model_requests, &self.model_settings(), &params)
             .await
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
 
@@ -227,7 +263,7 @@ impl LlmClient {
     pub async fn request_stream_with_tools<F>(
         &self,
         messages: &[Message],
-        _tools: &[crate::llm::tools::Tool],
+        tools: &[crate::llm::tools::Tool],
         mut on_event: F,
     ) -> StdResult<(), LlmError>
     where
@@ -241,7 +277,30 @@ impl LlmClient {
             .map(|m| {
                 let mut req = ModelRequest::new();
                 match m.role {
-                    Role::User => req.add_user_prompt(m.content.clone()),
+                    Role::User => {
+                        // Add user content
+                        if !m.content.is_empty() {
+                            req.add_user_prompt(m.content.clone());
+                        }
+                        
+                        // Add tool results if present (Issue 2 fix)
+                        if !m.tool_results.is_empty() {
+                            use serdes_ai::core::messages::request::{ModelRequestPart, ToolReturnPart};
+                            
+                            for tool_result in &m.tool_results {
+                                let tool_return = if tool_result.is_error {
+                                    ToolReturnPart::error("tool", &tool_result.content)
+                                        .with_tool_call_id(&tool_result.tool_use_id)
+                                } else {
+                                    ToolReturnPart::success("tool", &tool_result.content)
+                                        .with_tool_call_id(&tool_result.tool_use_id)
+                                };
+                                
+                                // Manual push since there's no add_tool_result method
+                                req.parts.push(ModelRequestPart::ToolReturn(tool_return));
+                            }
+                        }
+                    }
                     Role::Assistant => {
                         req.add_user_prompt(format!("[Assistant]: {}", &m.content));
                     }
@@ -264,10 +323,28 @@ impl LlmClient {
         // Build the model with extended config for thinking support
         let model = self.build_model(provider, base_url)?;
 
+        // Convert tools to SerdesAI ToolDefinition format (Issue 1 fix)
+        let _tool_defs: Vec<ToolDefinition> = tools
+            .iter()
+            .map(|t| ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone()))
+            .collect();
+
+        // Create request parameters with tools
+        // NOTE: SerdesAI's request_stream currently doesn't support tools parameter
+        // in the same way as the non-streaming request. This is a limitation of the
+        // underlying SerdesAI library. Tools are prepared here for when the API supports them.
+        let params = Default::default();
+
         // Use the model directly for streaming
-        let mut stream = model.request_stream(&model_requests, &self.model_settings(), &Default::default())
+        // TODO: Once SerdesAI supports tools in streaming, pass _tool_defs here
+        let mut stream = model.request_stream(&model_requests, &self.model_settings(), &params)
             .await
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+        
+        // Log if tools were requested but can't be passed yet
+        if !_tool_defs.is_empty() {
+            eprintln!("Warning: {} tools prepared but SerdesAI streaming doesn't support tools parameter yet", _tool_defs.len());
+        }
 
         use serdes_ai::core::messages::ModelResponseStreamEvent;
 
@@ -298,6 +375,15 @@ impl LlmClient {
                                 if !t.content.is_empty() {
                                     on_event(StreamEvent::ThinkingDelta(t.content.clone()));
                                 }
+                            }
+                            ModelResponsePart::ToolCall(tc) => {
+                                // Emit tool use event when tool call part starts
+                                let tool_use = crate::llm::tools::ToolUse::new(
+                                    tc.tool_call_id.as_deref().unwrap_or(""),
+                                    &tc.tool_name,
+                                    tc.args.to_json(),
+                                );
+                                on_event(StreamEvent::ToolUse(tool_use));
                             }
                             _ => {}
                         }

@@ -28,6 +28,7 @@ use personal_agent::config::Config;
 use personal_agent::models::{Conversation, Message as ConvMessage};
 use personal_agent::storage::ConversationStorage;
 use personal_agent::{LlmClient, LlmMessage, StreamEvent};
+use personal_agent::mcp::McpService;
 
 /// Logging helper - writes to file
 fn log_to_file(message: &str) {
@@ -94,6 +95,8 @@ pub struct ChatViewIvars {
     streaming_response: Arc<Mutex<String>>,
     /// Shared streaming thinking text for updating from background thread
     streaming_thinking: Arc<Mutex<String>>,
+    /// Shared tool uses accumulated during streaming
+    streaming_tool_uses: Arc<Mutex<Vec<personal_agent::llm::tools::ToolUse>>>,
     /// Flag to indicate streaming is in progress
     is_streaming: RefCell<bool>,
     /// Stop button for canceling streaming
@@ -119,6 +122,33 @@ define_class!(
         #[unsafe(method(loadView))]
         fn load_view(&self) {
             println!("DEBUG - ChatViewController loadView called");
+            
+            // Initialize MCP service in background
+            log_to_file("Initializing MCP service...");
+            thread::spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build();
+                
+                if let Ok(rt) = rt {
+                    rt.block_on(async {
+                        let service_arc = McpService::global();
+                        let result = {
+                            let mut svc = service_arc.lock().expect("Failed to acquire lock on McpService during initialization");
+                            svc.initialize().await
+                        };
+                        
+                        match result {
+                            Ok(()) => {
+                                let count = service_arc.lock().expect("Failed to acquire lock on McpService to get active count").active_count();
+                                log_to_file(&format!("MCP initialized: {} active", count));
+                            }
+                            Err(e) => log_to_file(&format!("MCP init error: {e}")),
+                        }
+                    });
+                }
+            });
+            
             let mtm = MainThreadMarker::new().unwrap();
 
             // Create main container (400x500 for popover content)
@@ -263,6 +293,16 @@ define_class!(
                                     });
                                     
                                     if let Some(profile) = profile {
+                                        // Get tools from MCP service
+                                        log_to_file("Fetching MCP tools...");
+                        let tools = {
+                            let service_arc = McpService::global();
+                            let svc = service_arc.lock().expect("Failed to acquire lock on McpService to get tools");
+                            let tools = svc.get_llm_tools();
+                            log_to_file(&format!("Got {} MCP tools", tools.len()));
+                            tools
+                        };
+                                        
                                         // Build messages from conversation, prepending system prompt
                                         let mut llm_messages: Vec<LlmMessage> = Vec::new();
                                         
@@ -304,10 +344,14 @@ define_class!(
                                         if let Ok(mut buf) = self.ivars().streaming_thinking.lock() {
                                             buf.clear();
                                         }
+                                        if let Ok(mut buf) = self.ivars().streaming_tool_uses.lock() {
+                                            buf.clear();
+                                        }
                                         
                                         // Clone what we need for the background thread
                                         let streaming_response = Arc::clone(&self.ivars().streaming_response);
                                         let streaming_thinking = Arc::clone(&self.ivars().streaming_thinking);
+                                        let streaming_tool_uses = Arc::clone(&self.ivars().streaming_tool_uses);
                                         let cancel_flag = Arc::clone(&self.ivars().cancel_streaming);
                                         let profile_clone = profile;
                                         
@@ -324,8 +368,9 @@ define_class!(
                                                         Ok(client) => {
                                                             let streaming_response_clone = Arc::clone(&streaming_response);
                                                             let streaming_thinking_clone = Arc::clone(&streaming_thinking);
+                                                            let streaming_tool_uses_clone = Arc::clone(&streaming_tool_uses);
                                                             let cancel_flag_clone = Arc::clone(&cancel_flag);
-                                                            let result = client.request_stream(&llm_messages, |event| {
+                                                            let result = client.request_stream_with_tools(&llm_messages, &tools, |event| {
                                                                 // Check for cancellation
                                                                 if cancel_flag_clone.load(std::sync::atomic::Ordering::SeqCst) {
                                                                     // Only add cancelled message once (check for EOT marker)
@@ -349,6 +394,12 @@ define_class!(
                                                                     StreamEvent::ThinkingDelta(delta) => {
                                                                         if let Ok(mut buf) = streaming_thinking_clone.lock() {
                                                                             buf.push_str(&delta);
+                                                                        }
+                                                                    }
+                                                                    StreamEvent::ToolUse(tool_use) => {
+                                                                        log_to_file(&format!("Tool use requested: {} ({})", tool_use.name, tool_use.id));
+                                                                        if let Ok(mut buf) = streaming_tool_uses_clone.lock() {
+                                                                            buf.push(tool_use);
                                                                         }
                                                                     }
                                                                     StreamEvent::Complete => {
@@ -744,6 +795,7 @@ impl ChatViewController {
             thinking_button: RefCell::new(None),
             streaming_response: Arc::new(Mutex::new(String::new())),
             streaming_thinking: Arc::new(Mutex::new(String::new())),
+            streaming_tool_uses: Arc::new(Mutex::new(Vec::new())),
             is_streaming: RefCell::new(false),
             stop_button: RefCell::new(None),
             cancel_streaming: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1258,6 +1310,48 @@ fn check_streaming_done(&self) -> bool {
             None
         };
         
+        // Get tool uses
+        let tool_uses = if let Ok(buf) = self.ivars().streaming_tool_uses.lock() {
+            buf.clone()
+        } else {
+            Vec::new()
+        };
+        
+        // Log tool uses for debugging
+        if !tool_uses.is_empty() {
+            log_to_file(&format!("=== TOOL USES DETECTED: {} ===", tool_uses.len()));
+            for tool_use in &tool_uses {
+                log_to_file(&format!("  - Tool: {} (id: {})", tool_use.name, tool_use.id));
+                log_to_file(&format!("    Input: {}", serde_json::to_string(&tool_use.input).unwrap_or_default()));
+            }
+            log_to_file("=== END TOOL USES ===");
+            
+            // Update the last message with tool execution status
+            if let Some(last_msg) = self.ivars().messages.borrow_mut().last_mut() {
+                if !last_msg.is_user {
+                    let mut display_text = final_text.clone();
+                    if !display_text.is_empty() {
+                        display_text.push_str("
+
+");
+                    }
+                    display_text.push_str(&format!(" Executing {} tool(s)...", tool_uses.len()));
+                    last_msg.text = display_text;
+                }
+            }
+            
+            // Rebuild messages to show tool execution status
+            let show_thinking = self.should_show_thinking();
+            self.rebuild_messages_with_thinking(&thinking_text, show_thinking);
+            
+            // Execute tools and continue conversation
+            self.execute_tools_and_continue(final_text, thinking_text, tool_uses);
+            
+            // Note: We don't mark streaming as done yet - that will happen after tool execution
+            return;
+        }
+        
+        // No tool uses - finalize normally
         // Update the last message with final text (no thinking inline anymore)
         if let Some(last_msg) = self.ivars().messages.borrow_mut().last_mut() {
             if !last_msg.is_user {
@@ -1296,8 +1390,208 @@ fn check_streaming_done(&self) -> bool {
         if let Some(btn) = &*self.ivars().stop_button.borrow() {
             btn.setEnabled(false);
         }
+    }
+    
+    /// Execute tools and continue the conversation with results
+    fn execute_tools_and_continue(
+        &self,
+        assistant_text: String,
+        thinking_text: Option<String>,
+        tool_uses: Vec<personal_agent::llm::tools::ToolUse>,
+    ) {
+        log_to_file("Executing tools in background...");
         
-        // Note: We already called rebuild_messages_with_thinking above, no need to call again
+        // Clone what we need for the background thread
+        let streaming_response = Arc::clone(&self.ivars().streaming_response);
+        let streaming_thinking = Arc::clone(&self.ivars().streaming_thinking);
+        let streaming_tool_uses = Arc::clone(&self.ivars().streaming_tool_uses);
+        let cancel_flag = Arc::clone(&self.ivars().cancel_streaming);
+        let conversation = self.ivars().conversation.borrow().clone();
+        
+        // Spawn background thread to execute tools
+        thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            
+            if let Ok(rt) = rt {
+                rt.block_on(async {
+                    // Execute each tool
+                    let mut tool_results = Vec::new();
+                    
+                    for tool_use in &tool_uses {
+                        log_to_file(&format!(" Executing tool: {}", tool_use.name));
+                        
+                        let result = {
+                            let service_arc = McpService::global();
+                            let mut svc = service_arc.lock().expect("Failed to acquire lock on McpService to call tool");
+                            svc.call_tool(&tool_use.name, tool_use.input.clone()).await
+                        };
+                        
+                        let (content, is_error) = match result {
+                            Ok(value) => {
+                                log_to_file(&format!("[OK] Tool {} completed successfully", tool_use.name));
+                                (value.to_string(), false)
+                            }
+                            Err(e) => {
+                                log_to_file(&format!(" Tool {} failed: {}", tool_use.name, e));
+                                (e, true)
+                            }
+                        };
+                        
+                        tool_results.push(personal_agent::llm::tools::ToolResult {
+                            tool_use_id: tool_use.id.clone(),
+                            content,
+                            is_error,
+                        });
+                    }
+                    
+                    log_to_file(&format!("All {} tools executed, continuing conversation", tool_results.len()));
+                    
+                    // Create assistant message with tool uses and add to conversation
+                    let mut assistant_msg = LlmMessage::assistant(&assistant_text);
+                    assistant_msg.tool_uses = tool_uses.clone();
+                    
+                    // Create user message with tool results
+                    let mut results_msg = LlmMessage::user("");
+                    results_msg.tool_results = tool_results.clone();
+                    
+                    // Get the current profile and build messages
+                    let config = Config::load(Config::default_path().unwrap_or_default()).ok();
+                    let profile = config.as_ref().and_then(|c| {
+                        c.default_profile.and_then(|id| {
+                            c.profiles.iter().find(|p| p.id == id).cloned()
+                        }).or_else(|| c.profiles.first().cloned())
+                    });
+                    
+                    if let Some(profile) = profile {
+                        // Get tools from MCP service
+                        let tools = {
+                            let service_arc = McpService::global();
+                            let svc = service_arc.lock().expect("Failed to acquire lock on McpService to get tools for continuation");
+                            svc.get_llm_tools()
+                        };
+                        
+                        // Build messages from conversation
+                        let mut llm_messages: Vec<LlmMessage> = Vec::new();
+                        
+                        // Add system prompt from profile if not empty
+                        if !profile.system_prompt.is_empty() {
+                            llm_messages.push(LlmMessage::system(&profile.system_prompt));
+                        }
+                        
+                        // Add conversation messages
+                        if let Some(conv) = &conversation {
+                            for m in &conv.messages {
+                                let msg = match m.role {
+                                    personal_agent::models::MessageRole::User => LlmMessage::user(&m.content),
+                                    personal_agent::models::MessageRole::Assistant => LlmMessage::assistant(&m.content),
+                                    personal_agent::models::MessageRole::System => LlmMessage::system(&m.content),
+                                };
+                                llm_messages.push(msg);
+                            }
+                        }
+                        
+                        // Add the assistant message with tool uses
+                        llm_messages.push(assistant_msg);
+                        
+                        // Add the tool results message
+                        llm_messages.push(results_msg);
+                        
+                        // Clear streaming buffers for the next response
+                        if let Ok(mut buf) = streaming_response.lock() {
+                            buf.clear();
+                        }
+                        if let Ok(mut buf) = streaming_thinking.lock() {
+                            buf.clear();
+                        }
+                        if let Ok(mut buf) = streaming_tool_uses.lock() {
+                            buf.clear();
+                        }
+                        
+                        // Make a new streaming request with the tool results
+                        log_to_file("Starting follow-up streaming request with tool results...");
+                        
+                        match LlmClient::from_profile(&profile) {
+                            Ok(client) => {
+                                let streaming_response_clone = Arc::clone(&streaming_response);
+                                let streaming_thinking_clone = Arc::clone(&streaming_thinking);
+                                let streaming_tool_uses_clone = Arc::clone(&streaming_tool_uses);
+                                let cancel_flag_clone = Arc::clone(&cancel_flag);
+                                
+                                let result = client.request_stream_with_tools(&llm_messages, &tools, |event| {
+                                    // Check for cancellation
+                                    if cancel_flag_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                                        if let Ok(mut buf) = streaming_response_clone.lock() {
+                                            if !buf.contains('␄') {
+                                                log_to_file("Streaming cancelled by user (tool continuation)");
+                                                buf.push_str("
+[Cancelled]");
+                                                buf.push('␄');
+                                            }
+                                        }
+                                        return;
+                                    }
+                                    
+                                    match event {
+                                        StreamEvent::TextDelta(delta) => {
+                                            if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                buf.push_str(&delta);
+                                            }
+                                        }
+                                        StreamEvent::ThinkingDelta(delta) => {
+                                            if let Ok(mut buf) = streaming_thinking_clone.lock() {
+                                                buf.push_str(&delta);
+                                            }
+                                        }
+                                        StreamEvent::ToolUse(tool_use) => {
+                                            log_to_file(&format!("Tool use requested (again): {} ({})", tool_use.name, tool_use.id));
+                                            if let Ok(mut buf) = streaming_tool_uses_clone.lock() {
+                                                buf.push(tool_use);
+                                            }
+                                        }
+                                        StreamEvent::Complete => {
+                                            log_to_file("Streaming complete (after tool execution)");
+                                            if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                buf.push('␄');
+                                            }
+                                        }
+                                        StreamEvent::Error(e) => {
+                                            log_to_file(&format!("Stream error (tool continuation): {e}"));
+                                            if let Ok(mut buf) = streaming_response_clone.lock() {
+                                                buf.push_str(&format!("
+[Error: {e}]"));
+                                            }
+                                        }
+                                    }
+                                }).await;
+                                
+                                if let Err(e) = result {
+                                    log_to_file(&format!("Follow-up stream request failed: {e}"));
+                                    if let Ok(mut buf) = streaming_response.lock() {
+                                        buf.push_str(&format!("[Error: {e}]"));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log_to_file(&format!("Failed to create client for follow-up: {e}"));
+                                if let Ok(mut buf) = streaming_response.lock() {
+                                    buf.push_str(&format!("[Error: {e}]"));
+                                }
+                            }
+                        }
+                    } else {
+                        log_to_file("No profile configured for tool continuation");
+                        if let Ok(mut buf) = streaming_response.lock() {
+                            buf.push_str("[No profile configured - go to Settings]");
+                        }
+                    }
+                });
+            }
+        });
+        
+        // Start polling for updates (the existing mechanism will handle the new response)
+        self.schedule_streaming_update();
     }
 
     fn rebuild_messages(&self) {

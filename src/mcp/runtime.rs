@@ -131,6 +131,12 @@ impl McpRuntime {
     }
 
     /// Call a tool on an MCP
+    /// 
+    /// **STUB**: This is a placeholder implementation. Actual tool execution will be implemented
+    /// when the SerdesAI MCP client integration is complete. Currently returns a stub error.
+    /// 
+    /// See: McpService::call_tool() which wraps this method and will handle the full
+    /// SerdesAI MCP client interaction once the integration PR lands.
     pub async fn call_tool(
         &mut self,
         tool_name: &str,
@@ -142,10 +148,16 @@ impl McpRuntime {
         // Update last used time
         self.manager.touch(&mcp_id);
 
-        // Would actually call the tool via SerdesAI client
-        // For now, return placeholder
+        // STUB: Would actually call the tool via SerdesAI MCP client here:
+        // let conn = self.connections.get_mut(&mcp_id).ok_or(...)?;
+        // let result = conn.client.call_tool(tool_name, arguments).await?;
+        // return Ok(result);
+        
+        eprintln!("[STUB] McpRuntime::call_tool({}) - MCP tool calling not yet implemented (waiting for SerdesAI integration)", tool_name);
+        
+        // For now, return placeholder error
         Ok(serde_json::json!({
-            "error": "MCP tool calling not yet implemented"
+            "error": "MCP tool calling not yet implemented - this is a stub"
         }))
     }
 
