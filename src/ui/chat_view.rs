@@ -29,6 +29,7 @@ use personal_agent::models::{Conversation, Message as ConvMessage};
 use personal_agent::storage::ConversationStorage;
 use personal_agent::{LlmClient, LlmMessage, StreamEvent};
 use personal_agent::mcp::McpService;
+use personal_agent::agent::runtime::{run_in_agent_runtime, spawn_in_agent_runtime};
 
 /// Logging helper - writes to file
 fn log_to_file(message: &str) {
@@ -271,20 +272,13 @@ define_class!(
                                     if let Some(profile) = profile {
                                         // Get tools from MCP service
                                         log_to_file("Fetching MCP tools...");
-                        let tools = {
+                        let tools = run_in_agent_runtime(async {
                             let service_arc = McpService::global();
-                            // Use a mini runtime to get tools synchronously
-                            let rt = tokio::runtime::Builder::new_current_thread()
-                                .enable_all()
-                                .build()
-                                .expect("Failed to create tokio runtime for tools");
-                            rt.block_on(async {
-                                let svc = service_arc.lock().await;
-                                let tools = svc.get_llm_tools();
-                                log_to_file(&format!("Got {} MCP tools", tools.len()));
-                                tools
-                            })
-                        };
+                            let svc = service_arc.lock().await;
+                            let tools = svc.get_llm_tools();
+                            log_to_file(&format!("Got {} MCP tools", tools.len()));
+                            tools
+                        });
                                         
                                         // Build messages from conversation, prepending system prompt
                                         let mut llm_messages: Vec<LlmMessage> = Vec::new();
@@ -338,15 +332,9 @@ define_class!(
                                         let cancel_flag = Arc::clone(&self.ivars().cancel_streaming);
                                         let profile_clone = profile;
                                         
-                                        // Spawn background thread for streaming
+                                        // Spawn streaming task in agent runtime
                                         log_to_file("Starting streaming request in background...");
-                                        thread::spawn(move || {
-                                            let rt = tokio::runtime::Builder::new_current_thread()
-                                                .enable_all()
-                                                .build();
-                                            
-                                            if let Ok(rt) = rt {
-                                                rt.block_on(async {
+                                        spawn_in_agent_runtime(async move {
                                                     match LlmClient::from_profile(&profile_clone) {
                                                         Ok(client) => {
                                                             let streaming_response_clone = Arc::clone(&streaming_response);
@@ -416,8 +404,6 @@ define_class!(
                                                             }
                                                         }
                                                     }
-                                                });
-                                            }
                                         });
                                         
                                         // Start a timer to poll for updates
@@ -767,27 +753,19 @@ impl ChatViewController {
     fn create_with_conversation(mtm: MainThreadMarker, conversation: Conversation) -> Retained<Self> {
         // Initialize MCP service in background
         log_to_file("Initializing MCP service...");
-        thread::spawn(|| {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
+        spawn_in_agent_runtime(async {
+            let service_arc = McpService::global();
+            let result = {
+                let mut svc = service_arc.lock().await;
+                svc.initialize().await
+            };
             
-            if let Ok(rt) = rt {
-                rt.block_on(async {
-                    let service_arc = McpService::global();
-                    let result = {
-                        let mut svc = service_arc.lock().await;
-                        svc.initialize().await
-                    };
-                    
-                    match result {
-                        Ok(()) => {
-                            let count = service_arc.lock().await.active_count();
-                            log_to_file(&format!("MCP initialized: {} active", count));
-                        }
-                        Err(e) => log_to_file(&format!("MCP init error: {e}")),
-                    }
-                });
+            match result {
+                Ok(()) => {
+                    let count = service_arc.lock().await.active_count();
+                    log_to_file(&format!("MCP initialized: {} active", count));
+                }
+                Err(e) => log_to_file(&format!("MCP init error: {e}")),
             }
         });
         
@@ -1432,14 +1410,8 @@ fn check_streaming_done(&self) -> bool {
         let conversation = self.ivars().conversation.borrow().clone();
         let executing_tools = Arc::clone(&self.ivars().executing_tools);
         
-        // Spawn background thread to execute tools
-        thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
-            
-            if let Ok(rt) = rt {
-                rt.block_on(async {
+        // Spawn tool execution in agent runtime
+        spawn_in_agent_runtime(async move {
                     // Execute each tool
                     let mut tool_results = Vec::new();
                     
@@ -1617,8 +1589,6 @@ fn check_streaming_done(&self) -> bool {
                             buf.push_str("[No profile configured - go to Settings]");
                         }
                     }
-                });
-            }
         });
         
         // Start polling for updates (the existing mechanism will handle the new response)
