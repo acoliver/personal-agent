@@ -1310,9 +1310,11 @@ fn check_streaming_done(&self) -> bool {
             None
         };
         
-        // Get tool uses
-        let tool_uses = if let Ok(buf) = self.ivars().streaming_tool_uses.lock() {
-            buf.clone()
+        // Get tool uses AND CLEAR THE BUFFER to prevent re-execution
+        let tool_uses = if let Ok(mut buf) = self.ivars().streaming_tool_uses.lock() {
+            let uses = buf.clone();
+            buf.clear();  // Clear immediately after reading to prevent infinite loop
+            uses
         } else {
             Vec::new()
         };
