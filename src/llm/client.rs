@@ -7,6 +7,7 @@ use crate::models::{AuthConfig, ModelProfile};
 use crate::registry::RegistryCache;
 use futures::StreamExt;
 use serdes_ai::prelude::*;
+use serdes_ai::models::ModelRequestParameters;
 use std::fs;
 use thiserror::Error;
 
@@ -233,9 +234,8 @@ impl LlmClient {
             .collect();
 
         // Create request parameters with tools
-        // Pass empty default params for now - tools will be handled through model_settings
-        // TODO: Figure out proper ModelRequestParameters import path
-        let params = Default::default();
+        let params = ModelRequestParameters::new()
+            .with_tools(tool_defs);
 
         // Make the request using the model directly
         let response = model
@@ -323,28 +323,20 @@ impl LlmClient {
         // Build the model with extended config for thinking support
         let model = self.build_model(provider, base_url)?;
 
-        // Convert tools to SerdesAI ToolDefinition format (Issue 1 fix)
-        let _tool_defs: Vec<ToolDefinition> = tools
+        // Convert tools to SerdesAI ToolDefinition format
+        let tool_defs: Vec<ToolDefinition> = tools
             .iter()
             .map(|t| ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone()))
             .collect();
 
         // Create request parameters with tools
-        // NOTE: SerdesAI's request_stream currently doesn't support tools parameter
-        // in the same way as the non-streaming request. This is a limitation of the
-        // underlying SerdesAI library. Tools are prepared here for when the API supports them.
-        let params = Default::default();
+        let params = ModelRequestParameters::new()
+            .with_tools(tool_defs);
 
         // Use the model directly for streaming
-        // TODO: Once SerdesAI supports tools in streaming, pass _tool_defs here
         let mut stream = model.request_stream(&model_requests, &self.model_settings(), &params)
             .await
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
-        
-        // Log if tools were requested but can't be passed yet
-        if !_tool_defs.is_empty() {
-            eprintln!("Warning: {} tools prepared but SerdesAI streaming doesn't support tools parameter yet", _tool_defs.len());
-        }
 
         use serdes_ai::core::messages::ModelResponseStreamEvent;
 
