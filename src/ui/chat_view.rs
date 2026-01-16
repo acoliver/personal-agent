@@ -273,10 +273,17 @@ define_class!(
                                         log_to_file("Fetching MCP tools...");
                         let tools = {
                             let service_arc = McpService::global();
-                            let svc = service_arc.lock().expect("Failed to acquire lock on McpService to get tools");
-                            let tools = svc.get_llm_tools();
-                            log_to_file(&format!("Got {} MCP tools", tools.len()));
-                            tools
+                            // Use a mini runtime to get tools synchronously
+                            let rt = tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build()
+                                .expect("Failed to create tokio runtime for tools");
+                            rt.block_on(async {
+                                let svc = service_arc.lock().await;
+                                let tools = svc.get_llm_tools();
+                                log_to_file(&format!("Got {} MCP tools", tools.len()));
+                                tools
+                            })
                         };
                                         
                                         // Build messages from conversation, prepending system prompt
@@ -769,13 +776,13 @@ impl ChatViewController {
                 rt.block_on(async {
                     let service_arc = McpService::global();
                     let result = {
-                        let mut svc = service_arc.lock().expect("Failed to acquire lock on McpService during initialization");
+                        let mut svc = service_arc.lock().await;
                         svc.initialize().await
                     };
                     
                     match result {
                         Ok(()) => {
-                            let count = service_arc.lock().expect("Failed to acquire lock on McpService to get active count").active_count();
+                            let count = service_arc.lock().await.active_count();
                             log_to_file(&format!("MCP initialized: {} active", count));
                         }
                         Err(e) => log_to_file(&format!("MCP init error: {e}")),
@@ -1439,7 +1446,7 @@ fn check_streaming_done(&self) -> bool {
                         
                         let result = {
                             let service_arc = McpService::global();
-                            let mut svc = service_arc.lock().expect("Failed to acquire lock on McpService to call tool");
+                            let mut svc = service_arc.lock().await;
                             svc.call_tool(&tool_use.name, tool_use.input.clone()).await
                         };
                         
@@ -1483,7 +1490,7 @@ fn check_streaming_done(&self) -> bool {
                         // Get tools from MCP service
                         let tools = {
                             let service_arc = McpService::global();
-                            let svc = service_arc.lock().expect("Failed to acquire lock on McpService to get tools for continuation");
+                            let svc = service_arc.lock().await;
                             svc.get_llm_tools()
                         };
                         

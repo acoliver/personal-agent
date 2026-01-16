@@ -55,10 +55,10 @@ pub enum StreamEvent {
 
 /// LLM client that uses `SerdesAI`
 pub struct LlmClient {
-    profile: ModelProfile,
-    api_key: String,
+    pub(crate) profile: ModelProfile,
+    pub(crate) api_key: String,
     /// Base URL from models.dev registry (if available)
-    registry_base_url: Option<String>,
+    pub(crate) registry_base_url: Option<String>,
 }
 
 impl LlmClient {
@@ -136,7 +136,7 @@ impl LlmClient {
     }
 
     /// Build a model with extended configuration (thinking support, etc.)
-    fn build_model(
+    pub(crate) fn build_model(
         &self,
         provider: &str,
         base_url: Option<&str>,
@@ -415,7 +415,7 @@ impl LlmClient {
     /// 
     /// Uses the `env` field from models.dev registry to determine the correct
     /// environment variable name for the provider.
-    fn set_api_key_env(&self) {
+    pub(crate) fn set_api_key_env(&self) {
         // Look up the env var name from registry, or use provider-specific defaults
         let env_var = self.get_env_var_name();
         std::env::set_var(&env_var, &self.api_key);
@@ -439,6 +439,11 @@ impl LlmClient {
         // Fallback to OPENAI_API_KEY for OpenAI-compatible providers
         "OPENAI_API_KEY".to_string()
     }
+    
+    /// Create an Agent with MCP tools integrated
+    /// 
+    /// This builds a SerdesAI Agent with the current profile's model and system prompt,
+    /// and registers MCP tools as native Agent tools using a bridge executor.
     
     /// Parse a SerdesAI ModelResponse into our Message type
     fn parse_response(
@@ -500,7 +505,7 @@ impl LlmClient {
     /// - `@ai-sdk/openai-compatible` -> use "openai" provider with custom `base_url`
     /// - `@ai-sdk/openai` -> native openai
     /// - `@ai-sdk/anthropic` -> native anthropic
-    fn get_serdes_provider(&self) -> &str {
+    pub(crate) fn get_serdes_provider(&self) -> &str {
         if let Ok(cache_path) = RegistryCache::default_path() {
             let cache = RegistryCache::new(cache_path, 24);
             if let Ok(Some(registry)) = cache.load() {

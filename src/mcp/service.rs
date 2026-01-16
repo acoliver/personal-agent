@@ -1,7 +1,8 @@
 //! MCP Service - singleton managing MCP connections for the app
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -136,34 +137,34 @@ mod tests {
         assert!(Arc::ptr_eq(&service1, &service2));
     }
     
-    #[test]
-    fn test_get_tools_empty() {
+    #[tokio::test]
+    async fn test_get_tools_empty() {
         let service = McpService::global();
-        let locked = service.lock().expect("Failed to acquire lock on McpService in test");
+        let locked = service.lock().await;
         let tools = locked.get_tools();
         // Should be empty initially (no MCPs started)
         assert_eq!(tools.len(), 0);
     }
     
-    #[test]
-    fn test_has_active_mcps_initially_false() {
+    #[tokio::test]
+    async fn test_has_active_mcps_initially_false() {
         let service = McpService::global();
-        let locked = service.lock().expect("Failed to acquire lock on McpService in test");
+        let locked = service.lock().await;
         // Should have no active MCPs initially
         assert!(!locked.has_active_mcps());
     }
     
-    #[test]
-    fn test_active_count_initially_zero() {
+    #[tokio::test]
+    async fn test_active_count_initially_zero() {
         let service = McpService::global();
-        let locked = service.lock().expect("Failed to acquire lock on McpService in test");
+        let locked = service.lock().await;
         assert_eq!(locked.active_count(), 0);
     }
     
     #[tokio::test]
     async fn test_call_tool_not_found() {
         let service = McpService::global();
-        let mut locked = service.lock().expect("Failed to acquire lock on McpService in test");
+        let mut locked = service.lock().await;
         
         let result = locked.call_tool("nonexistent_tool", serde_json::json!({})).await;
         assert!(result.is_err());

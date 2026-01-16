@@ -66,6 +66,8 @@ futures = "0.3"
 async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serdes-ai = { path = "research/serdesAI/serdes-ai", features = ["openai", "anthropic", "mcp"] }
+serdes-ai-agent = { path = "research/serdesAI/serdes-ai-agent" }
+serdes-ai-tools = { path = "research/serdesAI/serdes-ai-tools" }
 serdes-ai-mcp = { path = "research/serdesAI/serdes-ai-mcp", features = ["client", "reqwest"] }
 dispatch = "0.2"
 urlencoding = "2.1"
