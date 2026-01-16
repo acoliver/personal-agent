@@ -339,6 +339,11 @@ impl LlmClient {
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
 
         use serdes_ai::core::messages::ModelResponseStreamEvent;
+        use std::collections::HashMap;
+
+        // Track pending tool calls while streaming
+        // index -> (id, name, args_str)
+        let mut pending_tool_calls: HashMap<usize, (String, String, String)> = HashMap::new();
 
         while let Some(event_result) = stream.next().await {
             match event_result {
@@ -351,6 +356,12 @@ impl LlmClient {
                             }
                             ModelResponsePartDelta::Thinking(t) => {
                                 on_event(StreamEvent::ThinkingDelta(t.content_delta.clone()));
+                            }
+                            ModelResponsePartDelta::ToolCall(tc_delta) => {
+                                // Accumulate tool call args from deltas
+                                if let Some((_, _, ref mut args_str)) = pending_tool_calls.get_mut(&delta.index) {
+                                    args_str.push_str(&tc_delta.args_delta);
+                                }
                             }
                             _ => {}
                         }
@@ -369,18 +380,25 @@ impl LlmClient {
                                 }
                             }
                             ModelResponsePart::ToolCall(tc) => {
-                                // Emit tool use event when tool call part starts
-                                let tool_use = crate::llm::tools::ToolUse::new(
-                                    tc.tool_call_id.as_deref().unwrap_or(""),
-                                    &tc.tool_name,
-                                    tc.args.to_json(),
-                                );
-                                on_event(StreamEvent::ToolUse(tool_use));
+                                // Start accumulating this tool call
+                                let id = tc.tool_call_id.as_deref().unwrap_or("").to_string();
+                                let name = tc.tool_name.clone();
+                                pending_tool_calls.insert(start.index, (id, name, String::new()));
                             }
                             _ => {}
                         }
                     }
-                    ModelResponseStreamEvent::PartEnd(_) => {}
+                    ModelResponseStreamEvent::PartEnd(end) => {
+                        // Emit the complete tool use when the part ends
+                        if let Some((id, name, args_str)) = pending_tool_calls.remove(&end.index) {
+                            // Parse accumulated args
+                            let args = serde_json::from_str(&args_str).unwrap_or_else(|_| {
+                                serde_json::json!({"_raw": args_str, "_error": "parse_failed"})
+                            });
+                            let tool_use = crate::llm::tools::ToolUse::new(&id, &name, args);
+                            on_event(StreamEvent::ToolUse(tool_use));
+                        }
+                    }
                 },
                 Err(e) => {
                     on_event(StreamEvent::Error(e.to_string()));
