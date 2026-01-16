@@ -29,7 +29,7 @@ impl RegistryCache {
     ///
     /// * `cache_path` - Path to the cache file
     /// * `expiry_hours` - Number of hours before cache expires
-    #[must_use] 
+    #[must_use]
     pub const fn new(cache_path: PathBuf, expiry_hours: i64) -> Self {
         Self {
             cache_path,
@@ -272,7 +272,11 @@ mod tests {
     #[test]
     fn test_creates_parent_directory() {
         let temp_dir = TempDir::new().unwrap();
-        let cache_path = temp_dir.path().join("nested").join("dir").join("cache.json");
+        let cache_path = temp_dir
+            .path()
+            .join("nested")
+            .join("dir")
+            .join("cache.json");
         let cache = RegistryCache::new(cache_path.clone(), 24);
 
         let registry = create_test_registry();

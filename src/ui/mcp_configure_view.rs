@@ -8,16 +8,19 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObject;
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSAppearanceCustomization, NSButton, NSBezelStyle, NSFont, NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView,
-    NSStackView, NSStackViewDistribution, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSViewController,
+    NSAppearanceCustomization, NSBezelStyle, NSButton, NSFont, NSLayoutConstraintOrientation,
+    NSPopUpButton, NSScrollView, NSStackView, NSStackViewDistribution, NSTextField,
+    NSUserInterfaceLayoutOrientation, NSView, NSViewController,
 };
-use objc2_foundation::{NSEdgeInsets, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use objc2_core_graphics::CGColor;
+use objc2_foundation::{NSEdgeInsets, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 
 use crate::ui::Theme;
 use personal_agent::config::Config;
-use personal_agent::mcp::{EnvVarConfig, McpAuthType, McpConfig, McpPackage, McpPackageType, McpSource, McpTransport};
 use personal_agent::mcp::secrets::SecretsManager;
+use personal_agent::mcp::{
+    EnvVarConfig, McpAuthType, McpConfig, McpPackage, McpPackageType, McpSource, McpTransport,
+};
 use uuid::Uuid;
 
 use super::mcp_add_view::{ParsedMcp, PARSED_MCP, SELECTED_MCP_CONFIG};
@@ -26,7 +29,7 @@ fn log_to_file(message: &str) {
     let log_path = dirs::home_dir()
         .unwrap_or_default()
         .join("Library/Application Support/PersonalAgent/debug.log");
-    
+
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
         let _ = writeln!(file, "[{timestamp}] McpConfigureView: {message}");
@@ -77,11 +80,11 @@ define_class!(
 
             // Check if we have a selected config from registry search
             let selected_config = SELECTED_MCP_CONFIG.with(|cell| cell.borrow_mut().take());
-            
+
             if let Some(mcp_config) = selected_config {
-                log_to_file(&format!("Using selected registry config: {} with {} env_vars", 
+                log_to_file(&format!("Using selected registry config: {} with {} env_vars",
                     mcp_config.name, mcp_config.env_vars.len()));
-                
+
                 // Store it for use in configure view
                 *self.ivars().selected_config.borrow_mut() = Some(mcp_config.clone());
             } else {
@@ -92,13 +95,13 @@ define_class!(
 
             let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(400.0, 500.0));
             let root_view = NSView::initWithFrame(NSView::alloc(mtm), frame);
-            
+
             // Force dark appearance
             let dark_appearance_name = unsafe { objc2_app_kit::NSAppearanceNameDarkAqua };
             if let Some(dark_appearance) = objc2_app_kit::NSAppearance::appearanceNamed(dark_appearance_name) {
                 root_view.setAppearance(Some(&dark_appearance));
             }
-            
+
             root_view.setWantsLayer(true);
             if let Some(layer) = root_view.layer() {
                 let color = CGColor::new_generic_rgb(
@@ -160,49 +163,49 @@ define_class!(
         #[unsafe(method(saveClicked:))]
         fn save_clicked(&self, _sender: Option<&NSObject>) {
             log_to_file("Save clicked");
-            
+
             // Validate and get name
             let name = if let Some(field) = &*self.ivars().name_input.borrow() {
                 field.stringValue().to_string().trim().to_string()
             } else {
                 String::new()
             };
-            
+
             if name.is_empty() {
                 log_to_file("ERROR: Name is empty");
                 self.show_error("Validation Error", "MCP name is required");
                 return;
             }
-            
+
             // Get default secrets directory
             let secrets_dir = dirs::home_dir()
                 .unwrap_or_default()
                 .join("Library/Application Support/PersonalAgent/secrets");
             let secrets_manager = SecretsManager::new(secrets_dir);
-            
+
             // Build MCP config - either from selected registry config or parsed manual entry
             let mcp_config = if let Some(base_config) = &*self.ivars().selected_config.borrow() {
                 log_to_file("Building from selected registry config");
-                
+
                 // Clone and update with user input
                 let mut config = base_config.clone();
                 config.name = name; // User may have edited the name
-                
+
                 // Collect env var values from dynamic fields
                 let mut env_values = std::collections::HashMap::new();
                 for (var_name, field) in self.ivars().env_var_inputs.borrow().iter() {
                     let value = field.stringValue().to_string().trim().to_string();
                     if !value.is_empty() {
                         env_values.insert(var_name.clone(), value.clone());
-                        
+
                         // Store secrets
                         let var_name_lower = var_name.to_lowercase();
-                        let is_secret = var_name_lower.contains("key") 
+                        let is_secret = var_name_lower.contains("key")
                             || var_name_lower.contains("secret")
                             || var_name_lower.contains("token")
                             || var_name_lower.contains("password")
                             || var_name_lower.contains("pat");
-                        
+
                         if is_secret {
                             log_to_file(&format!("Storing secret for {}", var_name));
                             if let Err(e) = secrets_manager.store_api_key_named(config.id, var_name, &value) {
@@ -213,7 +216,7 @@ define_class!(
                         }
                     }
                 }
-                
+
                 // Validate required env vars
                 for env_var in &config.env_vars {
                     if env_var.required && !env_values.contains_key(&env_var.name) {
@@ -222,14 +225,14 @@ define_class!(
                         return;
                     }
                 }
-                
+
                 // Store env values in config.config JSON
                 config.config = serde_json::to_value(&env_values).unwrap_or_default();
-                
+
                 config
             } else {
                 log_to_file("Building from manual parsed MCP");
-                
+
                 // Get auth type from popup
                 let auth_type = if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
                     let index = popup.indexOfSelectedItem();
@@ -241,14 +244,14 @@ define_class!(
                 } else {
                     McpAuthType::None
                 };
-                
+
                 // Get auth values
                 let api_key = if let Some(field) = &*self.ivars().api_key_input.borrow() {
                     field.stringValue().to_string().trim().to_string()
                 } else {
                     String::new()
                 };
-                
+
                 let keyfile_path = if let Some(field) = &*self.ivars().keyfile_input.borrow() {
                     let path_str = field.stringValue().to_string().trim().to_string();
                     if path_str.is_empty() {
@@ -259,7 +262,7 @@ define_class!(
                 } else {
                     None
                 };
-                
+
                 // Build MCP config from parsed data
                 let parsed = self.ivars().parsed_mcp.borrow();
                 let Some(ref parsed) = *parsed else {
@@ -267,7 +270,7 @@ define_class!(
                     self.show_error("Configuration Error", "No MCP data to save");
                     return;
                 };
-                
+
                 let (package, source) = match parsed {
                     ParsedMcp::Npm { identifier, runtime_hint } => {
                         let package = McpPackage {
@@ -303,14 +306,14 @@ define_class!(
                         (package, source)
                     }
                 };
-                
+
                 let transport = match package.package_type {
                     McpPackageType::Http => McpTransport::Http,
                     _ => McpTransport::Stdio,
                 };
-                
+
                 let mcp_id = Uuid::new_v4();
-                
+
                 // Store API key in secrets if provided
                 if auth_type == McpAuthType::ApiKey && !api_key.is_empty() {
                     if let Err(e) = secrets_manager.store_api_key(mcp_id, &api_key) {
@@ -319,7 +322,7 @@ define_class!(
                         return;
                     }
                 }
-                
+
                 McpConfig {
                     id: mcp_id,
                     name: name.clone(),
@@ -334,9 +337,9 @@ define_class!(
                     oauth_token: None,
                 }
             };
-            
+
             log_to_file(&format!("MCP config: {mcp_config:?}"));
-            
+
             // Save to config
             let config_path = match Config::default_path() {
                 Ok(path) => path,
@@ -345,7 +348,7 @@ define_class!(
                     return;
                 }
             };
-            
+
             let mut config = match Config::load(&config_path) {
                 Ok(c) => c,
                 Err(e) => {
@@ -353,17 +356,17 @@ define_class!(
                     Config::default()
                 }
             };
-            
+
             config.mcps.push(mcp_config);
-            
+
             if let Err(e) = config.save(&config_path) {
                 log_to_file(&format!("ERROR: Failed to save config: {e}"));
                 self.show_error("Failed to save configuration", &format!("{e}"));
                 return;
             }
-            
+
             log_to_file("MCP saved successfully");
-            
+
             // Go back to settings
             use objc2_foundation::NSNotificationCenter;
             let center = NSNotificationCenter::defaultCenter();
@@ -376,7 +379,7 @@ define_class!(
             log_to_file("Auth type changed");
             if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
                 let index = popup.indexOfSelectedItem();
-                
+
                 // Show/hide appropriate auth fields
                 if let Some(api_key_field) = &*self.ivars().api_key_input.borrow() {
                     api_key_field.setHidden(index != 0);
@@ -390,14 +393,14 @@ define_class!(
         #[unsafe(method(connectSmitheryClicked:))]
         fn connect_smithery_clicked(&self, _sender: Option<&NSObject>) {
             log_to_file("Connect with Smithery clicked");
-            
+
             // Get the selected config
             let selected = self.ivars().selected_config.borrow();
             let Some(config) = selected.as_ref() else {
                 log_to_file("ERROR: No selected config");
                 return;
             };
-            
+
             // Extract qualified name from package identifier
             // For Smithery: identifier is like "https://server.smithery.ai/@owner/server-name"
             let qualified_name = if let McpSource::Smithery { qualified_name } = &config.source {
@@ -409,11 +412,11 @@ define_class!(
                     .unwrap_or(&config.name)
                     .to_string()
             };
-            
+
             let config_id = config.id;
-            
+
             log_to_file(&format!("Starting OAuth flow for: {}", qualified_name));
-            
+
             // Update UI to show in-progress state
             if let Some(status_label) = &*self.ivars().oauth_status_label.borrow() {
                 status_label.setStringValue(&NSString::from_str("Connecting..."));
@@ -421,27 +424,27 @@ define_class!(
             if let Some(button) = &*self.ivars().oauth_button.borrow() {
                 button.setEnabled(false);
             }
-            
+
             // Start OAuth flow in background thread
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
                     log_to_file("OAuth: Starting callback server");
-                    
+
                     // Start callback server
                     match personal_agent::mcp::start_oauth_callback_server().await {
                         Ok((port, receiver)) => {
                             log_to_file(&format!("OAuth: Callback server started on port {}", port));
-                            
+
                             // Generate OAuth URL
                             let oauth_config = personal_agent::mcp::SmitheryOAuthConfig {
                                 server_qualified_name: qualified_name.clone(),
                                 redirect_uri: format!("http://localhost:{}", port),
                             };
-                            
+
                             let oauth_url = personal_agent::mcp::generate_smithery_oauth_url(&oauth_config);
                             log_to_file(&format!("OAuth: Generated URL: {}", oauth_url));
-                            
+
                             // Open browser
                             #[cfg(target_os = "macos")]
                             {
@@ -450,7 +453,7 @@ define_class!(
                                     log_to_file(&format!("OAuth: Failed to open browser: {}", e));
                                 }
                             }
-                            
+
                             // Wait for callback (with timeout)
                             log_to_file("OAuth: Waiting for callback (5 min timeout)");
                             match tokio::time::timeout(
@@ -460,13 +463,13 @@ define_class!(
                                 Ok(Ok(result)) => {
                                     if let Some(ref token) = result.token {
                                         log_to_file(&format!("OAuth: Got token (length: {})", token.len()));
-                                        
+
                                         // Save token
                                         if let Err(e) = save_oauth_token(config_id, token) {
                                             log_to_file(&format!("OAuth: Failed to save token: {}", e));
                                         } else {
                                             log_to_file("OAuth: Token saved successfully");
-                                            
+
                                             // Update UI on main thread
                                             use objc2::rc::autoreleasepool;
                                             autoreleasepool(|_| {
@@ -499,7 +502,7 @@ define_class!(
         #[unsafe(method(oauthSuccessNotification:))]
         fn oauth_success_notification(&self, _notification: &NSObject) {
             log_to_file("OAuth success notification received");
-            
+
             // Update UI
             if let Some(status_label) = &*self.ivars().oauth_status_label.borrow() {
                 status_label.setStringValue(&NSString::from_str("Connected"));
@@ -514,21 +517,22 @@ define_class!(
 
 /// Helper function to save OAuth token to config
 fn save_oauth_token(config_id: Uuid, token: &str) -> Result<(), String> {
-    let config_path = Config::default_path()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-    
-    let mut config = Config::load(&config_path)
-        .map_err(|e| format!("Failed to load config: {}", e))?;
-    
+    let config_path =
+        Config::default_path().map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config =
+        Config::load(&config_path).map_err(|e| format!("Failed to load config: {}", e))?;
+
     if let Some(mcp) = config.mcps.iter_mut().find(|m| m.id == config_id) {
         mcp.oauth_token = Some(token.to_string());
     } else {
         return Err("MCP config not found".to_string());
     }
-    
-    config.save(&config_path)
+
+    config
+        .save(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -565,12 +569,18 @@ impl McpConfigureViewController {
         let top_bar = NSStackView::new(mtm);
         top_bar.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
         top_bar.setSpacing(8.0);
-        top_bar.setEdgeInsets(NSEdgeInsets { top: 8.0, left: 12.0, bottom: 8.0, right: 12.0 });
+        top_bar.setEdgeInsets(NSEdgeInsets {
+            top: 8.0,
+            left: 12.0,
+            bottom: 8.0,
+            right: 12.0,
+        });
         top_bar.setTranslatesAutoresizingMaskIntoConstraints(false);
 
         top_bar.setWantsLayer(true);
         if let Some(layer) = top_bar.layer() {
-            let color = CGColor::new_generic_rgb(Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2, 1.0);
+            let color =
+                CGColor::new_generic_rgb(Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2, 1.0);
             layer.setBackgroundColor(Some(&color));
         }
 
@@ -596,7 +606,10 @@ impl McpConfigureViewController {
 
         // Spacer
         let spacer = NSView::new(mtm);
-        spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+        spacer.setContentHuggingPriority_forOrientation(
+            1.0,
+            NSLayoutConstraintOrientation::Horizontal,
+        );
         top_bar.addArrangedSubview(&spacer);
 
         // Cancel button
@@ -639,10 +652,15 @@ impl McpConfigureViewController {
         let form_stack = super::FlippedStackView::new(mtm);
         form_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
         form_stack.setSpacing(16.0);
-        form_stack.setEdgeInsets(NSEdgeInsets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
+        form_stack.setEdgeInsets(NSEdgeInsets {
+            top: 16.0,
+            left: 16.0,
+            bottom: 16.0,
+            right: 16.0,
+        });
         form_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
         form_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
-        
+
         // Store form_stack for adding dynamic fields later
         *self.ivars().form_stack.borrow_mut() = Some(Retained::clone(&form_stack));
 
@@ -653,12 +671,22 @@ impl McpConfigureViewController {
             match parsed {
                 ParsedMcp::Npm { identifier, .. } => {
                     // Extract package name from @org/package
-                    identifier.split('/').last().unwrap_or(identifier).to_string()
+                    identifier
+                        .split('/')
+                        .last()
+                        .unwrap_or(identifier)
+                        .to_string()
                 }
                 ParsedMcp::Docker { image } => {
                     // Extract image name from org/image:tag
-                    image.split(':').next().unwrap_or(image)
-                        .split('/').last().unwrap_or(image).to_string()
+                    image
+                        .split(':')
+                        .next()
+                        .unwrap_or(image)
+                        .split('/')
+                        .last()
+                        .unwrap_or(image)
+                        .to_string()
                 }
                 ParsedMcp::Http { url } => {
                     // Extract last path segment
@@ -673,7 +701,7 @@ impl McpConfigureViewController {
         let name_section = self.build_form_field("Name", &default_name, mtm);
         form_stack.addArrangedSubview(&name_section.0);
         *self.ivars().name_input.borrow_mut() = Some(name_section.1);
-        
+
         // If we have a selected config, check auth type
         if let Some(ref config) = *self.ivars().selected_config.borrow() {
             if config.auth_type == McpAuthType::OAuth {
@@ -682,7 +710,10 @@ impl McpConfigureViewController {
                 let oauth_section = self.build_oauth_section(mtm);
                 form_stack.addArrangedSubview(&oauth_section);
             } else if !config.env_vars.is_empty() {
-                log_to_file(&format!("Building {} dynamic env var fields", config.env_vars.len()));
+                log_to_file(&format!(
+                    "Building {} dynamic env var fields",
+                    config.env_vars.len()
+                ));
                 self.build_env_var_fields(&config.env_vars, mtm);
             } else {
                 log_to_file("No env_vars in selected config - showing auth section");
@@ -700,15 +731,20 @@ impl McpConfigureViewController {
 
         scroll_view.setDocumentView(Some(&form_stack));
 
-        let form_width = form_stack.widthAnchor().constraintEqualToAnchor_constant(
-            &scroll_view.contentView().widthAnchor(), 0.0,
-        );
+        let form_width = form_stack
+            .widthAnchor()
+            .constraintEqualToAnchor_constant(&scroll_view.contentView().widthAnchor(), 0.0);
         form_width.setActive(true);
 
         scroll_view
     }
 
-    fn build_form_field(&self, label: &str, default_value: &str, mtm: MainThreadMarker) -> (Retained<NSView>, Retained<NSTextField>) {
+    fn build_form_field(
+        &self,
+        label: &str,
+        default_value: &str,
+        mtm: MainThreadMarker,
+    ) -> (Retained<NSView>, Retained<NSTextField>) {
         let container = NSStackView::new(mtm);
         container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
         container.setSpacing(4.0);
@@ -723,7 +759,9 @@ impl McpConfigureViewController {
         input.setPlaceholderString(Some(&NSString::from_str(default_value)));
         input.setStringValue(&NSString::from_str(default_value));
         input.setTranslatesAutoresizingMaskIntoConstraints(false);
-        let width = input.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
+        let width = input
+            .widthAnchor()
+            .constraintGreaterThanOrEqualToConstant(350.0);
         width.setActive(true);
         container.addArrangedSubview(&input);
 
@@ -731,8 +769,11 @@ impl McpConfigureViewController {
     }
 
     fn build_env_var_fields(&self, env_vars: &[EnvVarConfig], mtm: MainThreadMarker) {
-        log_to_file(&format!("build_env_var_fields called with {} vars", env_vars.len()));
-        
+        log_to_file(&format!(
+            "build_env_var_fields called with {} vars",
+            env_vars.len()
+        ));
+
         // Get the form stack - need to clone to avoid borrow issues
         let form_stack_opt = self.ivars().form_stack.borrow().clone();
         let form_stack = match form_stack_opt {
@@ -742,7 +783,7 @@ impl McpConfigureViewController {
                 return;
             }
         };
-        
+
         for env_var in env_vars {
             // Label with required indicator
             let label_text = if env_var.required {
@@ -750,41 +791,49 @@ impl McpConfigureViewController {
             } else {
                 format!("{} (optional)", env_var.name)
             };
-            
+
             let label = NSTextField::labelWithString(&NSString::from_str(&label_text), mtm);
             label.setTextColor(Some(&Theme::text_primary()));
             label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
             form_stack.addArrangedSubview(&label);
-            
+
             // Input field
             let input = NSTextField::new(mtm);
             input.setPlaceholderString(Some(&NSString::from_str(&env_var.name)));
             input.setTranslatesAutoresizingMaskIntoConstraints(false);
-            
+
             // Make it look like a secure field if it's likely a secret
             let var_name_lower = env_var.name.to_lowercase();
-            let is_secret = var_name_lower.contains("key") 
+            let is_secret = var_name_lower.contains("key")
                 || var_name_lower.contains("secret")
                 || var_name_lower.contains("token")
                 || var_name_lower.contains("password")
                 || var_name_lower.contains("pat");
-            
+
             if is_secret {
                 // Use a more muted placeholder for secrets
-                input.setPlaceholderString(Some(&NSString::from_str(&format!("Enter {}", env_var.name))));
+                input.setPlaceholderString(Some(&NSString::from_str(&format!(
+                    "Enter {}",
+                    env_var.name
+                ))));
             }
-            
-            let width = input.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
+
+            let width = input
+                .widthAnchor()
+                .constraintGreaterThanOrEqualToConstant(350.0);
             width.setActive(true);
             form_stack.addArrangedSubview(&input);
-            
+
             // Store reference
-            self.ivars().env_var_inputs.borrow_mut().push((env_var.name.clone(), input));
-            
+            self.ivars()
+                .env_var_inputs
+                .borrow_mut()
+                .push((env_var.name.clone(), input));
+
             log_to_file(&format!("Added field for {}", env_var.name));
         }
     }
-    
+
     fn build_auth_section(&self, mtm: MainThreadMarker) -> Retained<NSView> {
         let container = NSStackView::new(mtm);
         container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
@@ -806,7 +855,9 @@ impl McpConfigureViewController {
             auth_popup.setAction(Some(sel!(authTypeChanged:)));
         }
         auth_popup.selectItemAtIndex(2); // Default to None
-        let width = auth_popup.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
+        let width = auth_popup
+            .widthAnchor()
+            .constraintGreaterThanOrEqualToConstant(350.0);
         width.setActive(true);
         container.addArrangedSubview(&auth_popup);
         *self.ivars().auth_type_popup.borrow_mut() = Some(auth_popup);
@@ -815,7 +866,9 @@ impl McpConfigureViewController {
         let api_key_field = NSTextField::new(mtm);
         api_key_field.setPlaceholderString(Some(&NSString::from_str("Enter API key")));
         api_key_field.setHidden(true);
-        let api_key_width = api_key_field.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
+        let api_key_width = api_key_field
+            .widthAnchor()
+            .constraintGreaterThanOrEqualToConstant(350.0);
         api_key_width.setActive(true);
         container.addArrangedSubview(&api_key_field);
         *self.ivars().api_key_input.borrow_mut() = Some(api_key_field);
@@ -824,7 +877,9 @@ impl McpConfigureViewController {
         let keyfile_field = NSTextField::new(mtm);
         keyfile_field.setPlaceholderString(Some(&NSString::from_str("/path/to/keyfile")));
         keyfile_field.setHidden(true);
-        let keyfile_width = keyfile_field.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
+        let keyfile_width = keyfile_field
+            .widthAnchor()
+            .constraintGreaterThanOrEqualToConstant(350.0);
         keyfile_width.setActive(true);
         container.addArrangedSubview(&keyfile_field);
         *self.ivars().keyfile_input.borrow_mut() = Some(keyfile_field);
@@ -845,7 +900,10 @@ impl McpConfigureViewController {
         container.addArrangedSubview(&label);
 
         // Check if already connected
-        let is_connected = self.ivars().selected_config.borrow()
+        let is_connected = self
+            .ivars()
+            .selected_config
+            .borrow()
             .as_ref()
             .and_then(|c| c.oauth_token.as_ref())
             .is_some();
@@ -873,15 +931,17 @@ impl McpConfigureViewController {
         };
         btn.setBezelStyle(NSBezelStyle::Rounded);
         btn.setEnabled(!is_connected);
-        let btn_width = btn.widthAnchor().constraintGreaterThanOrEqualToConstant(350.0);
+        let btn_width = btn
+            .widthAnchor()
+            .constraintGreaterThanOrEqualToConstant(350.0);
         btn_width.setActive(true);
         container.addArrangedSubview(&btn);
         *self.ivars().oauth_button.borrow_mut() = Some(btn);
 
         // Info text
         let info = NSTextField::labelWithString(
-            &NSString::from_str("Click to authorize this application with Smithery"), 
-            mtm
+            &NSString::from_str("Click to authorize this application with Smithery"),
+            mtm,
         );
         info.setTextColor(Some(&Theme::text_secondary_color()));
         info.setFont(Some(&NSFont::systemFontOfSize(10.0)));

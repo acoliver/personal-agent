@@ -8,18 +8,19 @@ use std::cell::Cell;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
-use objc2_foundation::{
-    NSNotification, NSObjectProtocol, NSRectEdge, NSSize, NSString,
-};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSImage, NSMenu, NSMenuItem, NSPopover, NSPopoverBehavior, NSStatusBar, NSStatusItem,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage, NSMenu,
+    NSMenuItem, NSPopover, NSPopoverBehavior, NSStatusBar, NSStatusItem,
     NSVariableStatusItemLength,
 };
+use objc2_foundation::{NSNotification, NSObjectProtocol, NSRectEdge, NSSize, NSString};
 
 mod ui;
-use ui::{ChatViewController, HistoryViewController, McpAddViewController, McpConfigureViewController, ModelSelectorViewController, ProfileEditorDemoViewController, SettingsViewController};
 use ui::history_view::LOADED_CONVERSATION_JSON;
+use ui::{
+    ChatViewController, HistoryViewController, McpAddViewController, McpConfigureViewController,
+    ModelSelectorViewController, ProfileEditorDemoViewController, SettingsViewController,
+};
 
 // Thread-local storage for selected model from model selector
 thread_local! {
@@ -46,13 +47,13 @@ thread_local! {
 fn load_image(png_data: &[u8]) -> Option<Retained<NSImage>> {
     use objc2::AllocAnyThread;
     use objc2_foundation::NSData;
-    
+
     let data = NSData::with_bytes(png_data);
     let image = NSImage::initWithData(NSImage::alloc(), &data)?;
-    
+
     // Do NOT set as template - we want the original red color
-    // image.setTemplate(true);  
-    
+    // image.setTemplate(true);
+
     Some(image)
 }
 
@@ -72,7 +73,7 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let mtm = MainThreadMarker::new().unwrap();
-            
+
             // Force dark appearance for the entire app to avoid blue accents
             let app = NSApplication::sharedApplication(mtm);
             // SAFETY: NSAppearanceNameDarkAqua is a constant string provided by AppKit
@@ -112,7 +113,7 @@ define_class!(
             popover.setBehavior(NSPopoverBehavior::ApplicationDefined);
             popover.setAnimates(true);
             popover.setContentSize(NSSize::new(400.0, 500.0));
-            
+
             // Force dark appearance on the popover itself
             // SAFETY: NSAppearanceNameDarkAqua is a constant string provided by AppKit
             let dark_name = unsafe { objc2_app_kit::NSAppearanceNameDarkAqua };
@@ -128,7 +129,7 @@ define_class!(
             let profile_editor_view = ProfileEditorDemoViewController::new(mtm);
             let mcp_add_view = McpAddViewController::new(mtm);
             let mcp_configure_view = McpConfigureViewController::new(mtm);
-            
+
             // Set initial content to chat view
             popover.setContentViewController(Some(&chat_view));
 
@@ -150,7 +151,7 @@ define_class!(
             // Register for view switching notifications
             use objc2_foundation::NSNotificationCenter;
             let center = NSNotificationCenter::defaultCenter();
-            
+
             unsafe {
                 center.addObserver_selector_name_object(
                     self,
@@ -242,11 +243,11 @@ define_class!(
         fn show_chat_view(&self, _notification: &NSNotification) {
             let popover = POPOVER.take();
             let chat_view = CHAT_VIEW_CONTROLLER.take();
-            
+
             if let (Some(ref popover), Some(ref chat_view)) = (&popover, &chat_view) {
                 popover.setContentViewController(Some(chat_view));
             }
-            
+
             POPOVER.set(popover);
             CHAT_VIEW_CONTROLLER.set(chat_view);
         }
@@ -255,13 +256,13 @@ define_class!(
         fn show_settings_view(&self, _notification: &NSNotification) {
             let popover = POPOVER.take();
             let settings_view = SETTINGS_VIEW_CONTROLLER.take();
-            
+
             if let (Some(ref popover), Some(ref settings_view)) = (&popover, &settings_view) {
                 popover.setContentViewController(Some(settings_view));
                 // Reload profiles when settings view becomes visible
                 settings_view.reload_profiles();
             }
-            
+
             POPOVER.set(popover);
             SETTINGS_VIEW_CONTROLLER.set(settings_view);
         }
@@ -270,13 +271,13 @@ define_class!(
         fn show_history_view(&self, _notification: &NSNotification) {
             let popover = POPOVER.take();
             let history_view = HISTORY_VIEW_CONTROLLER.take();
-            
+
             if let (Some(ref popover), Some(ref history_view)) = (&popover, &history_view) {
                 // Refresh the history list before showing
                 history_view.reload_conversations();
                 popover.setContentViewController(Some(history_view));
             }
-            
+
             POPOVER.set(popover);
             HISTORY_VIEW_CONTROLLER.set(history_view);
         }
@@ -285,11 +286,11 @@ define_class!(
         fn show_model_selector(&self, _notification: &NSNotification) {
             let popover = POPOVER.take();
             let model_selector_view = MODEL_SELECTOR_VIEW_CONTROLLER.take();
-            
+
             if let (Some(ref popover), Some(ref model_selector_view)) = (&popover, &model_selector_view) {
                 popover.setContentViewController(Some(model_selector_view));
             }
-            
+
             POPOVER.set(popover);
             MODEL_SELECTOR_VIEW_CONTROLLER.set(model_selector_view);
         }
@@ -300,13 +301,13 @@ define_class!(
             // (The settings view sets EDITING_PROFILE_ID before posting this notification)
             let mtm = MainThreadMarker::new().unwrap();
             let new_profile_editor = ProfileEditorDemoViewController::new(mtm);
-            
+
             let popover = POPOVER.take();
-            
+
             if let Some(ref popover) = popover {
                 popover.setContentViewController(Some(&new_profile_editor));
             }
-            
+
             POPOVER.set(popover);
             // Update the stored reference
             PROFILE_EDITOR_VIEW_CONTROLLER.set(Some(new_profile_editor));
@@ -317,28 +318,28 @@ define_class!(
             // Model was selected in model selector
             // Create a NEW profile editor to pick up the selected model from thread-local storage
             let mtm = MainThreadMarker::new().unwrap();
-            
+
             println!("Model selected, creating new profile editor with selection");
-            
+
             // Create fresh profile editor - it will read SELECTED_MODEL_PROVIDER/ID from thread-local
             let new_profile_editor = ProfileEditorDemoViewController::new(mtm);
-            
+
             let popover = POPOVER.take();
-            
+
             if let Some(ref popover) = popover {
                 popover.setContentViewController(Some(&new_profile_editor));
             }
-            
+
             POPOVER.set(popover);
             // Update the stored reference
             PROFILE_EDITOR_VIEW_CONTROLLER.set(Some(new_profile_editor));
         }
-        
+
         #[unsafe(method(loadConversation:))]
         fn load_conversation(&self, _notification: &NSNotification) {
             // Get conversation JSON from thread-local storage
             let json_opt = LOADED_CONVERSATION_JSON.with(std::cell::Cell::take);
-            
+
             if let Some(json) = json_opt {
                 // Deserialize conversation
                 match serde_json::from_str::<personal_agent::models::Conversation>(&json) {
@@ -349,15 +350,15 @@ define_class!(
                             chat_view.load_conversation(conversation);
                         }
                         CHAT_VIEW_CONTROLLER.set(chat_view);
-                        
+
                         // Switch to chat view
                         let popover = POPOVER.take();
                         let chat_view = CHAT_VIEW_CONTROLLER.take();
-                        
+
                         if let (Some(ref popover), Some(ref chat_view)) = (&popover, &chat_view) {
                             popover.setContentViewController(Some(chat_view));
                         }
-                        
+
                         POPOVER.set(popover);
                         CHAT_VIEW_CONTROLLER.set(chat_view);
                     }
@@ -371,17 +372,17 @@ define_class!(
         #[unsafe(method(showAddMcp:))]
         fn show_add_mcp(&self, _notification: &NSNotification) {
             let mtm = MainThreadMarker::new().unwrap();
-            
+
             let popover = POPOVER.take();
             let existing = MCP_ADD_VIEW_CONTROLLER.take();
-            
+
             // Reuse existing controller or create new one
             let mcp_add_view = existing.unwrap_or_else(|| McpAddViewController::new(mtm));
-            
+
             if let Some(ref popover) = popover {
                 popover.setContentViewController(Some(&mcp_add_view));
             }
-            
+
             POPOVER.set(popover);
             MCP_ADD_VIEW_CONTROLLER.set(Some(mcp_add_view));
         }
@@ -391,13 +392,13 @@ define_class!(
             // Create a NEW MCP configure view instance (picks up PARSED_MCP from thread-local)
             let mtm = MainThreadMarker::new().unwrap();
             let new_mcp_configure_view = McpConfigureViewController::new(mtm);
-            
+
             let popover = POPOVER.take();
-            
+
             if let Some(ref popover) = popover {
                 popover.setContentViewController(Some(&new_mcp_configure_view));
             }
-            
+
             POPOVER.set(popover);
             MCP_CONFIGURE_VIEW_CONTROLLER.set(Some(new_mcp_configure_view));
         }
@@ -417,13 +418,13 @@ impl AppDelegate {
 /// Create the application's main menu with Edit menu for copy/paste
 fn setup_main_menu(mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
-    
+
     // Create main menu bar
     let main_menu = NSMenu::new(mtm);
-    
+
     // Create Edit menu
     let edit_menu = NSMenu::initWithTitle(mtm.alloc(), &NSString::from_str("Edit"));
-    
+
     // Add standard edit items
     unsafe {
         // Cut
@@ -434,7 +435,7 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("x"),
         );
         edit_menu.addItem(&cut_item);
-        
+
         // Copy
         let copy_item = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
@@ -443,7 +444,7 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("c"),
         );
         edit_menu.addItem(&copy_item);
-        
+
         // Paste
         let paste_item = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
@@ -452,7 +453,7 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("v"),
         );
         edit_menu.addItem(&paste_item);
-        
+
         // Select All
         let select_all_item = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
@@ -462,16 +463,16 @@ fn setup_main_menu(mtm: MainThreadMarker) {
         );
         edit_menu.addItem(&select_all_item);
     }
-    
+
     // Create Edit menu item for menu bar
     let edit_menu_item = NSMenuItem::new(mtm);
     edit_menu_item.setSubmenu(Some(&edit_menu));
-    
+
     // Add to main menu
     unsafe {
         main_menu.addItem(&edit_menu_item);
     }
-    
+
     // Set as app's main menu
     app.setMainMenu(Some(&main_menu));
 }
@@ -480,10 +481,10 @@ fn main() {
     let mtm = MainThreadMarker::new().expect("Must run on main thread");
 
     let app = NSApplication::sharedApplication(mtm);
-    
+
     // Set up Edit menu for copy/paste to work
     setup_main_menu(mtm);
-    
+
     let delegate = AppDelegate::new(mtm);
 
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));

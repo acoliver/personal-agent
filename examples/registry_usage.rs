@@ -33,21 +33,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example: Get models with tool calling capability
     println!("\n--- Models with Tool Calling ---");
     let tool_models = registry.get_tool_call_models();
-    println!("Found {} models with tool calling capability", tool_models.len());
+    println!(
+        "Found {} models with tool calling capability",
+        tool_models.len()
+    );
     for (provider_id, model) in tool_models.iter().take(5) {
         println!("  - {} / {} ({})", provider_id, model.name, model.id);
         if let Some(limit) = &model.limit {
-            println!(
-                "    Context: {}, Output: {}",
-                limit.context, limit.output
-            );
+            println!("    Context: {}, Output: {}", limit.context, limit.output);
         }
     }
 
     // Example: Get models with reasoning capability
     println!("\n--- Models with Reasoning ---");
     let reasoning_models = registry.get_reasoning_models();
-    println!("Found {} models with reasoning capability", reasoning_models.len());
+    println!(
+        "Found {} models with reasoning capability",
+        reasoning_models.len()
+    );
     for (provider_id, model) in reasoning_models.iter().take(5) {
         println!("  - {} / {} ({})", provider_id, model.name, model.id);
     }
@@ -64,10 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Found {} multimodal models", multimodal.len());
     for (provider_id, model) in multimodal.iter().take(5) {
         if let Some(modalities) = &model.modalities {
-            println!(
-                "  - {} / {} ({})",
-                provider_id, model.name, model.id
-            );
+            println!("  - {} / {} ({})", provider_id, model.name, model.id);
             println!(
                 "    Input: {}, Output: {}",
                 modalities.input.join(", "),
@@ -84,10 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for model in models.iter().take(5) {
                 println!("  - {} ({})", model.name, model.id);
                 if let Some(cost) = &model.cost {
-                    println!(
-                        "    Cost: input ${}, output ${}",
-                        cost.input, cost.output
-                    );
+                    println!("    Cost: input ${}, output ${}", cost.input, cost.output);
                 }
             }
         }

@@ -61,10 +61,7 @@ async fn test_registry_search_capabilities() {
             .map(|m| m.input.len() > 1)
             .unwrap_or(false)
     });
-    println!(
-        "Found {} multimodal models",
-        multimodal_models.len()
-    );
+    println!("Found {} multimodal models", multimodal_models.len());
 }
 
 #[tokio::test]
@@ -95,10 +92,7 @@ async fn test_provider_lookup() {
         );
 
         if let Some(first_model) = models.first() {
-            println!(
-                "  First model: {} ({})",
-                first_model.name, first_model.id
-            );
+            println!("  First model: {} ({})", first_model.name, first_model.id);
 
             let retrieved_model = registry.get_model(provider_id, &first_model.id);
             assert!(

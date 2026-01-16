@@ -42,7 +42,11 @@ impl RegistryManager {
     /// Create a new registry manager with a custom client (useful for testing)
     #[must_use]
     #[cfg(test)]
-    pub fn with_client(client: ModelsDevClient, cache_path: std::path::PathBuf, expiry_hours: i64) -> Self {
+    pub fn with_client(
+        client: ModelsDevClient,
+        cache_path: std::path::PathBuf,
+        expiry_hours: i64,
+    ) -> Self {
         Self {
             client,
             cache: RegistryCache::new(cache_path, expiry_hours),
@@ -182,7 +186,10 @@ mod tests {
         let registry2 = manager.get_registry().await;
         assert!(registry2.is_ok());
 
-        assert_eq!(registry1.unwrap().providers.len(), registry2.unwrap().providers.len());
+        assert_eq!(
+            registry1.unwrap().providers.len(),
+            registry2.unwrap().providers.len()
+        );
     }
 
     #[tokio::test]

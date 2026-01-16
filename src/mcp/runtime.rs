@@ -1,13 +1,15 @@
 //! MCP Runtime - spawns servers and handles tool calls
 
+use serdes_ai::mcp::McpClient;
 use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 use tokio::sync::Mutex;
-use serdes_ai::mcp::McpClient;
+use uuid::Uuid;
 
 use crate::config::Config;
-use crate::mcp::{McpConfig, McpManager, McpTransport, SecretsManager, McpStatus, McpStatusManager};
+use crate::mcp::{
+    McpConfig, McpManager, McpStatus, McpStatusManager, McpTransport, SecretsManager,
+};
 
 /// Active MCP connection
 pub struct McpConnection {
@@ -49,7 +51,8 @@ impl McpRuntime {
     /// Start an MCP server
     pub async fn start_mcp(&mut self, config: &McpConfig) -> Result<(), String> {
         if !config.enabled {
-            self.status_manager.set_status(config.id, McpStatus::Stopped);
+            self.status_manager
+                .set_status(config.id, McpStatus::Stopped);
             return Err("MCP is disabled".to_string());
         }
 
@@ -58,14 +61,15 @@ impl McpRuntime {
         }
 
         // Update status to Starting
-        self.status_manager.set_status(config.id, McpStatus::Starting);
+        self.status_manager
+            .set_status(config.id, McpStatus::Starting);
 
         // Build environment
-        let env = self.manager.build_env(config)
-            .map_err(|e| {
-                self.status_manager.set_status(config.id, McpStatus::Error(e.to_string()));
-                e.to_string()
-            })?;
+        let env = self.manager.build_env(config).map_err(|e| {
+            self.status_manager
+                .set_status(config.id, McpStatus::Error(e.to_string()));
+            e.to_string()
+        })?;
 
         // Create the MCP client based on transport
         let client: McpClient = match config.transport {
@@ -73,10 +77,13 @@ impl McpRuntime {
                 // HTTP transport - use reqwest-based HttpTransport
                 // Build custom headers from env (e.g., Authorization)
                 let mut headers = std::collections::HashMap::new();
-                
+
                 // Check for OAuth token first (highest priority for Smithery servers)
                 if let Some(ref oauth_token) = config.oauth_token {
-                    headers.insert("Authorization".to_string(), format!("Bearer {}", oauth_token));
+                    headers.insert(
+                        "Authorization".to_string(),
+                        format!("Bearer {}", oauth_token),
+                    );
                 } else {
                     // Check if we have auth data that should be passed as headers
                     // For Smithery and other HTTP MCPs, auth is typically passed via Authorization header
@@ -84,15 +91,19 @@ impl McpRuntime {
                         // Convert env var names to header names
                         // Common patterns: API_KEY, TOKEN, ACCESS_TOKEN -> Authorization: Bearer <value>
                         let key_lower = key.to_lowercase();
-                        if key_lower.contains("token") || key_lower.contains("api_key") || key_lower.contains("key") {
-                            headers.insert("Authorization".to_string(), format!("Bearer {}", value));
+                        if key_lower.contains("token")
+                            || key_lower.contains("api_key")
+                            || key_lower.contains("key")
+                        {
+                            headers
+                                .insert("Authorization".to_string(), format!("Bearer {}", value));
                         } else {
                             // Pass other env vars as custom headers with X- prefix
                             headers.insert(format!("X-{}", key), value.clone());
                         }
                     }
                 }
-                
+
                 // Create HTTP transport with custom headers if needed
                 let transport = if headers.is_empty() {
                     serdes_ai::mcp::transport::HttpTransport::new(&config.package.identifier)
@@ -100,8 +111,11 @@ impl McpRuntime {
                     // Build reqwest client with custom headers
                     let mut header_map = reqwest::header::HeaderMap::new();
                     for (key, value) in headers {
-                        if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
-                            if let Ok(header_value) = reqwest::header::HeaderValue::from_str(&value) {
+                        if let Ok(header_name) =
+                            reqwest::header::HeaderName::from_bytes(key.as_bytes())
+                        {
+                            if let Ok(header_value) = reqwest::header::HeaderValue::from_str(&value)
+                            {
                                 header_map.insert(header_name, header_value);
                             }
                         }
@@ -111,25 +125,30 @@ impl McpRuntime {
                         .build()
                         .map_err(|e| {
                             let err = format!("Failed to build HTTP client: {}", e);
-                            self.status_manager.set_status(config.id, McpStatus::Error(err.clone()));
+                            self.status_manager
+                                .set_status(config.id, McpStatus::Error(err.clone()));
                             err
                         })?;
-                    serdes_ai::mcp::transport::HttpTransport::with_client(client, &config.package.identifier)
+                    serdes_ai::mcp::transport::HttpTransport::with_client(
+                        client,
+                        &config.package.identifier,
+                    )
                 };
                 McpClient::new(transport)
-            },
+            }
             McpTransport::Stdio => {
                 // Build command
                 let (cmd, args) = McpManager::build_command(config);
-                
+
                 if cmd.is_empty() {
-                    self.status_manager.set_status(config.id, McpStatus::Error("Empty command".to_string()));
+                    self.status_manager
+                        .set_status(config.id, McpStatus::Error("Empty command".to_string()));
                     return Err("Empty command for stdio transport".to_string());
                 }
 
                 // Convert args to &str
                 let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                
+
                 // Note: SerdesAI doesn't support spawn_with_env yet
                 // Environment variables need to be set before spawning
                 // For now, we use spawn without env support
@@ -138,51 +157,57 @@ impl McpRuntime {
                     .await
                     .map_err(|e| {
                         let err = format!("Failed to spawn MCP: {}", e);
-                        self.status_manager.set_status(config.id, McpStatus::Error(err.clone()));
+                        self.status_manager
+                            .set_status(config.id, McpStatus::Error(err.clone()));
                         err
                     })?;
-                
+
                 McpClient::new(transport)
             }
         };
 
         // Initialize the client
-        client.initialize()
-            .await
-            .map_err(|e| {
-                let err = format!("Failed to initialize MCP: {}", e);
-                self.status_manager.set_status(config.id, McpStatus::Error(err.clone()));
-                err
-            })?;
+        client.initialize().await.map_err(|e| {
+            let err = format!("Failed to initialize MCP: {}", e);
+            self.status_manager
+                .set_status(config.id, McpStatus::Error(err.clone()));
+            err
+        })?;
 
         // List tools from the MCP server
-        let mcp_tools = client.list_tools()
-            .await
-            .map_err(|e| {
-                let err = format!("Failed to list tools: {}", e);
-                self.status_manager.set_status(config.id, McpStatus::Error(err.clone()));
-                err
-            })?;
+        let mcp_tools = client.list_tools().await.map_err(|e| {
+            let err = format!("Failed to list tools: {}", e);
+            self.status_manager
+                .set_status(config.id, McpStatus::Error(err.clone()));
+            err
+        })?;
 
         // Convert to our McpTool format
-        let tools: Vec<McpTool> = mcp_tools.into_iter().map(|t| McpTool {
-            name: t.name,
-            description: t.description.unwrap_or_default(),
-            input_schema: t.input_schema,
-            mcp_id: config.id,
-        }).collect();
+        let tools: Vec<McpTool> = mcp_tools
+            .into_iter()
+            .map(|t| McpTool {
+                name: t.name,
+                description: t.description.unwrap_or_default(),
+                input_schema: t.input_schema,
+                mcp_id: config.id,
+            })
+            .collect();
 
         // Register as active
         self.manager.register_active(config.clone());
-        
+
         // Store connection
-        self.connections.insert(config.id, McpConnection {
-            config: config.clone(),
-            client: Arc::new(Mutex::new(client)),
-            tools,
-        });
-        
-        self.status_manager.set_status(config.id, McpStatus::Running);
+        self.connections.insert(
+            config.id,
+            McpConnection {
+                config: config.clone(),
+                client: Arc::new(Mutex::new(client)),
+                tools,
+            },
+        );
+
+        self.status_manager
+            .set_status(config.id, McpStatus::Running);
 
         Ok(())
     }
@@ -206,7 +231,8 @@ impl McpRuntime {
 
     /// Get all available tools from active MCPs
     pub fn get_all_tools(&self) -> Vec<McpTool> {
-        self.connections.values()
+        self.connections
+            .values()
             .flat_map(|c| c.tools.iter().cloned())
             .collect()
     }
@@ -227,22 +253,26 @@ impl McpRuntime {
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let mcp_id = self.find_tool_provider(tool_name)
+        let mcp_id = self
+            .find_tool_provider(tool_name)
             .ok_or_else(|| format!("No MCP provides tool: {}", tool_name))?;
 
         // Update last used time
         self.manager.touch(&mcp_id);
 
         // Get the connection
-        let conn = self.connections.get(&mcp_id)
+        let conn = self
+            .connections
+            .get(&mcp_id)
             .ok_or_else(|| format!("MCP connection not found: {}", mcp_id))?;
 
         // Call the tool via SerdesAI MCP client
         let client = conn.client.lock().await;
-        let result = client.call_tool(tool_name, arguments)
+        let result = client
+            .call_tool(tool_name, arguments)
             .await
             .map_err(|e| format!("MCP tool call failed: {}", e))?;
-        
+
         // Convert CallToolResult to JSON
         // The result contains content array with text/image/resource items
         Ok(serde_json::to_value(result).unwrap_or_default())
@@ -274,8 +304,8 @@ impl McpRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::{McpAuthType, McpPackage, McpPackageType, McpSource};
     use tempfile::TempDir;
-    use crate::mcp::{McpSource, McpPackage, McpPackageType, McpAuthType};
 
     fn create_test_runtime() -> McpRuntime {
         let temp_dir = TempDir::new().unwrap();
@@ -288,7 +318,9 @@ mod tests {
             id: Uuid::new_v4(),
             name: "Test MCP".to_string(),
             enabled,
-            source: McpSource::Manual { url: "test".to_string() },
+            source: McpSource::Manual {
+                url: "test".to_string(),
+            },
             package: McpPackage {
                 package_type: McpPackageType::Npm,
                 identifier: "@test/mcp".to_string(),
@@ -389,7 +421,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_all_tools() {
         let runtime = create_test_runtime();
-        
+
         // Without real MCP connections, we should get empty tools
         let tools = runtime.get_all_tools();
         assert_eq!(tools.len(), 0);
@@ -421,7 +453,9 @@ mod tests {
 
         runtime.start_mcp(&config).await.unwrap();
 
-        let result = runtime.call_tool("nonexistent", serde_json::json!({})).await;
+        let result = runtime
+            .call_tool("nonexistent", serde_json::json!({}))
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No MCP provides tool"));
     }
@@ -462,7 +496,7 @@ mod tests {
     async fn test_error_propagation() {
         let mut runtime = create_test_runtime();
         let mut config = create_test_mcp_config(true);
-        
+
         // Set invalid package type that would cause error
         config.package.package_type = McpPackageType::Docker;
         config.package.identifier = "".to_string(); // Empty identifier should fail

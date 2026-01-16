@@ -55,7 +55,7 @@ impl McpStatus {
 }
 
 /// MCP Status Manager - Thread-safe status tracking
-/// 
+///
 /// This manager can be safely shared across threads using Arc<McpStatusManager>.
 /// All operations use interior mutability via RwLock.
 #[derive(Clone)]
@@ -95,10 +95,7 @@ impl McpStatusManager {
 
     /// Get a snapshot of all statuses (thread-safe)
     pub fn get_all_statuses(&self) -> HashMap<Uuid, McpStatus> {
-        self.statuses
-            .read()
-            .map(|s| s.clone())
-            .unwrap_or_default()
+        self.statuses.read().map(|s| s.clone()).unwrap_or_default()
     }
 
     /// Count running MCPs (thread-safe)
@@ -138,10 +135,16 @@ pub fn aggregate_mcp_status(statuses: &[McpStatus]) -> AggregateStatus {
     if statuses.is_empty() {
         return AggregateStatus::NoMcps;
     }
-    
-    let running = statuses.iter().filter(|s| matches!(s, McpStatus::Running)).count();
-    let errors = statuses.iter().filter(|s| matches!(s, McpStatus::Error(_))).count();
-    
+
+    let running = statuses
+        .iter()
+        .filter(|s| matches!(s, McpStatus::Running))
+        .count();
+    let errors = statuses
+        .iter()
+        .filter(|s| matches!(s, McpStatus::Error(_)))
+        .count();
+
     if errors == statuses.len() {
         AggregateStatus::AllFailed
     } else if errors > 0 {
@@ -224,7 +227,10 @@ mod tests {
         assert_eq!(manager.get_status(&id), McpStatus::Running);
 
         manager.set_status(id, McpStatus::Error("failed".to_string()));
-        assert_eq!(manager.get_status(&id), McpStatus::Error("failed".to_string()));
+        assert_eq!(
+            manager.get_status(&id),
+            McpStatus::Error("failed".to_string())
+        );
     }
 
     #[test]
@@ -329,7 +335,10 @@ mod tests {
         assert_eq!(manager.get_status(&id), McpStatus::Running);
 
         manager.set_status(id, McpStatus::Error("crash".to_string()));
-        assert_eq!(manager.get_status(&id), McpStatus::Error("crash".to_string()));
+        assert_eq!(
+            manager.get_status(&id),
+            McpStatus::Error("crash".to_string())
+        );
 
         manager.set_status(id, McpStatus::Restarting);
         assert_eq!(manager.get_status(&id), McpStatus::Restarting);
@@ -353,7 +362,10 @@ mod tests {
         assert_eq!(manager.count_errors(), 1);
 
         assert_eq!(manager.get_status(&id1), McpStatus::Running);
-        assert_eq!(manager.get_status(&id2), McpStatus::Error("failed".to_string()));
+        assert_eq!(
+            manager.get_status(&id2),
+            McpStatus::Error("failed".to_string())
+        );
         assert_eq!(manager.get_status(&id3), McpStatus::Starting);
     }
 
@@ -361,7 +373,7 @@ mod tests {
     async fn test_status_for_disabled_mcp() {
         use crate::mcp::McpConfig;
         use uuid::Uuid;
-        
+
         let mut config = McpConfig {
             id: Uuid::new_v4(),
             name: "test".to_string(),
@@ -382,10 +394,10 @@ mod tests {
             config: serde_json::json!({}),
             oauth_token: None,
         };
-        
+
         let status = get_config_status(&config);
         assert_eq!(status, McpStatus::Disabled);
-        
+
         // When enabled, should be Starting
         config.enabled = true;
         let status = get_config_status(&config);
@@ -410,7 +422,7 @@ mod tests {
     async fn test_aggregate_status_all_failed() {
         let statuses = vec![
             McpStatus::Error("err1".to_string()),
-            McpStatus::Error("err2".to_string())
+            McpStatus::Error("err2".to_string()),
         ];
         let aggregate = aggregate_mcp_status(&statuses);
         assert_eq!(aggregate, AggregateStatus::AllFailed);
@@ -426,11 +438,7 @@ mod tests {
     #[tokio::test]
     async fn test_aggregate_status_mixed_states() {
         // Test with various non-running, non-error states
-        let statuses = vec![
-            McpStatus::Running,
-            McpStatus::Starting,
-            McpStatus::Stopped
-        ];
+        let statuses = vec![McpStatus::Running, McpStatus::Starting, McpStatus::Stopped];
         let aggregate = aggregate_mcp_status(&statuses);
         assert_eq!(aggregate, AggregateStatus::PartialFailure);
     }

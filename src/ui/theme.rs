@@ -11,7 +11,7 @@ pub struct Theme;
 // =============================================================================
 // FlippedStackView - A NSStackView subclass with flipped coordinates
 // =============================================================================
-// 
+//
 // macOS uses a non-flipped coordinate system by default (origin at bottom-left).
 // This causes content in scroll views to appear at the BOTTOM and scroll position
 // defaults to showing the bottom of content.

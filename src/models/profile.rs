@@ -56,7 +56,9 @@ impl Default for ModelProfile {
             provider_id: "openai".to_string(),
             model_id: "gpt-4".to_string(),
             base_url: "https://api.openai.com/v1".to_string(),
-            auth: AuthConfig::Key { value: String::new() },
+            auth: AuthConfig::Key {
+                value: String::new(),
+            },
             parameters: ModelParameters::default(),
             system_prompt: default_system_prompt(),
         }
@@ -142,7 +144,9 @@ mod tests {
             "anthropic".to_string(),
             "claude-3-opus".to_string(),
             "https://api.anthropic.com/v1".to_string(),
-            AuthConfig::Key { value: "test-key".to_string() },
+            AuthConfig::Key {
+                value: "test-key".to_string(),
+            },
         );
 
         assert_eq!(profile.name, "Claude");
@@ -176,7 +180,9 @@ mod tests {
     #[test]
     fn test_set_auth() {
         let mut profile = ModelProfile::default();
-        let new_auth = AuthConfig::Keyfile { path: "/path/to/key".to_string() };
+        let new_auth = AuthConfig::Keyfile {
+            path: "/path/to/key".to_string(),
+        };
         profile.set_auth(new_auth.clone());
         assert_eq!(profile.auth, new_auth);
     }
@@ -198,7 +204,9 @@ mod tests {
 
     #[test]
     fn test_auth_key_serialization() {
-        let auth = AuthConfig::Key { value: "test-key".to_string() };
+        let auth = AuthConfig::Key {
+            value: "test-key".to_string(),
+        };
         let json = serde_json::to_string(&auth).unwrap();
         assert!(json.contains("\"type\":\"key\""));
         assert!(json.contains("\"value\":\"test-key\""));
@@ -206,7 +214,9 @@ mod tests {
 
     #[test]
     fn test_auth_keyfile_serialization() {
-        let auth = AuthConfig::Keyfile { path: "/path/to/key".to_string() };
+        let auth = AuthConfig::Keyfile {
+            path: "/path/to/key".to_string(),
+        };
         let json = serde_json::to_string(&auth).unwrap();
         assert!(json.contains("\"type\":\"keyfile\""));
         assert!(json.contains("\"path\":\"/path/to/key\""));

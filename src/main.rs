@@ -35,7 +35,7 @@ impl PersonalAgentApp {
         } else {
             tracing::info!("Tray icon created successfully");
         }
-        
+
         Self {
             _tray_icon: tray_icon_result.ok(),
         }
@@ -60,27 +60,43 @@ impl eframe::App for PersonalAgentApp {
 impl PersonalAgentApp {
     /// Handle tray icon click events - shows and focuses the window, positioned below the icon
     fn handle_tray_events(ctx: &egui::Context, _tray_icon: &Option<TrayIcon>) {
-        if let Ok(TrayIconEvent::Click { rect, id, button, button_state, .. }) = TrayIconEvent::receiver().try_recv() {
-            tracing::info!("Tray click event: rect={:?}, id={:?}, button={:?}, button_state={:?}", 
-                         rect, id, button, button_state);
-            
+        if let Ok(TrayIconEvent::Click {
+            rect,
+            id,
+            button,
+            button_state,
+            ..
+        }) = TrayIconEvent::receiver().try_recv()
+        {
+            tracing::info!(
+                "Tray click event: rect={:?}, id={:?}, button={:?}, button_state={:?}",
+                rect,
+                id,
+                button,
+                button_state
+            );
+
             // Use the rect field which contains screen coordinates
             let icon_x = rect.position.x as f32;
             let icon_y = rect.position.y as f32;
             let icon_height = rect.size.height as f32;
-            
-            tracing::info!("Icon position: x={}, y={}, height={}", icon_x, icon_y, icon_height);
-            
+
+            tracing::info!(
+                "Icon position: x={}, y={}, height={}",
+                icon_x,
+                icon_y,
+                icon_height
+            );
+
             // Position window directly below the icon (centered)
             let window_x = icon_x - (PANEL_WIDTH / 2.0) + (rect.size.width as f32 / 2.0);
             let window_y = icon_y + icon_height;
-            
+
             tracing::info!("Setting window position to: x={}, y={}", window_x, window_y);
-            
+
             // Apply positioning commands
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::new(
-                window_x,
-                window_y,
+                window_x, window_y,
             )));
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);

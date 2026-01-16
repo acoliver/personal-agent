@@ -4,7 +4,7 @@ use personal_agent::registry::RegistryCache;
 fn main() {
     let cache_path = RegistryCache::default_path().expect("get path");
     println!("Cache path: {:?}", cache_path);
-    
+
     let cache = RegistryCache::new(cache_path, 24);
     match cache.load() {
         Ok(Some(registry)) => {

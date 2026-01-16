@@ -32,9 +32,10 @@ impl ConversationStorage {
     /// # Errors
     /// Returns error if application support directory cannot be determined
     pub fn default_path() -> Result<PathBuf> {
-        let app_support = dirs::data_local_dir()
-            .ok_or_else(|| AppError::Storage("Could not determine application support directory".to_string()))?;
-        
+        let app_support = dirs::data_local_dir().ok_or_else(|| {
+            AppError::Storage("Could not determine application support directory".to_string())
+        })?;
+
         Ok(app_support.join("PersonalAgent").join("conversations"))
     }
 
@@ -52,13 +53,13 @@ impl ConversationStorage {
     /// Returns error if directory cannot be created or file cannot be written
     pub fn save(&self, conversation: &Conversation) -> Result<()> {
         self.ensure_directory()?;
-        
+
         let filename = conversation.filename();
         let path = self.base_path.join(&filename);
-        
+
         let contents = serde_json::to_string_pretty(conversation)?;
         fs::write(&path, contents)?;
-        
+
         Ok(())
     }
 
@@ -68,14 +69,14 @@ impl ConversationStorage {
     /// Returns error if file does not exist or cannot be parsed
     pub fn load(&self, filename: &str) -> Result<Conversation> {
         let path = self.base_path.join(filename);
-        
+
         if !path.exists() {
             return Err(AppError::ConversationNotFound(filename.to_string()));
         }
-        
+
         let contents = fs::read_to_string(&path)?;
         let conversation = serde_json::from_str(&contents)?;
-        
+
         Ok(conversation)
     }
 
@@ -87,23 +88,23 @@ impl ConversationStorage {
         if !self.base_path.exists() {
             return Ok(Vec::new());
         }
-        
+
         let mut filenames = Vec::new();
-        
+
         for entry in fs::read_dir(&self.base_path)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 if let Some(filename) = path.file_name() {
                     filenames.push(filename.to_string_lossy().to_string());
                 }
             }
         }
-        
+
         // Sort in reverse chronological order (newest first)
         filenames.sort_by(|a, b| b.cmp(a));
-        
+
         Ok(filenames)
     }
 
@@ -113,11 +114,11 @@ impl ConversationStorage {
     /// Returns error if file does not exist or cannot be deleted
     pub fn delete(&self, filename: &str) -> Result<()> {
         let path = self.base_path.join(filename);
-        
+
         if !path.exists() {
             return Err(AppError::ConversationNotFound(filename.to_string()));
         }
-        
+
         fs::remove_file(&path)?;
         Ok(())
     }
@@ -129,7 +130,7 @@ impl ConversationStorage {
     pub fn load_all(&self) -> Result<Vec<Conversation>> {
         let filenames = self.list()?;
         let mut conversations = Vec::new();
-        
+
         for filename in filenames {
             match self.load(&filename) {
                 Ok(conv) => conversations.push(conv),
@@ -138,7 +139,7 @@ impl ConversationStorage {
                 }
             }
         }
-        
+
         Ok(conversations)
     }
 }
@@ -230,7 +231,7 @@ mod tests {
         storage.save(&conv2)?;
 
         let filenames = storage.list()?;
-        
+
         // Newest (conv2) should be first
         assert_eq!(filenames[0], conv2.filename());
         assert_eq!(filenames[1], conv1.filename());

@@ -63,19 +63,14 @@ pub enum McpTransport {
     Http,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum McpAuthType {
+    #[default]
     None,
     ApiKey,
     Keyfile,
     OAuth,
-}
-
-impl Default for McpAuthType {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Registry environment variable metadata (from Official MCP registry)
@@ -91,25 +86,26 @@ pub struct RegistryEnvVar {
 /// Detect auth type from registry environment variable metadata
 pub fn detect_auth_type(env_vars: &[RegistryEnvVar]) -> McpAuthType {
     let has_client_id = env_vars.iter().any(|v| v.name.contains("CLIENT_ID"));
-    let has_client_secret = env_vars.iter().any(|v| v.name.contains("CLIENT_SECRET") && v.is_secret);
-    
+    let has_client_secret = env_vars
+        .iter()
+        .any(|v| v.name.contains("CLIENT_SECRET") && v.is_secret);
+
     if has_client_id && has_client_secret {
         return McpAuthType::OAuth;
     }
-    
+
     let has_secret_token = env_vars.iter().any(|v| {
-        v.is_secret && (
-            v.name.contains("TOKEN") || 
-            v.name.contains("API_KEY") || 
-            v.name.contains("_KEY") ||
-            v.name.contains("_PAT")
-        )
+        v.is_secret
+            && (v.name.contains("TOKEN")
+                || v.name.contains("API_KEY")
+                || v.name.contains("_KEY")
+                || v.name.contains("_PAT"))
     });
-    
+
     if has_secret_token {
         return McpAuthType::ApiKey;
     }
-    
+
     McpAuthType::None
 }
 
@@ -190,52 +186,44 @@ mod tests {
 
     #[test]
     fn test_detect_auth_type_api_key() {
-        let env_vars = vec![
-            RegistryEnvVar {
-                name: "API_KEY".to_string(),
-                is_secret: true,
-                is_required: true,
-            },
-        ];
+        let env_vars = vec![RegistryEnvVar {
+            name: "API_KEY".to_string(),
+            is_secret: true,
+            is_required: true,
+        }];
 
         assert_eq!(detect_auth_type(&env_vars), McpAuthType::ApiKey);
     }
 
     #[test]
     fn test_detect_auth_type_token() {
-        let env_vars = vec![
-            RegistryEnvVar {
-                name: "ACCESS_TOKEN".to_string(),
-                is_secret: true,
-                is_required: true,
-            },
-        ];
+        let env_vars = vec![RegistryEnvVar {
+            name: "ACCESS_TOKEN".to_string(),
+            is_secret: true,
+            is_required: true,
+        }];
 
         assert_eq!(detect_auth_type(&env_vars), McpAuthType::ApiKey);
     }
 
     #[test]
     fn test_detect_auth_type_pat() {
-        let env_vars = vec![
-            RegistryEnvVar {
-                name: "GITHUB_PAT".to_string(),
-                is_secret: true,
-                is_required: true,
-            },
-        ];
+        let env_vars = vec![RegistryEnvVar {
+            name: "GITHUB_PAT".to_string(),
+            is_secret: true,
+            is_required: true,
+        }];
 
         assert_eq!(detect_auth_type(&env_vars), McpAuthType::ApiKey);
     }
 
     #[test]
     fn test_detect_auth_type_none() {
-        let env_vars = vec![
-            RegistryEnvVar {
-                name: "CONFIG_VAR".to_string(),
-                is_secret: false,
-                is_required: false,
-            },
-        ];
+        let env_vars = vec![RegistryEnvVar {
+            name: "CONFIG_VAR".to_string(),
+            is_secret: false,
+            is_required: false,
+        }];
 
         assert_eq!(detect_auth_type(&env_vars), McpAuthType::None);
     }

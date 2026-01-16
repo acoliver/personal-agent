@@ -9,23 +9,23 @@ where
     D: Deserializer<'de>,
 {
     use serde::de::{self, Visitor};
-    
+
     struct BoolOrObjectVisitor;
-    
+
     impl<'de> Visitor<'de> for BoolOrObjectVisitor {
         type Value = bool;
-        
+
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a boolean or an object")
         }
-        
+
         fn visit_bool<E>(self, v: bool) -> Result<bool, E>
         where
             E: de::Error,
         {
             Ok(v)
         }
-        
+
         fn visit_map<M>(self, mut _map: M) -> Result<bool, M::Error>
         where
             M: de::MapAccess<'de>,
@@ -36,7 +36,7 @@ where
             Ok(true)
         }
     }
-    
+
     deserializer.deserialize_any(BoolOrObjectVisitor)
 }
 
@@ -46,51 +46,51 @@ where
     D: Deserializer<'de>,
 {
     use serde::de::{self, Visitor};
-    
+
     struct ProviderVisitor;
-    
+
     impl<'de> Visitor<'de> for ProviderVisitor {
         type Value = Option<String>;
-        
+
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a string, an object, or null")
         }
-        
+
         fn visit_none<E>(self) -> Result<Option<String>, E>
         where
             E: de::Error,
         {
             Ok(None)
         }
-        
+
         fn visit_unit<E>(self) -> Result<Option<String>, E>
         where
             E: de::Error,
         {
             Ok(None)
         }
-        
+
         fn visit_some<D>(self, deserializer: D) -> Result<Option<String>, D::Error>
         where
             D: Deserializer<'de>,
         {
             deserializer.deserialize_any(ProviderVisitor)
         }
-        
+
         fn visit_str<E>(self, v: &str) -> Result<Option<String>, E>
         where
             E: de::Error,
         {
             Ok(Some(v.to_string()))
         }
-        
+
         fn visit_string<E>(self, v: String) -> Result<Option<String>, E>
         where
             E: de::Error,
         {
             Ok(Some(v))
         }
-        
+
         fn visit_map<M>(self, mut _map: M) -> Result<Option<String>, M::Error>
         where
             M: de::MapAccess<'de>,
@@ -100,12 +100,12 @@ where
             Ok(None)
         }
     }
-    
+
     deserializer.deserialize_any(ProviderVisitor)
 }
 
 /// Top-level registry containing all providers
-/// 
+///
 /// When loading from cache, the data structure is:
 /// ```json
 /// {
@@ -116,7 +116,7 @@ where
 ///   }
 /// }
 /// ```
-/// 
+///
 /// The `data` field deserializes into this struct via `#[serde(flatten)]`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelRegistry {
@@ -241,7 +241,7 @@ pub struct Limit {
 
 impl ModelRegistry {
     /// Get all provider IDs
-    #[must_use] 
+    #[must_use]
     pub fn get_provider_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.providers.keys().cloned().collect();
         ids.sort();
@@ -249,13 +249,13 @@ impl ModelRegistry {
     }
 
     /// Get a provider by ID
-    #[must_use] 
+    #[must_use]
     pub fn get_provider(&self, provider_id: &str) -> Option<&Provider> {
         self.providers.get(provider_id)
     }
 
     /// Get all models for a specific provider
-    #[must_use] 
+    #[must_use]
     pub fn get_models_for_provider(&self, provider_id: &str) -> Option<Vec<&ModelInfo>> {
         self.providers.get(provider_id).map(|provider| {
             let mut models: Vec<&ModelInfo> = provider.models.values().collect();
@@ -265,7 +265,7 @@ impl ModelRegistry {
     }
 
     /// Get a specific model from a provider
-    #[must_use] 
+    #[must_use]
     pub fn get_model(&self, provider_id: &str, model_id: &str) -> Option<&ModelInfo> {
         self.providers
             .get(provider_id)
@@ -290,13 +290,13 @@ impl ModelRegistry {
     }
 
     /// Get all models with tool calling capability
-    #[must_use] 
+    #[must_use]
     pub fn get_tool_call_models(&self) -> Vec<(&str, &ModelInfo)> {
         self.search_models(|model| model.tool_call)
     }
 
     /// Get all models with reasoning capability
-    #[must_use] 
+    #[must_use]
     pub fn get_reasoning_models(&self) -> Vec<(&str, &ModelInfo)> {
         self.search_models(|model| model.reasoning)
     }

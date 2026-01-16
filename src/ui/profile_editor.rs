@@ -4,20 +4,18 @@ use std::cell::RefCell;
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
-use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, DefinedClass};
-use objc2_foundation::{
-    NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
-};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle, NSPopUpButton,
-    NSSlider, NSButtonType, NSStackView, NSUserInterfaceLayoutOrientation,
-    NSStackViewDistribution, NSLayoutConstraintOrientation,
+    NSBezelStyle, NSButton, NSButtonType, NSFont, NSLayoutConstraintOrientation, NSPopUpButton,
+    NSScrollView, NSSlider, NSStackView, NSStackViewDistribution, NSTextField,
+    NSUserInterfaceLayoutOrientation, NSView, NSViewController,
 };
+use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use objc2_quartz_core::CALayer;
 use uuid::Uuid;
 
+use super::model_selector::{SELECTED_MODEL_ID, SELECTED_MODEL_PROVIDER};
 use super::theme::Theme;
-use super::model_selector::{SELECTED_MODEL_PROVIDER, SELECTED_MODEL_ID};
 use personal_agent::config::Config;
 use personal_agent::models::{AuthConfig, ModelParameters, ModelProfile};
 use personal_agent::registry::{ModelRegistry, RegistryManager};
@@ -43,23 +41,23 @@ fn set_layer_corner_radius(layer: &CALayer, radius: f64) {
 pub struct ProfileEditorIvars {
     // Profile being edited (None = creating new)
     editing_profile_id: RefCell<Option<Uuid>>,
-    
+
     // Pre-selected model from model selector (if any)
     preselected_provider: RefCell<Option<String>>,
     preselected_model: RefCell<Option<String>>,
     selected_model_label: RefCell<Option<Retained<NSTextField>>>,
-    
+
     // Basic Info fields
     name_field: RefCell<Option<Retained<NSTextField>>>,
     provider_picker: RefCell<Option<Retained<NSView>>>, // Container for provider list
-    model_picker: RefCell<Option<Retained<NSView>>>, // Container for model list
-    
+    model_picker: RefCell<Option<Retained<NSView>>>,    // Container for model list
+
     // Auth fields
     auth_type_popup: RefCell<Option<Retained<NSPopUpButton>>>,
     api_key_field: RefCell<Option<Retained<NSTextField>>>,
     key_file_field: RefCell<Option<Retained<NSTextField>>>,
     base_url_field: RefCell<Option<Retained<NSTextField>>>,
-    
+
     // Parameter fields
     temperature_slider: RefCell<Option<Retained<NSSlider>>>,
     temperature_label: RefCell<Option<Retained<NSTextField>>>,
@@ -69,12 +67,12 @@ pub struct ProfileEditorIvars {
     thinking_budget_field: RefCell<Option<Retained<NSTextField>>>,
     enable_thinking_button: RefCell<Option<Retained<NSButton>>>,
     show_thinking_button: RefCell<Option<Retained<NSButton>>>,
-    
+
     // Registry data
     registry: RefCell<Option<ModelRegistry>>,
     selected_provider: RefCell<Option<String>>,
     selected_model: RefCell<Option<String>>,
-    
+
     // UI containers
     scroll_view: RefCell<Option<Retained<NSScrollView>>>,
     content_stack: RefCell<Option<Retained<NSStackView>>>,
@@ -116,42 +114,42 @@ define_class!(
                 main_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
                 main_stack.setDistribution(objc2_app_kit::NSStackViewDistribution::Fill);
             }
-            
+
             // Build the UI components
             let top_bar = self.build_top_bar_stack(mtm);
             let scroll_area = self.build_content_scroll_area(mtm);
             let bottom_bar = self.build_bottom_bar_stack(mtm);
-            
+
             // Add to main stack
             unsafe {
                 main_stack.addArrangedSubview(&top_bar);
                 main_stack.addArrangedSubview(&scroll_area);
                 main_stack.addArrangedSubview(&bottom_bar);
             }
-            
+
             // Add stack to main view
             main_view.addSubview(&main_stack);
-            
+
             // Set constraints to fill parent
             unsafe {
                 let leading = main_stack.leadingAnchor().constraintEqualToAnchor(&main_view.leadingAnchor());
                 leading.setActive(true);
-                
+
                 let trailing = main_stack.trailingAnchor().constraintEqualToAnchor(&main_view.trailingAnchor());
                 trailing.setActive(true);
-                
+
                 let top = main_stack.topAnchor().constraintEqualToAnchor(&main_view.topAnchor());
                 top.setActive(true);
-                
+
                 let bottom = main_stack.bottomAnchor().constraintEqualToAnchor(&main_view.bottomAnchor());
                 bottom.setActive(true);
             }
 
             self.setView(&main_view);
-            
+
             // Load registry and populate fields
             self.load_registry();
-            
+
             // Scroll to top after view is loaded
             if let Some(scroll_view) = &*self.ivars().scroll_view.borrow() {
                 let clip_view = scroll_view.contentView();
@@ -164,20 +162,20 @@ define_class!(
         fn provider_selected(&self, sender: Option<&NSObject>) {
             if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
                 let tag = button.tag() as usize;
-                
+
                 // Get provider ID from registry based on tag
                 if let Some(registry) = &*self.ivars().registry.borrow() {
                     let provider_ids = registry.get_provider_ids();
                     if tag < provider_ids.len() {
                         let provider_id = provider_ids[tag].clone();
                         *self.ivars().selected_provider.borrow_mut() = Some(provider_id.clone());
-                        
+
                         // Clear selected model when provider changes
                         *self.ivars().selected_model.borrow_mut() = None;
-                        
+
                         // Populate model list for the selected provider
                         self.populate_model_list();
-                        
+
                         // Update provider button states
                         self.update_provider_button_states(&provider_id);
                     }
@@ -189,7 +187,7 @@ define_class!(
         fn model_selected(&self, sender: Option<&NSObject>) {
             if let Some(button) = sender.and_then(|s| s.downcast_ref::<NSButton>()) {
                 let tag = button.tag() as usize;
-                
+
                 // Get model ID from registry based on tag and selected provider
                 if let Some(provider_id) = &*self.ivars().selected_provider.borrow() {
                     if let Some(registry) = &*self.ivars().registry.borrow() {
@@ -197,7 +195,7 @@ define_class!(
                             if tag < models.len() {
                                 let model_id = models[tag].id.clone();
                                 *self.ivars().selected_model.borrow_mut() = Some(model_id.clone());
-                                
+
                                 // Update model button states
                                 self.update_model_button_states(&model_id);
                             }
@@ -243,7 +241,7 @@ define_class!(
                         return;
                     }
                 };
-                
+
                 let mut config = match Config::load(&config_path) {
                     Ok(c) => c,
                     Err(e) => {
@@ -251,21 +249,21 @@ define_class!(
                         return;
                     }
                 };
-                
+
                 // Remove profile
                 if let Err(e) = config.remove_profile(&profile_id) {
                     eprintln!("Failed to remove profile: {e}");
                     return;
                 }
-                
+
                 // Save config
                 if let Err(e) = config.save(&config_path) {
                     eprintln!("Failed to save config: {e}");
                     return;
                 }
-                
+
                 println!("Profile deleted");
-                
+
                 // Go back to settings
                 use objc2_foundation::NSNotificationCenter;
                 let center = NSNotificationCenter::defaultCenter();
@@ -322,13 +320,9 @@ define_class!(
 impl ProfileEditorViewController {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         // Check if there's a pre-selected model from model selector
-        let preselected_provider = SELECTED_MODEL_PROVIDER.with(|cell| {
-            cell.take()
-        });
-        let preselected_model = SELECTED_MODEL_ID.with(|cell| {
-            cell.take()
-        });
-        
+        let preselected_provider = SELECTED_MODEL_PROVIDER.with(|cell| cell.take());
+        let preselected_model = SELECTED_MODEL_ID.with(|cell| cell.take());
+
         let ivars = ProfileEditorIvars {
             editing_profile_id: RefCell::new(None),
             preselected_provider: RefCell::new(preselected_provider.clone()),
@@ -357,31 +351,31 @@ impl ProfileEditorViewController {
             delete_button: RefCell::new(None),
             title_label: RefCell::new(None),
         };
-        
+
         let this = Self::alloc(mtm).set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
     }
-    
+
     /// Load an existing profile for editing
     pub fn load_profile(&self, profile: &ModelProfile) {
         *self.ivars().editing_profile_id.borrow_mut() = Some(profile.id);
         *self.ivars().selected_provider.borrow_mut() = Some(profile.provider_id.clone());
         *self.ivars().selected_model.borrow_mut() = Some(profile.model_id.clone());
-        
+
         // Update title
         if let Some(title) = &*self.ivars().title_label.borrow() {
             title.setStringValue(&NSString::from_str("Edit Profile"));
         }
-        
+
         // Set field values
         if let Some(field) = &*self.ivars().name_field.borrow() {
             field.setStringValue(&NSString::from_str(&profile.name));
         }
-        
+
         if let Some(field) = &*self.ivars().base_url_field.borrow() {
             field.setStringValue(&NSString::from_str(&profile.base_url));
         }
-        
+
         // Set auth fields based on type
         match &profile.auth {
             AuthConfig::Key { value } => {
@@ -403,37 +397,47 @@ impl ProfileEditorViewController {
                 self.update_auth_fields_visibility(false);
             }
         }
-        
+
         // Set parameter fields
         if let Some(slider) = &*self.ivars().temperature_slider.borrow() {
             slider.setDoubleValue(profile.parameters.temperature);
         }
         if let Some(label) = &*self.ivars().temperature_label.borrow() {
-            label.setStringValue(&NSString::from_str(&format!("{:.2}", profile.parameters.temperature)));
+            label.setStringValue(&NSString::from_str(&format!(
+                "{:.2}",
+                profile.parameters.temperature
+            )));
         }
-        
+
         if let Some(slider) = &*self.ivars().top_p_slider.borrow() {
             slider.setDoubleValue(profile.parameters.top_p);
         }
         if let Some(label) = &*self.ivars().top_p_label.borrow() {
-            label.setStringValue(&NSString::from_str(&format!("{:.2}", profile.parameters.top_p)));
+            label.setStringValue(&NSString::from_str(&format!(
+                "{:.2}",
+                profile.parameters.top_p
+            )));
         }
-        
+
         if let Some(field) = &*self.ivars().max_tokens_field.borrow() {
-            field.setStringValue(&NSString::from_str(&profile.parameters.max_tokens.to_string()));
+            field.setStringValue(&NSString::from_str(
+                &profile.parameters.max_tokens.to_string(),
+            ));
         }
-        
+
         if let Some(field) = &*self.ivars().thinking_budget_field.borrow() {
-            let value = profile.parameters.thinking_budget
+            let value = profile
+                .parameters
+                .thinking_budget
                 .map(|v| v.to_string())
                 .unwrap_or_default();
             field.setStringValue(&NSString::from_str(&value));
         }
-        
+
         if let Some(button) = &*self.ivars().enable_thinking_button.borrow() {
             button.setState(isize::from(profile.parameters.enable_thinking));
         }
-        
+
         if let Some(button) = &*self.ivars().show_thinking_button.borrow() {
             button.setState(isize::from(profile.parameters.show_thinking));
         }
@@ -454,16 +458,27 @@ impl ProfileEditorViewController {
                 right: 12.0,
             });
         }
-        
+
         top_bar.setWantsLayer(true);
         if let Some(layer) = top_bar.layer() {
-            set_layer_background_color(&layer, Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2);
+            set_layer_background_color(
+                &layer,
+                Theme::BG_DARK.0,
+                Theme::BG_DARK.1,
+                Theme::BG_DARK.2,
+            );
         }
-        
+
         // CRITICAL: Set fixed height and high content hugging priority
         unsafe {
-            top_bar.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
-            top_bar.setContentCompressionResistancePriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
+            top_bar.setContentHuggingPriority_forOrientation(
+                750.0,
+                NSLayoutConstraintOrientation::Vertical,
+            );
+            top_bar.setContentCompressionResistancePriority_forOrientation(
+                750.0,
+                NSLayoutConstraintOrientation::Vertical,
+            );
             let height_constraint = top_bar.heightAnchor().constraintEqualToConstant(44.0);
             height_constraint.setActive(true);
         }
@@ -480,7 +495,10 @@ impl ProfileEditorViewController {
         cancel_btn.setBezelStyle(NSBezelStyle::Rounded);
         unsafe {
             cancel_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            cancel_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            cancel_btn.setContentHuggingPriority_forOrientation(
+                750.0,
+                NSLayoutConstraintOrientation::Horizontal,
+            );
             let width_constraint = cancel_btn.widthAnchor().constraintEqualToConstant(70.0);
             width_constraint.setActive(true);
         }
@@ -491,7 +509,10 @@ impl ProfileEditorViewController {
         // Spacer (flexible, centers title)
         let spacer1 = NSView::new(mtm);
         unsafe {
-            spacer1.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+            spacer1.setContentHuggingPriority_forOrientation(
+                1.0,
+                NSLayoutConstraintOrientation::Horizontal,
+            );
             top_bar.addArrangedSubview(&spacer1);
         }
 
@@ -501,7 +522,10 @@ impl ProfileEditorViewController {
         title.setFont(Some(&NSFont::boldSystemFontOfSize(14.0)));
         title.setAlignment(objc2_app_kit::NSTextAlignment::Center);
         unsafe {
-            title.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            title.setContentHuggingPriority_forOrientation(
+                750.0,
+                NSLayoutConstraintOrientation::Horizontal,
+            );
             top_bar.addArrangedSubview(&title);
         }
         *self.ivars().title_label.borrow_mut() = Some(title);
@@ -509,10 +533,13 @@ impl ProfileEditorViewController {
         // Spacer (flexible, centers title)
         let spacer2 = NSView::new(mtm);
         unsafe {
-            spacer2.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
+            spacer2.setContentHuggingPriority_forOrientation(
+                1.0,
+                NSLayoutConstraintOrientation::Horizontal,
+            );
             top_bar.addArrangedSubview(&spacer2);
         }
-        
+
         // Save button (right, w=60 per wireframe)
         let save_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
@@ -525,7 +552,10 @@ impl ProfileEditorViewController {
         save_btn.setBezelStyle(NSBezelStyle::Rounded);
         unsafe {
             save_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            save_btn.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Horizontal);
+            save_btn.setContentHuggingPriority_forOrientation(
+                750.0,
+                NSLayoutConstraintOrientation::Horizontal,
+            );
             let width_constraint = save_btn.widthAnchor().constraintEqualToConstant(60.0);
             width_constraint.setActive(true);
         }
@@ -545,14 +575,22 @@ impl ProfileEditorViewController {
             scroll_view.setAutohidesScrollers(true);
             scroll_view.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
-        
+
         // CRITICAL: Set low content hugging priority so it expands to fill space
         unsafe {
-            scroll_view.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Vertical);
-            scroll_view.setContentCompressionResistancePriority_forOrientation(250.0, NSLayoutConstraintOrientation::Vertical);
-            
+            scroll_view.setContentHuggingPriority_forOrientation(
+                1.0,
+                NSLayoutConstraintOrientation::Vertical,
+            );
+            scroll_view.setContentCompressionResistancePriority_forOrientation(
+                250.0,
+                NSLayoutConstraintOrientation::Vertical,
+            );
+
             // Add minimum height constraint to prevent collapse
-            let min_height = scroll_view.heightAnchor().constraintGreaterThanOrEqualToConstant(100.0);
+            let min_height = scroll_view
+                .heightAnchor()
+                .constraintGreaterThanOrEqualToConstant(100.0);
             min_height.setActive(true);
         }
 
@@ -570,10 +608,15 @@ impl ProfileEditorViewController {
                 right: 14.0,
             });
         }
-        
+
         content_stack.setWantsLayer(true);
         if let Some(layer) = content_stack.layer() {
-            set_layer_background_color(&layer, Theme::BG_DARKEST.0, Theme::BG_DARKEST.1, Theme::BG_DARKEST.2);
+            set_layer_background_color(
+                &layer,
+                Theme::BG_DARKEST.0,
+                Theme::BG_DARKEST.1,
+                Theme::BG_DARKEST.2,
+            );
         }
 
         // Build sections
@@ -619,7 +662,8 @@ impl ProfileEditorViewController {
         if let Some(provider_id) = &*self.ivars().preselected_provider.borrow() {
             if let Some(model_id) = &*self.ivars().preselected_model.borrow() {
                 let selected_text = format!("Selected: {provider_id}:{model_id}");
-                let selected_label = NSTextField::labelWithString(&NSString::from_str(&selected_text), mtm);
+                let selected_label =
+                    NSTextField::labelWithString(&NSString::from_str(&selected_text), mtm);
                 selected_label.setTextColor(Some(&Theme::text_primary()));
                 selected_label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
                 unsafe {
@@ -680,8 +724,12 @@ impl ProfileEditorViewController {
         unsafe {
             provider_picker.setAutohidesScrollers(true);
             provider_picker.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let width_constraint = provider_picker.widthAnchor().constraintEqualToConstant(372.0);
-            let height_constraint = provider_picker.heightAnchor().constraintEqualToConstant(120.0);
+            let width_constraint = provider_picker
+                .widthAnchor()
+                .constraintEqualToConstant(372.0);
+            let height_constraint = provider_picker
+                .heightAnchor()
+                .constraintEqualToConstant(120.0);
             width_constraint.setActive(true);
             height_constraint.setActive(true);
         }
@@ -695,11 +743,17 @@ impl ProfileEditorViewController {
         }
         provider_stack.setWantsLayer(true);
         if let Some(layer) = provider_stack.layer() {
-            set_layer_background_color(&layer, Theme::BG_DARKER.0, Theme::BG_DARKER.1, Theme::BG_DARKER.2);
+            set_layer_background_color(
+                &layer,
+                Theme::BG_DARKER.0,
+                Theme::BG_DARKER.1,
+                Theme::BG_DARKER.2,
+            );
         }
 
         provider_picker.setDocumentView(Some(&provider_stack));
-        *self.ivars().provider_picker.borrow_mut() = Some(Retained::from(&*provider_stack as &NSView));
+        *self.ivars().provider_picker.borrow_mut() =
+            Some(Retained::from(&*provider_stack as &NSView));
 
         unsafe {
             section.addArrangedSubview(&provider_picker);
@@ -745,7 +799,12 @@ impl ProfileEditorViewController {
         }
         model_stack.setWantsLayer(true);
         if let Some(layer) = model_stack.layer() {
-            set_layer_background_color(&layer, Theme::BG_DARKER.0, Theme::BG_DARKER.1, Theme::BG_DARKER.2);
+            set_layer_background_color(
+                &layer,
+                Theme::BG_DARKER.0,
+                Theme::BG_DARKER.1,
+                Theme::BG_DARKER.2,
+            );
         }
 
         model_picker.setDocumentView(Some(&model_stack));
@@ -835,7 +894,9 @@ impl ProfileEditorViewController {
         key_file_field.setHidden(true);
         unsafe {
             key_file_field.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let width_constraint = key_file_field.widthAnchor().constraintEqualToConstant(372.0);
+            let width_constraint = key_file_field
+                .widthAnchor()
+                .constraintEqualToConstant(372.0);
             width_constraint.setActive(true);
         }
         unsafe {
@@ -854,14 +915,17 @@ impl ProfileEditorViewController {
             NSTextField::alloc(mtm),
             NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(372.0, 24.0)),
         );
-        base_url_field.setPlaceholderString(Some(&NSString::from_str("https://api.example.com/v1")));
+        base_url_field
+            .setPlaceholderString(Some(&NSString::from_str("https://api.example.com/v1")));
         base_url_field.setBackgroundColor(Some(&Theme::bg_darker()));
         base_url_field.setTextColor(Some(&Theme::text_primary()));
         base_url_field.setDrawsBackground(true);
         base_url_field.setBordered(true);
         unsafe {
             base_url_field.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let width_constraint = base_url_field.widthAnchor().constraintEqualToConstant(372.0);
+            let width_constraint = base_url_field
+                .widthAnchor()
+                .constraintEqualToConstant(372.0);
             width_constraint.setActive(true);
         }
         unsafe {
@@ -887,7 +951,8 @@ impl ProfileEditorViewController {
         }
 
         // Temperature row
-        let temp_row = self.build_slider_row("Temperature", 0.0, 2.0, 0.7, sel!(temperatureChanged:), mtm);
+        let temp_row =
+            self.build_slider_row("Temperature", 0.0, 2.0, 0.7, sel!(temperatureChanged:), mtm);
         unsafe {
             section.addArrangedSubview(&temp_row.0);
         }
@@ -909,12 +974,15 @@ impl ProfileEditorViewController {
             max_tokens_row.setSpacing(10.0);
         }
 
-        let max_tokens_label = NSTextField::labelWithString(&NSString::from_str("Max Output Tokens"), mtm);
+        let max_tokens_label =
+            NSTextField::labelWithString(&NSString::from_str("Max Output Tokens"), mtm);
         max_tokens_label.setTextColor(Some(&Theme::text_secondary_color()));
         max_tokens_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         unsafe {
             max_tokens_label.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let width_constraint = max_tokens_label.widthAnchor().constraintEqualToConstant(150.0);
+            let width_constraint = max_tokens_label
+                .widthAnchor()
+                .constraintEqualToConstant(150.0);
             width_constraint.setActive(true);
         }
         unsafe {
@@ -933,7 +1001,9 @@ impl ProfileEditorViewController {
         max_tokens_field.setBordered(true);
         unsafe {
             max_tokens_field.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let width_constraint = max_tokens_field.widthAnchor().constraintEqualToConstant(100.0);
+            let width_constraint = max_tokens_field
+                .widthAnchor()
+                .constraintEqualToConstant(100.0);
             width_constraint.setActive(true);
         }
         unsafe {
@@ -952,12 +1022,15 @@ impl ProfileEditorViewController {
             thinking_budget_row.setSpacing(10.0);
         }
 
-        let thinking_budget_label = NSTextField::labelWithString(&NSString::from_str("Thinking Budget"), mtm);
+        let thinking_budget_label =
+            NSTextField::labelWithString(&NSString::from_str("Thinking Budget"), mtm);
         thinking_budget_label.setTextColor(Some(&Theme::text_secondary_color()));
         thinking_budget_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         unsafe {
             thinking_budget_label.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let width_constraint = thinking_budget_label.widthAnchor().constraintEqualToConstant(150.0);
+            let width_constraint = thinking_budget_label
+                .widthAnchor()
+                .constraintEqualToConstant(150.0);
             width_constraint.setActive(true);
         }
         unsafe {
@@ -975,7 +1048,9 @@ impl ProfileEditorViewController {
         thinking_budget_field.setBordered(true);
         unsafe {
             thinking_budget_field.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let width_constraint = thinking_budget_field.widthAnchor().constraintEqualToConstant(100.0);
+            let width_constraint = thinking_budget_field
+                .widthAnchor()
+                .constraintEqualToConstant(100.0);
             width_constraint.setActive(true);
         }
         unsafe {
@@ -1064,7 +1139,8 @@ impl ProfileEditorViewController {
         }
 
         // Value label (fixed width)
-        let value_label = NSTextField::labelWithString(&NSString::from_str(&format!("{initial_value:.2}")), mtm);
+        let value_label =
+            NSTextField::labelWithString(&NSString::from_str(&format!("{initial_value:.2}")), mtm);
         value_label.setTextColor(Some(&Theme::text_primary()));
         value_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         value_label.setAlignment(objc2_app_kit::NSTextAlignment::Right);
@@ -1102,7 +1178,7 @@ impl ProfileEditorViewController {
                 return;
             }
         };
-        
+
         // Try to get cached registry first
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(r) => r,
@@ -1111,21 +1187,19 @@ impl ProfileEditorViewController {
                 return;
             }
         };
-        
-        let registry = runtime.block_on(async {
-            manager.get_registry().await
-        });
-        
+
+        let registry = runtime.block_on(async { manager.get_registry().await });
+
         match registry {
             Ok(reg) => {
                 *self.ivars().registry.borrow_mut() = Some(reg);
                 self.populate_provider_list();
-                
+
                 // If there's a pre-selected model, populate the model list and auto-fill base URL
                 if let Some(provider_id) = &*self.ivars().preselected_provider.borrow() {
                     self.populate_model_list();
                     self.update_provider_button_states(provider_id);
-                    
+
                     if let Some(model_id) = &*self.ivars().preselected_model.borrow() {
                         self.update_model_button_states(model_id);
                         self.auto_fill_base_url(provider_id);
@@ -1138,7 +1212,7 @@ impl ProfileEditorViewController {
             }
         }
     }
-    
+
     fn auto_fill_base_url(&self, provider_id: &str) {
         if let Some(base_url_field) = &*self.ivars().base_url_field.borrow() {
             // Check if base URL is already filled
@@ -1146,7 +1220,7 @@ impl ProfileEditorViewController {
             if !current_url.trim().is_empty() {
                 return; // Don't overwrite existing URL
             }
-            
+
             // Get provider from registry
             if let Some(registry) = &*self.ivars().registry.borrow() {
                 if let Some(provider) = registry.get_provider(provider_id) {
@@ -1165,7 +1239,7 @@ impl ProfileEditorViewController {
 
     fn populate_provider_list(&self) {
         let mtm = MainThreadMarker::new().unwrap();
-        
+
         if let Some(container) = &*self.ivars().provider_picker.borrow() {
             // Clear existing subviews
             let subviews = container.subviews();
@@ -1177,13 +1251,16 @@ impl ProfileEditorViewController {
                 }
                 view.removeFromSuperview();
             }
-            
+
             // Get provider IDs from registry
             if let Some(registry) = &*self.ivars().registry.borrow() {
                 let provider_ids = registry.get_provider_ids();
-                
+
                 if provider_ids.is_empty() {
-                    let label = NSTextField::labelWithString(&NSString::from_str("No providers available"), mtm);
+                    let label = NSTextField::labelWithString(
+                        &NSString::from_str("No providers available"),
+                        mtm,
+                    );
                     label.setTextColor(Some(&Theme::text_secondary_color()));
                     label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
                     container.addSubview(&label);
@@ -1200,15 +1277,16 @@ impl ProfileEditorViewController {
                                 button.setBezelStyle(NSBezelStyle::Rounded);
                                 button.setButtonType(NSButtonType::MomentaryPushIn);
                                 button.setTag(i as isize);
-                                
+
                                 unsafe {
                                     button.setTarget(Some(self));
                                     button.setAction(Some(sel!(providerSelected:)));
                                     button.setTranslatesAutoresizingMaskIntoConstraints(false);
-                                    let width_constraint = button.widthAnchor().constraintEqualToConstant(350.0);
+                                    let width_constraint =
+                                        button.widthAnchor().constraintEqualToConstant(350.0);
                                     width_constraint.setActive(true);
                                 }
-                                
+
                                 unsafe {
                                     stack.addArrangedSubview(&button);
                                 }
@@ -1219,10 +1297,10 @@ impl ProfileEditorViewController {
             }
         }
     }
-    
+
     fn populate_model_list(&self) {
         let mtm = MainThreadMarker::new().unwrap();
-        
+
         if let Some(container) = &*self.ivars().model_picker.borrow() {
             // Clear existing subviews
             let subviews = container.subviews();
@@ -1234,13 +1312,16 @@ impl ProfileEditorViewController {
                 }
                 view.removeFromSuperview();
             }
-            
+
             // Get models for selected provider
             if let Some(provider_id) = &*self.ivars().selected_provider.borrow() {
                 if let Some(registry) = &*self.ivars().registry.borrow() {
                     if let Some(models) = registry.get_models_for_provider(provider_id) {
                         if models.is_empty() {
-                            let label = NSTextField::labelWithString(&NSString::from_str("No models available"), mtm);
+                            let label = NSTextField::labelWithString(
+                                &NSString::from_str("No models available"),
+                                mtm,
+                            );
                             label.setTextColor(Some(&Theme::text_secondary_color()));
                             label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
                             container.addSubview(&label);
@@ -1250,9 +1331,12 @@ impl ProfileEditorViewController {
                                 for (i, model) in models.iter().enumerate() {
                                     let button = NSButton::initWithFrame(
                                         NSButton::alloc(mtm),
-                                        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(350.0, 28.0)),
+                                        NSRect::new(
+                                            NSPoint::new(0.0, 0.0),
+                                            NSSize::new(350.0, 28.0),
+                                        ),
                                     );
-                                    
+
                                     // Build button title with model info
                                     let mut title = model.name.clone();
                                     if model.tool_call {
@@ -1264,20 +1348,21 @@ impl ProfileEditorViewController {
                                     if let Some(limit) = &model.limit {
                                         title.push_str(&format!(" ({}k)", limit.context / 1000));
                                     }
-                                    
+
                                     button.setTitle(&NSString::from_str(&title));
                                     button.setBezelStyle(NSBezelStyle::Rounded);
                                     button.setButtonType(NSButtonType::MomentaryPushIn);
                                     button.setTag(i as isize);
-                                    
+
                                     unsafe {
                                         button.setTarget(Some(self));
                                         button.setAction(Some(sel!(modelSelected:)));
                                         button.setTranslatesAutoresizingMaskIntoConstraints(false);
-                                        let width_constraint = button.widthAnchor().constraintEqualToConstant(350.0);
+                                        let width_constraint =
+                                            button.widthAnchor().constraintEqualToConstant(350.0);
                                         width_constraint.setActive(true);
                                     }
-                                    
+
                                     unsafe {
                                         stack.addArrangedSubview(&button);
                                     }
@@ -1289,13 +1374,13 @@ impl ProfileEditorViewController {
             }
         }
     }
-    
+
     fn update_provider_button_states(&self, selected_provider: &str) {
         if let Some(container) = &*self.ivars().provider_picker.borrow() {
             for view in &container.subviews() {
                 if let Some(button) = view.downcast_ref::<NSButton>() {
                     let title = button.title().to_string();
-                    
+
                     // Check if this button's title matches the selected provider
                     if let Some(registry) = &*self.ivars().registry.borrow() {
                         if let Some(provider) = registry.get_provider(selected_provider) {
@@ -1310,13 +1395,13 @@ impl ProfileEditorViewController {
             }
         }
     }
-    
+
     fn update_model_button_states(&self, selected_model: &str) {
         if let Some(container) = &*self.ivars().model_picker.borrow() {
             for view in &container.subviews() {
                 if let Some(button) = view.downcast_ref::<NSButton>() {
                     let title = button.title().to_string();
-                    
+
                     // Check if this button's title starts with the selected model name
                     if title.starts_with(selected_model) {
                         button.setState(1);
@@ -1327,16 +1412,16 @@ impl ProfileEditorViewController {
             }
         }
     }
-    
+
     fn show_error_alert(&self, message: &str) {
         use objc2_app_kit::NSAlert;
         let mtm = MainThreadMarker::new().unwrap();
-        
+
         let alert = NSAlert::new(mtm);
         alert.setMessageText(&NSString::from_str("Validation Error"));
         alert.setInformativeText(&NSString::from_str(message));
         alert.addButtonWithTitle(&NSString::from_str("OK"));
-        
+
         unsafe {
             alert.runModal();
         }
@@ -1344,7 +1429,7 @@ impl ProfileEditorViewController {
 
     fn show_registry_error(&self) {
         let mtm = MainThreadMarker::new().unwrap();
-        
+
         if let Some(container) = &*self.ivars().provider_picker.borrow() {
             let label = NSTextField::labelWithString(
                 &NSString::from_str("Failed to load models.\nCheck connection and try again."),
@@ -1360,7 +1445,7 @@ impl ProfileEditorViewController {
         if let Some(api_key_field) = &*self.ivars().api_key_field.borrow() {
             api_key_field.setHidden(!show_api_key);
         }
-        
+
         if let Some(key_file_field) = &*self.ivars().key_file_field.borrow() {
             key_file_field.setHidden(show_api_key);
         }
@@ -1373,12 +1458,12 @@ impl ProfileEditorViewController {
         } else {
             String::new()
         };
-        
+
         if name.trim().is_empty() {
             self.show_error_alert("Profile name is required");
             return false;
         }
-        
+
         // Get selected provider and model
         let provider_id = if let Some(provider) = &*self.ivars().selected_provider.borrow() {
             provider.clone()
@@ -1386,14 +1471,14 @@ impl ProfileEditorViewController {
             self.show_error_alert("Please select a provider");
             return false;
         };
-        
+
         let model_id = if let Some(model) = &*self.ivars().selected_model.borrow() {
             model.clone()
         } else {
             self.show_error_alert("Please select a model");
             return false;
         };
-        
+
         // Get auth config
         let auth = if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
             let selected = popup.indexOfSelectedItem();
@@ -1415,12 +1500,16 @@ impl ProfileEditorViewController {
                 AuthConfig::Keyfile { path }
             } else {
                 // None - use empty API key
-                AuthConfig::Key { value: String::new() }
+                AuthConfig::Key {
+                    value: String::new(),
+                }
             }
         } else {
-            AuthConfig::Key { value: String::new() }
+            AuthConfig::Key {
+                value: String::new(),
+            }
         };
-        
+
         // Get base URL
         let base_url = if let Some(field) = &*self.ivars().base_url_field.borrow() {
             let url = field.stringValue().to_string();
@@ -1433,26 +1522,30 @@ impl ProfileEditorViewController {
         } else {
             format!("https://api.{provider_id}.com/v1")
         };
-        
+
         // Get parameters
         let temperature = if let Some(slider) = &*self.ivars().temperature_slider.borrow() {
             slider.doubleValue()
         } else {
             0.7
         };
-        
+
         let top_p = if let Some(slider) = &*self.ivars().top_p_slider.borrow() {
             slider.doubleValue()
         } else {
             0.95
         };
-        
+
         let max_tokens = if let Some(field) = &*self.ivars().max_tokens_field.borrow() {
-            field.stringValue().to_string().parse::<u32>().unwrap_or(4096)
+            field
+                .stringValue()
+                .to_string()
+                .parse::<u32>()
+                .unwrap_or(4096)
         } else {
             4096
         };
-        
+
         let thinking_budget = if let Some(field) = &*self.ivars().thinking_budget_field.borrow() {
             let value_str = field.stringValue().to_string();
             if value_str.trim().is_empty() {
@@ -1463,19 +1556,19 @@ impl ProfileEditorViewController {
         } else {
             None
         };
-        
+
         let enable_thinking = if let Some(button) = &*self.ivars().enable_thinking_button.borrow() {
             button.state() == 1
         } else {
             false
         };
-        
+
         let show_thinking = if let Some(button) = &*self.ivars().show_thinking_button.borrow() {
             button.state() == 1
         } else {
             false
         };
-        
+
         let parameters = ModelParameters {
             temperature,
             top_p,
@@ -1484,7 +1577,7 @@ impl ProfileEditorViewController {
             enable_thinking,
             show_thinking,
         };
-        
+
         // Create or update profile
         let profile = if let Some(profile_id) = *self.ivars().editing_profile_id.borrow() {
             // Updating existing profile
@@ -1496,7 +1589,9 @@ impl ProfileEditorViewController {
                 base_url,
                 auth,
                 parameters,
-                system_prompt: "You are a helpful assistant, be direct and to the point. Respond in English.".to_string(),
+                system_prompt:
+                    "You are a helpful assistant, be direct and to the point. Respond in English."
+                        .to_string(),
             }
         } else {
             // Creating new profile
@@ -1508,10 +1603,12 @@ impl ProfileEditorViewController {
                 base_url,
                 auth,
                 parameters,
-                system_prompt: "You are a helpful assistant, be direct and to the point. Respond in English.".to_string(),
+                system_prompt:
+                    "You are a helpful assistant, be direct and to the point. Respond in English."
+                        .to_string(),
             }
         };
-        
+
         // Save to config
         let config_path = match Config::default_path() {
             Ok(path) => path,
@@ -1520,7 +1617,7 @@ impl ProfileEditorViewController {
                 return false;
             }
         };
-        
+
         let mut config = match Config::load(&config_path) {
             Ok(c) => c,
             Err(e) => {
@@ -1528,7 +1625,7 @@ impl ProfileEditorViewController {
                 return false;
             }
         };
-        
+
         if self.ivars().editing_profile_id.borrow().is_some() {
             // Update existing
             if let Err(e) = config.update_profile(profile) {
@@ -1538,19 +1635,19 @@ impl ProfileEditorViewController {
         } else {
             // Add new
             config.add_profile(profile.clone());
-            
+
             // If this is the first profile, make it the default
             if config.profiles.len() == 1 {
                 config.default_profile = Some(profile.id);
             }
         }
-        
+
         // Save config
         if let Err(e) = config.save(&config_path) {
             eprintln!("Failed to save config: {e}");
             return false;
         }
-        
+
         println!("Profile saved successfully");
         true
     }

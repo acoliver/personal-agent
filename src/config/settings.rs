@@ -68,7 +68,7 @@ impl Config {
     /// Returns error if file cannot be read or parsed
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        
+
         if path.exists() {
             let contents = fs::read_to_string(path)?;
             let config: Self = serde_json::from_str(&contents)?;
@@ -86,7 +86,7 @@ impl Config {
     /// Returns error if file cannot be written or permissions cannot be set
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
-        
+
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -94,10 +94,10 @@ impl Config {
 
         // Serialize to JSON
         let contents = serde_json::to_string_pretty(self)?;
-        
+
         // Write to file
         fs::write(path, contents)?;
-        
+
         // Set permissions to 600 (owner read/write only)
         #[cfg(unix)]
         {
@@ -105,7 +105,7 @@ impl Config {
             let permissions = fs::Permissions::from_mode(0o600);
             fs::set_permissions(path, permissions)?;
         }
-        
+
         Ok(())
     }
 
@@ -114,9 +114,10 @@ impl Config {
     /// # Errors
     /// Returns error if application support directory cannot be determined
     pub fn default_path() -> Result<PathBuf> {
-        let app_support = dirs::data_local_dir()
-            .ok_or_else(|| AppError::Config("Could not determine application support directory".to_string()))?;
-        
+        let app_support = dirs::data_local_dir().ok_or_else(|| {
+            AppError::Config("Could not determine application support directory".to_string())
+        })?;
+
         Ok(app_support.join("PersonalAgent").join("config.json"))
     }
 
@@ -130,17 +131,19 @@ impl Config {
     /// # Errors
     /// Returns error if profile with given ID is not found
     pub fn remove_profile(&mut self, id: &Uuid) -> Result<()> {
-        let index = self.profiles.iter()
+        let index = self
+            .profiles
+            .iter()
             .position(|p| p.id == *id)
             .ok_or_else(|| AppError::ProfileNotFound(id.to_string()))?;
-        
+
         self.profiles.remove(index);
-        
+
         // Clear default profile if it was removed
         if self.default_profile == Some(*id) {
             self.default_profile = None;
         }
-        
+
         Ok(())
     }
 
@@ -149,7 +152,8 @@ impl Config {
     /// # Errors
     /// Returns error if profile with given ID is not found
     pub fn get_profile(&self, id: &Uuid) -> Result<&ModelProfile> {
-        self.profiles.iter()
+        self.profiles
+            .iter()
             .find(|p| p.id == *id)
             .ok_or_else(|| AppError::ProfileNotFound(id.to_string()))
     }
@@ -159,7 +163,8 @@ impl Config {
     /// # Errors
     /// Returns error if profile with given ID is not found
     pub fn get_profile_mut(&mut self, id: &Uuid) -> Result<&mut ModelProfile> {
-        self.profiles.iter_mut()
+        self.profiles
+            .iter_mut()
             .find(|p| p.id == *id)
             .ok_or_else(|| AppError::ProfileNotFound(id.to_string()))
     }
@@ -184,10 +189,12 @@ impl Config {
     /// # Errors
     /// Returns error if MCP with given ID is not found
     pub fn remove_mcp(&mut self, id: &Uuid) -> Result<()> {
-        let index = self.mcps.iter()
+        let index = self
+            .mcps
+            .iter()
             .position(|m| m.id == *id)
             .ok_or_else(|| AppError::Config(format!("MCP not found: {id}")))?;
-        
+
         self.mcps.remove(index);
         Ok(())
     }
@@ -236,9 +243,9 @@ mod tests {
         let config_path = temp_dir.path().join("config.json");
 
         assert!(!config_path.exists());
-        
+
         let config = Config::load(&config_path)?;
-        
+
         assert!(config_path.exists());
         assert_eq!(config.theme, "dark");
 
@@ -314,7 +321,7 @@ mod tests {
         let profile_id = profile.id;
 
         config.add_profile(profile.clone());
-        
+
         profile.name = "Updated Name".to_string();
         config.update_profile(profile)?;
 

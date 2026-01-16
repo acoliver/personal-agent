@@ -37,7 +37,7 @@ impl Conversation {
         let now = Utc::now();
         // Default title to timestamp format YYYYMMDDHHMMSSmmm
         let default_title = now.format("%Y%m%d%H%M%S%3f").to_string();
-        
+
         Self {
             id: Uuid::new_v4(),
             created_at: now,
@@ -178,10 +178,8 @@ mod tests {
 
     #[test]
     fn test_assistant_with_thinking() {
-        let message = Message::assistant_with_thinking(
-            "Answer".to_string(),
-            "Thinking...".to_string(),
-        );
+        let message =
+            Message::assistant_with_thinking("Answer".to_string(), "Thinking...".to_string());
         assert_eq!(message.role, MessageRole::Assistant);
         assert_eq!(message.content, "Answer");
         assert_eq!(message.thinking_content, Some("Thinking...".to_string()));

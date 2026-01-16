@@ -1,11 +1,11 @@
 //! OAuth 2.0 flow support for MCPs
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use uuid::Uuid;
-use serde::{Deserialize, Serialize};
+use tiny_http::{Response, Server};
 use tokio::sync::oneshot;
-use tiny_http::{Server, Response};
+use uuid::Uuid;
 
 /// OAuth token storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,22 +50,25 @@ pub struct OAuthCallbackResult {
 
 /// Start a local HTTP server to receive OAuth callback
 /// Returns (port, receiver for token)
-pub async fn start_oauth_callback_server() -> Result<(u16, oneshot::Receiver<OAuthCallbackResult>), String> {
+pub async fn start_oauth_callback_server(
+) -> Result<(u16, oneshot::Receiver<OAuthCallbackResult>), String> {
     // Find available port
     let server = Server::http("127.0.0.1:0")
         .map_err(|e| format!("Failed to start callback server: {}", e))?;
-    
-    let port = server.server_addr().to_ip()
+
+    let port = server
+        .server_addr()
+        .to_ip()
         .ok_or("Failed to get server address")?
         .port();
-    
+
     let (tx, rx) = oneshot::channel();
-    
+
     // Spawn task to handle callback
     tokio::task::spawn_blocking(move || {
         handle_oauth_callback(server, tx);
     });
-    
+
     Ok((port, rx))
 }
 
@@ -74,42 +77,45 @@ fn handle_oauth_callback(server: Server, tx: oneshot::Sender<OAuthCallbackResult
     // Wait for single request - recv() returns Result<Request, IoError>
     if let Ok(request) = server.recv() {
         let url = request.url();
-        
+
         // Parse query parameters
         let mut token = None;
         let mut error = None;
-        
+
         if let Some(query_start) = url.find('?') {
             let query = &url[query_start + 1..];
             for pair in query.split('&') {
                 if let Some(eq_idx) = pair.find('=') {
                     let key = &pair[..eq_idx];
                     let value = &pair[eq_idx + 1..];
-                    
+
                     match key {
                         "access_token" | "token" => {
-                            token = Some(urlencoding::decode(value).unwrap_or_default().to_string());
+                            token =
+                                Some(urlencoding::decode(value).unwrap_or_default().to_string());
                         }
                         "error" => {
-                            error = Some(urlencoding::decode(value).unwrap_or_default().to_string());
+                            error =
+                                Some(urlencoding::decode(value).unwrap_or_default().to_string());
                         }
                         _ => {}
                     }
                 }
             }
         }
-        
+
         // Send success page
         let response_html = if token.is_some() {
             "<html><body><h1>Authentication Successful</h1><p>You can close this window.</p></body></html>"
         } else {
             "<html><body><h1>Authentication Failed</h1><p>You can close this window.</p></body></html>"
         };
-        
-        let response = Response::from_string(response_html)
-            .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap());
+
+        let response = Response::from_string(response_html).with_header(
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap(),
+        );
         let _ = request.respond(response);
-        
+
         // Send result
         let _ = tx.send(OAuthCallbackResult { token, error });
     }
@@ -141,9 +147,16 @@ pub struct OAuthConfig {
 #[derive(Debug, Clone)]
 pub enum OAuthFlowState {
     NotStarted,
-    AwaitingCallback { state: String, pkce_verifier: Option<String> },
-    TokenReceived { token: OAuthToken },
-    Error { message: String },
+    AwaitingCallback {
+        state: String,
+        pkce_verifier: Option<String>,
+    },
+    TokenReceived {
+        token: OAuthToken,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// OAuth Manager handles OAuth flows for MCPs
@@ -184,14 +197,17 @@ impl OAuthManager {
 
     /// Check if MCP has valid (non-expired) token
     pub fn has_valid_token(&self, mcp_id: &Uuid) -> bool {
-        self.tokens.get(mcp_id)
+        self.tokens
+            .get(mcp_id)
             .map(|t| !t.is_expired())
             .unwrap_or(false)
     }
 
     /// Generate authorization URL for OAuth flow
     pub fn generate_auth_url(&mut self, mcp_id: Uuid) -> Result<String, String> {
-        let config = self.configs.get(&mcp_id)
+        let config = self
+            .configs
+            .get(&mcp_id)
             .ok_or_else(|| "No OAuth config registered for MCP".to_string())?;
 
         // Generate state parameter for CSRF protection
@@ -212,7 +228,10 @@ impl OAuthManager {
         );
 
         if !config.scopes.is_empty() {
-            url.push_str(&format!("&scope={}", urlencoding::encode(&config.scopes.join(" "))));
+            url.push_str(&format!(
+                "&scope={}",
+                urlencoding::encode(&config.scopes.join(" "))
+            ));
         }
 
         Ok(url)
@@ -220,7 +239,9 @@ impl OAuthManager {
 
     /// Get MCP ID from OAuth state parameter
     pub fn get_mcp_for_state(&self, state: &str) -> Option<Uuid> {
-        self.pending_flows.lock().ok()
+        self.pending_flows
+            .lock()
+            .ok()
             .and_then(|flows| flows.get(state).copied())
     }
 
@@ -279,10 +300,13 @@ mod tests {
     fn test_token_is_expired_when_past_expiry() {
         let mut token = create_test_token();
         // Set expiry to 1 second ago
-        token.expires_at = Some(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64 - 1);
+        token.expires_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                - 1,
+        );
         assert!(token.is_expired());
     }
 
@@ -290,10 +314,13 @@ mod tests {
     fn test_token_is_not_expired_when_before_expiry() {
         let mut token = create_test_token();
         // Set expiry to 3600 seconds in the future
-        token.expires_at = Some(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64 + 3600);
+        token.expires_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                + 3600,
+        );
         assert!(!token.is_expired());
     }
 
@@ -304,7 +331,7 @@ mod tests {
         let config = create_test_config();
 
         manager.register_config(mcp_id, config.clone());
-        
+
         let retrieved = manager.get_config(&mcp_id);
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().client_id, config.client_id);
@@ -325,7 +352,7 @@ mod tests {
         let token = create_test_token();
 
         manager.store_token(mcp_id, token.clone());
-        
+
         let retrieved = manager.get_token(&mcp_id);
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().access_token, token.access_token);
@@ -346,7 +373,7 @@ mod tests {
         let token = create_test_token();
 
         manager.store_token(mcp_id, token);
-        
+
         assert!(manager.has_valid_token(&mcp_id));
     }
 
@@ -355,13 +382,16 @@ mod tests {
         let mut manager = OAuthManager::new();
         let mcp_id = Uuid::new_v4();
         let mut token = create_test_token();
-        token.expires_at = Some(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64 - 1);
+        token.expires_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                - 1,
+        );
 
         manager.store_token(mcp_id, token);
-        
+
         assert!(!manager.has_valid_token(&mcp_id));
     }
 
@@ -383,15 +413,21 @@ mod tests {
 
         manager.register_config(mcp_id, config.clone());
         let result = manager.generate_auth_url(mcp_id);
-        
+
         assert!(result.is_ok());
         let url = result.unwrap();
-        
+
         // Check URL components
         assert!(url.starts_with(&config.auth_url));
         assert!(url.contains("response_type=code"));
-        assert!(url.contains(&format!("client_id={}", urlencoding::encode(&config.client_id))));
-        assert!(url.contains(&format!("redirect_uri={}", urlencoding::encode(&config.redirect_uri))));
+        assert!(url.contains(&format!(
+            "client_id={}",
+            urlencoding::encode(&config.client_id)
+        )));
+        assert!(url.contains(&format!(
+            "redirect_uri={}",
+            urlencoding::encode(&config.redirect_uri)
+        )));
         assert!(url.contains("state="));
         assert!(url.contains("scope=read%20write"));
     }
@@ -405,10 +441,10 @@ mod tests {
 
         manager.register_config(mcp_id, config.clone());
         let result = manager.generate_auth_url(mcp_id);
-        
+
         assert!(result.is_ok());
         let url = result.unwrap();
-        
+
         assert!(!url.contains("scope="));
     }
 
@@ -420,14 +456,15 @@ mod tests {
 
         manager.register_config(mcp_id, config);
         let url = manager.generate_auth_url(mcp_id).unwrap();
-        
+
         // Extract state from URL
-        let state = url.split("state=")
+        let state = url
+            .split("state=")
             .nth(1)
             .and_then(|s| s.split('&').next())
             .unwrap();
         let decoded_state = urlencoding::decode(state).unwrap();
-        
+
         let retrieved_mcp_id = manager.get_mcp_for_state(&decoded_state);
         assert_eq!(retrieved_mcp_id, Some(mcp_id));
     }
@@ -447,18 +484,19 @@ mod tests {
 
         manager.register_config(mcp_id, config);
         let url = manager.generate_auth_url(mcp_id).unwrap();
-        
+
         // Extract state from URL
-        let state = url.split("state=")
+        let state = url
+            .split("state=")
             .nth(1)
             .and_then(|s| s.split('&').next())
             .unwrap();
         let decoded_state = urlencoding::decode(state).unwrap();
-        
+
         assert!(manager.get_mcp_for_state(&decoded_state).is_some());
-        
+
         manager.clear_pending_flow(&decoded_state);
-        
+
         assert!(manager.get_mcp_for_state(&decoded_state).is_none());
     }
 
@@ -471,12 +509,12 @@ mod tests {
 
         manager.register_config(mcp_id, config);
         manager.store_token(mcp_id, token);
-        
+
         assert!(manager.get_config(&mcp_id).is_some());
         assert!(manager.get_token(&mcp_id).is_some());
-        
+
         manager.delete_mcp(&mcp_id);
-        
+
         assert!(manager.get_config(&mcp_id).is_none());
         assert!(manager.get_token(&mcp_id).is_none());
     }
@@ -486,7 +524,7 @@ mod tests {
         let token = create_test_token();
         let json = serde_json::to_string(&token).unwrap();
         let deserialized: OAuthToken = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(token.access_token, deserialized.access_token);
         assert_eq!(token.token_type, deserialized.token_type);
         assert_eq!(token.refresh_token, deserialized.refresh_token);
@@ -499,7 +537,7 @@ mod tests {
         let config = create_test_config();
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: OAuthConfig = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(config.client_id, deserialized.client_id);
         assert_eq!(config.client_secret, deserialized.client_secret);
         assert_eq!(config.auth_url, deserialized.auth_url);
@@ -517,7 +555,7 @@ mod tests {
             "token_url": "https://token.example.com",
             "redirect_uri": "http://localhost:8080"
         }"#;
-        
+
         let config: OAuthConfig = serde_json::from_str(json).unwrap();
         assert!(config.scopes.is_empty());
     }
@@ -531,9 +569,9 @@ mod tests {
             expires_at: None,
             scope: None,
         };
-        
+
         let json = serde_json::to_string(&token).unwrap();
-        
+
         assert!(!json.contains("refresh_token"));
         assert!(!json.contains("expires_at"));
         assert!(!json.contains("scope"));
@@ -543,7 +581,7 @@ mod tests {
     fn test_oauth_manager_default() {
         let manager = OAuthManager::default();
         let mcp_id = Uuid::new_v4();
-        
+
         assert!(manager.get_config(&mcp_id).is_none());
         assert!(manager.get_token(&mcp_id).is_none());
         assert!(!manager.has_valid_token(&mcp_id));
@@ -554,7 +592,7 @@ mod tests {
         let mut manager = OAuthManager::new();
         let mcp_id1 = Uuid::new_v4();
         let mcp_id2 = Uuid::new_v4();
-        
+
         let mut config1 = create_test_config();
         config1.client_id = "client1".to_string();
         let mut config2 = create_test_config();

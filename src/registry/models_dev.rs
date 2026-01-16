@@ -13,13 +13,13 @@ pub struct ModelsDevClient {
 
 impl ModelsDevClient {
     /// Create a new client with the default API URL
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        
+
         Self {
             client,
             api_url: MODELS_DEV_API_URL.to_string(),
@@ -27,17 +27,14 @@ impl ModelsDevClient {
     }
 
     /// Create a new client with a custom API URL (useful for testing)
-    #[must_use] 
+    #[must_use]
     pub fn with_url(api_url: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        
-        Self {
-            client,
-            api_url,
-        }
+
+        Self { client, api_url }
     }
 
     /// Fetch the model registry from models.dev

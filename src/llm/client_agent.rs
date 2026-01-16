@@ -35,10 +35,13 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
         // Get the global MCP service and call the tool
         let service_arc = crate::mcp::McpService::global();
         let mut svc = service_arc.lock().await;
-        
-        let result = svc.call_tool(&self.tool_name, args.clone())
+
+        let result = svc
+            .call_tool(&self.tool_name, args.clone())
             .await
-            .map_err(|e| ToolError::execution_failed(format!("MCP tool {} failed: {}", self.tool_name, e)))?;
+            .map_err(|e| {
+                ToolError::execution_failed(format!("MCP tool {} failed: {}", self.tool_name, e))
+            })?;
 
         // Convert the JSON result to a ToolReturn
         Ok(ToolReturn::text(result.to_string()))
@@ -193,5 +196,3 @@ impl AgentClientExt for crate::llm::LlmClient {
         Ok(())
     }
 }
-
-

@@ -36,7 +36,10 @@ struct PopoverBridgeState {
 /// Deferred popover operations to avoid re-entrancy
 #[derive(Clone)]
 enum PendingPopoverOperation {
-    Show { button_bounds: NSRect, status_button: Retained<NSView> },
+    Show {
+        button_bounds: NSRect,
+        status_button: Retained<NSView>,
+    },
     Hide,
 }
 
@@ -68,37 +71,38 @@ pub fn setup_native_popover(window_handle: &dyn HasWindowHandle) -> Result<(), S
             // SAFETY: We know this is a valid NSView pointer from eframe
             let ns_view = unsafe { Retained::retain(ns_view_ptr) }
                 .ok_or_else(|| "Failed to retain NSView".to_string())?;
-            
+
             // Get the window from the view
-            ns_view.window()
+            ns_view
+                .window()
                 .ok_or_else(|| "Failed to get NSWindow from NSView".to_string())?
         }
         _ => return Err("Not running on macOS".to_string()),
     };
 
     // Get MainThreadMarker (safe because we're on the main thread in macOS GUI app)
-    let mtm = MainThreadMarker::new()
-        .ok_or("Not running on main thread")?;
+    let mtm = MainThreadMarker::new().ok_or("Not running on main thread")?;
 
     // Create the popover
     let popover = NSPopover::new(mtm);
     popover.setBehavior(objc2_app_kit::NSPopoverBehavior::Transient);
     popover.setAnimates(true);
-    
+
     // Set the content size to match our panel dimensions
     let size = objc2_foundation::NSSize::new(400.0, 500.0);
     popover.setContentSize(size);
 
     // Get the window's content view
-    let content_view = ns_window.contentView()
+    let content_view = ns_window
+        .contentView()
         .ok_or("Failed to get content view")?;
-    
+
     // Create a proper NSViewController to host the content
     let view_controller = NSViewController::new(mtm);
-    
+
     // Set the content view on the view controller
     view_controller.setView(&content_view);
-    
+
     // Set the view controller as the popover's content
     popover.setContentViewController(Some(&view_controller));
 
@@ -130,13 +134,15 @@ pub fn setup_native_popover(window_handle: &dyn HasWindowHandle) -> Result<(), S
 /// # Safety
 /// Uses unsafe blocks to call NSPopover methods. Must be called from main thread.
 #[allow(unsafe_code)]
-pub fn show_popover_at_statusbar(button_bounds: NSRect, status_button: &NSView) -> Result<(), String> {
+pub fn show_popover_at_statusbar(
+    button_bounds: NSRect,
+    status_button: &NSView,
+) -> Result<(), String> {
     tracing::info!("Queueing popover show operation");
-    
+
     POPOVER_STATE.with(|state| {
         let mut state_mut = state.borrow_mut();
-        let bridge_state = state_mut.as_mut()
-            .ok_or("Popover not initialized")?;
+        let bridge_state = state_mut.as_mut().ok_or("Popover not initialized")?;
 
         // Queue the operation instead of executing immediately
         // Clone the Retained pointer to store it
@@ -159,11 +165,10 @@ pub fn show_popover_at_statusbar(button_bounds: NSRect, status_button: &NSView) 
 #[allow(unsafe_code)]
 pub fn hide_popover() -> Result<(), String> {
     tracing::info!("Queueing popover hide operation");
-    
+
     POPOVER_STATE.with(|state| {
         let mut state_mut = state.borrow_mut();
-        let bridge_state = state_mut.as_mut()
-            .ok_or("Popover not initialized")?;
+        let bridge_state = state_mut.as_mut().ok_or("Popover not initialized")?;
 
         // Queue the operation
         bridge_state.pending_operation = Some(PendingPopoverOperation::Hide);
@@ -187,13 +192,18 @@ pub fn process_pending_operations() {
         if let Some(bridge_state) = state_mut.as_mut() {
             if let Some(operation) = bridge_state.pending_operation.take() {
                 match operation {
-                    PendingPopoverOperation::Show { button_bounds, status_button } => {
+                    PendingPopoverOperation::Show {
+                        button_bounds,
+                        status_button,
+                    } => {
                         tracing::info!("Processing queued show operation");
-                        bridge_state.popover.showRelativeToRect_ofView_preferredEdge(
-                            button_bounds,
-                            &status_button,
-                            NSRectEdge::MinY,
-                        );
+                        bridge_state
+                            .popover
+                            .showRelativeToRect_ofView_preferredEdge(
+                                button_bounds,
+                                &status_button,
+                                NSRectEdge::MinY,
+                            );
                         tracing::info!("Popover shown successfully");
                     }
                     PendingPopoverOperation::Hide => {
@@ -212,7 +222,8 @@ pub fn process_pending_operations() {
 /// Check if the popover is currently shown
 pub fn is_popover_shown() -> bool {
     POPOVER_STATE.with(|state| {
-        state.borrow()
+        state
+            .borrow()
             .as_ref()
             .map(|s| s.popover.isShown())
             .unwrap_or(false)

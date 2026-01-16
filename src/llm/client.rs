@@ -6,8 +6,8 @@
 use crate::models::{AuthConfig, ModelProfile};
 use crate::registry::RegistryCache;
 use futures::StreamExt;
-use serdes_ai::prelude::*;
 use serdes_ai::models::ModelRequestParameters;
+use serdes_ai::prelude::*;
 use std::fs;
 use thiserror::Error;
 
@@ -63,12 +63,12 @@ pub struct LlmClient {
 
 impl LlmClient {
     /// Create a new LLM client from a model profile
-    /// 
+    ///
     /// This looks up the provider in the models.dev registry to get
     /// the correct API base URL and configuration.
     pub fn from_profile(profile: &ModelProfile) -> StdResult<Self, LlmError> {
         let api_key = Self::resolve_api_key(profile)?;
-        
+
         // Look up provider info from models.dev registry
         let registry_base_url = Self::get_registry_base_url(&profile.provider_id);
 
@@ -78,7 +78,7 @@ impl LlmClient {
             registry_base_url,
         })
     }
-    
+
     /// Get the base URL from models.dev registry for a provider
     fn get_registry_base_url(provider_id: &str) -> Option<String> {
         let cache_path = RegistryCache::default_path().ok()?;
@@ -100,15 +100,13 @@ impl LlmClient {
                 }
                 value.clone()
             }
-            AuthConfig::Keyfile { path } => {
-                fs::read_to_string(path)
-                    .map_err(|e| LlmError::KeyfileRead {
-                        path: path.clone(),
-                        source: e,
-                    })?
-                    .trim()
-                    .to_string()
-            }
+            AuthConfig::Keyfile { path } => fs::read_to_string(path)
+                .map_err(|e| LlmError::KeyfileRead {
+                    path: path.clone(),
+                    source: e,
+                })?
+                .trim()
+                .to_string(),
         };
 
         if key.is_empty() {
@@ -142,20 +140,19 @@ impl LlmClient {
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
         use serdes_ai::ExtendedModelConfig;
-        
-        let mut config = ExtendedModelConfig::new()
-            .with_api_key(&self.api_key);
-        
+
+        let mut config = ExtendedModelConfig::new().with_api_key(&self.api_key);
+
         if let Some(url) = base_url {
             config = config.with_base_url(url);
         }
-        
+
         // Enable thinking if profile has it enabled
         if self.profile.parameters.enable_thinking {
             let budget = self.profile.parameters.thinking_budget.map(u64::from);
             config = config.with_thinking(budget);
         }
-        
+
         serdes_ai::build_model_extended(provider, &self.profile.model_id, config)
             .map_err(|e| LlmError::SerdesAi(e.to_string()))
     }
@@ -184,11 +181,13 @@ impl LlmClient {
                         if !m.content.is_empty() {
                             req.add_user_prompt(m.content.clone());
                         }
-                        
+
                         // Add tool results if present
                         if !m.tool_results.is_empty() {
-                            use serdes_ai::core::messages::request::{ModelRequestPart, ToolReturnPart};
-                            
+                            use serdes_ai::core::messages::request::{
+                                ModelRequestPart, ToolReturnPart,
+                            };
+
                             for tool_result in &m.tool_results {
                                 let tool_return = if tool_result.is_error {
                                     ToolReturnPart::error("tool", &tool_result.content)
@@ -197,7 +196,7 @@ impl LlmClient {
                                     ToolReturnPart::success("tool", &tool_result.content)
                                         .with_tool_call_id(&tool_result.tool_use_id)
                                 };
-                                
+
                                 // Manual push since there's no add_tool_result method
                                 req.parts.push(ModelRequestPart::ToolReturn(tool_return));
                             }
@@ -223,19 +222,20 @@ impl LlmClient {
 
         // Determine provider type from registry
         let provider = self.get_serdes_provider();
-        
+
         // Build the model with extended config for thinking support
         let model = self.build_model(provider, base_url)?;
 
         // Convert tools to SerdesAI ToolDefinition format
         let tool_defs: Vec<ToolDefinition> = tools
             .iter()
-            .map(|t| ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone()))
+            .map(|t| {
+                ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone())
+            })
             .collect();
 
         // Create request parameters with tools
-        let params = ModelRequestParameters::new()
-            .with_tools(tool_defs);
+        let params = ModelRequestParameters::new().with_tools(tool_defs);
 
         // Make the request using the model directly
         let response = model
@@ -256,7 +256,8 @@ impl LlmClient {
     where
         F: FnMut(StreamEvent) + Send,
     {
-        self.request_stream_with_tools(messages, &[], on_event).await
+        self.request_stream_with_tools(messages, &[], on_event)
+            .await
     }
 
     /// Make a streaming request with tools, returning events via callback
@@ -282,11 +283,13 @@ impl LlmClient {
                         if !m.content.is_empty() {
                             req.add_user_prompt(m.content.clone());
                         }
-                        
+
                         // Add tool results if present (Issue 2 fix)
                         if !m.tool_results.is_empty() {
-                            use serdes_ai::core::messages::request::{ModelRequestPart, ToolReturnPart};
-                            
+                            use serdes_ai::core::messages::request::{
+                                ModelRequestPart, ToolReturnPart,
+                            };
+
                             for tool_result in &m.tool_results {
                                 let tool_return = if tool_result.is_error {
                                     ToolReturnPart::error("tool", &tool_result.content)
@@ -295,7 +298,7 @@ impl LlmClient {
                                     ToolReturnPart::success("tool", &tool_result.content)
                                         .with_tool_call_id(&tool_result.tool_use_id)
                                 };
-                                
+
                                 // Manual push since there's no add_tool_result method
                                 req.parts.push(ModelRequestPart::ToolReturn(tool_return));
                             }
@@ -319,22 +322,24 @@ impl LlmClient {
 
         // Determine provider type from registry
         let provider = self.get_serdes_provider();
-        
+
         // Build the model with extended config for thinking support
         let model = self.build_model(provider, base_url)?;
 
         // Convert tools to SerdesAI ToolDefinition format
         let tool_defs: Vec<ToolDefinition> = tools
             .iter()
-            .map(|t| ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone()))
+            .map(|t| {
+                ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone())
+            })
             .collect();
 
         // Create request parameters with tools
-        let params = ModelRequestParameters::new()
-            .with_tools(tool_defs);
+        let params = ModelRequestParameters::new().with_tools(tool_defs);
 
         // Use the model directly for streaming
-        let mut stream = model.request_stream(&model_requests, &self.model_settings(), &params)
+        let mut stream = model
+            .request_stream(&model_requests, &self.model_settings(), &params)
             .await
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
 
@@ -359,7 +364,9 @@ impl LlmClient {
                             }
                             ModelResponsePartDelta::ToolCall(tc_delta) => {
                                 // Accumulate tool call args from deltas
-                                if let Some((_, _, ref mut args_str)) = pending_tool_calls.get_mut(&delta.index) {
+                                if let Some((_, _, ref mut args_str)) =
+                                    pending_tool_calls.get_mut(&delta.index)
+                                {
                                     args_str.push_str(&tc_delta.args_delta);
                                 }
                             }
@@ -392,9 +399,9 @@ impl LlmClient {
                         // Emit the complete tool use when the part ends
                         if let Some((id, name, args_str)) = pending_tool_calls.remove(&end.index) {
                             // Parse accumulated args
-                            let args = serde_json::from_str(&args_str).unwrap_or_else(|_| {
-                                serde_json::json!({"_raw": args_str, "_error": "parse_failed"})
-                            });
+                            let args = serde_json::from_str(&args_str).unwrap_or_else(
+                                |_| serde_json::json!({"_raw": args_str, "_error": "parse_failed"}),
+                            );
                             let tool_use = crate::llm::tools::ToolUse::new(&id, &name, args);
                             on_event(StreamEvent::ToolUse(tool_use));
                         }
@@ -412,7 +419,7 @@ impl LlmClient {
     }
 
     /// Set the API key in the environment for the provider
-    /// 
+    ///
     /// Uses the `env` field from models.dev registry to determine the correct
     /// environment variable name for the provider.
     pub(crate) fn set_api_key_env(&self) {
@@ -420,7 +427,7 @@ impl LlmClient {
         let env_var = self.get_env_var_name();
         std::env::set_var(&env_var, &self.api_key);
     }
-    
+
     /// Get the environment variable name for API key from models.dev registry
     fn get_env_var_name(&self) -> String {
         // First try to get from registry
@@ -435,13 +442,11 @@ impl LlmClient {
                 }
             }
         }
-        
+
         // Fallback to OPENAI_API_KEY for OpenAI-compatible providers
         "OPENAI_API_KEY".to_string()
     }
-    
 
-    
     /// Parse a SerdesAI ModelResponse into our Message type
     fn parse_response(
         &self,
@@ -497,7 +502,7 @@ impl LlmClient {
     }
 
     /// Determine the provider type for `SerdesAI`
-    /// 
+    ///
     /// Uses models.dev registry `npm` field to detect OpenAI-compatible providers:
     /// - `@ai-sdk/openai-compatible` -> use "openai" provider with custom `base_url`
     /// - `@ai-sdk/openai` -> native openai
@@ -515,7 +520,7 @@ impl LlmClient {
                 }
             }
         }
-        
+
         // Use provider_id directly for known SerdesAI providers
         match self.profile.provider_id.as_str() {
             "anthropic" | "claude" => "anthropic",
@@ -646,8 +651,12 @@ mod tests {
     #[test]
     fn test_message_with_tool_uses() {
         use crate::llm::tools::ToolUse;
-        
-        let tool_use = ToolUse::new("toolu_123", "get_weather", serde_json::json!({"city": "NYC"}));
+
+        let tool_use = ToolUse::new(
+            "toolu_123",
+            "get_weather",
+            serde_json::json!({"city": "NYC"}),
+        );
         let msg = Message::assistant("Let me check...").with_tool_uses(vec![tool_use]);
 
         assert!(msg.has_tool_uses());
@@ -658,7 +667,7 @@ mod tests {
     #[test]
     fn test_message_with_tool_results() {
         use crate::llm::tools::ToolResult;
-        
+
         let result = ToolResult::success("toolu_123", "Temperature: 72°F");
         let msg = Message::user("").with_tool_results(vec![result]);
 
@@ -707,9 +716,9 @@ mod tests {
 
     #[test]
     fn test_parse_response_with_tool_call() {
-        use serdes_ai::core::{ModelResponse, ModelResponsePart};
         use serdes_ai::core::messages::parts::ToolCallArgs;
-        
+        use serdes_ai::core::{ModelResponse, ModelResponsePart};
+
         let profile = ModelProfile {
             provider_id: "anthropic".to_string(),
             model_id: "claude-3-opus".to_string(),
@@ -724,18 +733,21 @@ mod tests {
         let response = ModelResponse {
             parts: vec![
                 ModelResponsePart::Text(serdes_ai::core::messages::parts::TextPart::new(
-                    "Let me check the weather for you."
+                    "Let me check the weather for you.",
                 )),
-                ModelResponsePart::ToolCall(serdes_ai::core::messages::parts::ToolCallPart::new(
-                    "get_weather",
-                    ToolCallArgs::json(serde_json::json!({"city": "NYC"}))
-                ).with_tool_call_id("toolu_123")),
+                ModelResponsePart::ToolCall(
+                    serdes_ai::core::messages::parts::ToolCallPart::new(
+                        "get_weather",
+                        ToolCallArgs::json(serde_json::json!({"city": "NYC"})),
+                    )
+                    .with_tool_call_id("toolu_123"),
+                ),
             ],
             ..Default::default()
         };
 
         let message = client.parse_response(response, &[]).unwrap();
-        
+
         assert_eq!(message.role, Role::Assistant);
         assert!(message.content.contains("weather"));
         assert!(message.has_tool_uses());
@@ -748,7 +760,7 @@ mod tests {
     #[test]
     fn test_parse_response_with_thinking() {
         use serdes_ai::core::{ModelResponse, ModelResponsePart};
-        
+
         let profile = ModelProfile {
             provider_id: "anthropic".to_string(),
             model_id: "claude-3-opus".to_string(),
@@ -763,19 +775,22 @@ mod tests {
         let response = ModelResponse {
             parts: vec![
                 ModelResponsePart::Thinking(serdes_ai::core::messages::parts::ThinkingPart::new(
-                    "Let me analyze this problem..."
+                    "Let me analyze this problem...",
                 )),
                 ModelResponsePart::Text(serdes_ai::core::messages::parts::TextPart::new(
-                    "The answer is 42"
+                    "The answer is 42",
                 )),
             ],
             ..Default::default()
         };
 
         let message = client.parse_response(response, &[]).unwrap();
-        
+
         assert_eq!(message.role, Role::Assistant);
         assert_eq!(message.content, "The answer is 42");
-        assert_eq!(message.thinking_content, Some("Let me analyze this problem...".to_string()));
+        assert_eq!(
+            message.thinking_content,
+            Some("Let me analyze this problem...".to_string())
+        );
     }
 }

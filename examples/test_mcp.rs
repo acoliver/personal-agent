@@ -1,7 +1,7 @@
 //! Test MCP integration with a real MCP server
-//! 
+//!
 //! This example demonstrates connecting to an MCP server and calling tools.
-//! 
+//!
 //! Usage:
 //!   cargo run --example test_mcp
 
@@ -13,31 +13,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Try to connect to filesystem MCP if npx is available
     println!("Attempting to spawn filesystem MCP server...");
-    
-    match StdioTransport::spawn("npx", &["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]).await {
+
+    match StdioTransport::spawn(
+        "npx",
+        &["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+    )
+    .await
+    {
         Ok(transport) => {
             println!("[OK] MCP transport spawned");
-            
+
             let client = McpClient::new(transport);
-            
+
             println!("Initializing MCP client...");
             match client.initialize().await {
                 Ok(init_result) => {
                     println!("[OK] MCP initialized");
                     println!("  Server: {}", init_result.server_info.name);
                     println!("  Version: {}", init_result.server_info.version);
-                    
+
                     println!("\nListing tools...");
                     match client.list_tools().await {
                         Ok(tools) => {
                             println!("[OK] Found {} tools:", tools.len());
                             for tool in &tools {
-                                println!("  - {}: {}", 
-                                    tool.name, 
-                                    tool.description.as_ref().unwrap_or(&"(no description)".to_string())
+                                println!(
+                                    "  - {}: {}",
+                                    tool.name,
+                                    tool.description
+                                        .as_ref()
+                                        .unwrap_or(&"(no description)".to_string())
                                 );
                             }
-                            
+
                             // Try calling a simple tool if available
                             if let Some(tool) = tools.first() {
                                 println!("\nAttempting to call tool: {}", tool.name);
@@ -54,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!(" Failed to initialize: {}", e);
                 }
             }
-            
+
             println!("\nClosing connection...");
             let _ = client.close().await;
             println!("[OK] Connection closed");
@@ -65,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("To test MCP integration, ensure Node.js and npm/npx are installed.");
         }
     }
-    
+
     println!("\n=== MCP Integration Test Complete ===");
     Ok(())
 }

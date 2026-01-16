@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use uuid::Uuid;
 use thiserror::Error;
+use uuid::Uuid;
 
-use crate::mcp::{McpConfig, McpAuthType, McpPackageType, SecretsManager};
 use crate::mcp::toolset;
+use crate::mcp::{McpAuthType, McpConfig, McpPackageType, SecretsManager};
 
 #[derive(Debug, Error)]
 pub enum McpError {
@@ -110,12 +110,15 @@ impl McpManager {
     /// Register an MCP as active (for tracking purposes)
     pub fn register_active(&mut self, config: McpConfig) {
         let now = Instant::now();
-        self.active.insert(config.id, ActiveMcp {
-            config,
-            started_at: now,
-            last_used: now,
-            restart_count: 0,
-        });
+        self.active.insert(
+            config.id,
+            ActiveMcp {
+                config,
+                started_at: now,
+                last_used: now,
+                restart_count: 0,
+            },
+        );
     }
 
     /// Stop an MCP
@@ -133,7 +136,9 @@ impl McpManager {
     /// Clean up idle MCPs
     pub fn cleanup_idle(&mut self) {
         let now = Instant::now();
-        let idle_ids: Vec<Uuid> = self.active.iter()
+        let idle_ids: Vec<Uuid> = self
+            .active
+            .iter()
             .filter(|(_, a)| now.duration_since(a.last_used) > self.idle_timeout)
             .map(|(id, _)| *id)
             .collect();
@@ -162,15 +167,17 @@ impl McpManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::{EnvVarConfig, McpPackage, McpSource, McpTransport};
     use tempfile::TempDir;
-    use crate::mcp::{McpSource, McpPackage, McpTransport, EnvVarConfig};
 
     fn create_test_config() -> McpConfig {
         McpConfig {
             id: Uuid::new_v4(),
             name: "Test MCP".to_string(),
             enabled: true,
-            source: McpSource::Manual { url: "test".to_string() },
+            source: McpSource::Manual {
+                url: "test".to_string(),
+            },
             package: McpPackage {
                 package_type: McpPackageType::Npm,
                 identifier: "@test/mcp".to_string(),
@@ -197,7 +204,7 @@ mod tests {
     fn test_new_manager() {
         let secrets = create_secrets_manager();
         let manager = McpManager::new(secrets);
-        
+
         assert_eq!(manager.active_count(), 0);
         assert_eq!(manager.idle_timeout, Duration::from_secs(30 * 60));
         assert_eq!(manager.max_restart_attempts, 3);
@@ -208,7 +215,7 @@ mod tests {
         let secrets = create_secrets_manager();
         let timeout = Duration::from_secs(60);
         let manager = McpManager::with_idle_timeout(secrets, timeout);
-        
+
         assert_eq!(manager.idle_timeout, timeout);
     }
 
@@ -216,7 +223,7 @@ mod tests {
     fn test_with_max_restarts() {
         let secrets = create_secrets_manager();
         let manager = McpManager::with_max_restarts(secrets, 5);
-        
+
         assert_eq!(manager.max_restart_attempts, 5);
     }
 
@@ -224,7 +231,7 @@ mod tests {
     fn test_build_command_npm() {
         let config = create_test_config();
         let (cmd, args) = McpManager::build_command(&config);
-        
+
         assert_eq!(cmd, "npx");
         assert_eq!(args, vec!["-y", "@test/mcp"]);
     }
@@ -233,9 +240,9 @@ mod tests {
     fn test_build_command_npm_default_runtime() {
         let mut config = create_test_config();
         config.package.runtime_hint = None;
-        
+
         let (cmd, args) = McpManager::build_command(&config);
-        
+
         assert_eq!(cmd, "npx");
         assert_eq!(args, vec!["-y", "@test/mcp"]);
     }
@@ -245,9 +252,9 @@ mod tests {
         let mut config = create_test_config();
         config.package.package_type = McpPackageType::Docker;
         config.package.identifier = "test/mcp:latest".to_string();
-        
+
         let (cmd, args) = McpManager::build_command(&config);
-        
+
         assert_eq!(cmd, "docker");
         assert_eq!(args, vec!["run", "-i", "--rm", "test/mcp:latest"]);
     }
@@ -256,9 +263,9 @@ mod tests {
     fn test_build_command_http() {
         let mut config = create_test_config();
         config.package.package_type = McpPackageType::Http;
-        
+
         let (cmd, args) = McpManager::build_command(&config);
-        
+
         assert_eq!(cmd, "");
         assert!(args.is_empty());
     }
@@ -267,10 +274,10 @@ mod tests {
     fn test_build_env_no_auth() {
         let secrets = create_secrets_manager();
         let manager = McpManager::new(secrets);
-        
+
         let mut config = create_test_config();
         config.auth_type = McpAuthType::None;
-        
+
         let env = manager.build_env(&config).unwrap();
         assert!(env.is_empty());
     }
@@ -279,13 +286,13 @@ mod tests {
     fn test_build_env_api_key() {
         let temp_dir = TempDir::new().unwrap();
         let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
-        
+
         let config = create_test_config();
         secrets.store_api_key(config.id, "test-key-123").unwrap();
-        
+
         let manager = McpManager::new(secrets);
         let env = manager.build_env(&config).unwrap();
-        
+
         assert_eq!(env.get("TEST_API_KEY").unwrap(), "test-key-123");
     }
 
@@ -293,7 +300,7 @@ mod tests {
     fn test_build_env_multiple_api_keys() {
         let temp_dir = TempDir::new().unwrap();
         let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
-        
+
         let mut config = create_test_config();
         config.env_vars = vec![
             EnvVarConfig {
@@ -305,13 +312,17 @@ mod tests {
                 required: true,
             },
         ];
-        
-        secrets.store_api_key_named(config.id, "CLIENT_ID", "id-123").unwrap();
-        secrets.store_api_key_named(config.id, "CLIENT_SECRET", "secret-456").unwrap();
-        
+
+        secrets
+            .store_api_key_named(config.id, "CLIENT_ID", "id-123")
+            .unwrap();
+        secrets
+            .store_api_key_named(config.id, "CLIENT_SECRET", "secret-456")
+            .unwrap();
+
         let manager = McpManager::new(secrets);
         let env = manager.build_env(&config).unwrap();
-        
+
         assert_eq!(env.get("CLIENT_ID").unwrap(), "id-123");
         assert_eq!(env.get("CLIENT_SECRET").unwrap(), "secret-456");
     }
@@ -320,17 +331,17 @@ mod tests {
     fn test_build_env_keyfile() {
         let temp_dir = TempDir::new().unwrap();
         let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
-        
+
         let keyfile_path = temp_dir.path().join("test.key");
         std::fs::write(&keyfile_path, "keyfile-content").unwrap();
-        
+
         let mut config = create_test_config();
         config.auth_type = McpAuthType::Keyfile;
         config.keyfile_path = Some(keyfile_path);
-        
+
         let manager = McpManager::new(secrets);
         let env = manager.build_env(&config).unwrap();
-        
+
         assert_eq!(env.get("TEST_API_KEY").unwrap(), "keyfile-content");
     }
 
@@ -338,18 +349,18 @@ mod tests {
     fn test_build_env_keyfile_default_var_name() {
         let temp_dir = TempDir::new().unwrap();
         let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
-        
+
         let keyfile_path = temp_dir.path().join("test.key");
         std::fs::write(&keyfile_path, "keyfile-content").unwrap();
-        
+
         let mut config = create_test_config();
         config.auth_type = McpAuthType::Keyfile;
         config.keyfile_path = Some(keyfile_path);
         config.env_vars.clear();
-        
+
         let manager = McpManager::new(secrets);
         let env = manager.build_env(&config).unwrap();
-        
+
         assert_eq!(env.get("API_KEY").unwrap(), "keyfile-content");
     }
 
@@ -357,14 +368,14 @@ mod tests {
     fn test_register_active() {
         let secrets = create_secrets_manager();
         let mut manager = McpManager::new(secrets);
-        
+
         let config = create_test_config();
         let id = config.id;
-        
+
         assert!(!manager.is_active(&id));
-        
+
         manager.register_active(config);
-        
+
         assert!(manager.is_active(&id));
         assert_eq!(manager.active_count(), 1);
     }
@@ -373,17 +384,17 @@ mod tests {
     fn test_touch() {
         let secrets = create_secrets_manager();
         let mut manager = McpManager::new(secrets);
-        
+
         let config = create_test_config();
         let id = config.id;
-        
+
         manager.register_active(config);
-        
+
         let first_time = manager.get_last_used(&id).unwrap();
         std::thread::sleep(Duration::from_millis(10));
-        
+
         manager.touch(&id);
-        
+
         let second_time = manager.get_last_used(&id).unwrap();
         assert!(second_time > first_time);
     }
@@ -392,12 +403,12 @@ mod tests {
     fn test_get_restart_count() {
         let secrets = create_secrets_manager();
         let mut manager = McpManager::new(secrets);
-        
+
         let config = create_test_config();
         let id = config.id;
-        
+
         assert_eq!(manager.get_restart_count(&id), 0);
-        
+
         manager.register_active(config);
         assert_eq!(manager.get_restart_count(&id), 0);
     }
@@ -406,13 +417,13 @@ mod tests {
     fn test_stop() {
         let secrets = create_secrets_manager();
         let mut manager = McpManager::new(secrets);
-        
+
         let config = create_test_config();
         let id = config.id;
-        
+
         manager.register_active(config);
         assert!(manager.is_active(&id));
-        
+
         manager.stop(&id).unwrap();
         assert!(!manager.is_active(&id));
         assert_eq!(manager.active_count(), 0);
@@ -422,17 +433,17 @@ mod tests {
     fn test_shutdown_all() {
         let secrets = create_secrets_manager();
         let mut manager = McpManager::new(secrets);
-        
+
         let config1 = create_test_config();
         let config2 = create_test_config();
-        
+
         manager.register_active(config1);
         manager.register_active(config2);
-        
+
         assert_eq!(manager.active_count(), 2);
-        
+
         manager.shutdown_all().unwrap();
-        
+
         assert_eq!(manager.active_count(), 0);
     }
 
@@ -441,21 +452,21 @@ mod tests {
         let secrets = create_secrets_manager();
         let timeout = Duration::from_millis(50);
         let mut manager = McpManager::with_idle_timeout(secrets, timeout);
-        
+
         let config1 = create_test_config();
         let config2 = create_test_config();
         let id1 = config1.id;
         let id2 = config2.id;
-        
+
         manager.register_active(config1);
         manager.register_active(config2);
-        
+
         std::thread::sleep(Duration::from_millis(60));
-        
+
         manager.touch(&id2);
-        
+
         manager.cleanup_idle();
-        
+
         assert!(!manager.is_active(&id1));
         assert!(manager.is_active(&id2));
         assert_eq!(manager.active_count(), 1);
@@ -465,16 +476,16 @@ mod tests {
     fn test_handle_config_change_disable() {
         let secrets = create_secrets_manager();
         let mut manager = McpManager::new(secrets);
-        
+
         let mut config = create_test_config();
         let id = config.id;
-        
+
         manager.register_active(config.clone());
         assert!(manager.is_active(&id));
-        
+
         config.enabled = false;
         manager.handle_config_change(&config).unwrap();
-        
+
         assert!(!manager.is_active(&id));
     }
 
@@ -482,14 +493,14 @@ mod tests {
     fn test_handle_config_change_enable() {
         let secrets = create_secrets_manager();
         let mut manager = McpManager::new(secrets);
-        
+
         let config = create_test_config();
         let id = config.id;
-        
+
         assert!(!manager.is_active(&id));
-        
+
         manager.handle_config_change(&config).unwrap();
-        
+
         assert!(!manager.is_active(&id));
     }
 
@@ -497,19 +508,19 @@ mod tests {
     fn test_delete_mcp() {
         let temp_dir = TempDir::new().unwrap();
         let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
-        
+
         let config = create_test_config();
         let id = config.id;
-        
+
         secrets.store_api_key(id, "test-key").unwrap();
-        
+
         let mut manager = McpManager::new(secrets);
         manager.register_active(config.clone());
-        
+
         assert!(manager.is_active(&id));
-        
+
         manager.delete_mcp(&config).unwrap();
-        
+
         assert!(!manager.is_active(&id));
         assert!(manager.secrets.load_api_key(id).is_err());
     }
@@ -518,7 +529,7 @@ mod tests {
     fn test_get_last_used_nonexistent() {
         let secrets = create_secrets_manager();
         let manager = McpManager::new(secrets);
-        
+
         let id = Uuid::new_v4();
         assert!(manager.get_last_used(&id).is_none());
     }
@@ -527,7 +538,7 @@ mod tests {
     fn test_touch_nonexistent() {
         let secrets = create_secrets_manager();
         let mut manager = McpManager::new(secrets);
-        
+
         let id = Uuid::new_v4();
         manager.touch(&id); // Should not panic
     }
@@ -536,40 +547,38 @@ mod tests {
     fn test_build_env_oauth() {
         let temp_dir = TempDir::new().unwrap();
         let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
-        
+
         let mut config = create_test_config();
         config.auth_type = McpAuthType::OAuth;
-        config.env_vars = vec![
-            EnvVarConfig {
-                name: "ACCESS_TOKEN".to_string(),
-                required: true,
-            },
-        ];
-        
-        secrets.store_api_key_named(config.id, "ACCESS_TOKEN", "oauth-token-123").unwrap();
-        
+        config.env_vars = vec![EnvVarConfig {
+            name: "ACCESS_TOKEN".to_string(),
+            required: true,
+        }];
+
+        secrets
+            .store_api_key_named(config.id, "ACCESS_TOKEN", "oauth-token-123")
+            .unwrap();
+
         let manager = McpManager::new(secrets);
         let env = manager.build_env(&config).unwrap();
-        
+
         assert_eq!(env.get("ACCESS_TOKEN").unwrap(), "oauth-token-123");
     }
 
     #[test]
     fn test_build_env_oauth_missing_token() {
         let secrets = create_secrets_manager();
-        
+
         let mut config = create_test_config();
         config.auth_type = McpAuthType::OAuth;
-        config.env_vars = vec![
-            EnvVarConfig {
-                name: "ACCESS_TOKEN".to_string(),
-                required: true,
-            },
-        ];
-        
+        config.env_vars = vec![EnvVarConfig {
+            name: "ACCESS_TOKEN".to_string(),
+            required: true,
+        }];
+
         let manager = McpManager::new(secrets);
         let env = manager.build_env(&config).unwrap();
-        
+
         // OAuth missing tokens are silently skipped
         assert!(env.is_empty());
     }

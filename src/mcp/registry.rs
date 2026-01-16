@@ -1,24 +1,25 @@
 //! MCP Registry client for discovering servers
 
+use crate::mcp::{
+    detect_auth_type, EnvVarConfig, McpAuthType, McpConfig, McpPackage, McpPackageType, McpSource,
+    McpTransport, RegistryEnvVar,
+};
 use serde::Deserialize;
-use crate::mcp::{McpConfig, McpSource, McpPackage, McpPackageType, McpTransport, McpAuthType, EnvVarConfig, RegistryEnvVar, detect_auth_type};
 use uuid::Uuid;
 
 /// Resolve Smithery API key from either a path or raw key
 fn resolve_smithery_key(key_or_path: &str) -> Result<String, String> {
     let trimmed = key_or_path.trim();
-    
+
     // Check if it looks like a path
     if trimmed.starts_with('/') || trimmed.starts_with("~/") || trimmed.starts_with("./") {
         // Expand ~ to home dir
-        let path = if trimmed.starts_with("~/") {
-            dirs::home_dir()
-                .ok_or("No home directory")?
-                .join(&trimmed[2..])
+        let path = if let Some(stripped) = trimmed.strip_prefix("~/") {
+            dirs::home_dir().ok_or("No home directory")?.join(stripped)
         } else {
             std::path::PathBuf::from(trimmed)
         };
-        
+
         std::fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read keyfile {}: {}", path.display(), e))
             .map(|s| s.trim().to_string())
@@ -156,10 +157,18 @@ impl McpRegistry {
     }
 
     /// Search official registry with server-side search
-    pub async fn search_official(&self, query: &str) -> Result<Vec<McpRegistryServerWrapper>, String> {
-        let url = format!("{}?search={}&limit=100", self.official_url, urlencoding::encode(query));
-        
-        let response = self.http_client
+    pub async fn search_official(
+        &self,
+        query: &str,
+    ) -> Result<Vec<McpRegistryServerWrapper>, String> {
+        let url = format!(
+            "{}?search={}&limit=100",
+            self.official_url,
+            urlencoding::encode(query)
+        );
+
+        let response = self
+            .http_client
             .get(&url)
             .send()
             .await
@@ -176,12 +185,13 @@ impl McpRegistry {
 
         Ok(registry_response.servers)
     }
-    
+
     /// Fetch all servers from official registry (no search, for browsing)
     pub async fn fetch_official(&self) -> Result<Vec<McpRegistryServerWrapper>, String> {
         let url = format!("{}?limit=100", self.official_url);
-        
-        let response = self.http_client
+
+        let response = self
+            .http_client
             .get(&url)
             .send()
             .await
@@ -200,79 +210,94 @@ impl McpRegistry {
     }
 
     /// Fetch from Smithery registry
-    pub async fn fetch_smithery(&self, query: &str, key_or_path: &str) -> Result<Vec<McpRegistryServerWrapper>, String> {
+    pub async fn fetch_smithery(
+        &self,
+        query: &str,
+        key_or_path: &str,
+    ) -> Result<Vec<McpRegistryServerWrapper>, String> {
         let api_key = resolve_smithery_key(key_or_path)?;
-        
+
         if api_key.is_empty() {
             return Err("Smithery API key is empty".to_string());
         }
-        
-        let url = format!("https://registry.smithery.ai/servers?q={}", urlencoding::encode(query));
-        
-        let response = self.http_client
+
+        let url = format!(
+            "https://registry.smithery.ai/servers?q={}",
+            urlencoding::encode(query)
+        );
+
+        let response = self
+            .http_client
             .get(&url)
             .header("Authorization", format!("Bearer {}", api_key))
             .send()
             .await
             .map_err(|e| format!("Failed to fetch Smithery: {e}"))?;
-        
+
         if !response.status().is_success() {
             return Err(format!("Smithery returned {}", response.status()));
         }
-        
+
         let smithery_response: SmitheryResponse = response
             .json()
             .await
             .map_err(|e| format!("Failed to parse Smithery response: {e}"))?;
-        
+
         // Convert to our wrapper format
         // Note: Smithery hosted servers require OAuth, but the search API doesn't tell us
         // what specific auth is needed. We mark them as needing OAuth so the user
         // is prompted to configure.
-        Ok(smithery_response.servers.into_iter().map(|s| {
-            McpRegistryServerWrapper {
-                server: McpRegistryServer {
-                    name: s.display_name.clone(),
-                    description: s.description,
-                    repository: McpRegistryRepository::default(),
-                    version: "latest".to_string(),
-                    packages: vec![],
-                    remotes: if s.remote {
-                        vec![McpRegistryRemote {
-                            remote_type: "smithery-oauth".to_string(), // Mark as needing Smithery OAuth
-                            url: format!("https://server.smithery.ai/{}", s.qualified_name),
-                        }]
-                    } else {
-                        vec![]
+        Ok(smithery_response
+            .servers
+            .into_iter()
+            .map(|s| {
+                McpRegistryServerWrapper {
+                    server: McpRegistryServer {
+                        name: s.display_name.clone(),
+                        description: s.description,
+                        repository: McpRegistryRepository::default(),
+                        version: "latest".to_string(),
+                        packages: vec![],
+                        remotes: if s.remote {
+                            vec![McpRegistryRemote {
+                                remote_type: "smithery-oauth".to_string(), // Mark as needing Smithery OAuth
+                                url: format!("https://server.smithery.ai/{}", s.qualified_name),
+                            }]
+                        } else {
+                            vec![]
+                        },
                     },
-                },
-                meta: serde_json::json!({
-                    "source": "smithery",
-                    "qualified_name": s.qualified_name,
-                    "verified": s.verified,
-                    "use_count": s.use_count,
-                }),
-            }
-        }).collect())
+                    meta: serde_json::json!({
+                        "source": "smithery",
+                        "qualified_name": s.qualified_name,
+                        "verified": s.verified,
+                        "use_count": s.use_count,
+                    }),
+                }
+            })
+            .collect())
     }
 
     /// Search registries by query
     pub async fn search(&self, query: &str) -> Result<McpSearchResult, String> {
         // Fetch from official registry
         let all_entries = self.fetch_official().await?;
-        
+
         let query_lower = query.to_lowercase();
         let filtered: Vec<McpRegistryServerWrapper> = all_entries
             .into_iter()
             .filter(|e| {
-                e.server.name.to_lowercase().contains(&query_lower) ||
-                e.server.description.to_lowercase().contains(&query_lower) ||
-                e.server.repository.url.as_ref()
-                    .map(|u| u.to_lowercase().contains(&query_lower))
-                    .unwrap_or(false)
+                e.server.name.to_lowercase().contains(&query_lower)
+                    || e.server.description.to_lowercase().contains(&query_lower)
+                    || e.server
+                        .repository
+                        .url
+                        .as_ref()
+                        .map(|u| u.to_lowercase().contains(&query_lower))
+                        .unwrap_or(false)
             })
             .collect();
-        
+
         // Deduplicate by server name (official registry has duplicates)
         let mut seen = std::collections::HashSet::new();
         let deduped: Vec<McpRegistryServerWrapper> = filtered
@@ -287,24 +312,36 @@ impl McpRegistry {
     }
 
     /// Search with registry selection
-    pub async fn search_registry(&self, query: &str, registry: McpRegistrySource, smithery_key: Option<&str>) -> Result<McpSearchResult, String> {
+    pub async fn search_registry(
+        &self,
+        query: &str,
+        registry: McpRegistrySource,
+        smithery_key: Option<&str>,
+    ) -> Result<McpSearchResult, String> {
         match registry {
             McpRegistrySource::Official => {
                 // Use server-side search
                 let results = self.search_official(query).await?;
-                
+
                 // Dedupe by name
                 let mut seen = std::collections::HashSet::new();
-                let deduped = results.into_iter()
+                let deduped = results
+                    .into_iter()
                     .filter(|e| seen.insert(e.server.name.clone()))
                     .collect();
-                
-                Ok(McpSearchResult { entries: deduped, source: McpRegistrySource::Official })
+
+                Ok(McpSearchResult {
+                    entries: deduped,
+                    source: McpRegistrySource::Official,
+                })
             }
             McpRegistrySource::Smithery => {
                 let key = smithery_key.ok_or("Smithery API key required")?;
                 let entries = self.fetch_smithery(query, key).await?;
-                Ok(McpSearchResult { entries, source: McpRegistrySource::Smithery })
+                Ok(McpSearchResult {
+                    entries,
+                    source: McpRegistrySource::Smithery,
+                })
             }
         }
     }
@@ -312,25 +349,36 @@ impl McpRegistry {
     /// Convert registry server to McpConfig
     pub fn entry_to_config(wrapper: &McpRegistryServerWrapper) -> Result<McpConfig, String> {
         let server = &wrapper.server;
-        
+
         // Prefer packages over remotes
         if let Some(package) = server.packages.first() {
             // Convert package type
             let package_type = match package.registry_type.as_str() {
                 "npm" => McpPackageType::Npm,
                 "oci" => McpPackageType::Docker,
-                _ => return Err(format!("Unsupported registry type: {}", package.registry_type)),
+                _ => {
+                    return Err(format!(
+                        "Unsupported registry type: {}",
+                        package.registry_type
+                    ))
+                }
             };
 
             // Convert transport type
             let transport = match package.transport.transport_type.as_str() {
                 "stdio" => McpTransport::Stdio,
                 "http" | "streamable-http" => McpTransport::Http,
-                _ => return Err(format!("Unsupported transport type: {}", package.transport.transport_type)),
+                _ => {
+                    return Err(format!(
+                        "Unsupported transport type: {}",
+                        package.transport.transport_type
+                    ))
+                }
             };
 
             // Convert env vars
-            let env_vars: Vec<EnvVarConfig> = package.environment_variables
+            let env_vars: Vec<EnvVarConfig> = package
+                .environment_variables
                 .iter()
                 .map(|v| EnvVarConfig {
                     name: v.name.clone(),
@@ -339,7 +387,8 @@ impl McpRegistry {
                 .collect();
 
             // Detect auth type from env vars
-            let registry_env_vars: Vec<RegistryEnvVar> = package.environment_variables
+            let registry_env_vars: Vec<RegistryEnvVar> = package
+                .environment_variables
                 .iter()
                 .map(|v| RegistryEnvVar {
                     name: v.name.clone(),
@@ -347,9 +396,9 @@ impl McpRegistry {
                     is_required: v.is_required,
                 })
                 .collect();
-            
+
             let auth_type = detect_auth_type(&registry_env_vars);
-            
+
             // Determine runtime hint based on package type
             let runtime_hint = match package_type {
                 McpPackageType::Npm => Some("npx".to_string()),
@@ -438,14 +487,12 @@ mod tests {
                     transport: McpRegistryTransport {
                         transport_type: "stdio".to_string(),
                     },
-                    environment_variables: vec![
-                        McpRegistryEnvVar {
-                            name: "API_KEY".to_string(),
-                            description: Some("API key for authentication".to_string()),
-                            is_secret: true,
-                            is_required: true,
-                        }
-                    ],
+                    environment_variables: vec![McpRegistryEnvVar {
+                        name: "API_KEY".to_string(),
+                        description: Some("API key for authentication".to_string()),
+                        is_secret: true,
+                        is_required: true,
+                    }],
                 }],
                 remotes: vec![],
             },
@@ -453,7 +500,7 @@ mod tests {
         };
 
         let config = McpRegistry::entry_to_config(&wrapper).unwrap();
-        
+
         assert_eq!(config.name, "test/mcp-server");
         assert_eq!(config.package.package_type, McpPackageType::Npm);
         assert_eq!(config.package.identifier, "@test/mcp-server");
@@ -487,7 +534,7 @@ mod tests {
         };
 
         let config = McpRegistry::entry_to_config(&wrapper).unwrap();
-        
+
         assert_eq!(config.package.package_type, McpPackageType::Docker);
         assert_eq!(config.package.identifier, "docker.io/test/server:2.0.0");
         assert_eq!(config.auth_type, McpAuthType::None);
@@ -511,7 +558,7 @@ mod tests {
         };
 
         let config = McpRegistry::entry_to_config(&wrapper).unwrap();
-        
+
         assert_eq!(config.package.package_type, McpPackageType::Http);
         assert_eq!(config.transport, McpTransport::Http);
         assert_eq!(config.package.identifier, "https://example.com/mcp");
@@ -553,7 +600,7 @@ mod tests {
         };
 
         let config = McpRegistry::entry_to_config(&wrapper).unwrap();
-        
+
         assert_eq!(config.auth_type, McpAuthType::OAuth);
         assert_eq!(config.env_vars.len(), 2);
     }

@@ -16,4 +16,4 @@ pub use mcp_configure_view::McpConfigureViewController;
 pub use model_selector::ModelSelectorViewController;
 pub use profile_editor_demo::ProfileEditorDemoViewController;
 pub use settings_view::SettingsViewController;
-pub use theme::{Theme, FlippedStackView};
+pub use theme::{FlippedStackView, Theme};
