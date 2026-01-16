@@ -99,6 +99,8 @@ pub struct ChatViewIvars {
     streaming_tool_uses: Arc<Mutex<Vec<personal_agent::llm::tools::ToolUse>>>,
     /// Flag to indicate streaming is in progress
     is_streaming: RefCell<bool>,
+    /// Flag to indicate we're currently executing tools (waiting for follow-up stream)
+    executing_tools: Arc<std::sync::atomic::AtomicBool>,
     /// Stop button for canceling streaming
     stop_button: RefCell<Option<Retained<NSButton>>>,
     /// Flag to signal cancellation
@@ -797,6 +799,7 @@ impl ChatViewController {
             streaming_thinking: Arc::new(Mutex::new(String::new())),
             streaming_tool_uses: Arc::new(Mutex::new(Vec::new())),
             is_streaming: RefCell::new(false),
+            executing_tools: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_button: RefCell::new(None),
             cancel_streaming: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
@@ -1295,6 +1298,12 @@ fn check_streaming_done(&self) -> bool {
     fn finalize_streaming(&self) {
         log_to_file("Finalizing streaming response");
         
+        // Skip if currently executing tools (waiting for follow-up stream)
+        if self.ivars().executing_tools.load(std::sync::atomic::Ordering::SeqCst) {
+            log_to_file("Skipping finalize_streaming - currently executing tools");
+            return;
+        }
+        
         // Get the final text and remove the EOT marker
         let final_text = if let Ok(buf) = self.ivars().streaming_response.lock() {
             buf.trim_end_matches('␄').to_string()
@@ -1345,6 +1354,9 @@ fn check_streaming_done(&self) -> bool {
             // Rebuild messages to show tool execution status
             let show_thinking = self.should_show_thinking();
             self.rebuild_messages_with_thinking(&thinking_text, show_thinking);
+            
+            // Set the executing_tools flag to prevent re-finalization during tool execution
+            self.ivars().executing_tools.store(true, std::sync::atomic::Ordering::SeqCst);
             
             // Execute tools and continue conversation
             self.execute_tools_and_continue(final_text, thinking_text, tool_uses);
@@ -1409,6 +1421,7 @@ fn check_streaming_done(&self) -> bool {
         let streaming_tool_uses = Arc::clone(&self.ivars().streaming_tool_uses);
         let cancel_flag = Arc::clone(&self.ivars().cancel_streaming);
         let conversation = self.ivars().conversation.borrow().clone();
+        let executing_tools = Arc::clone(&self.ivars().executing_tools);
         
         // Spawn background thread to execute tools
         thread::spawn(move || {
@@ -1557,6 +1570,10 @@ fn check_streaming_done(&self) -> bool {
                                             if let Ok(mut buf) = streaming_response_clone.lock() {
                                                 buf.push('␄');
                                             }
+                                            
+                                            // Clear the executing_tools flag to allow finalization
+                                            executing_tools.store(false, std::sync::atomic::Ordering::SeqCst);
+                                            log_to_file("Cleared executing_tools flag - finalize can now proceed");
                                         }
                                         StreamEvent::Error(e) => {
                                             log_to_file(&format!("Stream error (tool continuation): {e}"));
