@@ -7,6 +7,7 @@ pub mod registry;
 pub mod status;
 pub mod oauth;
 pub mod service;
+pub mod toolset;
 
 pub use types::*;
 pub use secrets::SecretsManager;
@@ -16,3 +17,4 @@ pub use registry::{McpRegistry, McpRegistryServerWrapper, McpSearchResult, McpRe
 pub use status::{McpStatus, McpStatusManager};
 pub use oauth::{OAuthManager, OAuthToken, OAuthConfig, OAuthFlowState, OAuthCallbackResult, SmitheryOAuthConfig, start_oauth_callback_server, generate_smithery_oauth_url};
 pub use service::{McpService, ToolDefinition};
+pub use toolset::{build_command, build_env_for_config, build_headers_for_config, create_toolset_from_config};

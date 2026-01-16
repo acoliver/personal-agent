@@ -6,6 +6,7 @@ use uuid::Uuid;
 use thiserror::Error;
 
 use crate::mcp::{McpConfig, McpAuthType, McpPackageType, SecretsManager};
+use crate::mcp::toolset;
 
 #[derive(Debug, Error)]
 pub enum McpError {
@@ -19,6 +20,8 @@ pub enum McpError {
     Io(#[from] std::io::Error),
     #[error("MCP server error: {0}")]
     ServerError(String),
+    #[error("Configuration error: {0}")]
+    Config(String),
 }
 
 pub type McpResult<T> = Result<T, McpError>;
@@ -69,67 +72,12 @@ impl McpManager {
 
     /// Build environment variables for an MCP based on its auth config
     pub fn build_env(&self, config: &McpConfig) -> McpResult<HashMap<String, String>> {
-        let mut env = HashMap::new();
-
-        match config.auth_type {
-            McpAuthType::None => {}
-            McpAuthType::ApiKey => {
-                // Load API keys for each env var
-                for var in &config.env_vars {
-                    let key = if config.env_vars.len() == 1 {
-                        self.secrets.load_api_key(config.id)?
-                    } else {
-                        self.secrets.load_api_key_named(config.id, &var.name)?
-                    };
-                    env.insert(var.name.clone(), key);
-                }
-            }
-            McpAuthType::Keyfile => {
-                if let Some(ref path) = config.keyfile_path {
-                    let key = self.secrets.read_keyfile(path)?;
-                    // Use the first env var name, or a default
-                    let var_name = config.env_vars.first()
-                        .map(|v| v.name.clone())
-                        .unwrap_or_else(|| "API_KEY".to_string());
-                    env.insert(var_name, key);
-                }
-            }
-            McpAuthType::OAuth => {
-                // OAuth tokens would be loaded from oauth token storage
-                // For now, treat like API key (the access_token)
-                for var in &config.env_vars {
-                    if let Ok(key) = self.secrets.load_api_key_named(config.id, &var.name) {
-                        env.insert(var.name.clone(), key);
-                    }
-                }
-            }
-        }
-
-        Ok(env)
+        toolset::build_env_for_config(config, &self.secrets)
     }
 
     /// Build the command and arguments for an MCP based on its package type
     pub fn build_command(config: &McpConfig) -> (String, Vec<String>) {
-        match config.package.package_type {
-            McpPackageType::Npm => {
-                let runtime = config.package.runtime_hint.as_deref().unwrap_or("npx");
-                let args = vec!["-y".to_string(), config.package.identifier.clone()];
-                (runtime.to_string(), args)
-            }
-            McpPackageType::Docker => {
-                let args = vec![
-                    "run".to_string(),
-                    "-i".to_string(),
-                    "--rm".to_string(),
-                    config.package.identifier.clone(),
-                ];
-                ("docker".to_string(), args)
-            }
-            McpPackageType::Http => {
-                // HTTP transport doesn't spawn a process
-                (String::new(), Vec::new())
-            }
-        }
+        toolset::build_command(config)
     }
 
     /// Check if an MCP is currently active
