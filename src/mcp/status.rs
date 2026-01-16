@@ -6,11 +6,20 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum McpStatus {
+    Disabled,
     Stopped,
     Starting,
     Running,
     Error(String),
     Restarting,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AggregateStatus {
+    AllHealthy,
+    PartialFailure,
+    AllFailed,
+    NoMcps,
 }
 
 impl McpStatus {
@@ -24,6 +33,7 @@ impl McpStatus {
 
     pub fn display_name(&self) -> &str {
         match self {
+            McpStatus::Disabled => "Disabled",
             McpStatus::Stopped => "Stopped",
             McpStatus::Starting => "Starting...",
             McpStatus::Running => "Running",
@@ -34,6 +44,7 @@ impl McpStatus {
 
     pub fn status_color(&self) -> (f64, f64, f64) {
         match self {
+            McpStatus::Disabled => (0.3, 0.3, 0.3),   // Dark Gray
             McpStatus::Stopped => (0.5, 0.5, 0.5),    // Gray
             McpStatus::Starting => (1.0, 0.8, 0.0),   // Yellow
             McpStatus::Running => (0.0, 0.8, 0.0),    // Green
@@ -113,12 +124,42 @@ impl Default for McpStatusManager {
     }
 }
 
+/// Get status for a config (before toolset creation)
+pub fn get_config_status(config: &crate::mcp::McpConfig) -> McpStatus {
+    if !config.enabled {
+        McpStatus::Disabled
+    } else {
+        McpStatus::Starting
+    }
+}
+
+/// Aggregate status from multiple MCPs
+pub fn aggregate_mcp_status(statuses: &[McpStatus]) -> AggregateStatus {
+    if statuses.is_empty() {
+        return AggregateStatus::NoMcps;
+    }
+    
+    let running = statuses.iter().filter(|s| matches!(s, McpStatus::Running)).count();
+    let errors = statuses.iter().filter(|s| matches!(s, McpStatus::Error(_))).count();
+    
+    if errors == statuses.len() {
+        AggregateStatus::AllFailed
+    } else if errors > 0 {
+        AggregateStatus::PartialFailure
+    } else if running == statuses.len() {
+        AggregateStatus::AllHealthy
+    } else {
+        AggregateStatus::PartialFailure
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_status_display_name() {
+        assert_eq!(McpStatus::Disabled.display_name(), "Disabled");
         assert_eq!(McpStatus::Stopped.display_name(), "Stopped");
         assert_eq!(McpStatus::Starting.display_name(), "Starting...");
         assert_eq!(McpStatus::Running.display_name(), "Running");
@@ -128,6 +169,7 @@ mod tests {
 
     #[test]
     fn test_status_is_running() {
+        assert!(!McpStatus::Disabled.is_running());
         assert!(!McpStatus::Stopped.is_running());
         assert!(!McpStatus::Starting.is_running());
         assert!(McpStatus::Running.is_running());
@@ -137,6 +179,7 @@ mod tests {
 
     #[test]
     fn test_status_is_error() {
+        assert!(!McpStatus::Disabled.is_error());
         assert!(!McpStatus::Stopped.is_error());
         assert!(!McpStatus::Starting.is_error());
         assert!(!McpStatus::Running.is_error());
@@ -146,11 +189,13 @@ mod tests {
 
     #[test]
     fn test_status_color() {
+        let dark_gray = (0.3, 0.3, 0.3);
         let gray = (0.5, 0.5, 0.5);
         let yellow = (1.0, 0.8, 0.0);
         let green = (0.0, 0.8, 0.0);
         let red = (0.8, 0.0, 0.0);
 
+        assert_eq!(McpStatus::Disabled.status_color(), dark_gray);
         assert_eq!(McpStatus::Stopped.status_color(), gray);
         assert_eq!(McpStatus::Starting.status_color(), yellow);
         assert_eq!(McpStatus::Running.status_color(), green);
@@ -258,6 +303,7 @@ mod tests {
 
     #[test]
     fn test_status_equality() {
+        assert_eq!(McpStatus::Disabled, McpStatus::Disabled);
         assert_eq!(McpStatus::Stopped, McpStatus::Stopped);
         assert_eq!(McpStatus::Running, McpStatus::Running);
         assert_eq!(
@@ -309,5 +355,90 @@ mod tests {
         assert_eq!(manager.get_status(&id1), McpStatus::Running);
         assert_eq!(manager.get_status(&id2), McpStatus::Error("failed".to_string()));
         assert_eq!(manager.get_status(&id3), McpStatus::Starting);
+    }
+
+    #[tokio::test]
+    async fn test_status_for_disabled_mcp() {
+        use crate::mcp::McpConfig;
+        use uuid::Uuid;
+        
+        let mut config = McpConfig {
+            id: Uuid::new_v4(),
+            name: "test".to_string(),
+            enabled: false,
+            source: crate::mcp::McpSource::Official {
+                name: "test".to_string(),
+                version: "1.0.0".to_string(),
+            },
+            package: crate::mcp::McpPackage {
+                package_type: crate::mcp::McpPackageType::Npm,
+                identifier: "test".to_string(),
+                runtime_hint: None,
+            },
+            transport: crate::mcp::McpTransport::Stdio,
+            auth_type: crate::mcp::McpAuthType::None,
+            env_vars: vec![],
+            keyfile_path: None,
+            config: serde_json::json!({}),
+            oauth_token: None,
+        };
+        
+        let status = get_config_status(&config);
+        assert_eq!(status, McpStatus::Disabled);
+        
+        // When enabled, should be Starting
+        config.enabled = true;
+        let status = get_config_status(&config);
+        assert_eq!(status, McpStatus::Starting);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_status_all_running() {
+        let statuses = vec![McpStatus::Running, McpStatus::Running];
+        let aggregate = aggregate_mcp_status(&statuses);
+        assert_eq!(aggregate, AggregateStatus::AllHealthy);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_status_some_errors() {
+        let statuses = vec![McpStatus::Running, McpStatus::Error("test".to_string())];
+        let aggregate = aggregate_mcp_status(&statuses);
+        assert_eq!(aggregate, AggregateStatus::PartialFailure);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_status_all_failed() {
+        let statuses = vec![
+            McpStatus::Error("err1".to_string()),
+            McpStatus::Error("err2".to_string())
+        ];
+        let aggregate = aggregate_mcp_status(&statuses);
+        assert_eq!(aggregate, AggregateStatus::AllFailed);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_status_no_mcps() {
+        let statuses: Vec<McpStatus> = vec![];
+        let aggregate = aggregate_mcp_status(&statuses);
+        assert_eq!(aggregate, AggregateStatus::NoMcps);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_status_mixed_states() {
+        // Test with various non-running, non-error states
+        let statuses = vec![
+            McpStatus::Running,
+            McpStatus::Starting,
+            McpStatus::Stopped
+        ];
+        let aggregate = aggregate_mcp_status(&statuses);
+        assert_eq!(aggregate, AggregateStatus::PartialFailure);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_status_only_disabled() {
+        let statuses = vec![McpStatus::Disabled, McpStatus::Disabled];
+        let aggregate = aggregate_mcp_status(&statuses);
+        assert_eq!(aggregate, AggregateStatus::PartialFailure);
     }
 }

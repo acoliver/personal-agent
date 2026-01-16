@@ -1281,6 +1281,7 @@ impl SettingsViewController {
                     Some(McpStatus::Running) => (0.0, 0.8, 0.0), // Green - running
                     Some(McpStatus::Starting) => (1.0, 0.8, 0.0), // Yellow - starting  
                     Some(McpStatus::Error(_)) => (0.8, 0.0, 0.0), // Red - error
+                    Some(McpStatus::Disabled) => (0.3, 0.3, 0.3), // Dark Gray - disabled
                     Some(McpStatus::Stopped) | Some(McpStatus::Restarting) | None => (0.5, 0.5, 0.5), // Gray
                 };
                 set_layer_background_color(&layer, r, g, b);
