@@ -6,6 +6,7 @@ pub mod runtime;
 pub mod registry;
 pub mod status;
 pub mod oauth;
+pub mod service;
 
 pub use types::*;
 pub use secrets::SecretsManager;
@@ -14,3 +15,4 @@ pub use runtime::{McpRuntime, McpTool, McpConnection};
 pub use registry::{McpRegistry, McpRegistryServerWrapper, McpSearchResult, McpRegistrySource};
 pub use status::{McpStatus, McpStatusManager};
 pub use oauth::{OAuthManager, OAuthToken, OAuthConfig, OAuthFlowState};
+pub use service::{McpService, ToolDefinition};

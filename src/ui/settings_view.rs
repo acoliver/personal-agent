@@ -11,7 +11,7 @@ use objc2_foundation::{
     NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
 use objc2_app_kit::{
-    NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle,
+    NSView, NSViewController, NSTextField, NSButton, NSScrollView, NSFont, NSBezelStyle, NSButtonType,
     NSStackView, NSUserInterfaceLayoutOrientation, NSStackViewDistribution, NSLayoutConstraintOrientation,
     NSSwitch, NSControlStateValueOn, NSControlStateValueOff,
 };
@@ -1212,42 +1212,39 @@ impl SettingsViewController {
         index: usize,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
-        // Row container
-        let container = NSStackView::new(mtm);
+        // Use a button as the row container for click handling
+        let row_btn = NSButton::initWithFrame(
+            NSButton::alloc(mtm),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 32.0)),
+        );
+        row_btn.setButtonType(NSButtonType::MomentaryLight);
+        row_btn.setBezelStyle(NSBezelStyle::SmallSquare);
+        row_btn.setBordered(false);
+        row_btn.setTitle(&NSString::from_str(""));
+        row_btn.setTag(index as isize);
+        
         unsafe {
-            container.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-            container.setSpacing(8.0);
-            container.setTranslatesAutoresizingMaskIntoConstraints(false);
-            container.setEdgeInsets(objc2_foundation::NSEdgeInsets {
-                top: 4.0,
-                left: 8.0,
-                bottom: 4.0,
-                right: 8.0,
-            });
+            row_btn.setTarget(Some(self));
+            row_btn.setAction(Some(sel!(mcpRowClicked:)));
+            row_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
         
-        container.setWantsLayer(true);
-        if let Some(layer) = container.layer() {
+        row_btn.setWantsLayer(true);
+        if let Some(layer) = row_btn.layer() {
             set_layer_background_color(&layer, Theme::BG_DARKER.0, Theme::BG_DARKER.1, Theme::BG_DARKER.2);
         }
         
-        unsafe {
-            let height_constraint = container.heightAnchor().constraintEqualToConstant(28.0);
-            height_constraint.setActive(true);
-        }
-        
-        // Clickable area for selection (invisible button)
-        let click_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str(""),
-                Some(self),
-                Some(sel!(mcpRowClicked:)),
-                mtm,
-            )
-        };
-        click_btn.setBezelStyle(NSBezelStyle::Inline);
-        click_btn.setBordered(false);
-        click_btn.setTag(index as isize);
+        // Row content container
+        let container = NSStackView::new(mtm);
+        container.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        container.setSpacing(8.0);
+        container.setTranslatesAutoresizingMaskIntoConstraints(false);
+        container.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+            top: 4.0,
+            left: 8.0,
+            bottom: 4.0,
+            right: 8.0,
+        });
         
         // Status indicator (colored dot)
         let status_view = NSView::new(mtm);
@@ -1309,7 +1306,24 @@ impl SettingsViewController {
             container.addArrangedSubview(&toggle);
         }
         
-        Retained::from(&*container as &NSView)
+        // Add container to button
+        row_btn.addSubview(&container);
+        
+        // Constrain container to fill button
+        let leading = container.leadingAnchor().constraintEqualToAnchor(&row_btn.leadingAnchor());
+        let trailing = container.trailingAnchor().constraintEqualToAnchor(&row_btn.trailingAnchor());
+        let top = container.topAnchor().constraintEqualToAnchor(&row_btn.topAnchor());
+        let bottom = container.bottomAnchor().constraintEqualToAnchor(&row_btn.bottomAnchor());
+        leading.setActive(true);
+        trailing.setActive(true);
+        top.setActive(true);
+        bottom.setActive(true);
+        
+        // Button size
+        let height = row_btn.heightAnchor().constraintEqualToConstant(32.0);
+        height.setActive(true);
+        
+        Retained::from(&*row_btn as &NSView)
     }
 
     fn select_profile(&self, profile_id: Uuid) {

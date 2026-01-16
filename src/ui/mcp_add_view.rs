@@ -10,13 +10,17 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{
     NSAppearanceCustomization, NSButton, NSBezelStyle, NSFont, NSLayoutConstraintOrientation, NSStackView, 
     NSStackViewDistribution, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSViewController, NSScrollView,
-    NSButtonType,
+    NSButtonType, NSPopUpButton,
 };
 use objc2_foundation::{NSEdgeInsets, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use objc2_core_graphics::CGColor;
 
 use crate::ui::Theme;
 use personal_agent::mcp::{McpConfig, registry::{McpRegistry, McpRegistryServerWrapper}};
+use std::sync::Mutex;
+
+// Global storage for search results (thread-safe, accessed from background thread and main thread)
+static GLOBAL_SEARCH_RESULTS: Mutex<Option<Vec<McpRegistryServerWrapper>>> = Mutex::new(None);
 
 fn log_to_file(message: &str) {
     let log_path = dirs::home_dir()
@@ -96,6 +100,9 @@ pub struct McpAddViewIvars {
     results_scroll: RefCell<Option<Retained<NSScrollView>>>,
     url_input: RefCell<Option<Retained<NSTextField>>>,
     next_button: RefCell<Option<Retained<NSButton>>>,
+    registry_popup: RefCell<Option<Retained<NSPopUpButton>>>,
+    search_helper: RefCell<Option<Retained<NSTextField>>>,
+    selected_result_index: RefCell<Option<usize>>,
 }
 
 define_class!(
@@ -161,10 +168,12 @@ define_class!(
             self.setView(&root_view);
             
             // Register for search complete notification
+            // First remove any existing observer for this notification
             use objc2_foundation::NSNotificationCenter;
             let center = NSNotificationCenter::defaultCenter();
             let name = NSString::from_str("PersonalAgentMcpSearchComplete");
             unsafe {
+                center.removeObserver_name_object(self, Some(&name), None);
                 center.addObserver_selector_name_object(
                     self,
                     sel!(searchCompleteNotification:),
@@ -229,17 +238,41 @@ define_class!(
 
         #[unsafe(method(urlChanged:))]
         fn url_changed(&self, _sender: Option<&NSObject>) {
-            // Enable Next button when URL is non-empty
+            // Enable Next button when URL is non-empty OR a result is selected
             let url = if let Some(field) = &*self.ivars().url_input.borrow() {
                 field.stringValue().to_string()
             } else {
                 String::new()
             };
             
-            let is_valid = !url.trim().is_empty();
+            let has_url = !url.trim().is_empty();
+            let has_selection = self.ivars().selected_result_index.borrow().is_some();
+            let is_valid = has_url || has_selection;
             
             if let Some(btn) = &*self.ivars().next_button.borrow() {
                 btn.setEnabled(is_valid);
+            }
+        }
+
+        #[unsafe(method(registryChanged:))]
+        fn registry_changed(&self, _sender: Option<&NSObject>) {
+            log_to_file("Registry changed");
+            
+            let selected_index = if let Some(popup) = &*self.ivars().registry_popup.borrow() {
+                popup.indexOfSelectedItem()
+            } else {
+                0
+            };
+            
+            // 0 = "Select...", 1 = "Official", 2 = "Smithery", 3 = "Both"
+            let should_enable_search = selected_index > 0;
+            
+            if let Some(field) = &*self.ivars().search_field.borrow() {
+                field.setEnabled(should_enable_search);
+            }
+            
+            if let Some(helper) = &*self.ivars().search_helper.borrow() {
+                helper.setHidden(should_enable_search);
             }
         }
 
@@ -265,33 +298,56 @@ define_class!(
                 let tag = button.tag() as usize;
                 log_to_file(&format!("Result clicked with tag: {tag}"));
                 
-                // Get the registry entry from the tag
-                // We'll store search results in a thread-local
-                SEARCH_RESULTS.with(|cell| {
-                    let results = cell.borrow();
-                    if let Some(ref entries) = *results {
-                        if tag < entries.len() {
-                            let wrapper = &entries[tag];
-                            
-                            match McpRegistry::entry_to_config(wrapper) {
-                                Ok(config) => {
-                                    log_to_file(&format!("Converted to config: {}", config.name));
-                                    SELECTED_MCP_CONFIG.with(|cell| {
-                                        *cell.borrow_mut() = Some(config);
-                                    });
-                                    
-                                    use objc2_foundation::NSNotificationCenter;
-                                    let center = NSNotificationCenter::defaultCenter();
-                                    let name = NSString::from_str("PersonalAgentShowConfigureMcp");
-                                    unsafe { center.postNotificationName_object(&name, None); }
+                // Store selected index and enable Next button
+                *self.ivars().selected_result_index.borrow_mut() = Some(tag);
+                
+                // Get the registry entry from global mutex
+                let entries_opt = GLOBAL_SEARCH_RESULTS.lock().ok().and_then(|guard| guard.clone());
+                if let Some(ref entries) = entries_opt {
+                    if tag < entries.len() {
+                        let wrapper = &entries[tag];
+                        
+                        match McpRegistry::entry_to_config(wrapper) {
+                            Ok(mcp_config) => {
+                                log_to_file(&format!("Converted to config: {}", mcp_config.name));
+                                
+                                // Save directly - don't go to configure view
+                                let config_path = match personal_agent::config::Config::default_path() {
+                                    Ok(path) => path,
+                                    Err(e) => {
+                                        log_to_file(&format!("ERROR: Failed to get config path: {e}"));
+                                        return;
+                                    }
+                                };
+                                
+                                let mut config = match personal_agent::config::Config::load(&config_path) {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        log_to_file(&format!("ERROR: Failed to load config: {e}"));
+                                        personal_agent::config::Config::default()
+                                    }
+                                };
+                                
+                                config.mcps.push(mcp_config);
+                                
+                                if let Err(e) = config.save(&config_path) {
+                                    log_to_file(&format!("ERROR: Failed to save config: {e}"));
+                                } else {
+                                    log_to_file("MCP saved successfully");
                                 }
-                                Err(e) => {
-                                    log_to_file(&format!("Failed to convert entry: {e}"));
-                                }
+                                
+                                // Go directly to settings
+                                use objc2_foundation::NSNotificationCenter;
+                                let center = NSNotificationCenter::defaultCenter();
+                                let name = NSString::from_str("PersonalAgentShowSettingsView");
+                                unsafe { center.postNotificationName_object(&name, None); }
+                            }
+                            Err(e) => {
+                                log_to_file(&format!("Failed to convert entry: {e}"));
                             }
                         }
                     }
-                });
+                }
             }
         }
     }
@@ -306,6 +362,9 @@ impl McpAddViewController {
             results_scroll: RefCell::new(None),
             url_input: RefCell::new(None),
             next_button: RefCell::new(None),
+            registry_popup: RefCell::new(None),
+            search_helper: RefCell::new(None),
+            selected_result_index: RefCell::new(None),
         };
         let this = mtm.alloc::<Self>().set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
@@ -342,25 +401,32 @@ impl McpAddViewController {
                 Ok(search_results) => {
                     log_to_file(&format!("Search found {} results", search_results.entries.len()));
                     
-                    // Store results in thread-local
-                    SEARCH_RESULTS.with(|cell| {
-                        *cell.borrow_mut() = Some(search_results.entries.clone());
-                    });
+                    // Store results in global mutex (thread-safe)
+                    if let Ok(mut guard) = GLOBAL_SEARCH_RESULTS.lock() {
+                        *guard = Some(search_results.entries.clone());
+                    }
                     
                     // Post notification to update UI on main thread
-                    use objc2_foundation::NSNotificationCenter;
-                    let center = NSNotificationCenter::defaultCenter();
-                    let name = NSString::from_str("PersonalAgentMcpSearchComplete");
-                    unsafe { center.postNotificationName_object(&name, None); }
+                    // Must use performSelectorOnMainThread for thread safety
+                    use objc2_foundation::{NSNotificationCenter, NSRunLoop};
+                    
+                    // Dispatch to main thread
+                    dispatch::Queue::main().exec_async(|| {
+                        let center = NSNotificationCenter::defaultCenter();
+                        let name = NSString::from_str("PersonalAgentMcpSearchComplete");
+                        unsafe { center.postNotificationName_object(&name, None); }
+                    });
                 }
                 Err(e) => {
                     eprintln!("Search failed: {e}");
                     
-                    // Post error notification
-                    use objc2_foundation::NSNotificationCenter;
-                    let center = NSNotificationCenter::defaultCenter();
-                    let name = NSString::from_str("PersonalAgentMcpSearchError");
-                    unsafe { center.postNotificationName_object(&name, None); }
+                    // Post error notification on main thread
+                    dispatch::Queue::main().exec_async(|| {
+                        use objc2_foundation::NSNotificationCenter;
+                        let center = NSNotificationCenter::defaultCenter();
+                        let name = NSString::from_str("PersonalAgentMcpSearchError");
+                        unsafe { center.postNotificationName_object(&name, None); }
+                    });
                 }
             }
         });
@@ -378,57 +444,61 @@ impl McpAddViewController {
         self.show_loading(false);
         
         if let Some(stack) = &*self.ivars().results_stack.borrow() {
-            // Clear existing results
-            let subviews = stack.subviews();
-            for view in &subviews {
-                unsafe {
-                    stack.removeArrangedSubview(&view);
-                }
+            // Clear ALL existing results first
+            let subviews = stack.arrangedSubviews();
+            log_to_file(&format!("Clearing {} existing subviews", subviews.len()));
+            for view in subviews.iter() {
+                stack.removeArrangedSubview(&view);
                 view.removeFromSuperview();
             }
             
-            // Add new results
-            SEARCH_RESULTS.with(|cell| {
-                let results = cell.borrow();
-                if let Some(ref entries) = *results {
-                    if entries.is_empty() {
-                        // Show "no results" message
-                        let label = NSTextField::labelWithString(&NSString::from_str("No servers found."), mtm);
-                        label.setTextColor(Some(&Theme::text_secondary_color()));
-                        label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-                        unsafe {
-                            stack.addArrangedSubview(&label);
-                        }
-                    } else {
-                        // Add result rows
-                        for (index, wrapper) in entries.iter().enumerate() {
-                            let row = self.create_result_row(&wrapper.server, index, mtm);
-                            unsafe {
-                                stack.addArrangedSubview(&row);
-                            }
-                        }
+            // Add new results from global mutex
+            let entries_opt = GLOBAL_SEARCH_RESULTS.lock().ok().and_then(|guard| guard.clone());
+            if let Some(ref entries) = entries_opt {
+                log_to_file(&format!("Adding {} results to UI", entries.len()));
+                if entries.is_empty() {
+                    // Show "no results" message
+                    let label = NSTextField::labelWithString(&NSString::from_str("No servers found."), mtm);
+                    label.setTextColor(Some(&Theme::text_secondary_color()));
+                    label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+                    stack.addArrangedSubview(&label);
+                } else {
+                    // Add result rows
+                    for (index, wrapper) in entries.iter().enumerate() {
+                        let row = self.create_result_row(wrapper, index, mtm);
+                        stack.addArrangedSubview(&row);
                     }
                 }
-            });
+            }
         }
     }
 
     fn create_result_row(
         &self,
-        server: &personal_agent::mcp::registry::McpRegistryServer,
+        wrapper: &McpRegistryServerWrapper,
         index: usize,
         mtm: MainThreadMarker,
     ) -> Retained<NSView> {
-        // Create button that acts as the row
+        let server = &wrapper.server;
+        
+        // Use a simple borderless button with title set to empty, 
+        // then overlay our custom content
         let button = NSButton::initWithFrame(
             NSButton::alloc(mtm),
-            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 44.0)),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 50.0)),
         );
-        button.setButtonType(NSButtonType::MomentaryPushIn);
-        button.setBezelStyle(NSBezelStyle::Rounded);
-        button.setBordered(true);
-        button.setAlignment(objc2_app_kit::NSTextAlignment::Left);
+        button.setButtonType(NSButtonType::MomentaryLight);
+        button.setBezelStyle(NSBezelStyle::SmallSquare);
+        button.setBordered(false);
+        button.setTitle(&NSString::from_str(""));
         button.setTag(index as isize);
+        
+        button.setWantsLayer(true);
+        if let Some(layer) = button.layer() {
+            let color = CGColor::new_generic_rgb(0.15, 0.15, 0.15, 1.0);
+            layer.setBackgroundColor(Some(&color));
+            layer.setCornerRadius(6.0);
+        }
         
         unsafe {
             button.setTarget(Some(self));
@@ -436,55 +506,24 @@ impl McpAddViewController {
             button.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
         
-        // Create content stack inside button
-        let content = NSStackView::new(mtm);
-        unsafe {
-            content.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-            content.setSpacing(2.0);
-            content.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
-            content.setTranslatesAutoresizingMaskIntoConstraints(false);
-        }
-        
-        // Name label (bold)
-        let name_label = NSTextField::labelWithString(&NSString::from_str(&server.name), mtm);
-        name_label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
-        name_label.setTextColor(Some(&Theme::text_primary()));
-        unsafe {
-            content.addArrangedSubview(&name_label);
-        }
-        
-        // Description label (truncated)
-        let desc_text = if server.description.len() > 60 {
-            format!("{}...", &server.description[..60])
+        // Build the title as attributed string with name + description
+        let desc_text: String = server.description.chars().take(45).collect();
+        let desc_text = if server.description.chars().count() > 45 {
+            format!("{desc_text}...")
         } else {
-            server.description.clone()
+            desc_text
         };
-        let desc_label = NSTextField::labelWithString(&NSString::from_str(&desc_text), mtm);
-        desc_label.setFont(Some(&NSFont::systemFontOfSize(10.0)));
-        desc_label.setTextColor(Some(&Theme::text_secondary_color()));
-        unsafe {
-            content.addArrangedSubview(&desc_label);
-        }
         
-        // Add content to button
-        button.addSubview(&content);
+        // Set button title to name, use attributed title for styling
+        let title = format!("{}
+{}", server.name, desc_text);
+        button.setTitle(&NSString::from_str(&title));
         
-        // Constrain content to fill button with padding
-        unsafe {
-            let leading = content.leadingAnchor().constraintEqualToAnchor_constant(&button.leadingAnchor(), 8.0);
-            let trailing = content.trailingAnchor().constraintEqualToAnchor_constant(&button.trailingAnchor(), -8.0);
-            let top = content.topAnchor().constraintEqualToAnchor_constant(&button.topAnchor(), 6.0);
-            let bottom = content.bottomAnchor().constraintEqualToAnchor_constant(&button.bottomAnchor(), -6.0);
-            leading.setActive(true);
-            trailing.setActive(true);
-            top.setActive(true);
-            bottom.setActive(true);
-            
-            let width = button.widthAnchor().constraintEqualToConstant(360.0);
-            let height = button.heightAnchor().constraintEqualToConstant(44.0);
-            width.setActive(true);
-            height.setActive(true);
-        }
+        // Fixed size for button
+        let width = button.widthAnchor().constraintEqualToConstant(360.0);
+        let height = button.heightAnchor().constraintEqualToConstant(50.0);
+        width.setActive(true);
+        height.setActive(true);
         
         Retained::from(&*button as &NSView)
     }
@@ -527,26 +566,91 @@ impl McpAddViewController {
     fn build_content(&self, mtm: MainThreadMarker) -> Retained<NSView> {
         let content = NSStackView::new(mtm);
         content.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-        content.setSpacing(16.0);
+        content.setSpacing(12.0);
         content.setEdgeInsets(NSEdgeInsets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
         content.setTranslatesAutoresizingMaskIntoConstraints(false);
         content.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
 
-        // ===== SEARCH SECTION =====
+        // ===== URL FIELD (TOP) =====
         
-        // Search label
+        // URL label
+        let url_label = NSTextField::labelWithString(
+            &NSString::from_str("URL:"),
+            mtm,
+        );
+        url_label.setTextColor(Some(&Theme::text_primary()));
+        url_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        content.addArrangedSubview(&url_label);
+
+        // URL input field
+        let url_field = NSTextField::new(mtm);
+        url_field.setPlaceholderString(Some(&NSString::from_str("npx -y @modelcontextprotocol/server-filesystem")));
+        url_field.setTranslatesAutoresizingMaskIntoConstraints(false);
+        unsafe {
+            url_field.setTarget(Some(self));
+            url_field.setAction(Some(sel!(urlChanged:)));
+        }
+        let width = url_field.widthAnchor().constraintGreaterThanOrEqualToConstant(360.0);
+        width.setActive(true);
+        content.addArrangedSubview(&url_field);
+        *self.ivars().url_input.borrow_mut() = Some(Retained::clone(&url_field));
+
+        // ===== DIVIDER =====
+        
+        let divider_label = NSTextField::labelWithString(
+            &NSString::from_str("-- or search registry --"),
+            mtm,
+        );
+        divider_label.setTextColor(Some(&Theme::text_secondary_color()));
+        divider_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+        divider_label.setAlignment(objc2_app_kit::NSTextAlignment::Center);
+        unsafe {
+            divider_label.setTranslatesAutoresizingMaskIntoConstraints(false);
+            let div_width = divider_label.widthAnchor().constraintEqualToConstant(360.0);
+            div_width.setActive(true);
+        }
+        content.addArrangedSubview(&divider_label);
+
+        // ===== REGISTRY DROPDOWN =====
+        
+        let registry_label = NSTextField::labelWithString(
+            &NSString::from_str("Registry:"),
+            mtm,
+        );
+        registry_label.setTextColor(Some(&Theme::text_primary()));
+        registry_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        content.addArrangedSubview(&registry_label);
+
+        let registry_popup = NSPopUpButton::new(mtm);
+        registry_popup.addItemWithTitle(&NSString::from_str("Select..."));
+        registry_popup.addItemWithTitle(&NSString::from_str("Official"));
+        registry_popup.addItemWithTitle(&NSString::from_str("Smithery"));
+        registry_popup.addItemWithTitle(&NSString::from_str("Both"));
+        unsafe {
+            registry_popup.setTarget(Some(self));
+            registry_popup.setAction(Some(sel!(registryChanged:)));
+            registry_popup.setTranslatesAutoresizingMaskIntoConstraints(false);
+            let popup_width = registry_popup.widthAnchor().constraintEqualToConstant(360.0);
+            popup_width.setActive(true);
+        }
+        content.addArrangedSubview(&registry_popup);
+        *self.ivars().registry_popup.borrow_mut() = Some(Retained::clone(&registry_popup));
+
+        // ===== SEARCH FIELD =====
+        
         let search_label = NSTextField::labelWithString(
-            &NSString::from_str("Search MCP Registry:"),
+            &NSString::from_str("Search:"),
             mtm,
         );
         search_label.setTextColor(Some(&Theme::text_primary()));
-        search_label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
+        search_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         content.addArrangedSubview(&search_label);
 
-        // Search field
+        // Search field (disabled by default)
         let search_field = NSTextField::new(mtm);
-        search_field.setPlaceholderString(Some(&NSString::from_str("Search MCP servers...")));
+        search_field.setPlaceholderString(Some(&NSString::from_str("Enter search term...")));
         search_field.setTranslatesAutoresizingMaskIntoConstraints(false);
+        search_field.setEnabled(false); // Disabled until registry selected
         unsafe {
             search_field.setTarget(Some(self));
             search_field.setAction(Some(sel!(searchFieldAction:)));
@@ -554,7 +658,18 @@ impl McpAddViewController {
         let width = search_field.widthAnchor().constraintGreaterThanOrEqualToConstant(360.0);
         width.setActive(true);
         content.addArrangedSubview(&search_field);
-        *self.ivars().search_field.borrow_mut() = Some(search_field);
+        *self.ivars().search_field.borrow_mut() = Some(Retained::clone(&search_field));
+
+        // Helper text (shown when no registry selected)
+        let helper_text = NSTextField::labelWithString(
+            &NSString::from_str("(select registry first)"),
+            mtm,
+        );
+        helper_text.setTextColor(Some(&Theme::text_secondary_color()));
+        helper_text.setFont(Some(&NSFont::systemFontOfSize(10.0)));
+        helper_text.setHidden(false);
+        content.addArrangedSubview(&helper_text);
+        *self.ivars().search_helper.borrow_mut() = Some(Retained::clone(&helper_text));
 
         // Loading label
         let loading_label = NSTextField::labelWithString(&NSString::from_str("Searching..."), mtm);
@@ -562,9 +677,10 @@ impl McpAddViewController {
         loading_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
         loading_label.setHidden(true);
         content.addArrangedSubview(&loading_label);
-        *self.ivars().loading_label.borrow_mut() = Some(loading_label);
+        *self.ivars().loading_label.borrow_mut() = Some(Retained::clone(&loading_label));
 
-        // Results scroll view
+        // ===== RESULTS SCROLL VIEW =====
+        
         let results_scroll = NSScrollView::new(mtm);
         results_scroll.setHasVerticalScroller(true);
         results_scroll.setDrawsBackground(false);
@@ -593,84 +709,16 @@ impl McpAddViewController {
         
         content.addArrangedSubview(&results_scroll);
         *self.ivars().results_stack.borrow_mut() = Some(Retained::from(&*results_stack as &NSStackView));
-        *self.ivars().results_scroll.borrow_mut() = Some(results_scroll);
+        *self.ivars().results_scroll.borrow_mut() = Some(Retained::clone(&results_scroll));
 
-        // Separator
-        let separator = NSView::new(mtm);
-        separator.setWantsLayer(true);
-        if let Some(layer) = separator.layer() {
-            let color = CGColor::new_generic_rgb(0.3, 0.3, 0.3, 1.0);
-            layer.setBackgroundColor(Some(&color));
-        }
-        unsafe {
-            separator.setTranslatesAutoresizingMaskIntoConstraints(false);
-            let height = separator.heightAnchor().constraintEqualToConstant(1.0);
-            let width = separator.widthAnchor().constraintEqualToConstant(360.0);
-            height.setActive(true);
-            width.setActive(true);
-        }
-        content.addArrangedSubview(&separator);
-
-        // ===== MANUAL URL SECTION =====
-
-        // Manual URL label
-        let instructions = NSTextField::labelWithString(
-            &NSString::from_str("Or enter URL manually:"),
-            mtm,
-        );
-        instructions.setTextColor(Some(&Theme::text_primary()));
-        instructions.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-        content.addArrangedSubview(&instructions);
-
-        // URL input field
-        let url_field = NSTextField::new(mtm);
-        url_field.setPlaceholderString(Some(&NSString::from_str("npx -y @modelcontextprotocol/server-filesystem")));
-        url_field.setTranslatesAutoresizingMaskIntoConstraints(false);
-        unsafe {
-            url_field.setTarget(Some(self));
-            url_field.setAction(Some(sel!(urlChanged:)));
-        }
-        let width = url_field.widthAnchor().constraintGreaterThanOrEqualToConstant(360.0);
-        width.setActive(true);
-        content.addArrangedSubview(&url_field);
-        *self.ivars().url_input.borrow_mut() = Some(url_field);
-
-        // Examples section
-        let examples_label = NSTextField::labelWithString(&NSString::from_str("Examples:"), mtm);
-        examples_label.setTextColor(Some(&Theme::text_secondary_color()));
-        examples_label.setFont(Some(&NSFont::boldSystemFontOfSize(11.0)));
-        content.addArrangedSubview(&examples_label);
-
-        let example1 = NSTextField::labelWithString(
-            &NSString::from_str("  npx -y @modelcontextprotocol/server-filesystem"),
-            mtm,
-        );
-        example1.setTextColor(Some(&Theme::text_secondary_color()));
-        example1.setFont(Some(&NSFont::systemFontOfSize(10.0)));
-        content.addArrangedSubview(&example1);
-
-        let example2 = NSTextField::labelWithString(
-            &NSString::from_str("  docker run mcp/server:latest"),
-            mtm,
-        );
-        example2.setTextColor(Some(&Theme::text_secondary_color()));
-        example2.setFont(Some(&NSFont::systemFontOfSize(10.0)));
-        content.addArrangedSubview(&example2);
-
-        let example3 = NSTextField::labelWithString(
-            &NSString::from_str("  https://example.com/mcp"),
-            mtm,
-        );
-        example3.setTextColor(Some(&Theme::text_secondary_color()));
-        example3.setFont(Some(&NSFont::systemFontOfSize(10.0)));
-        content.addArrangedSubview(&example3);
-
-        // Spacer to push Next button to bottom
+        // ===== SPACER TO PUSH NEXT BUTTON DOWN =====
+        
         let spacer = NSView::new(mtm);
         spacer.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Vertical);
         content.addArrangedSubview(&spacer);
 
-        // Next button
+        // ===== NEXT BUTTON =====
+        
         let next_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
                 &NSString::from_str("Next"),
@@ -680,11 +728,11 @@ impl McpAddViewController {
             )
         };
         next_btn.setBezelStyle(NSBezelStyle::Rounded);
-        next_btn.setEnabled(false); // Disabled until URL is entered
+        next_btn.setEnabled(false); // Disabled until URL is entered or result selected
         let next_width = next_btn.widthAnchor().constraintEqualToConstant(80.0);
         next_width.setActive(true);
         content.addArrangedSubview(&next_btn);
-        *self.ivars().next_button.borrow_mut() = Some(next_btn);
+        *self.ivars().next_button.borrow_mut() = Some(Retained::clone(&next_btn));
 
         Retained::from(&*content as &NSView)
     }

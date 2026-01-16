@@ -158,7 +158,16 @@ impl LlmClient {
     }
 
     /// Make a non-streaming request
-    pub async fn request(&self, messages: &[Message]) -> StdResult<String, LlmError> {
+    pub async fn request(&self, messages: &[Message]) -> StdResult<Message, LlmError> {
+        self.request_with_tools(messages, &[]).await
+    }
+
+    /// Make a non-streaming request with tools
+    pub async fn request_with_tools(
+        &self,
+        messages: &[Message],
+        tools: &[crate::llm::tools::Tool],
+    ) -> StdResult<Message, LlmError> {
         // Set API key in environment for SerdesAI
         self.set_api_key_env();
 
@@ -198,27 +207,27 @@ impl LlmClient {
             .await
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
 
-        // Extract text from response parts
-        let text = response
-            .parts
-            .iter()
-            .filter_map(|p| {
-                if let serdes_ai::core::ModelResponsePart::Text(t) = p {
-                    Some(t.content.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        Ok(text)
+        // Parse response into Message
+        self.parse_response(response, tools)
     }
 
     /// Make a streaming request, returning events via callback
     pub async fn request_stream<F>(
         &self,
         messages: &[Message],
+        on_event: F,
+    ) -> StdResult<(), LlmError>
+    where
+        F: FnMut(StreamEvent) + Send,
+    {
+        self.request_stream_with_tools(messages, &[], on_event).await
+    }
+
+    /// Make a streaming request with tools, returning events via callback
+    pub async fn request_stream_with_tools<F>(
+        &self,
+        messages: &[Message],
+        _tools: &[crate::llm::tools::Tool],
         mut on_event: F,
     ) -> StdResult<(), LlmError>
     where
@@ -335,6 +344,60 @@ impl LlmClient {
         "OPENAI_API_KEY".to_string()
     }
     
+    /// Parse a SerdesAI ModelResponse into our Message type
+    fn parse_response(
+        &self,
+        response: serdes_ai::core::ModelResponse,
+        _tools: &[crate::llm::tools::Tool],
+    ) -> StdResult<Message, LlmError> {
+        use serdes_ai::core::ModelResponsePart;
+
+        let mut text = String::new();
+        let mut thinking_text = String::new();
+        let mut tool_uses = Vec::new();
+
+        for part in response.parts {
+            match part {
+                ModelResponsePart::Text(t) => {
+                    text.push_str(&t.content);
+                }
+                ModelResponsePart::Thinking(t) => {
+                    thinking_text.push_str(&t.content);
+                }
+                ModelResponsePart::ToolCall(tc) => {
+                    // Parse tool call into ToolUse
+                    let tool_use = crate::llm::tools::ToolUse::new(
+                        tc.tool_call_id.as_deref().unwrap_or(""),
+                        &tc.tool_name,
+                        tc.args.to_json(),
+                    );
+
+                    // Log tool use for now (since MCP not fully wired)
+                    eprintln!(
+                        "LLM requested tool: {} with args: {}",
+                        tool_use.name,
+                        serde_json::to_string(&tool_use.input).unwrap_or_default()
+                    );
+
+                    tool_uses.push(tool_use);
+                }
+                _ => {
+                    // Ignore other part types for now
+                }
+            }
+        }
+
+        let mut message = Message::assistant(text);
+        if !thinking_text.is_empty() {
+            message = message.with_thinking(thinking_text);
+        }
+        if !tool_uses.is_empty() {
+            message = message.with_tool_uses(tool_uses);
+        }
+
+        Ok(message)
+    }
+
     /// Determine the provider type for `SerdesAI`
     /// 
     /// Uses models.dev registry `npm` field to detect OpenAI-compatible providers:
@@ -373,12 +436,16 @@ pub enum Role {
     System,
 }
 
-/// A chat message
+/// A chat message with optional tool interactions
 #[derive(Debug, Clone)]
 pub struct Message {
     pub role: Role,
     pub content: String,
     pub thinking_content: Option<String>,
+    /// Tool uses requested by the assistant (for assistant messages)
+    pub tool_uses: Vec<crate::llm::tools::ToolUse>,
+    /// Tool results provided by the user (for user messages)
+    pub tool_results: Vec<crate::llm::tools::ToolResult>,
 }
 
 impl Message {
@@ -388,6 +455,8 @@ impl Message {
             role: Role::User,
             content: content.into(),
             thinking_content: None,
+            tool_uses: Vec::new(),
+            tool_results: Vec::new(),
         }
     }
 
@@ -397,6 +466,8 @@ impl Message {
             role: Role::Assistant,
             content: content.into(),
             thinking_content: None,
+            tool_uses: Vec::new(),
+            tool_results: Vec::new(),
         }
     }
 
@@ -406,6 +477,8 @@ impl Message {
             role: Role::System,
             content: content.into(),
             thinking_content: None,
+            tool_uses: Vec::new(),
+            tool_results: Vec::new(),
         }
     }
 
@@ -413,6 +486,28 @@ impl Message {
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
         self.thinking_content = Some(thinking.into());
         self
+    }
+
+    /// Add tool uses (for assistant messages)
+    pub fn with_tool_uses(mut self, tool_uses: Vec<crate::llm::tools::ToolUse>) -> Self {
+        self.tool_uses = tool_uses;
+        self
+    }
+
+    /// Add tool results (for user messages)
+    pub fn with_tool_results(mut self, tool_results: Vec<crate::llm::tools::ToolResult>) -> Self {
+        self.tool_results = tool_results;
+        self
+    }
+
+    /// Check if this message has tool uses
+    pub fn has_tool_uses(&self) -> bool {
+        !self.tool_uses.is_empty()
+    }
+
+    /// Check if this message has tool results
+    pub fn has_tool_results(&self) -> bool {
+        !self.tool_results.is_empty()
     }
 }
 
@@ -426,6 +521,8 @@ mod tests {
         assert_eq!(msg.role, Role::User);
         assert_eq!(msg.content, "Hello");
         assert!(msg.thinking_content.is_none());
+        assert!(msg.tool_uses.is_empty());
+        assert!(msg.tool_results.is_empty());
     }
 
     #[test]
@@ -446,6 +543,30 @@ mod tests {
     fn test_message_with_thinking() {
         let msg = Message::assistant("Answer").with_thinking("Let me think...");
         assert_eq!(msg.thinking_content, Some("Let me think...".to_string()));
+    }
+
+    #[test]
+    fn test_message_with_tool_uses() {
+        use crate::llm::tools::ToolUse;
+        
+        let tool_use = ToolUse::new("toolu_123", "get_weather", serde_json::json!({"city": "NYC"}));
+        let msg = Message::assistant("Let me check...").with_tool_uses(vec![tool_use]);
+
+        assert!(msg.has_tool_uses());
+        assert_eq!(msg.tool_uses.len(), 1);
+        assert_eq!(msg.tool_uses[0].name, "get_weather");
+    }
+
+    #[test]
+    fn test_message_with_tool_results() {
+        use crate::llm::tools::ToolResult;
+        
+        let result = ToolResult::success("toolu_123", "Temperature: 72°F");
+        let msg = Message::user("").with_tool_results(vec![result]);
+
+        assert!(msg.has_tool_results());
+        assert_eq!(msg.tool_results.len(), 1);
+        assert!(!msg.tool_results[0].is_error);
     }
 
     #[test]
@@ -484,5 +605,79 @@ mod tests {
         };
         let client = LlmClient::from_profile(&profile).unwrap();
         assert_eq!(client.model_spec(), "anthropic:claude-3-opus");
+    }
+
+    #[test]
+    fn test_parse_response_with_tool_call() {
+        use serdes_ai::core::{ModelResponse, ModelResponsePart};
+        use serdes_ai::core::messages::parts::ToolCallArgs;
+        
+        let profile = ModelProfile {
+            provider_id: "anthropic".to_string(),
+            model_id: "claude-3-opus".to_string(),
+            auth: AuthConfig::Key {
+                value: "test".to_string(),
+            },
+            ..Default::default()
+        };
+        let client = LlmClient::from_profile(&profile).unwrap();
+
+        // Create a mock response with a tool call
+        let response = ModelResponse {
+            parts: vec![
+                ModelResponsePart::Text(serdes_ai::core::messages::parts::TextPart::new(
+                    "Let me check the weather for you."
+                )),
+                ModelResponsePart::ToolCall(serdes_ai::core::messages::parts::ToolCallPart::new(
+                    "get_weather",
+                    ToolCallArgs::json(serde_json::json!({"city": "NYC"}))
+                ).with_tool_call_id("toolu_123")),
+            ],
+            ..Default::default()
+        };
+
+        let message = client.parse_response(response, &[]).unwrap();
+        
+        assert_eq!(message.role, Role::Assistant);
+        assert!(message.content.contains("weather"));
+        assert!(message.has_tool_uses());
+        assert_eq!(message.tool_uses.len(), 1);
+        assert_eq!(message.tool_uses[0].name, "get_weather");
+        assert_eq!(message.tool_uses[0].id, "toolu_123");
+        assert_eq!(message.tool_uses[0].input["city"], "NYC");
+    }
+
+    #[test]
+    fn test_parse_response_with_thinking() {
+        use serdes_ai::core::{ModelResponse, ModelResponsePart};
+        
+        let profile = ModelProfile {
+            provider_id: "anthropic".to_string(),
+            model_id: "claude-3-opus".to_string(),
+            auth: AuthConfig::Key {
+                value: "test".to_string(),
+            },
+            ..Default::default()
+        };
+        let client = LlmClient::from_profile(&profile).unwrap();
+
+        // Create a mock response with thinking content
+        let response = ModelResponse {
+            parts: vec![
+                ModelResponsePart::Thinking(serdes_ai::core::messages::parts::ThinkingPart::new(
+                    "Let me analyze this problem..."
+                )),
+                ModelResponsePart::Text(serdes_ai::core::messages::parts::TextPart::new(
+                    "The answer is 42"
+                )),
+            ],
+            ..Default::default()
+        };
+
+        let message = client.parse_response(response, &[]).unwrap();
+        
+        assert_eq!(message.role, Role::Assistant);
+        assert_eq!(message.content, "The answer is 42");
+        assert_eq!(message.thinking_content, Some("Let me analyze this problem...".to_string()));
     }
 }

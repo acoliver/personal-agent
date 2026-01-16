@@ -4,5 +4,7 @@
 //! and the `SerdesAI` library for making LLM requests.
 
 mod client;
+pub mod tools;
 
 pub use client::{LlmClient, LlmError, Message, Role, StreamEvent};
+pub use tools::{Tool, ToolResult, ToolUse};

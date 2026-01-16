@@ -370,18 +370,20 @@ define_class!(
 
         #[unsafe(method(showAddMcp:))]
         fn show_add_mcp(&self, _notification: &NSNotification) {
-            // Create a NEW MCP add view instance
             let mtm = MainThreadMarker::new().unwrap();
-            let new_mcp_add_view = McpAddViewController::new(mtm);
             
             let popover = POPOVER.take();
+            let existing = MCP_ADD_VIEW_CONTROLLER.take();
+            
+            // Reuse existing controller or create new one
+            let mcp_add_view = existing.unwrap_or_else(|| McpAddViewController::new(mtm));
             
             if let Some(ref popover) = popover {
-                popover.setContentViewController(Some(&new_mcp_add_view));
+                popover.setContentViewController(Some(&mcp_add_view));
             }
             
             POPOVER.set(popover);
-            MCP_ADD_VIEW_CONTROLLER.set(Some(new_mcp_add_view));
+            MCP_ADD_VIEW_CONTROLLER.set(Some(mcp_add_view));
         }
 
         #[unsafe(method(showConfigureMcp:))]
