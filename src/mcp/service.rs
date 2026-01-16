@@ -110,6 +110,12 @@ impl McpService {
         self.runtime.active_count()
     }
     
+    /// Get the status of a specific MCP
+    pub fn get_status(&self, id: &uuid::Uuid) -> Option<crate::mcp::McpStatus> {
+        let status_manager = self.runtime.status_manager();
+        Some(status_manager.get_status(id))
+    }
+    
     /// Reload MCPs from config (useful after config changes)
     pub async fn reload(&mut self) -> Result<(), String> {
         // For now, just re-initialize

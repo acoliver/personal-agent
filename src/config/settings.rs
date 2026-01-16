@@ -21,6 +21,9 @@ pub struct Config {
     pub profiles: Vec<ModelProfile>,
     #[serde(default)]
     pub mcps: Vec<crate::mcp::McpConfig>,
+    /// Smithery API key or path to keyfile
+    #[serde(default)]
+    pub smithery_auth: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -42,6 +45,7 @@ impl Default for Config {
             context_management: ContextManagement::default(),
             profiles: Vec::new(),
             mcps: Vec::new(),
+            smithery_auth: None,
         }
     }
 }

@@ -14,5 +14,5 @@ pub use manager::{McpManager, McpError, McpResult};
 pub use runtime::{McpRuntime, McpTool, McpConnection};
 pub use registry::{McpRegistry, McpRegistryServerWrapper, McpSearchResult, McpRegistrySource};
 pub use status::{McpStatus, McpStatusManager};
-pub use oauth::{OAuthManager, OAuthToken, OAuthConfig, OAuthFlowState};
+pub use oauth::{OAuthManager, OAuthToken, OAuthConfig, OAuthFlowState, OAuthCallbackResult, SmitheryOAuthConfig, start_oauth_callback_server, generate_smithery_oauth_url};
 pub use service::{McpService, ToolDefinition};

@@ -16,7 +16,7 @@ use objc2_foundation::{NSEdgeInsets, NSObjectProtocol, NSPoint, NSRect, NSSize, 
 use objc2_core_graphics::CGColor;
 
 use crate::ui::Theme;
-use personal_agent::mcp::{McpConfig, registry::{McpRegistry, McpRegistryServerWrapper}};
+use personal_agent::mcp::{McpAuthType, McpConfig, registry::{McpRegistry, McpRegistryServerWrapper}};
 use std::sync::Mutex;
 
 // Global storage for search results (thread-safe, accessed from background thread and main thread)
@@ -103,6 +103,9 @@ pub struct McpAddViewIvars {
     registry_popup: RefCell<Option<Retained<NSPopUpButton>>>,
     search_helper: RefCell<Option<Retained<NSTextField>>>,
     selected_result_index: RefCell<Option<usize>>,
+    key_input_container: RefCell<Option<Retained<NSView>>>,
+    key_input_field: RefCell<Option<Retained<NSTextField>>>,
+    search_button: RefCell<Option<Retained<NSButton>>>,
 }
 
 define_class!(
@@ -265,14 +268,131 @@ define_class!(
             };
             
             // 0 = "Select...", 1 = "Official", 2 = "Smithery", 3 = "Both"
+            let is_smithery_selected = selected_index == 2;
+            
+            if is_smithery_selected {
+                // Check if config has smithery_auth
+                let has_key = if let Ok(config_path) = personal_agent::config::Config::default_path() {
+                    if let Ok(config) = personal_agent::config::Config::load(&config_path) {
+                        config.smithery_auth.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                
+                if !has_key {
+                    // Show key input and open browser
+                    if let Some(container) = &*self.ivars().key_input_container.borrow() {
+                        container.setHidden(false);
+                    }
+                    
+                    // Open Smithery keys page
+                    use objc2_app_kit::NSWorkspace;
+                    use objc2_foundation::NSURL;
+                    let mtm = MainThreadMarker::new().unwrap();
+                    let url_str = NSString::from_str("https://smithery.ai/account/api-keys");
+                    if let Some(url) = unsafe { NSURL::URLWithString(&url_str) } {
+                        let workspace = NSWorkspace::sharedWorkspace();
+                        unsafe { workspace.openURL(&url) };
+                    }
+                    
+                    // Disable search until key is saved
+                    if let Some(field) = &*self.ivars().search_field.borrow() {
+                        field.setEnabled(false);
+                    }
+                    if let Some(btn) = &*self.ivars().search_button.borrow() {
+                        btn.setEnabled(false);
+                    }
+                    return;
+                }
+            }
+            
+            // Hide key input for non-Smithery or if key exists
+            if let Some(container) = &*self.ivars().key_input_container.borrow() {
+                container.setHidden(true);
+            }
+            
             let should_enable_search = selected_index > 0;
             
             if let Some(field) = &*self.ivars().search_field.borrow() {
                 field.setEnabled(should_enable_search);
             }
             
+            if let Some(btn) = &*self.ivars().search_button.borrow() {
+                btn.setEnabled(should_enable_search);
+            }
+            
             if let Some(helper) = &*self.ivars().search_helper.borrow() {
                 helper.setHidden(should_enable_search);
+            }
+        }
+
+        #[unsafe(method(saveKeyClicked:))]
+        fn save_key_clicked(&self, _sender: Option<&NSObject>) {
+            log_to_file("Save key clicked");
+            
+            let key_or_path = if let Some(field) = &*self.ivars().key_input_field.borrow() {
+                field.stringValue().to_string()
+            } else {
+                String::new()
+            };
+            
+            if key_or_path.trim().is_empty() {
+                return;
+            }
+            
+            let config_path = match personal_agent::config::Config::default_path() {
+                Ok(path) => path,
+                Err(e) => {
+                    log_to_file(&format!("ERROR: Failed to get config path: {e}"));
+                    return;
+                }
+            };
+            
+            let mut config = match personal_agent::config::Config::load(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    log_to_file(&format!("ERROR: Failed to load config: {e}"));
+                    personal_agent::config::Config::default()
+                }
+            };
+            
+            config.smithery_auth = Some(key_or_path.clone());
+            
+            if let Err(e) = config.save(&config_path) {
+                log_to_file(&format!("ERROR: Failed to save config: {e}"));
+                
+                use objc2_app_kit::NSAlert;
+                let mtm = MainThreadMarker::new().unwrap();
+                let alert = NSAlert::new(mtm);
+                alert.setMessageText(&NSString::from_str("Failed to Save Key"));
+                alert.setInformativeText(&NSString::from_str(&format!("Error: {e}")));
+                alert.addButtonWithTitle(&NSString::from_str("OK"));
+                unsafe { alert.runModal() };
+            } else {
+                log_to_file("Smithery key saved successfully");
+                
+                // Hide key input container
+                if let Some(container) = &*self.ivars().key_input_container.borrow() {
+                    container.setHidden(true);
+                }
+                
+                // Enable search
+                if let Some(field) = &*self.ivars().search_field.borrow() {
+                    field.setEnabled(true);
+                }
+                if let Some(btn) = &*self.ivars().search_button.borrow() {
+                    btn.setEnabled(true);
+                }
+                
+                // Update dropdown text to remove "(requires API key)"
+                if let Some(popup) = &*self.ivars().registry_popup.borrow() {
+                    if let Some(item) = popup.itemAtIndex(2) {
+                        item.setTitle(&NSString::from_str("Smithery"));
+                    }
+                }
             }
         }
 
@@ -289,6 +409,23 @@ define_class!(
             }
             
             log_to_file(&format!("Search triggered: {query}"));
+            self.perform_search(query);
+        }
+        
+        #[unsafe(method(searchButtonClicked:))]
+        fn search_button_clicked(&self, _sender: Option<&NSObject>) {
+            // Trigger the same search logic as pressing Enter
+            let query = if let Some(field) = &*self.ivars().search_field.borrow() {
+                field.stringValue().to_string()
+            } else {
+                String::new()
+            };
+            
+            if query.trim().is_empty() {
+                return;
+            }
+            
+            log_to_file(&format!("Search button clicked: {query}"));
             self.perform_search(query);
         }
 
@@ -311,36 +448,72 @@ define_class!(
                             Ok(mcp_config) => {
                                 log_to_file(&format!("Converted to config: {}", mcp_config.name));
                                 
-                                // Save directly - don't go to configure view
-                                let config_path = match personal_agent::config::Config::default_path() {
-                                    Ok(path) => path,
-                                    Err(e) => {
-                                        log_to_file(&format!("ERROR: Failed to get config path: {e}"));
-                                        return;
-                                    }
-                                };
+                                // Check if configuration is needed
+                                let needs_config = !mcp_config.env_vars.is_empty() 
+                                    || mcp_config.auth_type != McpAuthType::None;
                                 
-                                let mut config = match personal_agent::config::Config::load(&config_path) {
-                                    Ok(c) => c,
-                                    Err(e) => {
-                                        log_to_file(&format!("ERROR: Failed to load config: {e}"));
-                                        personal_agent::config::Config::default()
-                                    }
-                                };
-                                
-                                config.mcps.push(mcp_config);
-                                
-                                if let Err(e) = config.save(&config_path) {
-                                    log_to_file(&format!("ERROR: Failed to save config: {e}"));
+                                if needs_config {
+                                    log_to_file(&format!("Config needs setup - env_vars: {}, auth_type: {:?}", 
+                                        mcp_config.env_vars.len(), mcp_config.auth_type));
+                                    
+                                    // Store config and go to configure view
+                                    SELECTED_MCP_CONFIG.with(|cell| {
+                                        *cell.borrow_mut() = Some(mcp_config);
+                                    });
+                                    
+                                    // Navigate to configure view
+                                    use objc2_foundation::NSNotificationCenter;
+                                    let center = NSNotificationCenter::defaultCenter();
+                                    let name = NSString::from_str("PersonalAgentShowConfigureMcp");
+                                    unsafe { center.postNotificationName_object(&name, None); }
                                 } else {
-                                    log_to_file("MCP saved successfully");
+                                    log_to_file("No config needed - saving directly");
+                                    
+                                    // No config needed - save directly
+                                    let config_path = match personal_agent::config::Config::default_path() {
+                                        Ok(path) => path,
+                                        Err(e) => {
+                                            log_to_file(&format!("ERROR: Failed to get config path: {e}"));
+                                            return;
+                                        }
+                                    };
+                                    
+                                    let mut config = match personal_agent::config::Config::load(&config_path) {
+                                        Ok(c) => c,
+                                        Err(e) => {
+                                            log_to_file(&format!("ERROR: Failed to load config: {e}"));
+                                            personal_agent::config::Config::default()
+                                        }
+                                    };
+                                    
+                                    config.mcps.push(mcp_config);
+                                    
+                                    if let Err(e) = config.save(&config_path) {
+                                        log_to_file(&format!("ERROR: Failed to save config: {e}"));
+                                    } else {
+                                        log_to_file("MCP saved successfully");
+                                        
+                                        // Reload MCP service to start the new MCP
+                                        std::thread::spawn(|| {
+                                            if let Ok(rt) = tokio::runtime::Runtime::new() {
+                                                rt.block_on(async {
+                                                    use personal_agent::mcp::McpService;
+                                                    let service = McpService::global();
+                                                    let mut guard = service.lock().await;
+                                                    if let Err(e) = guard.reload().await {
+                                                        eprintln!("Failed to reload MCPs: {e}");
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    }
+                                    
+                                    // Go directly to settings
+                                    use objc2_foundation::NSNotificationCenter;
+                                    let center = NSNotificationCenter::defaultCenter();
+                                    let name = NSString::from_str("PersonalAgentShowSettingsView");
+                                    unsafe { center.postNotificationName_object(&name, None); }
                                 }
-                                
-                                // Go directly to settings
-                                use objc2_foundation::NSNotificationCenter;
-                                let center = NSNotificationCenter::defaultCenter();
-                                let name = NSString::from_str("PersonalAgentShowSettingsView");
-                                unsafe { center.postNotificationName_object(&name, None); }
                             }
                             Err(e) => {
                                 log_to_file(&format!("Failed to convert entry: {e}"));
@@ -365,6 +538,9 @@ impl McpAddViewController {
             registry_popup: RefCell::new(None),
             search_helper: RefCell::new(None),
             selected_result_index: RefCell::new(None),
+            key_input_container: RefCell::new(None),
+            key_input_field: RefCell::new(None),
+            search_button: RefCell::new(None),
         };
         let this = mtm.alloc::<Self>().set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
@@ -372,6 +548,42 @@ impl McpAddViewController {
 
     fn perform_search(&self, query: String) {
         log_to_file("perform_search started");
+        
+        // Get selected registry
+        let selected_index = if let Some(popup) = &*self.ivars().registry_popup.borrow() {
+            popup.indexOfSelectedItem()
+        } else {
+            1 // Default to Official
+        };
+        
+        // 0 = "Select...", 1 = "Official", 2 = "Smithery", 3 = "Both"
+        let registry_source = match selected_index {
+            2 => personal_agent::mcp::registry::McpRegistrySource::Smithery,
+            _ => personal_agent::mcp::registry::McpRegistrySource::Official, // For now, "Both" just does official
+        };
+        
+        // Get Smithery key if needed
+        let smithery_key = if registry_source == personal_agent::mcp::registry::McpRegistrySource::Smithery {
+            let config_path = match personal_agent::config::Config::default_path() {
+                Ok(path) => path,
+                Err(e) => {
+                    log_to_file(&format!("ERROR: Failed to get config path: {e}"));
+                    return;
+                }
+            };
+            
+            match personal_agent::config::Config::load(&config_path) {
+                Ok(config) => config.smithery_auth.clone(),
+                Err(e) => {
+                    log_to_file(&format!("ERROR: Failed to load config: {e}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        log_to_file(&format!("Searching registry: {:?}", registry_source));
         
         // Show loading state
         self.show_loading(true);
@@ -382,7 +594,6 @@ impl McpAddViewController {
         });
         
         // Spawn thread to do search
-        let self_ptr = self as *const Self;
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Runtime::new() {
                 Ok(r) => r,
@@ -394,7 +605,7 @@ impl McpAddViewController {
             
             let registry = McpRegistry::new();
             let results = runtime.block_on(async {
-                registry.search(&query).await
+                registry.search_registry(&query, registry_source, smithery_key.as_deref()).await
             });
             
             match results {
@@ -407,11 +618,9 @@ impl McpAddViewController {
                     }
                     
                     // Post notification to update UI on main thread
-                    // Must use performSelectorOnMainThread for thread safety
-                    use objc2_foundation::{NSNotificationCenter, NSRunLoop};
-                    
                     // Dispatch to main thread
                     dispatch::Queue::main().exec_async(|| {
+                        use objc2_foundation::NSNotificationCenter;
                         let center = NSNotificationCenter::defaultCenter();
                         let name = NSString::from_str("PersonalAgentMcpSearchComplete");
                         unsafe { center.postNotificationName_object(&name, None); }
@@ -624,7 +833,24 @@ impl McpAddViewController {
         let registry_popup = NSPopUpButton::new(mtm);
         registry_popup.addItemWithTitle(&NSString::from_str("Select..."));
         registry_popup.addItemWithTitle(&NSString::from_str("Official"));
-        registry_popup.addItemWithTitle(&NSString::from_str("Smithery"));
+        
+        // Check if Smithery key exists to determine dropdown text
+        let has_smithery_key = if let Ok(config_path) = personal_agent::config::Config::default_path() {
+            if let Ok(config) = personal_agent::config::Config::load(&config_path) {
+                config.smithery_auth.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        let smithery_text = if has_smithery_key {
+            "Smithery"
+        } else {
+            "Smithery (requires API key)"
+        };
+        registry_popup.addItemWithTitle(&NSString::from_str(smithery_text));
         registry_popup.addItemWithTitle(&NSString::from_str("Both"));
         unsafe {
             registry_popup.setTarget(Some(self));
@@ -636,6 +862,49 @@ impl McpAddViewController {
         content.addArrangedSubview(&registry_popup);
         *self.ivars().registry_popup.borrow_mut() = Some(Retained::clone(&registry_popup));
 
+        // ===== KEY INPUT SECTION (hidden initially) =====
+        
+        let key_container = NSStackView::new(mtm);
+        key_container.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        key_container.setSpacing(8.0);
+        key_container.setTranslatesAutoresizingMaskIntoConstraints(false);
+        key_container.setHidden(true);
+        
+        let key_label = NSTextField::labelWithString(
+            &NSString::from_str("Key or File:"),
+            mtm,
+        );
+        key_label.setTextColor(Some(&Theme::text_primary()));
+        key_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        let label_width = key_label.widthAnchor().constraintEqualToConstant(90.0);
+        label_width.setActive(true);
+        key_container.addArrangedSubview(&key_label);
+        
+        let key_field = NSTextField::new(mtm);
+        key_field.setPlaceholderString(Some(&NSString::from_str("API key or path to keyfile")));
+        key_field.setTranslatesAutoresizingMaskIntoConstraints(false);
+        key_container.addArrangedSubview(&key_field);
+        *self.ivars().key_input_field.borrow_mut() = Some(Retained::clone(&key_field));
+        
+        let save_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str("Save"),
+                Some(self),
+                Some(sel!(saveKeyClicked:)),
+                mtm,
+            )
+        };
+        save_btn.setBezelStyle(NSBezelStyle::Rounded);
+        let save_width = save_btn.widthAnchor().constraintEqualToConstant(60.0);
+        save_width.setActive(true);
+        key_container.addArrangedSubview(&save_btn);
+        
+        let container_width = key_container.widthAnchor().constraintEqualToConstant(360.0);
+        container_width.setActive(true);
+        
+        content.addArrangedSubview(&key_container);
+        *self.ivars().key_input_container.borrow_mut() = Some(Retained::from(&*key_container as &NSView));
+
         // ===== SEARCH FIELD =====
         
         let search_label = NSTextField::labelWithString(
@@ -646,7 +915,12 @@ impl McpAddViewController {
         search_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         content.addArrangedSubview(&search_label);
 
-        // Search field (disabled by default)
+        // Search field + button in horizontal stack
+        let search_row = NSStackView::new(mtm);
+        search_row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        search_row.setSpacing(8.0);
+        search_row.setTranslatesAutoresizingMaskIntoConstraints(false);
+        
         let search_field = NSTextField::new(mtm);
         search_field.setPlaceholderString(Some(&NSString::from_str("Enter search term...")));
         search_field.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -655,10 +929,27 @@ impl McpAddViewController {
             search_field.setTarget(Some(self));
             search_field.setAction(Some(sel!(searchFieldAction:)));
         }
-        let width = search_field.widthAnchor().constraintGreaterThanOrEqualToConstant(360.0);
-        width.setActive(true);
-        content.addArrangedSubview(&search_field);
+        search_row.addArrangedSubview(&search_field);
         *self.ivars().search_field.borrow_mut() = Some(Retained::clone(&search_field));
+        
+        let search_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str("Search"),
+                Some(self),
+                Some(sel!(searchButtonClicked:)),
+                mtm,
+            )
+        };
+        search_btn.setBezelStyle(NSBezelStyle::Rounded);
+        search_btn.setEnabled(false); // Disabled until registry selected
+        let btn_width = search_btn.widthAnchor().constraintEqualToConstant(80.0);
+        btn_width.setActive(true);
+        search_row.addArrangedSubview(&search_btn);
+        *self.ivars().search_button.borrow_mut() = Some(Retained::clone(&search_btn));
+        
+        let row_width = search_row.widthAnchor().constraintEqualToConstant(360.0);
+        row_width.setActive(true);
+        content.addArrangedSubview(&search_row);
 
         // Helper text (shown when no registry selected)
         let helper_text = NSTextField::labelWithString(

@@ -71,7 +71,51 @@ impl McpRuntime {
         let client: McpClient = match config.transport {
             McpTransport::Http => {
                 // HTTP transport - use reqwest-based HttpTransport
-                let transport = serdes_ai::mcp::transport::HttpTransport::new(&config.package.identifier);
+                // Build custom headers from env (e.g., Authorization)
+                let mut headers = std::collections::HashMap::new();
+                
+                // Check for OAuth token first (highest priority for Smithery servers)
+                if let Some(ref oauth_token) = config.oauth_token {
+                    headers.insert("Authorization".to_string(), format!("Bearer {}", oauth_token));
+                } else {
+                    // Check if we have auth data that should be passed as headers
+                    // For Smithery and other HTTP MCPs, auth is typically passed via Authorization header
+                    for (key, value) in &env {
+                        // Convert env var names to header names
+                        // Common patterns: API_KEY, TOKEN, ACCESS_TOKEN -> Authorization: Bearer <value>
+                        let key_lower = key.to_lowercase();
+                        if key_lower.contains("token") || key_lower.contains("api_key") || key_lower.contains("key") {
+                            headers.insert("Authorization".to_string(), format!("Bearer {}", value));
+                        } else {
+                            // Pass other env vars as custom headers with X- prefix
+                            headers.insert(format!("X-{}", key), value.clone());
+                        }
+                    }
+                }
+                
+                // Create HTTP transport with custom headers if needed
+                let transport = if headers.is_empty() {
+                    serdes_ai::mcp::transport::HttpTransport::new(&config.package.identifier)
+                } else {
+                    // Build reqwest client with custom headers
+                    let mut header_map = reqwest::header::HeaderMap::new();
+                    for (key, value) in headers {
+                        if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
+                            if let Ok(header_value) = reqwest::header::HeaderValue::from_str(&value) {
+                                header_map.insert(header_name, header_value);
+                            }
+                        }
+                    }
+                    let client = reqwest::Client::builder()
+                        .default_headers(header_map)
+                        .build()
+                        .map_err(|e| {
+                            let err = format!("Failed to build HTTP client: {}", e);
+                            self.status_manager.set_status(config.id, McpStatus::Error(err.clone()));
+                            err
+                        })?;
+                    serdes_ai::mcp::transport::HttpTransport::with_client(client, &config.package.identifier)
+                };
                 McpClient::new(transport)
             },
             McpTransport::Stdio => {
@@ -86,8 +130,11 @@ impl McpRuntime {
                 // Convert args to &str
                 let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                 
-                // Spawn with environment
-                let transport = serdes_ai::mcp::StdioTransport::spawn_with_env(&cmd, &args_str, env)
+                // Note: SerdesAI doesn't support spawn_with_env yet
+                // Environment variables need to be set before spawning
+                // For now, we use spawn without env support
+                // TODO: When spawn_with_env is added to SerdesAI, use it here
+                let transport = serdes_ai::mcp::StdioTransport::spawn(&cmd, &args_str)
                     .await
                     .map_err(|e| {
                         let err = format!("Failed to spawn MCP: {}", e);
@@ -252,6 +299,7 @@ mod tests {
             env_vars: vec![],
             keyfile_path: None,
             config: serde_json::json!({}),
+            oauth_token: None,
         }
     }
 

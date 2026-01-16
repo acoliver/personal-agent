@@ -20,6 +20,9 @@ pub struct McpConfig {
     /// MCP-specific configuration from configSchema
     #[serde(default)]
     pub config: serde_json::Value,
+    /// OAuth token for Smithery or other OAuth-based MCPs
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -137,6 +140,7 @@ mod tests {
             }],
             keyfile_path: None,
             config: serde_json::json!({}),
+            oauth_token: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -304,6 +308,7 @@ mod tests {
             env_vars: vec![],
             keyfile_path: Some(PathBuf::from("/path/to/keyfile")),
             config: serde_json::json!({"key": "value"}),
+            oauth_token: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();

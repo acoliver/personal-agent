@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
+use tiny_http::{Server, Response};
 
 /// OAuth token storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +32,97 @@ impl OAuthToken {
             false // No expiry = never expires
         }
     }
+}
+
+/// Smithery OAuth configuration
+#[derive(Debug, Clone)]
+pub struct SmitheryOAuthConfig {
+    pub server_qualified_name: String, // e.g., "@owner/server-name"
+    pub redirect_uri: String,          // e.g., "http://localhost:PORT"
+}
+
+/// OAuth callback result
+#[derive(Debug)]
+pub struct OAuthCallbackResult {
+    pub token: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Start a local HTTP server to receive OAuth callback
+/// Returns (port, receiver for token)
+pub async fn start_oauth_callback_server() -> Result<(u16, oneshot::Receiver<OAuthCallbackResult>), String> {
+    // Find available port
+    let server = Server::http("127.0.0.1:0")
+        .map_err(|e| format!("Failed to start callback server: {}", e))?;
+    
+    let port = server.server_addr().to_ip()
+        .ok_or("Failed to get server address")?
+        .port();
+    
+    let (tx, rx) = oneshot::channel();
+    
+    // Spawn task to handle callback
+    tokio::task::spawn_blocking(move || {
+        handle_oauth_callback(server, tx);
+    });
+    
+    Ok((port, rx))
+}
+
+/// Handle OAuth callback request
+fn handle_oauth_callback(server: Server, tx: oneshot::Sender<OAuthCallbackResult>) {
+    // Wait for single request - recv() returns Result<Request, IoError>
+    if let Ok(request) = server.recv() {
+        let url = request.url();
+        
+        // Parse query parameters
+        let mut token = None;
+        let mut error = None;
+        
+        if let Some(query_start) = url.find('?') {
+            let query = &url[query_start + 1..];
+            for pair in query.split('&') {
+                if let Some(eq_idx) = pair.find('=') {
+                    let key = &pair[..eq_idx];
+                    let value = &pair[eq_idx + 1..];
+                    
+                    match key {
+                        "access_token" | "token" => {
+                            token = Some(urlencoding::decode(value).unwrap_or_default().to_string());
+                        }
+                        "error" => {
+                            error = Some(urlencoding::decode(value).unwrap_or_default().to_string());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        
+        // Send success page
+        let response_html = if token.is_some() {
+            "<html><body><h1>Authentication Successful</h1><p>You can close this window.</p></body></html>"
+        } else {
+            "<html><body><h1>Authentication Failed</h1><p>You can close this window.</p></body></html>"
+        };
+        
+        let response = Response::from_string(response_html)
+            .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap());
+        let _ = request.respond(response);
+        
+        // Send result
+        let _ = tx.send(OAuthCallbackResult { token, error });
+    }
+}
+
+/// Generate Smithery OAuth URL
+pub fn generate_smithery_oauth_url(config: &SmitheryOAuthConfig) -> String {
+    // Smithery OAuth URL format: https://smithery.ai/server/{qualified_name}/authorize?redirect_uri={uri}
+    format!(
+        "https://smithery.ai/server/{}/authorize?redirect_uri={}",
+        urlencoding::encode(&config.server_qualified_name),
+        urlencoding::encode(&config.redirect_uri)
+    )
 }
 
 /// OAuth configuration for an MCP

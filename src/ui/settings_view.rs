@@ -380,48 +380,43 @@ define_class!(
             if let Some(mcp_id) = *self.ivars().selected_mcp_id.borrow() {
                 log_to_file(&format!("Delete MCP clicked: {mcp_id}"));
                 
-                use objc2_app_kit::NSAlert;
-                let mtm = MainThreadMarker::new().unwrap();
-                
-                let alert = NSAlert::new(mtm);
-                alert.setMessageText(&NSString::from_str("Delete MCP?"));
-                alert.setInformativeText(&NSString::from_str("This action cannot be undone."));
-                alert.addButtonWithTitle(&NSString::from_str("Delete"));
-                alert.addButtonWithTitle(&NSString::from_str("Cancel"));
-                
-                let response = unsafe { alert.runModal() };
-                
-                if response == 1000 {
-                    let config_path = match Config::default_path() {
-                        Ok(path) => path,
-                        Err(e) => {
-                            eprintln!("Failed to get config path: {e}");
-                            return;
-                        }
-                    };
-                    
-                    let mut config = match Config::load(&config_path) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            eprintln!("Failed to load config: {e}");
-                            return;
-                        }
-                    };
-                    
-                    if let Err(e) = config.remove_mcp(&mcp_id) {
-                        eprintln!("Failed to remove MCP: {e}");
+                // Delete directly without confirmation
+                let config_path = match Config::default_path() {
+                    Ok(path) => path,
+                    Err(e) => {
+                        eprintln!("Failed to get config path: {e}");
                         return;
                     }
-                    
-                    if let Err(e) = config.save(&config_path) {
-                        eprintln!("Failed to save config: {e}");
+                };
+                
+                let mut config = match Config::load(&config_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Failed to load config: {e}");
                         return;
                     }
-                    
-                    log_to_file("MCP deleted successfully");
-                    self.load_mcps();
+                };
+                
+                if let Err(e) = config.remove_mcp(&mcp_id) {
+                    eprintln!("Failed to remove MCP: {e}");
+                    return;
                 }
+                
+                if let Err(e) = config.save(&config_path) {
+                    eprintln!("Failed to save config: {e}");
+                    return;
+                }
+                
+                log_to_file("MCP deleted successfully");
+                
+                // Clear selection
+                *self.ivars().selected_mcp_id.borrow_mut() = None;
             }
+            
+            // Reload outside the borrow scope
+            self.ivars().mcp_uuid_map.borrow_mut().clear();
+            self.load_mcps();
+            self.update_mcp_button_states();
         }
 
         #[unsafe(method(hotkeyChanged:))]
@@ -482,6 +477,7 @@ impl SettingsViewController {
     /// Reload profiles from config - called when returning from profile editor
     pub fn reload_profiles(&self) {
         self.load_profiles();
+        self.load_mcps();
     }
 
     // ========================================================================
@@ -1023,9 +1019,9 @@ impl SettingsViewController {
         self.ivars().profile_uuid_map.borrow_mut().clear();
         
         if let Some(list_stack) = &*self.ivars().profiles_list.borrow() {
-            // Clear existing rows
-            let subviews = list_stack.subviews();
-            for view in &subviews {
+            // Clear existing rows - collect first to avoid mutating while iterating
+            let subviews: Vec<_> = list_stack.subviews().to_vec();
+            for view in subviews {
                 unsafe {
                     list_stack.removeArrangedSubview(&view);
                 }
@@ -1080,9 +1076,9 @@ impl SettingsViewController {
         self.ivars().mcp_uuid_map.borrow_mut().clear();
         
         if let Some(list_stack) = &*self.ivars().mcps_list.borrow() {
-            // Clear existing rows
-            let subviews = list_stack.subviews();
-            for view in &subviews {
+            // Clear existing rows - collect first to avoid mutating while iterating
+            let subviews: Vec<_> = list_stack.subviews().to_vec();
+            for view in subviews {
                 unsafe {
                     list_stack.removeArrangedSubview(&view);
                 }
@@ -1258,15 +1254,38 @@ impl SettingsViewController {
         }
         
         if let Some(layer) = status_view.layer() {
-            // For now, show green if enabled, gray if disabled
-            // TODO: Connect to McpRuntime to get actual status
-            let (r, g, b) = if mcp.enabled {
-                (0.0, 0.8, 0.0) // Green
-            } else {
-                (0.5, 0.5, 0.5) // Gray
+            // Get actual status from MCP service
+            use personal_agent::mcp::{McpService, McpStatus};
+            let status: Option<McpStatus> = {
+                let service = McpService::global();
+                // Try to lock, if can't just show unknown status
+                let result = service.try_lock();
+                match result {
+                    Ok(guard) => {
+                        let s = guard.get_status(&mcp.id);
+                        drop(guard); // Explicitly drop before end of block
+                        s
+                    },
+                    Err(_) => None,
+                }
             };
-            set_layer_background_color(&layer, r, g, b);
-            set_layer_corner_radius(&layer, 4.0);
+            
+            // Determine color based on status
+            if !mcp.enabled {
+                // Empty circle for disabled
+                set_layer_background_color(&layer, 0.0, 0.0, 0.0);
+                set_layer_border(&layer, 1.0, 0.5, 0.5, 0.5);
+                set_layer_corner_radius(&layer, 4.0);
+            } else {
+                let (r, g, b) = match status {
+                    Some(McpStatus::Running) => (0.0, 0.8, 0.0), // Green - running
+                    Some(McpStatus::Starting) => (1.0, 0.8, 0.0), // Yellow - starting  
+                    Some(McpStatus::Error(_)) => (0.8, 0.0, 0.0), // Red - error
+                    Some(McpStatus::Stopped) | Some(McpStatus::Restarting) | None => (0.5, 0.5, 0.5), // Gray
+                };
+                set_layer_background_color(&layer, r, g, b);
+                set_layer_corner_radius(&layer, 4.0);
+            }
         }
         
         unsafe {
@@ -1362,6 +1381,29 @@ impl SettingsViewController {
         log_to_file(&format!("Selecting MCP: {mcp_id}"));
         *self.ivars().selected_mcp_id.borrow_mut() = Some(mcp_id);
         self.update_mcp_button_states();
+        self.highlight_selected_mcp();
+    }
+    
+    fn highlight_selected_mcp(&self) {
+        let selected_id = *self.ivars().selected_mcp_id.borrow();
+        let uuid_map = self.ivars().mcp_uuid_map.borrow();
+        
+        if let Some(list_stack) = &*self.ivars().mcps_list.borrow() {
+            let subviews = list_stack.arrangedSubviews();
+            for (index, view) in subviews.iter().enumerate() {
+                let is_selected = uuid_map.get(index).map(|&id| Some(id) == selected_id).unwrap_or(false);
+                
+                if let Some(layer) = view.layer() {
+                    if is_selected {
+                        // Highlight color (blue-ish)
+                        set_layer_background_color(&layer, 0.2, 0.4, 0.8);
+                    } else {
+                        // Normal color
+                        set_layer_background_color(&layer, Theme::BG_DARKER.0, Theme::BG_DARKER.1, Theme::BG_DARKER.2);
+                    }
+                }
+            }
+        }
     }
 
     fn update_profile_button_states(&self) {
@@ -1377,12 +1419,18 @@ impl SettingsViewController {
 
     fn update_mcp_button_states(&self) {
         let has_selection = self.ivars().selected_mcp_id.borrow().is_some();
+        log_to_file(&format!("update_mcp_button_states: has_selection={}", has_selection));
         
         if let Some(btn) = &*self.ivars().mcp_delete_btn.borrow() {
+            log_to_file(&format!("Enabling delete button: {}", has_selection));
             btn.setEnabled(has_selection);
+        } else {
+            log_to_file("mcp_delete_btn is None!");
         }
         if let Some(btn) = &*self.ivars().mcp_edit_btn.borrow() {
             btn.setEnabled(has_selection);
+        } else {
+            log_to_file("mcp_edit_btn is None!");
         }
     }
 }

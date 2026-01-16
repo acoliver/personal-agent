@@ -69,8 +69,11 @@ serdes-ai = { path = "research/serdesAI/serdes-ai", features = ["openai", "anthr
 serdes-ai-agent = { path = "research/serdesAI/serdes-ai-agent" }
 serdes-ai-tools = { path = "research/serdesAI/serdes-ai-tools" }
 serdes-ai-mcp = { path = "research/serdesAI/serdes-ai-mcp", features = ["client", "reqwest"] }
+serdes-ai-models = { path = "research/serdesAI/serdes-ai-models" }
+serdes-ai-core = { path = "research/serdesAI/serdes-ai-core" }
 dispatch = "0.2"
 urlencoding = "2.1"
+tiny_http = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

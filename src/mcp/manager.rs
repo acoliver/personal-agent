@@ -236,6 +236,7 @@ mod tests {
             }],
             keyfile_path: None,
             config: serde_json::json!({}),
+            oauth_token: None,
         }
     }
 
