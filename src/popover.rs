@@ -1,8 +1,8 @@
-//! Native macOS NSPopover integration for egui
+//! Native macOS `NSPopover` integration for egui
 //!
-//! This module provides a bridge between egui windows and native macOS NSPopover,
+//! This module provides a bridge between egui windows and native macOS `NSPopover`,
 //! allowing the application to appear with a native popover arrow anchored to
-//! the status bar icon, just like BarTranslate.
+//! the status bar icon, just like `BarTranslate`.
 //!
 //! Note: This module uses unsafe blocks to interface with Objective-C APIs.
 //! Safety is ensured by following objc2 patterns and macOS threading requirements.
@@ -19,11 +19,12 @@ use std::cell::RefCell;
 
 thread_local! {
     /// Thread-local state for the popover bridge
-    /// This is safe because NSPopover must only be accessed from the main thread
+    /// This is safe because `NSPopover` must only be accessed from the main thread
     static POPOVER_STATE: RefCell<Option<PopoverBridgeState>> = const { RefCell::new(None) };
 }
 
 /// Shared state for the popover bridge
+#[allow(dead_code)]
 struct PopoverBridgeState {
     popover: Retained<NSPopover>,
     #[allow(dead_code)] // Keep for future use
@@ -35,6 +36,7 @@ struct PopoverBridgeState {
 
 /// Deferred popover operations to avoid re-entrancy
 #[derive(Clone)]
+#[allow(dead_code)]
 enum PendingPopoverOperation {
     Show {
         button_bounds: NSRect,
@@ -44,21 +46,23 @@ enum PendingPopoverOperation {
 }
 
 /// Initialize the popover state (must be called on main thread)
+#[allow(dead_code)]
 pub fn initialize_popover_state() {
     POPOVER_STATE.with(|state| {
         *state.borrow_mut() = None;
     });
 }
 
-/// Setup the native NSPopover for the egui window
+/// Setup the native `NSPopover` for the egui window
 ///
 /// This function should be called after the egui window is created.
-/// It wraps the window's content view inside a native NSPopover.
+/// It wraps the window's content view inside a native `NSPopover`.
 ///
 /// # Safety
-/// Uses unsafe blocks to interface with Objective-C NSWindow APIs.
+/// Uses unsafe blocks to interface with Objective-C `NSWindow` APIs.
 /// Must be called from the main thread.
 #[allow(unsafe_code)]
+#[allow(dead_code)]
 pub fn setup_native_popover(window_handle: &dyn HasWindowHandle) -> Result<(), String> {
     let raw_handle = window_handle
         .window_handle()
@@ -67,7 +71,7 @@ pub fn setup_native_popover(window_handle: &dyn HasWindowHandle) -> Result<(), S
     let ns_window = match raw_handle.as_raw() {
         RawWindowHandle::AppKit(handle) => {
             // Get the NSView from the handle
-            let ns_view_ptr = handle.ns_view.as_ptr() as *mut NSView;
+            let ns_view_ptr = handle.ns_view.as_ptr().cast::<NSView>();
             // SAFETY: We know this is a valid NSView pointer from eframe
             let ns_view = unsafe { Retained::retain(ns_view_ptr) }
                 .ok_or_else(|| "Failed to retain NSView".to_string())?;
@@ -132,8 +136,9 @@ pub fn setup_native_popover(window_handle: &dyn HasWindowHandle) -> Result<(), S
 /// operation is deferred to avoid re-entrancy with eframe's update cycle.
 ///
 /// # Safety
-/// Uses unsafe blocks to call NSPopover methods. Must be called from main thread.
+/// Uses unsafe blocks to call `NSPopover` methods. Must be called from main thread.
 #[allow(unsafe_code)]
+#[allow(dead_code)]
 pub fn show_popover_at_statusbar(
     button_bounds: NSRect,
     status_button: &NSView,
@@ -161,8 +166,9 @@ pub fn show_popover_at_statusbar(
 /// The actual hide operation is deferred to avoid re-entrancy.
 ///
 /// # Safety
-/// Uses unsafe blocks to call NSPopover methods. Must be called from main thread.
+/// Uses unsafe blocks to call `NSPopover` methods. Must be called from main thread.
 #[allow(unsafe_code)]
+#[allow(dead_code)]
 pub fn hide_popover() -> Result<(), String> {
     tracing::info!("Queueing popover hide operation");
 
@@ -180,12 +186,13 @@ pub fn hide_popover() -> Result<(), String> {
 
 /// Process any pending popover operations
 ///
-/// This should be called at the end of each frame, after eframe's update() completes.
+/// This should be called at the end of each frame, after eframe's `update()` completes.
 /// It executes the deferred show/hide operations outside the update loop.
 ///
 /// # Safety
-/// Uses unsafe blocks to call NSPopover methods. Must be called from main thread.
+/// Uses unsafe blocks to call `NSPopover` methods. Must be called from main thread.
 #[allow(unsafe_code)]
+#[allow(dead_code)]
 pub fn process_pending_operations() {
     POPOVER_STATE.with(|state| {
         let mut state_mut = state.borrow_mut();
@@ -220,12 +227,7 @@ pub fn process_pending_operations() {
 }
 
 /// Check if the popover is currently shown
+#[allow(dead_code)]
 pub fn is_popover_shown() -> bool {
-    POPOVER_STATE.with(|state| {
-        state
-            .borrow()
-            .as_ref()
-            .map(|s| s.popover.isShown())
-            .unwrap_or(false)
-    })
+    POPOVER_STATE.with(|state| state.borrow().as_ref().is_some_and(|s| s.popover.isShown()))
 }

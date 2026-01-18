@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[allow(clippy::derive_partial_eq_without_eq)]
 pub struct McpConfig {
     pub id: Uuid,
     pub name: String,
@@ -14,7 +15,10 @@ pub struct McpConfig {
     /// Environment variables this MCP requires (from registry metadata)
     #[serde(default)]
     pub env_vars: Vec<EnvVarConfig>,
-    /// Path to keyfile if auth_type is Keyfile
+    /// Package arguments this MCP requires (from registry metadata)
+    #[serde(default)]
+    pub package_args: Vec<McpPackageArg>,
+    /// Path to keyfile if `auth_type` is Keyfile
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keyfile_path: Option<PathBuf>,
     /// MCP-specific configuration from configSchema
@@ -25,13 +29,32 @@ pub struct McpConfig {
     pub oauth_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EnvVarConfig {
     pub name: String,
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpPackageArgType {
+    Named,
+    Positional,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpPackageArg {
+    pub arg_type: McpPackageArgType,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpSource {
     Official { name: String, version: String },
@@ -39,7 +62,7 @@ pub enum McpSource {
     Manual { url: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpPackage {
     #[serde(rename = "type")]
     pub package_type: McpPackageType,
@@ -48,7 +71,7 @@ pub struct McpPackage {
     pub runtime_hint: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum McpPackageType {
     Npm,
@@ -56,14 +79,14 @@ pub enum McpPackageType {
     Http,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum McpTransport {
     Stdio,
     Http,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum McpAuthType {
     #[default]
@@ -84,6 +107,7 @@ pub struct RegistryEnvVar {
 }
 
 /// Detect auth type from registry environment variable metadata
+#[must_use]
 pub fn detect_auth_type(env_vars: &[RegistryEnvVar]) -> McpAuthType {
     let has_client_id = env_vars.iter().any(|v| v.name.contains("CLIENT_ID"));
     let has_client_secret = env_vars
@@ -134,6 +158,7 @@ mod tests {
                 name: "API_KEY".to_string(),
                 required: true,
             }],
+            package_args: vec![],
             keyfile_path: None,
             config: serde_json::json!({}),
             oauth_token: None,
@@ -294,6 +319,7 @@ mod tests {
             transport: McpTransport::Http,
             auth_type: McpAuthType::Keyfile,
             env_vars: vec![],
+            package_args: vec![],
             keyfile_path: Some(PathBuf::from("/path/to/keyfile")),
             config: serde_json::json!({"key": "value"}),
             oauth_token: None,

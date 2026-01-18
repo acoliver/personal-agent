@@ -1,4 +1,5 @@
 //! Simple test view to debug `NSStackView` layout
+#![allow(unsafe_code)]
 
 use objc2::rc::Retained;
 use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
@@ -10,6 +11,7 @@ use objc2_app_kit::{
 use objc2_core_graphics::CGColor;
 use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 
+#[allow(dead_code)]
 pub struct SimpleTestIvars;
 
 define_class!(
@@ -21,135 +23,154 @@ define_class!(
 
     unsafe impl NSObjectProtocol for SimpleTestViewController {}
 
+    #[allow(dead_code)]
+    #[allow(clippy::unused_self)]
     impl SimpleTestViewController {
         #[unsafe(method(loadView))]
         fn load_view(&self) {
             let mtm = MainThreadMarker::new().unwrap();
+            self.log_layout_header();
 
-            println!("
-=== SimpleTestViewController with NSStackView ===
-");
-
-            // ================================================================
-            // ROOT VIEW (400x500)
-            // ================================================================
-            let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(400.0, 500.0));
-            let root_view = NSView::initWithFrame(NSView::alloc(mtm), frame);
-            root_view.setWantsLayer(true);
-            if let Some(layer) = root_view.layer() {
-                let color = CGColor::new_generic_rgb(0.05, 0.05, 0.05, 1.0);
-                layer.setBackgroundColor(Some(&color));
-            }
-
-            // ================================================================
-            // MAIN VERTICAL STACK
-            // ================================================================
-            /*
-            -------MainStack (vertical)------------------
-            | ----TopBar (horizontal)------------------ |
-            | | [Title Label]           [Settings Btn] | |
-            | ----------------------------------------- |
-            | ----ChatArea (scroll view)-------------- |
-            | |                                       | |
-            | |  (messages go here)                   | |
-            | |                                       | |
-            | ----------------------------------------- |
-            | ----InputBar (horizontal)--------------- |
-            | | [Text Field]              [Send Btn]  | |
-            | ----------------------------------------- |
-            ---------------------------------------------
-            */
-
-            let main_stack = NSStackView::new(mtm);
-            main_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-            main_stack.setSpacing(0.0);
-            main_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
-            main_stack.setDistribution(NSStackViewDistribution::Fill);
-
-            // ================================================================
-            // TOP BAR (height ~44)
-            // ================================================================
+            let root_view = self.build_root_view(mtm);
+            let main_stack = Self::build_main_stack(mtm);
             let top_bar = self.build_top_bar(mtm);
-
-            // ================================================================
-            // CHAT AREA (flexible height - should expand)
-            // ================================================================
             let chat_area = self.build_chat_area(mtm);
-
-            // ================================================================
-            // INPUT BAR (height ~50)
-            // ================================================================
             let input_bar = self.build_input_bar(mtm);
 
-            // ================================================================
-            // ADD TO STACK WITH PRIORITIES
-            // ================================================================
-            // High hugging = wants to stay small
-            // Low hugging = willing to expand
-
-            top_bar.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
-            chat_area.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Vertical);
-            input_bar.setContentHuggingPriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
-
-            // Compression resistance - how much it resists being squished
-            top_bar.setContentCompressionResistancePriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
-            chat_area.setContentCompressionResistancePriority_forOrientation(250.0, NSLayoutConstraintOrientation::Vertical);
-            input_bar.setContentCompressionResistancePriority_forOrientation(750.0, NSLayoutConstraintOrientation::Vertical);
-
-            main_stack.addArrangedSubview(&top_bar);
-            main_stack.addArrangedSubview(&chat_area);
-            main_stack.addArrangedSubview(&input_bar);
-
-            root_view.addSubview(&main_stack);
-
-            // ================================================================
-            // CONSTRAIN STACK TO FILL ROOT VIEW
-            // ================================================================
-            let leading = main_stack.leadingAnchor().constraintEqualToAnchor(&root_view.leadingAnchor());
-            let trailing = main_stack.trailingAnchor().constraintEqualToAnchor(&root_view.trailingAnchor());
-            let top = main_stack.topAnchor().constraintEqualToAnchor(&root_view.topAnchor());
-            let bottom = main_stack.bottomAnchor().constraintEqualToAnchor(&root_view.bottomAnchor());
-
-            leading.setActive(true);
-            trailing.setActive(true);
-            top.setActive(true);
-            bottom.setActive(true);
-
-            // ================================================================
-            // HEIGHT CONSTRAINTS FOR FIXED-HEIGHT ITEMS
-            // ================================================================
-            let top_height = top_bar.heightAnchor().constraintEqualToConstant(44.0);
-            top_height.setActive(true);
-
-            let input_height = input_bar.heightAnchor().constraintEqualToConstant(50.0);
-            input_height.setActive(true);
-
-            // Chat area needs minimum height constraint
-            let chat_min_height = chat_area.heightAnchor().constraintGreaterThanOrEqualToConstant(100.0);
-            chat_min_height.setActive(true);
+            Self::configure_layout(&root_view, &main_stack, &top_bar, &chat_area, &input_bar);
 
             self.setView(&root_view);
-
-            // Force layout
             root_view.layoutSubtreeIfNeeded();
 
-            println!("root_view frame: {:?}", root_view.frame());
-            println!("main_stack frame: {:?}", main_stack.frame());
-            println!("top_bar frame: {:?}", top_bar.frame());
-            println!("chat_area frame: {:?}", chat_area.frame());
-            println!("input_bar frame: {:?}", input_bar.frame());
-            println!("
-=== End Layout Debug ===
-");
+            self.log_layout(&root_view, &main_stack, &top_bar, &chat_area, &input_bar);
         }
     }
 );
 
 impl SimpleTestViewController {
+    #[allow(dead_code)]
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         unsafe { msg_send![Self::alloc(mtm), init] }
     }
 
+    #[allow(clippy::unused_self)]
+    fn log_layout_header(&self) {
+        println!(
+            "
+=== SimpleTestViewController with NSStackView ===
+"
+        );
+    }
+
+    #[allow(clippy::unused_self)]
+    fn build_root_view(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(400.0, 500.0));
+        let root_view = NSView::initWithFrame(NSView::alloc(mtm), frame);
+        root_view.setWantsLayer(true);
+        if let Some(layer) = root_view.layer() {
+            let color = CGColor::new_generic_rgb(0.05, 0.05, 0.05, 1.0);
+            layer.setBackgroundColor(Some(&color));
+        }
+        root_view
+    }
+
+    fn build_main_stack(mtm: MainThreadMarker) -> Retained<NSStackView> {
+        let main_stack = NSStackView::new(mtm);
+        main_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+        main_stack.setSpacing(0.0);
+        main_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
+        main_stack.setDistribution(NSStackViewDistribution::Fill);
+        main_stack
+    }
+
+    fn configure_layout(
+        root_view: &NSView,
+        main_stack: &NSStackView,
+        top_bar: &NSStackView,
+        chat_area: &NSScrollView,
+        input_bar: &NSStackView,
+    ) {
+        top_bar.setContentHuggingPriority_forOrientation(
+            750.0,
+            NSLayoutConstraintOrientation::Vertical,
+        );
+        chat_area
+            .setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Vertical);
+        input_bar.setContentHuggingPriority_forOrientation(
+            750.0,
+            NSLayoutConstraintOrientation::Vertical,
+        );
+
+        top_bar.setContentCompressionResistancePriority_forOrientation(
+            750.0,
+            NSLayoutConstraintOrientation::Vertical,
+        );
+        chat_area.setContentCompressionResistancePriority_forOrientation(
+            250.0,
+            NSLayoutConstraintOrientation::Vertical,
+        );
+        input_bar.setContentCompressionResistancePriority_forOrientation(
+            750.0,
+            NSLayoutConstraintOrientation::Vertical,
+        );
+
+        main_stack.addArrangedSubview(top_bar);
+        main_stack.addArrangedSubview(chat_area);
+        main_stack.addArrangedSubview(input_bar);
+        root_view.addSubview(main_stack);
+
+        let leading = main_stack
+            .leadingAnchor()
+            .constraintEqualToAnchor(&root_view.leadingAnchor());
+        let trailing = main_stack
+            .trailingAnchor()
+            .constraintEqualToAnchor(&root_view.trailingAnchor());
+        let top = main_stack
+            .topAnchor()
+            .constraintEqualToAnchor(&root_view.topAnchor());
+        let bottom = main_stack
+            .bottomAnchor()
+            .constraintEqualToAnchor(&root_view.bottomAnchor());
+
+        leading.setActive(true);
+        trailing.setActive(true);
+        top.setActive(true);
+        bottom.setActive(true);
+
+        let top_height = top_bar.heightAnchor().constraintEqualToConstant(44.0);
+        top_height.setActive(true);
+
+        let input_height = input_bar.heightAnchor().constraintEqualToConstant(50.0);
+        input_height.setActive(true);
+
+        let chat_min_height = chat_area
+            .heightAnchor()
+            .constraintGreaterThanOrEqualToConstant(100.0);
+        chat_min_height.setActive(true);
+    }
+
+    #[allow(clippy::unused_self)]
+    fn log_layout(
+        &self,
+        root_view: &NSView,
+        main_stack: &NSStackView,
+        top_bar: &NSStackView,
+        chat_area: &NSScrollView,
+        input_bar: &NSStackView,
+    ) {
+        println!("root_view frame: {:?}", root_view.frame());
+        println!("main_stack frame: {:?}", main_stack.frame());
+        println!("top_bar frame: {:?}", top_bar.frame());
+        println!("chat_area frame: {:?}", chat_area.frame());
+        println!("input_bar frame: {:?}", input_bar.frame());
+        println!(
+            "
+=== End Layout Debug ===
+"
+        );
+    }
+
+    #[allow(clippy::unused_self)]
     fn build_top_bar(&self, mtm: MainThreadMarker) -> Retained<NSStackView> {
         /*
         ----TopBar (horizontal, height=44)--------
@@ -209,6 +230,7 @@ impl SimpleTestViewController {
         stack
     }
 
+    #[allow(clippy::unused_self)]
     fn build_chat_area(&self, mtm: MainThreadMarker) -> Retained<NSScrollView> {
         /*
         ----ChatArea (scroll view, flexible height)----
@@ -256,6 +278,7 @@ impl SimpleTestViewController {
         scroll_view
     }
 
+    #[allow(clippy::unused_self)]
     fn build_input_bar(&self, mtm: MainThreadMarker) -> Retained<NSStackView> {
         /*
         ----InputBar (horizontal, height=50)------

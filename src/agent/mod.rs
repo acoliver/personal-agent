@@ -1,11 +1,11 @@
-//! Agent module for PersonalAgent.
+//! Agent module for `PersonalAgent`.
 //!
-//! This module provides the main PersonalAgent struct that wraps SerdesAI's Agent
+//! This module provides the main `PersonalAgent` struct that wraps `SerdesAI`'s Agent
 //! with our application-specific configuration and MCP toolsets.
 //!
 //! # Architecture
 //! - `runtime.rs`: Global tokio runtime that persists for application lifetime
-//! - `mod.rs` (this file): PersonalAgent wrapper and global singleton
+//! - `mod.rs` (this file): `PersonalAgent` wrapper and global singleton
 //!
 //! # Global Runtime Pattern
 //! Instead of creating temporary runtimes that get dropped, we use a single
@@ -39,9 +39,9 @@ pub enum AgentError {
     BuildError(String),
 }
 
-/// PersonalAgent wraps SerdesAI's Agent with application-specific configuration.
+/// `PersonalAgent` wraps `SerdesAI`'s Agent with application-specific configuration.
 ///
-/// This is a placeholder implementation until SerdesAI PR #5 (McpToolset support)
+/// This is a placeholder implementation until `SerdesAI` PR #5 (`McpToolset` support)
 /// is merged. Once available, this will construct a full Agent with MCP toolsets.
 pub struct PersonalAgent {
     // For now, just track tool count since we don't have full SerdesAI integration
@@ -49,14 +49,15 @@ pub struct PersonalAgent {
 }
 
 impl PersonalAgent {
-    /// Create a new PersonalAgent with the given profile and MCP configurations.
+    /// Create a new `PersonalAgent` with the given profile and MCP configurations.
     ///
-    /// Currently a placeholder that just counts enabled MCPs. Once SerdesAI PR #5
-    /// is merged, this will create McpToolsets and build a full Agent.
-    pub async fn new(
-        _profile: &ModelProfile,
-        mcp_configs: &[McpConfig],
-    ) -> Result<Self, AgentError> {
+    /// Currently a placeholder that just counts enabled MCPs. Once `SerdesAI` PR #5
+    /// is merged, this will create `McpToolsets` and build a full Agent.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AgentError` if agent initialization fails.
+    pub fn new(_profile: &ModelProfile, mcp_configs: &[McpConfig]) -> Result<Self, AgentError> {
         // Count enabled MCPs (placeholder for actual toolset creation)
         let enabled_count = mcp_configs.iter().filter(|c| c.enabled).count();
 
@@ -68,21 +69,22 @@ impl PersonalAgent {
     }
 
     /// Get the number of tools available to this agent.
-    pub fn tool_count(&self) -> usize {
+    #[must_use]
+    pub const fn tool_count(&self) -> usize {
         self.tool_count
     }
 }
 
 /// Global agent singleton.
 ///
-/// Uses OnceCell to ensure thread-safe initialization and RwLock for
+/// Uses `OnceCell` to ensure thread-safe initialization and `RwLock` for
 /// concurrent read access with exclusive write access when updating.
 static GLOBAL_AGENT: once_cell::sync::OnceCell<tokio::sync::RwLock<Option<PersonalAgent>>> =
     once_cell::sync::OnceCell::new();
 
 /// Get the global agent lock.
 ///
-/// Returns a reference to the RwLock containing the optional PersonalAgent.
+/// Returns a reference to the `RwLock` containing the optional `PersonalAgent`.
 /// Use `.read().await` for concurrent access or `.write().await` to update.
 pub fn global_agent() -> &'static tokio::sync::RwLock<Option<PersonalAgent>> {
     GLOBAL_AGENT.get_or_init(|| tokio::sync::RwLock::new(None))
@@ -97,13 +99,19 @@ pub fn global_agent() -> &'static tokio::sync::RwLock<Option<PersonalAgent>> {
 /// ```ignore
 /// init_global_agent(&profile, &mcp_configs).await?;
 /// ```
+///
+/// # Errors
+///
+/// Returns `AgentError` if agent initialization fails.
 pub async fn init_global_agent(
     profile: &ModelProfile,
     mcp_configs: &[McpConfig],
 ) -> Result<(), AgentError> {
-    let agent = PersonalAgent::new(profile, mcp_configs).await?;
-    let mut lock = global_agent().write().await;
-    *lock = Some(agent);
+    let agent = PersonalAgent::new(profile, mcp_configs)?;
+    {
+        let mut lock = global_agent().write().await;
+        *lock = Some(agent);
+    }
     Ok(())
 }
 
@@ -114,7 +122,7 @@ mod tests {
     #[tokio::test]
     async fn test_agent_creation_no_mcps() {
         let profile = ModelProfile::default();
-        let agent = PersonalAgent::new(&profile, &[]).await.unwrap();
+        let agent = PersonalAgent::new(&profile, &[]).unwrap();
         assert!(agent.tool_count() == 0);
     }
 
@@ -137,12 +145,13 @@ mod tests {
             transport: crate::mcp::McpTransport::Stdio,
             auth_type: crate::mcp::McpAuthType::None,
             env_vars: vec![],
+            package_args: vec![],
             keyfile_path: None,
             config: serde_json::json!({}),
             oauth_token: None,
         };
 
-        let agent = PersonalAgent::new(&profile, &[config]).await.unwrap();
+        let agent = PersonalAgent::new(&profile, &[config]).unwrap();
         // Disabled MCPs should not create toolsets
         assert!(agent.tool_count() == 0);
     }
@@ -154,7 +163,7 @@ mod tests {
 
         let agent = Arc::new(run_in_agent_runtime(async {
             let profile = ModelProfile::default();
-            PersonalAgent::new(&profile, &[]).await.unwrap()
+            PersonalAgent::new(&profile, &[]).unwrap()
         }));
 
         let handles: Vec<_> = (0..5)

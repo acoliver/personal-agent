@@ -3,7 +3,7 @@
 //! Phase 0: Minimal viable menu bar app
 //! - Menu bar icon using tray-icon
 //! - Empty egui panel (400x500px, dark background)
-//! - Panel opens on tray icon click using native NSPopover
+//! - Panel opens on tray icon click using native `NSPopover`
 //! - Quit option in tray menu
 
 use eframe::egui;
@@ -24,7 +24,7 @@ const PANEL_HEIGHT: f32 = 500.0;
 /// Main application state
 #[derive(Default)]
 struct PersonalAgentApp {
-    _tray_icon: Option<TrayIcon>,
+    tray_icon: Option<TrayIcon>,
 }
 
 impl PersonalAgentApp {
@@ -37,21 +37,19 @@ impl PersonalAgentApp {
         }
 
         Self {
-            _tray_icon: tray_icon_result.ok(),
+            tray_icon: tray_icon_result.ok(),
         }
     }
 
     #[cfg(test)]
     fn with_tray_icon(tray_icon: Option<TrayIcon>) -> Self {
-        Self {
-            _tray_icon: tray_icon,
-        }
+        Self { tray_icon }
     }
 }
 
 impl eframe::App for PersonalAgentApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        Self::handle_tray_events(ctx, &self._tray_icon);
+        Self::handle_tray_events(ctx, self.tray_icon.as_ref());
         Self::handle_menu_events(ctx);
         Self::render_ui(ctx);
     }
@@ -59,7 +57,7 @@ impl eframe::App for PersonalAgentApp {
 
 impl PersonalAgentApp {
     /// Handle tray icon click events - shows and focuses the window, positioned below the icon
-    fn handle_tray_events(ctx: &egui::Context, _tray_icon: &Option<TrayIcon>) {
+    fn handle_tray_events(ctx: &egui::Context, _tray_icon: Option<&TrayIcon>) {
         if let Ok(TrayIconEvent::Click {
             rect,
             id,
@@ -76,9 +74,11 @@ impl PersonalAgentApp {
                 button_state
             );
 
-            // Use the rect field which contains screen coordinates
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
             let icon_x = rect.position.x as f32;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
             let icon_y = rect.position.y as f32;
+            #[allow(clippy::cast_precision_loss)]
             let icon_height = rect.size.height as f32;
 
             tracing::info!(
@@ -89,6 +89,7 @@ impl PersonalAgentApp {
             );
 
             // Position window directly below the icon (centered)
+            #[allow(clippy::cast_precision_loss)]
             let window_x = icon_x - (PANEL_WIDTH / 2.0) + (rect.size.width as f32 / 2.0);
             let window_y = icon_y + icon_height;
 
@@ -251,7 +252,7 @@ mod tests {
     fn test_app_default() {
         let app = PersonalAgentApp::default();
         assert!(
-            app._tray_icon.is_none(),
+            app.tray_icon.is_none(),
             "Default app should have no tray icon"
         );
     }
@@ -259,11 +260,11 @@ mod tests {
     #[test]
     fn test_app_with_tray_icon() {
         let app = PersonalAgentApp::with_tray_icon(None);
-        assert!(app._tray_icon.is_none());
+        assert!(app.tray_icon.is_none());
 
         // We can't create a real tray icon in tests, but we can test the structure
         let app_some = PersonalAgentApp::with_tray_icon(None);
-        assert!(app_some._tray_icon.is_none());
+        assert!(app_some.tray_icon.is_none());
     }
 
     #[test]
@@ -428,8 +429,8 @@ mod tests {
     fn test_app_structure() {
         let app1 = PersonalAgentApp::default();
         let app2 = PersonalAgentApp::with_tray_icon(None);
-        assert!(app1._tray_icon.is_none());
-        assert!(app2._tray_icon.is_none());
+        assert!(app1.tray_icon.is_none());
+        assert!(app2.tray_icon.is_none());
     }
 
     #[test]
@@ -631,11 +632,11 @@ mod tests {
     fn test_app_initialization_flow() {
         // Test app can be created with default
         let app1 = PersonalAgentApp::default();
-        assert!(app1._tray_icon.is_none());
+        assert!(app1.tray_icon.is_none());
 
         // Test app can be created with test constructor
         let app2 = PersonalAgentApp::with_tray_icon(None);
-        assert!(app2._tray_icon.is_none());
+        assert!(app2.tray_icon.is_none());
     }
 
     #[test]

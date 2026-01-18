@@ -6,7 +6,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::mcp::toolset;
-use crate::mcp::{McpAuthType, McpConfig, McpPackageType, SecretsManager};
+use crate::mcp::{McpConfig, SecretsManager};
 
 #[derive(Debug, Error)]
 pub enum McpError {
@@ -28,8 +28,6 @@ pub type McpResult<T> = Result<T, McpError>;
 
 /// Information about an active MCP server
 struct ActiveMcp {
-    config: McpConfig,
-    started_at: Instant,
     last_used: Instant,
     restart_count: u32,
 }
@@ -39,58 +37,56 @@ pub struct McpManager {
     secrets: SecretsManager,
     active: HashMap<Uuid, ActiveMcp>,
     idle_timeout: Duration,
-    max_restart_attempts: u32,
 }
 
 impl McpManager {
+    #[must_use]
     pub fn new(secrets: SecretsManager) -> Self {
         Self {
             secrets,
             active: HashMap::new(),
             idle_timeout: Duration::from_secs(30 * 60), // 30 minutes
-            max_restart_attempts: 3,
         }
     }
 
+    #[must_use]
     pub fn with_idle_timeout(secrets: SecretsManager, timeout: Duration) -> Self {
         Self {
             secrets,
             active: HashMap::new(),
             idle_timeout: timeout,
-            max_restart_attempts: 3,
-        }
-    }
-
-    pub fn with_max_restarts(secrets: SecretsManager, max_restarts: u32) -> Self {
-        Self {
-            secrets,
-            active: HashMap::new(),
-            idle_timeout: Duration::from_secs(30 * 60),
-            max_restart_attempts: max_restarts,
         }
     }
 
     /// Build environment variables for an MCP based on its auth config
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError` if secrets cannot be loaded.
     pub fn build_env(&self, config: &McpConfig) -> McpResult<HashMap<String, String>> {
         toolset::build_env_for_config(config, &self.secrets)
     }
 
     /// Build the command and arguments for an MCP based on its package type
+    #[must_use]
     pub fn build_command(config: &McpConfig) -> (String, Vec<String>) {
         toolset::build_command(config)
     }
 
     /// Check if an MCP is currently active
+    #[must_use]
     pub fn is_active(&self, id: &Uuid) -> bool {
         self.active.contains_key(id)
     }
 
     /// Get count of active MCPs
+    #[must_use]
     pub fn active_count(&self) -> usize {
         self.active.len()
     }
 
     /// Get the last used time for an MCP
+    #[must_use]
     pub fn get_last_used(&self, id: &Uuid) -> Option<Instant> {
         self.active.get(id).map(|a| a.last_used)
     }
@@ -103,18 +99,17 @@ impl McpManager {
     }
 
     /// Get restart count for an MCP
+    #[must_use]
     pub fn get_restart_count(&self, id: &Uuid) -> u32 {
-        self.active.get(id).map(|a| a.restart_count).unwrap_or(0)
+        self.active.get(id).map_or(0, |a| a.restart_count)
     }
 
     /// Register an MCP as active (for tracking purposes)
-    pub fn register_active(&mut self, config: McpConfig) {
+    pub fn register_active(&mut self, config: &McpConfig) {
         let now = Instant::now();
         self.active.insert(
             config.id,
             ActiveMcp {
-                config,
-                started_at: now,
                 last_used: now,
                 restart_count: 0,
             },
@@ -122,12 +117,20 @@ impl McpManager {
     }
 
     /// Stop an MCP
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError` if shutdown fails.
     pub fn stop(&mut self, id: &Uuid) -> McpResult<()> {
         self.active.remove(id);
         Ok(())
     }
 
     /// Shutdown all MCPs
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError` if shutdown fails.
     pub fn shutdown_all(&mut self) -> McpResult<()> {
         self.active.clear();
         Ok(())
@@ -149,6 +152,10 @@ impl McpManager {
     }
 
     /// Handle config change (e.g., MCP disabled)
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError` if shutdown fails.
     pub fn handle_config_change(&mut self, config: &McpConfig) -> McpResult<()> {
         if !config.enabled && self.is_active(&config.id) {
             self.stop(&config.id)?;
@@ -157,6 +164,10 @@ impl McpManager {
     }
 
     /// Delete an MCP (stop + delete credentials)
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError` if credentials cannot be removed.
     pub fn delete_mcp(&mut self, config: &McpConfig) -> McpResult<()> {
         self.stop(&config.id)?;
         self.secrets.delete_api_key(config.id)?;
@@ -167,7 +178,9 @@ impl McpManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::{EnvVarConfig, McpPackage, McpSource, McpTransport};
+    use crate::mcp::{
+        EnvVarConfig, McpAuthType, McpPackage, McpPackageType, McpSource, McpTransport,
+    };
     use tempfile::TempDir;
 
     fn create_test_config() -> McpConfig {
@@ -189,6 +202,7 @@ mod tests {
                 name: "TEST_API_KEY".to_string(),
                 required: true,
             }],
+            package_args: vec![],
             keyfile_path: None,
             config: serde_json::json!({}),
             oauth_token: None,
@@ -207,7 +221,6 @@ mod tests {
 
         assert_eq!(manager.active_count(), 0);
         assert_eq!(manager.idle_timeout, Duration::from_secs(30 * 60));
-        assert_eq!(manager.max_restart_attempts, 3);
     }
 
     #[test]
@@ -220,20 +233,35 @@ mod tests {
     }
 
     #[test]
-    fn test_with_max_restarts() {
-        let secrets = create_secrets_manager();
-        let manager = McpManager::with_max_restarts(secrets, 5);
-
-        assert_eq!(manager.max_restart_attempts, 5);
-    }
-
-    #[test]
     fn test_build_command_npm() {
         let config = create_test_config();
         let (cmd, args) = McpManager::build_command(&config);
 
         assert_eq!(cmd, "npx");
         assert_eq!(args, vec!["-y", "@test/mcp"]);
+    }
+
+    #[test]
+    fn test_build_command_with_package_args() {
+        let mut config = create_test_config();
+        config.package_args = vec![crate::mcp::McpPackageArg {
+            arg_type: crate::mcp::McpPackageArgType::Named,
+            name: "allowed-directories".to_string(),
+            description: None,
+            required: true,
+            default: None,
+        }];
+        config.config = serde_json::json!({
+            "package_args": {
+                "allowed-directories": "/tmp, /var"
+            }
+        });
+
+        let (cmd, args) = McpManager::build_command(&config);
+        assert_eq!(cmd, "npx");
+        assert!(args.contains(&"--allowed-directories".to_string()));
+        assert!(args.contains(&"/tmp".to_string()));
+        assert!(args.contains(&"/var".to_string()));
     }
 
     #[test]
@@ -374,7 +402,7 @@ mod tests {
 
         assert!(!manager.is_active(&id));
 
-        manager.register_active(config);
+        manager.register_active(&config);
 
         assert!(manager.is_active(&id));
         assert_eq!(manager.active_count(), 1);
@@ -388,7 +416,7 @@ mod tests {
         let config = create_test_config();
         let id = config.id;
 
-        manager.register_active(config);
+        manager.register_active(&config);
 
         let first_time = manager.get_last_used(&id).unwrap();
         std::thread::sleep(Duration::from_millis(10));
@@ -409,7 +437,7 @@ mod tests {
 
         assert_eq!(manager.get_restart_count(&id), 0);
 
-        manager.register_active(config);
+        manager.register_active(&config);
         assert_eq!(manager.get_restart_count(&id), 0);
     }
 
@@ -421,7 +449,7 @@ mod tests {
         let config = create_test_config();
         let id = config.id;
 
-        manager.register_active(config);
+        manager.register_active(&config);
         assert!(manager.is_active(&id));
 
         manager.stop(&id).unwrap();
@@ -437,8 +465,8 @@ mod tests {
         let config1 = create_test_config();
         let config2 = create_test_config();
 
-        manager.register_active(config1);
-        manager.register_active(config2);
+        manager.register_active(&config1);
+        manager.register_active(&config2);
 
         assert_eq!(manager.active_count(), 2);
 
@@ -458,8 +486,8 @@ mod tests {
         let id1 = config1.id;
         let id2 = config2.id;
 
-        manager.register_active(config1);
-        manager.register_active(config2);
+        manager.register_active(&config1);
+        manager.register_active(&config2);
 
         std::thread::sleep(Duration::from_millis(60));
 
@@ -480,7 +508,7 @@ mod tests {
         let mut config = create_test_config();
         let id = config.id;
 
-        manager.register_active(config.clone());
+        manager.register_active(&config);
         assert!(manager.is_active(&id));
 
         config.enabled = false;
@@ -515,7 +543,7 @@ mod tests {
         secrets.store_api_key(id, "test-key").unwrap();
 
         let mut manager = McpManager::new(secrets);
-        manager.register_active(config.clone());
+        manager.register_active(&config);
 
         assert!(manager.is_active(&id));
 

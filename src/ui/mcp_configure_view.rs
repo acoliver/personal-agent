@@ -1,4 +1,27 @@
 //! Configure MCP view - set name, auth, etc.
+#![allow(unsafe_code)]
+#![allow(unused_unsafe)]
+#![allow(clippy::redundant_clone)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::assigning_clones)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::option_map_or_none)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::map_unwrap_or)]
+#![allow(clippy::explicit_iter_loop)]
+#![allow(clippy::single_char_pattern)]
+#![allow(clippy::manual_let_else)]
+#![allow(clippy::match_wildcard_for_single_variants)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::if_then_some_else_none)]
+#![allow(clippy::ref_option)]
+#![allow(clippy::unused_self)]
+#![allow(clippy::double_ended_iterator_last)]
+#![allow(clippy::if_not_else)]
+#![allow(clippy::single_match_else)]
 
 use std::cell::RefCell;
 use std::fs::OpenOptions;
@@ -17,15 +40,21 @@ use objc2_foundation::{NSEdgeInsets, NSObjectProtocol, NSPoint, NSRect, NSSize, 
 
 use crate::ui::Theme;
 use personal_agent::config::Config;
-use personal_agent::mcp::secrets::SecretsManager;
-use personal_agent::mcp::{
-    EnvVarConfig, McpAuthType, McpConfig, McpPackage, McpPackageType, McpSource, McpTransport,
+use personal_agent::mcp::{McpAuthType, McpConfig, McpSource, SecretsManager};
+
+use super::mcp_configure_helpers::{
+    build_auth_section, build_env_values, build_env_var_fields, build_form_stack,
+    build_manual_mcp_config, build_oauth_section, build_package_arg_values,
+    build_package_args_fields, form_default_name, merge_config_values, parse_manual_auth_inputs,
+    save_oauth_token, validate_required_env_vars, validate_required_package_args,
 };
+
 use uuid::Uuid;
 
-use super::mcp_add_view::{ParsedMcp, PARSED_MCP, SELECTED_MCP_CONFIG};
+use super::mcp_add_view::{PARSED_MCP, SELECTED_MCP_CONFIG};
+use crate::ui::mcp_add_helpers::ParsedMcp;
 
-fn log_to_file(message: &str) {
+pub(super) fn log_to_file(message: &str) {
     let log_path = dirs::home_dir()
         .unwrap_or_default()
         .join("Library/Application Support/PersonalAgent/debug.log");
@@ -37,17 +66,18 @@ fn log_to_file(message: &str) {
 }
 
 pub struct McpConfigureViewIvars {
-    parsed_mcp: RefCell<Option<ParsedMcp>>,
-    selected_config: RefCell<Option<McpConfig>>,
-    name_input: RefCell<Option<Retained<NSTextField>>>,
-    auth_type_popup: RefCell<Option<Retained<NSPopUpButton>>>,
-    api_key_input: RefCell<Option<Retained<NSTextField>>>,
-    keyfile_input: RefCell<Option<Retained<NSTextField>>>,
-    form_stack: RefCell<Option<Retained<super::FlippedStackView>>>,
-    env_var_inputs: RefCell<Vec<(String, Retained<NSTextField>)>>,
-    auth_section: RefCell<Option<Retained<NSView>>>,
-    oauth_button: RefCell<Option<Retained<NSButton>>>,
-    oauth_status_label: RefCell<Option<Retained<NSTextField>>>,
+    pub(super) parsed_mcp: RefCell<Option<ParsedMcp>>,
+    pub(super) selected_config: RefCell<Option<McpConfig>>,
+    pub(super) name_input: RefCell<Option<Retained<NSTextField>>>,
+    pub(super) auth_type_popup: RefCell<Option<Retained<NSPopUpButton>>>,
+    pub(super) api_key_input: RefCell<Option<Retained<NSTextField>>>,
+    pub(super) keyfile_input: RefCell<Option<Retained<NSTextField>>>,
+    pub(super) form_stack: RefCell<Option<Retained<super::FlippedStackView>>>,
+    pub(super) env_var_inputs: RefCell<Vec<(String, Retained<NSTextField>)>>,
+    pub(super) package_arg_inputs: RefCell<Vec<(String, Retained<NSTextField>)>>,
+    pub(super) auth_section: RefCell<Option<Retained<NSView>>>,
+    pub(super) oauth_button: RefCell<Option<Retained<NSButton>>>,
+    pub(super) oauth_status_label: RefCell<Option<Retained<NSTextField>>>,
 }
 
 define_class!(
@@ -164,106 +194,58 @@ define_class!(
         fn save_clicked(&self, _sender: Option<&NSObject>) {
             log_to_file("Save clicked");
 
-            // Validate and get name
-            let name = if let Some(field) = &*self.ivars().name_input.borrow() {
-                field.stringValue().to_string().trim().to_string()
-            } else {
-                String::new()
-            };
-
+            let name = self.read_name_value();
             if name.is_empty() {
                 log_to_file("ERROR: Name is empty");
                 self.show_error("Validation Error", "MCP name is required");
                 return;
             }
 
-            // Get default secrets directory
-            let secrets_dir = dirs::home_dir()
-                .unwrap_or_default()
-                .join("Library/Application Support/PersonalAgent/secrets");
-            let secrets_manager = SecretsManager::new(secrets_dir);
-
-            // Build MCP config - either from selected registry config or parsed manual entry
+            let secrets_manager = self.create_secrets_manager();
             let mcp_config = if let Some(base_config) = &*self.ivars().selected_config.borrow() {
                 log_to_file("Building from selected registry config");
-
-                // Clone and update with user input
                 let mut config = base_config.clone();
-                config.name = name; // User may have edited the name
+                config.name = name;
 
-                // Collect env var values from dynamic fields
-                let mut env_values = std::collections::HashMap::new();
-                for (var_name, field) in self.ivars().env_var_inputs.borrow().iter() {
-                    let value = field.stringValue().to_string().trim().to_string();
-                    if !value.is_empty() {
-                        env_values.insert(var_name.clone(), value.clone());
-
-                        // Store secrets
-                        let var_name_lower = var_name.to_lowercase();
-                        let is_secret = var_name_lower.contains("key")
-                            || var_name_lower.contains("secret")
-                            || var_name_lower.contains("token")
-                            || var_name_lower.contains("password")
-                            || var_name_lower.contains("pat");
-
-                        if is_secret {
-                            log_to_file(&format!("Storing secret for {}", var_name));
-                            if let Err(e) = secrets_manager.store_api_key_named(config.id, var_name, &value) {
-                                log_to_file(&format!("ERROR: Failed to store secret {}: {}", var_name, e));
-                                self.show_error("Failed to store secret", &format!("{}: {}", var_name, e));
-                                return;
-                            }
-                        }
-                    }
-                }
-
-                // Validate required env vars
-                for env_var in &config.env_vars {
-                    if env_var.required && !env_values.contains_key(&env_var.name) {
-                        log_to_file(&format!("ERROR: Required env var missing: {}", env_var.name));
-                        self.show_error("Validation Error", &format!("Required field '{}' is empty", env_var.name));
+                let env_values = match build_env_values(
+                    &self.ivars().env_var_inputs.borrow(),
+                    &secrets_manager,
+                    config.id,
+                ) {
+                    Ok(values) => values,
+                    Err(err) => {
+                        log_to_file(&format!("ERROR: {err}"));
+                        self.show_error("Failed to store secret", &err);
                         return;
                     }
+                };
+
+                let package_arg_values = build_package_arg_values(&self.ivars().package_arg_inputs.borrow());
+
+                if let Some(missing) = validate_required_env_vars(&config.env_vars, &env_values) {
+                    log_to_file(&format!("ERROR: Required env var missing: {missing}"));
+                    self.show_error(
+                        "Validation Error",
+                        &format!("Required field '{missing}' is empty"),
+                    );
+                    return;
                 }
 
-                // Store env values in config.config JSON
-                config.config = serde_json::to_value(&env_values).unwrap_or_default();
+                if let Some(missing) =
+                    validate_required_package_args(&config.package_args, &package_arg_values)
+                {
+                    log_to_file(&format!("ERROR: Required package arg missing: {missing}"));
+                    self.show_error(
+                        "Validation Error",
+                        &format!("Required field '{missing}' is empty"),
+                    );
+                    return;
+                }
 
+                merge_config_values(&mut config, &env_values, &package_arg_values);
                 config
             } else {
                 log_to_file("Building from manual parsed MCP");
-
-                // Get auth type from popup
-                let auth_type = if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
-                    let index = popup.indexOfSelectedItem();
-                    match index {
-                        0 => McpAuthType::ApiKey,
-                        1 => McpAuthType::Keyfile,
-                        _ => McpAuthType::None,
-                    }
-                } else {
-                    McpAuthType::None
-                };
-
-                // Get auth values
-                let api_key = if let Some(field) = &*self.ivars().api_key_input.borrow() {
-                    field.stringValue().to_string().trim().to_string()
-                } else {
-                    String::new()
-                };
-
-                let keyfile_path = if let Some(field) = &*self.ivars().keyfile_input.borrow() {
-                    let path_str = field.stringValue().to_string().trim().to_string();
-                    if path_str.is_empty() {
-                        None
-                    } else {
-                        Some(std::path::PathBuf::from(path_str))
-                    }
-                } else {
-                    None
-                };
-
-                // Build MCP config from parsed data
                 let parsed = self.ivars().parsed_mcp.borrow();
                 let Some(ref parsed) = *parsed else {
                     log_to_file("ERROR: No parsed MCP data and no selected config");
@@ -271,122 +253,34 @@ define_class!(
                     return;
                 };
 
-                let (package, source) = match parsed {
-                    ParsedMcp::Npm { identifier, runtime_hint } => {
-                        let package = McpPackage {
-                            package_type: McpPackageType::Npm,
-                            identifier: identifier.clone(),
-                            runtime_hint: Some(runtime_hint.clone()),
-                        };
-                        let source = McpSource::Manual {
-                            url: format!("npx {}", identifier),
-                        };
-                        (package, source)
-                    }
-                    ParsedMcp::Docker { image } => {
-                        let package = McpPackage {
-                            package_type: McpPackageType::Docker,
-                            identifier: image.clone(),
-                            runtime_hint: None,
-                        };
-                        let source = McpSource::Manual {
-                            url: format!("docker run {}", image),
-                        };
-                        (package, source)
-                    }
-                    ParsedMcp::Http { url } => {
-                        let package = McpPackage {
-                            package_type: McpPackageType::Http,
-                            identifier: url.clone(),
-                            runtime_hint: None,
-                        };
-                        let source = McpSource::Manual {
-                            url: url.clone(),
-                        };
-                        (package, source)
-                    }
-                };
+                let auth_inputs = parse_manual_auth_inputs(
+                    self.ivars().auth_type_popup.borrow().as_ref(),
+                    self.ivars().api_key_input.borrow().as_ref(),
+                    self.ivars().keyfile_input.borrow().as_ref(),
+                );
 
-                let transport = match package.package_type {
-                    McpPackageType::Http => McpTransport::Http,
-                    _ => McpTransport::Stdio,
-                };
-
-                let mcp_id = Uuid::new_v4();
-
-                // Store API key in secrets if provided
-                if auth_type == McpAuthType::ApiKey && !api_key.is_empty() {
-                    if let Err(e) = secrets_manager.store_api_key(mcp_id, &api_key) {
-                        log_to_file(&format!("ERROR: Failed to store API key: {e}"));
-                        self.show_error("Failed to store API key", &format!("{e}"));
-                        return;
-                    }
-                }
-
-                McpConfig {
-                    id: mcp_id,
-                    name: name.clone(),
-                    enabled: true,
-                    source,
-                    package,
-                    transport,
-                    auth_type: auth_type.clone(),
-                    env_vars: vec![],
-                    keyfile_path: keyfile_path.clone(),
-                    config: serde_json::json!({}),
-                    oauth_token: None,
-                }
+                let mcp_config = build_manual_mcp_config(parsed, name.clone(), auth_inputs);
+                self.save_manual_api_key(&secrets_manager, &mcp_config);
+                mcp_config
             };
 
             log_to_file(&format!("MCP config: {mcp_config:?}"));
-
-            // Save to config
-            let config_path = match Config::default_path() {
-                Ok(path) => path,
-                Err(e) => {
-                    log_to_file(&format!("ERROR: Failed to get config path: {e}"));
-                    return;
-                }
-            };
-
-            let mut config = match Config::load(&config_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    log_to_file(&format!("ERROR: Failed to load config: {e}"));
-                    Config::default()
-                }
-            };
-
-            config.mcps.push(mcp_config);
-
-            if let Err(e) = config.save(&config_path) {
-                log_to_file(&format!("ERROR: Failed to save config: {e}"));
-                self.show_error("Failed to save configuration", &format!("{e}"));
-                return;
-            }
-
-            log_to_file("MCP saved successfully");
-
-            // Go back to settings
-            use objc2_foundation::NSNotificationCenter;
-            let center = NSNotificationCenter::defaultCenter();
-            let name = NSString::from_str("PersonalAgentShowSettingsView");
-            unsafe { center.postNotificationName_object(&name, None); }
+            self.persist_config(mcp_config);
         }
 
         #[unsafe(method(authTypeChanged:))]
         fn auth_type_changed(&self, _sender: Option<&NSObject>) {
             log_to_file("Auth type changed");
-            if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
-                let index = popup.indexOfSelectedItem();
+            let Some(popup) = &*self.ivars().auth_type_popup.borrow() else {
+                return;
+            };
 
-                // Show/hide appropriate auth fields
-                if let Some(api_key_field) = &*self.ivars().api_key_input.borrow() {
-                    api_key_field.setHidden(index != 0);
-                }
-                if let Some(keyfile_field) = &*self.ivars().keyfile_input.borrow() {
-                    keyfile_field.setHidden(index != 1);
-                }
+            let index = popup.indexOfSelectedItem();
+            if let Some(api_key_field) = &*self.ivars().api_key_input.borrow() {
+                api_key_field.setHidden(index != 0);
+            }
+            if let Some(keyfile_field) = &*self.ivars().keyfile_input.borrow() {
+                keyfile_field.setHidden(index != 1);
             }
         }
 
@@ -394,109 +288,28 @@ define_class!(
         fn connect_smithery_clicked(&self, _sender: Option<&NSObject>) {
             log_to_file("Connect with Smithery clicked");
 
-            // Get the selected config
             let selected = self.ivars().selected_config.borrow();
             let Some(config) = selected.as_ref() else {
                 log_to_file("ERROR: No selected config");
                 return;
             };
 
-            // Extract qualified name from package identifier
-            // For Smithery: identifier is like "https://server.smithery.ai/@owner/server-name"
             let qualified_name = if let McpSource::Smithery { qualified_name } = &config.source {
                 qualified_name.clone()
             } else {
-                // Try to extract from package identifier as fallback
-                config.package.identifier
+                config
+                    .package
+                    .identifier
                     .strip_prefix("https://server.smithery.ai/")
                     .unwrap_or(&config.name)
                     .to_string()
             };
 
             let config_id = config.id;
+            log_to_file(&format!("Starting OAuth flow for: {qualified_name}"));
 
-            log_to_file(&format!("Starting OAuth flow for: {}", qualified_name));
-
-            // Update UI to show in-progress state
-            if let Some(status_label) = &*self.ivars().oauth_status_label.borrow() {
-                status_label.setStringValue(&NSString::from_str("Connecting..."));
-            }
-            if let Some(button) = &*self.ivars().oauth_button.borrow() {
-                button.setEnabled(false);
-            }
-
-            // Start OAuth flow in background thread
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
-                    log_to_file("OAuth: Starting callback server");
-
-                    // Start callback server
-                    match personal_agent::mcp::start_oauth_callback_server().await {
-                        Ok((port, receiver)) => {
-                            log_to_file(&format!("OAuth: Callback server started on port {}", port));
-
-                            // Generate OAuth URL
-                            let oauth_config = personal_agent::mcp::SmitheryOAuthConfig {
-                                server_qualified_name: qualified_name.clone(),
-                                redirect_uri: format!("http://localhost:{}", port),
-                            };
-
-                            let oauth_url = personal_agent::mcp::generate_smithery_oauth_url(&oauth_config);
-                            log_to_file(&format!("OAuth: Generated URL: {}", oauth_url));
-
-                            // Open browser
-                            #[cfg(target_os = "macos")]
-                            {
-                                use std::process::Command;
-                                if let Err(e) = Command::new("open").arg(&oauth_url).spawn() {
-                                    log_to_file(&format!("OAuth: Failed to open browser: {}", e));
-                                }
-                            }
-
-                            // Wait for callback (with timeout)
-                            log_to_file("OAuth: Waiting for callback (5 min timeout)");
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(300), // 5 min timeout
-                                receiver
-                            ).await {
-                                Ok(Ok(result)) => {
-                                    if let Some(ref token) = result.token {
-                                        log_to_file(&format!("OAuth: Got token (length: {})", token.len()));
-
-                                        // Save token
-                                        if let Err(e) = save_oauth_token(config_id, token) {
-                                            log_to_file(&format!("OAuth: Failed to save token: {}", e));
-                                        } else {
-                                            log_to_file("OAuth: Token saved successfully");
-
-                                            // Update UI on main thread
-                                            use objc2::rc::autoreleasepool;
-                                            autoreleasepool(|_| {
-                                                use objc2_foundation::NSNotificationCenter;
-                                                let center = NSNotificationCenter::defaultCenter();
-                                                let name = NSString::from_str("PersonalAgentOAuthSuccess");
-                                                unsafe { center.postNotificationName_object(&name, None); }
-                                            });
-                                        }
-                                    } else if let Some(ref error) = result.error {
-                                        log_to_file(&format!("OAuth: Error from callback: {}", error));
-                                    }
-                                }
-                                Ok(Err(_)) => {
-                                    log_to_file("OAuth: Callback channel closed");
-                                }
-                                Err(_) => {
-                                    log_to_file("OAuth: Timeout waiting for callback");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log_to_file(&format!("OAuth: Failed to start callback server: {}", e));
-                        }
-                    }
-                });
-            });
+            self.update_oauth_ui(true);
+            self.launch_oauth_flow(config_id, qualified_name);
         }
 
         #[unsafe(method(oauthSuccessNotification:))]
@@ -515,27 +328,6 @@ define_class!(
     }
 );
 
-/// Helper function to save OAuth token to config
-fn save_oauth_token(config_id: Uuid, token: &str) -> Result<(), String> {
-    let config_path =
-        Config::default_path().map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config =
-        Config::load(&config_path).map_err(|e| format!("Failed to load config: {}", e))?;
-
-    if let Some(mcp) = config.mcps.iter_mut().find(|m| m.id == config_id) {
-        mcp.oauth_token = Some(token.to_string());
-    } else {
-        return Err("MCP config not found".to_string());
-    }
-
-    config
-        .save(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-
-    Ok(())
-}
-
 impl McpConfigureViewController {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let ivars = McpConfigureViewIvars {
@@ -547,6 +339,7 @@ impl McpConfigureViewController {
             keyfile_input: RefCell::new(None),
             form_stack: RefCell::new(None),
             env_var_inputs: RefCell::new(Vec::new()),
+            package_arg_inputs: RefCell::new(Vec::new()),
             auth_section: RefCell::new(None),
             oauth_button: RefCell::new(None),
             oauth_status_label: RefCell::new(None),
@@ -563,6 +356,234 @@ impl McpConfigureViewController {
         alert.setInformativeText(&NSString::from_str(message));
         alert.addButtonWithTitle(&NSString::from_str("OK"));
         unsafe { alert.runModal() };
+    }
+
+    fn read_name_value(&self) -> String {
+        self.ivars()
+            .name_input
+            .borrow()
+            .as_ref()
+            .map(|field| field.stringValue().to_string().trim().to_string())
+            .unwrap_or_default()
+    }
+
+    fn create_secrets_manager(&self) -> SecretsManager {
+        let secrets_dir = dirs::home_dir()
+            .unwrap_or_default()
+            .join("Library/Application Support/PersonalAgent/secrets");
+        SecretsManager::new(secrets_dir)
+    }
+
+    fn save_manual_api_key(&self, secrets_manager: &SecretsManager, config: &McpConfig) {
+        if config.auth_type != McpAuthType::ApiKey {
+            return;
+        }
+
+        let api_key = self
+            .ivars()
+            .api_key_input
+            .borrow()
+            .as_ref()
+            .map(|field| field.stringValue().to_string().trim().to_string())
+            .unwrap_or_default();
+
+        if api_key.is_empty() {
+            return;
+        }
+
+        if let Err(e) = secrets_manager.store_api_key(config.id, &api_key) {
+            log_to_file(&format!("ERROR: Failed to store API key: {e}"));
+            self.show_error("Failed to store API key", &format!("{e}"));
+        }
+    }
+
+    fn persist_config(&self, mcp_config: McpConfig) {
+        let config_path = match Config::default_path() {
+            Ok(path) => path,
+            Err(e) => {
+                log_to_file(&format!("ERROR: Failed to get config path: {e}"));
+                return;
+            }
+        };
+
+        let mut config = match Config::load(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                log_to_file(&format!("ERROR: Failed to load config: {e}"));
+                Config::default()
+            }
+        };
+
+        config.mcps.push(mcp_config);
+
+        if let Err(e) = config.save(&config_path) {
+            log_to_file(&format!("ERROR: Failed to save config: {e}"));
+            self.show_error("Failed to save configuration", &format!("{e}"));
+            return;
+        }
+
+        log_to_file("MCP saved successfully");
+
+        use objc2_foundation::NSNotificationCenter;
+        let center = NSNotificationCenter::defaultCenter();
+        let name = NSString::from_str("PersonalAgentShowSettingsView");
+        unsafe {
+            center.postNotificationName_object(&name, None);
+        }
+    }
+
+    fn update_oauth_ui(&self, connecting: bool) {
+        if let Some(status_label) = &*self.ivars().oauth_status_label.borrow() {
+            let text = if connecting {
+                "Connecting..."
+            } else {
+                "Connected"
+            };
+            status_label.setStringValue(&NSString::from_str(text));
+        }
+        if let Some(button) = &*self.ivars().oauth_button.borrow() {
+            button.setEnabled(!connecting);
+            if !connecting {
+                button.setTitle(&NSString::from_str("Already Connected"));
+            }
+        }
+    }
+
+    fn launch_oauth_flow(&self, config_id: Uuid, qualified_name: String) {
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                log_to_file("OAuth: Starting callback server");
+
+                match personal_agent::mcp::start_oauth_callback_server().await {
+                    Ok((port, receiver)) => {
+                        log_to_file(&format!("OAuth: Callback server started on port {port}"));
+
+                        let oauth_config = personal_agent::mcp::SmitheryOAuthConfig {
+                            server_qualified_name: qualified_name.clone(),
+                            redirect_uri: format!("http://localhost:{port}"),
+                        };
+
+                        let oauth_url =
+                            personal_agent::mcp::generate_smithery_oauth_url(&oauth_config);
+                        log_to_file(&format!("OAuth: Generated URL: {oauth_url}"));
+
+                        #[cfg(target_os = "macos")]
+                        {
+                            use std::process::Command;
+                            if let Err(e) = Command::new("open").arg(&oauth_url).spawn() {
+                                log_to_file(&format!("OAuth: Failed to open browser: {e}"));
+                            }
+                        }
+
+                        log_to_file("OAuth: Waiting for callback (5 min timeout)");
+                        match tokio::time::timeout(std::time::Duration::from_secs(300), receiver)
+                            .await
+                        {
+                            Ok(Ok(result)) => {
+                                if let Some(ref token) = result.token {
+                                    log_to_file(&format!(
+                                        "OAuth: Got token (length: {})",
+                                        token.len()
+                                    ));
+
+                                    if let Err(e) = save_oauth_token(config_id, token) {
+                                        log_to_file(&format!("OAuth: Failed to save token: {e}"));
+                                    } else {
+                                        log_to_file("OAuth: Token saved successfully");
+                                        use objc2::rc::autoreleasepool;
+                                        autoreleasepool(|_| {
+                                            use objc2_foundation::NSNotificationCenter;
+                                            let center = NSNotificationCenter::defaultCenter();
+                                            let name =
+                                                NSString::from_str("PersonalAgentOAuthSuccess");
+                                            unsafe {
+                                                center.postNotificationName_object(&name, None);
+                                            }
+                                        });
+                                    }
+                                } else if let Some(ref error) = result.error {
+                                    log_to_file(&format!("OAuth: Error from callback: {error}"));
+                                }
+                            }
+                            Ok(Err(_)) => {
+                                log_to_file("OAuth: Callback channel closed");
+                            }
+                            Err(_) => {
+                                log_to_file("OAuth: Timeout waiting for callback");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log_to_file(&format!("OAuth: Failed to start callback server: {e}"));
+                    }
+                }
+            });
+        });
+    }
+
+    fn add_auth_form_sections(&self, form_stack: &NSStackView, mtm: MainThreadMarker) {
+        if let Some(ref config) = *self.ivars().selected_config.borrow() {
+            self.add_registry_auth_sections(form_stack, config, mtm);
+        } else {
+            self.add_manual_auth_section(form_stack, mtm);
+        }
+    }
+
+    fn add_registry_auth_sections(
+        &self,
+        form_stack: &NSStackView,
+        config: &McpConfig,
+        mtm: MainThreadMarker,
+    ) {
+        if config.auth_type == McpAuthType::OAuth {
+            log_to_file("OAuth auth type detected - showing OAuth section");
+            let oauth_section = build_oauth_section(self, mtm);
+            form_stack.addArrangedSubview(&oauth_section);
+            return;
+        }
+
+        self.add_package_arg_fields(config, mtm);
+        self.add_env_or_auth_fields(form_stack, config, mtm);
+    }
+
+    fn add_package_arg_fields(&self, config: &McpConfig, mtm: MainThreadMarker) {
+        if config.package_args.is_empty() {
+            return;
+        }
+
+        log_to_file(&format!(
+            "Building {} package args fields",
+            config.package_args.len()
+        ));
+        build_package_args_fields(self, &config.package_args, mtm);
+    }
+
+    fn add_env_or_auth_fields(
+        &self,
+        form_stack: &NSStackView,
+        config: &McpConfig,
+        mtm: MainThreadMarker,
+    ) {
+        if !config.env_vars.is_empty() {
+            log_to_file(&format!(
+                "Building {} dynamic env var fields",
+                config.env_vars.len()
+            ));
+            build_env_var_fields(self, &config.env_vars, mtm);
+            return;
+        }
+
+        log_to_file("No env_vars in selected config - showing auth section");
+        let auth_section = build_auth_section(self, mtm);
+        form_stack.addArrangedSubview(&auth_section);
+        *self.ivars().auth_section.borrow_mut() = Some(auth_section);
+    }
+
+    fn add_manual_auth_section(&self, form_stack: &NSStackView, mtm: MainThreadMarker) {
+        let auth_section = build_auth_section(self, mtm);
+        form_stack.addArrangedSubview(&auth_section);
+        *self.ivars().auth_section.borrow_mut() = Some(auth_section);
     }
 
     fn build_top_bar(&self, mtm: MainThreadMarker) -> Retained<NSView> {
@@ -593,7 +614,7 @@ impl McpConfigureViewController {
                 mtm,
             )
         };
-        back_btn.setBezelStyle(NSBezelStyle::Rounded);
+        back_btn.setBezelStyle(NSBezelStyle::Automatic);
         let back_width = back_btn.widthAnchor().constraintEqualToConstant(40.0);
         back_width.setActive(true);
         top_bar.addArrangedSubview(&back_btn);
@@ -621,7 +642,7 @@ impl McpConfigureViewController {
                 mtm,
             )
         };
-        cancel_btn.setBezelStyle(NSBezelStyle::Rounded);
+        cancel_btn.setBezelStyle(NSBezelStyle::Automatic);
         let cancel_width = cancel_btn.widthAnchor().constraintEqualToConstant(70.0);
         cancel_width.setActive(true);
         top_bar.addArrangedSubview(&cancel_btn);
@@ -635,7 +656,7 @@ impl McpConfigureViewController {
                 mtm,
             )
         };
-        save_btn.setBezelStyle(NSBezelStyle::Rounded);
+        save_btn.setBezelStyle(NSBezelStyle::Automatic);
         let save_width = save_btn.widthAnchor().constraintEqualToConstant(60.0);
         save_width.setActive(true);
         top_bar.addArrangedSubview(&save_btn);
@@ -649,85 +670,18 @@ impl McpConfigureViewController {
         scroll_view.setTranslatesAutoresizingMaskIntoConstraints(false);
         scroll_view.setDrawsBackground(false);
 
-        let form_stack = super::FlippedStackView::new(mtm);
-        form_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-        form_stack.setSpacing(16.0);
-        form_stack.setEdgeInsets(NSEdgeInsets {
-            top: 16.0,
-            left: 16.0,
-            bottom: 16.0,
-            right: 16.0,
-        });
-        form_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
-        form_stack.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
-
-        // Store form_stack for adding dynamic fields later
+        let form_stack = build_form_stack(mtm);
         *self.ivars().form_stack.borrow_mut() = Some(Retained::clone(&form_stack));
 
-        // Get default name - either from selected config or parsed MCP
-        let default_name = if let Some(ref config) = *self.ivars().selected_config.borrow() {
-            config.name.clone()
-        } else if let Some(ref parsed) = *self.ivars().parsed_mcp.borrow() {
-            match parsed {
-                ParsedMcp::Npm { identifier, .. } => {
-                    // Extract package name from @org/package
-                    identifier
-                        .split('/')
-                        .last()
-                        .unwrap_or(identifier)
-                        .to_string()
-                }
-                ParsedMcp::Docker { image } => {
-                    // Extract image name from org/image:tag
-                    image
-                        .split(':')
-                        .next()
-                        .unwrap_or(image)
-                        .split('/')
-                        .last()
-                        .unwrap_or(image)
-                        .to_string()
-                }
-                ParsedMcp::Http { url } => {
-                    // Extract last path segment
-                    url.split('/').last().unwrap_or("mcp").to_string()
-                }
-            }
-        } else {
-            "My MCP".to_string()
-        };
-
-        // Name field
+        let default_name = form_default_name(
+            self.ivars().selected_config.borrow().as_ref(),
+            self.ivars().parsed_mcp.borrow().as_ref(),
+        );
         let name_section = self.build_form_field("Name", &default_name, mtm);
         form_stack.addArrangedSubview(&name_section.0);
         *self.ivars().name_input.borrow_mut() = Some(name_section.1);
 
-        // If we have a selected config, check auth type
-        if let Some(ref config) = *self.ivars().selected_config.borrow() {
-            if config.auth_type == McpAuthType::OAuth {
-                log_to_file("OAuth auth type detected - showing OAuth section");
-                // Show OAuth section
-                let oauth_section = self.build_oauth_section(mtm);
-                form_stack.addArrangedSubview(&oauth_section);
-            } else if !config.env_vars.is_empty() {
-                log_to_file(&format!(
-                    "Building {} dynamic env var fields",
-                    config.env_vars.len()
-                ));
-                self.build_env_var_fields(&config.env_vars, mtm);
-            } else {
-                log_to_file("No env_vars in selected config - showing auth section");
-                // No env vars, show standard auth section
-                let auth_section = self.build_auth_section(mtm);
-                form_stack.addArrangedSubview(&auth_section);
-                *self.ivars().auth_section.borrow_mut() = Some(auth_section);
-            }
-        } else {
-            // Manual entry - show standard auth section
-            let auth_section = self.build_auth_section(mtm);
-            form_stack.addArrangedSubview(&auth_section);
-            *self.ivars().auth_section.borrow_mut() = Some(auth_section);
-        }
+        self.add_auth_form_sections(&form_stack, mtm);
 
         scroll_view.setDocumentView(Some(&form_stack));
 
@@ -766,187 +720,5 @@ impl McpConfigureViewController {
         container.addArrangedSubview(&input);
 
         (Retained::from(&*container as &NSView), input)
-    }
-
-    fn build_env_var_fields(&self, env_vars: &[EnvVarConfig], mtm: MainThreadMarker) {
-        log_to_file(&format!(
-            "build_env_var_fields called with {} vars",
-            env_vars.len()
-        ));
-
-        // Get the form stack - need to clone to avoid borrow issues
-        let form_stack_opt = self.ivars().form_stack.borrow().clone();
-        let form_stack = match form_stack_opt {
-            Some(ref stack) => stack,
-            None => {
-                log_to_file("ERROR: form_stack not available");
-                return;
-            }
-        };
-
-        for env_var in env_vars {
-            // Label with required indicator
-            let label_text = if env_var.required {
-                format!("{} (required)", env_var.name)
-            } else {
-                format!("{} (optional)", env_var.name)
-            };
-
-            let label = NSTextField::labelWithString(&NSString::from_str(&label_text), mtm);
-            label.setTextColor(Some(&Theme::text_primary()));
-            label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-            form_stack.addArrangedSubview(&label);
-
-            // Input field
-            let input = NSTextField::new(mtm);
-            input.setPlaceholderString(Some(&NSString::from_str(&env_var.name)));
-            input.setTranslatesAutoresizingMaskIntoConstraints(false);
-
-            // Make it look like a secure field if it's likely a secret
-            let var_name_lower = env_var.name.to_lowercase();
-            let is_secret = var_name_lower.contains("key")
-                || var_name_lower.contains("secret")
-                || var_name_lower.contains("token")
-                || var_name_lower.contains("password")
-                || var_name_lower.contains("pat");
-
-            if is_secret {
-                // Use a more muted placeholder for secrets
-                input.setPlaceholderString(Some(&NSString::from_str(&format!(
-                    "Enter {}",
-                    env_var.name
-                ))));
-            }
-
-            let width = input
-                .widthAnchor()
-                .constraintGreaterThanOrEqualToConstant(350.0);
-            width.setActive(true);
-            form_stack.addArrangedSubview(&input);
-
-            // Store reference
-            self.ivars()
-                .env_var_inputs
-                .borrow_mut()
-                .push((env_var.name.clone(), input));
-
-            log_to_file(&format!("Added field for {}", env_var.name));
-        }
-    }
-
-    fn build_auth_section(&self, mtm: MainThreadMarker) -> Retained<NSView> {
-        let container = NSStackView::new(mtm);
-        container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-        container.setSpacing(8.0);
-        container.setTranslatesAutoresizingMaskIntoConstraints(false);
-
-        let label = NSTextField::labelWithString(&NSString::from_str("Authentication"), mtm);
-        label.setTextColor(Some(&Theme::text_primary()));
-        label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-        container.addArrangedSubview(&label);
-
-        // Auth type popup
-        let auth_popup = unsafe { NSPopUpButton::new(mtm) };
-        auth_popup.addItemWithTitle(&NSString::from_str("API Key"));
-        auth_popup.addItemWithTitle(&NSString::from_str("Key File"));
-        auth_popup.addItemWithTitle(&NSString::from_str("None"));
-        unsafe {
-            auth_popup.setTarget(Some(self));
-            auth_popup.setAction(Some(sel!(authTypeChanged:)));
-        }
-        auth_popup.selectItemAtIndex(2); // Default to None
-        let width = auth_popup
-            .widthAnchor()
-            .constraintGreaterThanOrEqualToConstant(350.0);
-        width.setActive(true);
-        container.addArrangedSubview(&auth_popup);
-        *self.ivars().auth_type_popup.borrow_mut() = Some(auth_popup);
-
-        // API Key input (hidden by default)
-        let api_key_field = NSTextField::new(mtm);
-        api_key_field.setPlaceholderString(Some(&NSString::from_str("Enter API key")));
-        api_key_field.setHidden(true);
-        let api_key_width = api_key_field
-            .widthAnchor()
-            .constraintGreaterThanOrEqualToConstant(350.0);
-        api_key_width.setActive(true);
-        container.addArrangedSubview(&api_key_field);
-        *self.ivars().api_key_input.borrow_mut() = Some(api_key_field);
-
-        // Keyfile path input (hidden by default)
-        let keyfile_field = NSTextField::new(mtm);
-        keyfile_field.setPlaceholderString(Some(&NSString::from_str("/path/to/keyfile")));
-        keyfile_field.setHidden(true);
-        let keyfile_width = keyfile_field
-            .widthAnchor()
-            .constraintGreaterThanOrEqualToConstant(350.0);
-        keyfile_width.setActive(true);
-        container.addArrangedSubview(&keyfile_field);
-        *self.ivars().keyfile_input.borrow_mut() = Some(keyfile_field);
-
-        Retained::from(&*container as &NSView)
-    }
-
-    fn build_oauth_section(&self, mtm: MainThreadMarker) -> Retained<NSView> {
-        let container = NSStackView::new(mtm);
-        container.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-        container.setSpacing(12.0);
-        container.setTranslatesAutoresizingMaskIntoConstraints(false);
-
-        // Section label
-        let label = NSTextField::labelWithString(&NSString::from_str("Authentication"), mtm);
-        label.setTextColor(Some(&Theme::text_primary()));
-        label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
-        container.addArrangedSubview(&label);
-
-        // Check if already connected
-        let is_connected = self
-            .ivars()
-            .selected_config
-            .borrow()
-            .as_ref()
-            .and_then(|c| c.oauth_token.as_ref())
-            .is_some();
-
-        // Status label
-        let status_text = if is_connected {
-            "Connected [OK]"
-        } else {
-            "Not connected"
-        };
-        let status = NSTextField::labelWithString(&NSString::from_str(status_text), mtm);
-        status.setTextColor(Some(&Theme::text_primary()));
-        status.setFont(Some(&NSFont::systemFontOfSize(11.0)));
-        container.addArrangedSubview(&status);
-        *self.ivars().oauth_status_label.borrow_mut() = Some(status);
-
-        // Connect button
-        let btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("Connect with Smithery"),
-                Some(self),
-                Some(sel!(connectSmitheryClicked:)),
-                mtm,
-            )
-        };
-        btn.setBezelStyle(NSBezelStyle::Rounded);
-        btn.setEnabled(!is_connected);
-        let btn_width = btn
-            .widthAnchor()
-            .constraintGreaterThanOrEqualToConstant(350.0);
-        btn_width.setActive(true);
-        container.addArrangedSubview(&btn);
-        *self.ivars().oauth_button.borrow_mut() = Some(btn);
-
-        // Info text
-        let info = NSTextField::labelWithString(
-            &NSString::from_str("Click to authorize this application with Smithery"),
-            mtm,
-        );
-        info.setTextColor(Some(&Theme::text_secondary_color()));
-        info.setFont(Some(&NSFont::systemFontOfSize(10.0)));
-        container.addArrangedSubview(&info);
-
-        Retained::from(&*container as &NSView)
     }
 }

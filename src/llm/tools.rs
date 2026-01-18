@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A tool use request from the LLM
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolUse {
     /// Unique identifier for this tool use
     pub id: String,
@@ -28,7 +28,7 @@ impl ToolUse {
 }
 
 /// Result from executing a tool
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolResult {
     /// ID of the tool use this is responding to
     pub tool_use_id: String,

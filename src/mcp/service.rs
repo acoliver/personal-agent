@@ -19,7 +19,11 @@ pub struct McpService {
 
 impl McpService {
     /// Get the global singleton instance
-    pub fn global() -> Arc<Mutex<McpService>> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the data directory cannot be resolved.
+    pub fn global() -> Arc<Mutex<Self>> {
         MCP_SERVICE
             .get_or_init(|| {
                 let secrets = SecretsManager::new(
@@ -28,7 +32,7 @@ impl McpService {
                         .join("PersonalAgent")
                         .join("mcp_secrets"),
                 );
-                Arc::new(Mutex::new(McpService {
+                Arc::new(Mutex::new(Self {
                     runtime: McpRuntime::new(secrets),
                     tool_registry: HashMap::new(),
                 }))
@@ -37,21 +41,31 @@ impl McpService {
     }
 
     /// Initialize MCPs from config - call on app startup
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config cannot be loaded.
     pub async fn initialize(&mut self) -> Result<(), String> {
+        eprintln!("McpService::initialize() starting");
         let config_path = Config::default_path().map_err(|e| e.to_string())?;
+        eprintln!("Config path: {}", config_path.display());
         let config = Config::load(config_path).map_err(|e| e.to_string())?;
+        eprintln!("Config loaded, {} MCPs", config.mcps.len());
 
         let results = self.runtime.start_all(&config).await;
+        eprintln!("start_all completed with {} results", results.len());
 
         // Log any failures
-        for (id, result) in results {
-            if let Err(e) = result {
-                eprintln!("Failed to start MCP {}: {}", id, e);
+        for (id, result) in &results {
+            match result {
+                Ok(()) => eprintln!("MCP {id} started OK"),
+                Err(e) => eprintln!("MCP {id} FAILED: {e}"),
             }
         }
 
         // Update tool registry
         self.update_tool_registry();
+        eprintln!("Tool registry updated, {} tools", self.tool_registry.len());
 
         Ok(())
     }
@@ -65,6 +79,7 @@ impl McpService {
     }
 
     /// Get all available tools from active MCPs
+    #[must_use]
     pub fn get_tools(&self) -> Vec<ToolDefinition> {
         self.runtime
             .get_all_tools()
@@ -78,6 +93,7 @@ impl McpService {
     }
 
     /// Get all available tools as LLM Tool definitions
+    #[must_use]
     pub fn get_llm_tools(&self) -> Vec<crate::llm::Tool> {
         self.get_tools()
             .into_iter()
@@ -85,14 +101,18 @@ impl McpService {
             .collect()
     }
 
-    /// Call a tool on the appropriate MCP server  
+    /// Call a tool on the appropriate MCP server
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tool execution fails.
     pub async fn call_tool(
         &mut self,
         tool_name: &str,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         // Log the tool call attempt
-        eprintln!("MCP tool call: {} with args: {}", tool_name, args);
+        eprintln!("MCP tool call: {tool_name} with args: {args}");
 
         // Route to appropriate MCP based on tool_registry
         let result = self.runtime.call_tool(tool_name, args).await;
@@ -104,22 +124,29 @@ impl McpService {
     }
 
     /// Check if any MCPs are currently active
+    #[must_use]
     pub fn has_active_mcps(&self) -> bool {
         self.runtime.has_active_mcps()
     }
 
     /// Get the count of active MCPs
+    #[must_use]
     pub fn active_count(&self) -> usize {
         self.runtime.active_count()
     }
 
     /// Get the status of a specific MCP
+    #[must_use]
     pub fn get_status(&self, id: &uuid::Uuid) -> Option<crate::mcp::McpStatus> {
         let status_manager = self.runtime.status_manager();
         Some(status_manager.get_status(id))
     }
 
     /// Reload MCPs from config (useful after config changes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if MCPs fail to initialize.
     pub async fn reload(&mut self) -> Result<(), String> {
         // For now, just re-initialize
         self.initialize().await

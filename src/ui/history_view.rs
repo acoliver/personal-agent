@@ -1,4 +1,11 @@
 //! History view for browsing and loading conversations
+#![allow(unsafe_code)]
+#![allow(unused_unsafe)]
+#![allow(unused_variables)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::assigning_clones)]
+#![allow(clippy::too_many_lines)]
 
 use std::cell::{Cell, RefCell};
 use std::fs::OpenOptions;
@@ -43,10 +50,6 @@ fn set_layer_background_color(layer: &CALayer, r: f64, g: f64, b: f64) {
     use objc2_core_graphics::CGColor;
     let color = CGColor::new_generic_rgb(r, g, b, 1.0);
     layer.setBackgroundColor(Some(&color));
-}
-
-fn set_layer_corner_radius(layer: &CALayer, radius: f64) {
-    layer.setCornerRadius(radius);
 }
 
 // ============================================================================
@@ -288,7 +291,7 @@ impl HistoryViewController {
                 mtm,
             )
         };
-        back_btn.setBezelStyle(NSBezelStyle::Rounded);
+        back_btn.setBezelStyle(NSBezelStyle::Automatic);
         unsafe {
             back_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
             back_btn.setContentHuggingPriority_forOrientation(
@@ -416,12 +419,19 @@ impl HistoryViewController {
 
         log_to_file("load_conversations called");
 
-        // Load conversations from storage
+        let items = Self::load_conversation_items();
+        *self.ivars().conversations.borrow_mut() = items.clone();
+
+        self.render_conversation_items(&items, mtm);
+        self.scroll_to_top();
+    }
+
+    fn load_conversation_items() -> Vec<ConversationItem> {
         let storage = match ConversationStorage::with_default_path() {
             Ok(s) => s,
             Err(e) => {
                 log_to_file(&format!("Failed to create conversation storage: {e}"));
-                return;
+                return Vec::new();
             }
         };
 
@@ -436,38 +446,36 @@ impl HistoryViewController {
             }
         };
 
-        // Sort conversations by date (newest first)
         let mut conversations = conversations;
         conversations.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-        // Convert to display items
-        let items: Vec<ConversationItem> = conversations
+        conversations
             .iter()
-            .map(|conv| {
-                // Use timestamp format for untitled conversations: YYYYMMDDHHMMSSmmm
-                let title = conv
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| conv.created_at.format("%Y%m%d%H%M%S%3f").to_string());
-                let date = conv.created_at.format("%Y-%m-%d %H:%M").to_string();
-                let filename = conv.filename();
-                let message_count = conv.messages.len();
+            .map(Self::build_conversation_item)
+            .collect()
+    }
 
-                log_to_file(&format!(
-                    "Conversation: title='{title}', date='{date}', messages={message_count}"
-                ));
+    fn build_conversation_item(conv: &personal_agent::models::Conversation) -> ConversationItem {
+        let title = conv
+            .title
+            .clone()
+            .unwrap_or_else(|| conv.created_at.format("%Y%m%d%H%M%S%3f").to_string());
+        let date = conv.created_at.format("%Y-%m-%d %H:%M").to_string();
+        let message_count = conv.messages.len();
 
-                ConversationItem {
-                    filename,
-                    title,
-                    date,
-                    message_count,
-                }
-            })
-            .collect();
+        log_to_file(&format!(
+            "Conversation: title='{title}', date='{date}', messages={message_count}"
+        ));
 
-        *self.ivars().conversations.borrow_mut() = items.clone();
+        ConversationItem {
+            filename: conv.filename(),
+            title,
+            date,
+            message_count,
+        }
+    }
 
+    fn render_conversation_items(&self, items: &[ConversationItem], mtm: MainThreadMarker) {
         log_to_file(&format!(
             "Container ref valid: {}",
             self.ivars().conversations_container.borrow().is_some()
@@ -475,18 +483,8 @@ impl HistoryViewController {
 
         if let Some(container) = &*self.ivars().conversations_container.borrow() {
             log_to_file(&format!("Adding {} items to container", items.len()));
-            // Clear existing subviews (for stack view, remove arranged subviews)
-            let subviews = container.subviews();
-            for view in &subviews {
-                if let Some(stack) = container.downcast_ref::<NSStackView>() {
-                    unsafe {
-                        stack.removeArrangedSubview(&view);
-                    }
-                }
-                view.removeFromSuperview();
-            }
+            Self::clear_container(container);
 
-            // For stack view, just add conversation views - stack handles positioning
             if let Some(stack) = container.downcast_ref::<NSStackView>() {
                 for (index, item) in items.iter().enumerate() {
                     let conv_view = self.create_conversation_card(
@@ -501,22 +499,38 @@ impl HistoryViewController {
                     }
                 }
 
-                // If no conversations, show a message
                 if items.is_empty() {
-                    let message = NSTextField::labelWithString(
-                        &NSString::from_str(
-                            "No conversations yet.\n\nStart a new conversation to get started.",
-                        ),
-                        mtm,
-                    );
-                    message.setTextColor(Some(&Theme::text_secondary_color()));
-                    message.setFont(Some(&NSFont::systemFontOfSize(13.0)));
-                    stack.addArrangedSubview(&message);
+                    Self::add_empty_state_message(stack, mtm);
                 }
             }
         }
+    }
 
-        // Scroll to top after loading - force layout first
+    fn clear_container(container: &NSView) {
+        let subviews = container.subviews();
+        for view in &subviews {
+            if let Some(stack) = container.downcast_ref::<NSStackView>() {
+                unsafe {
+                    stack.removeArrangedSubview(&view);
+                }
+            }
+            view.removeFromSuperview();
+        }
+    }
+
+    fn add_empty_state_message(stack: &NSStackView, mtm: MainThreadMarker) {
+        let message = NSTextField::labelWithString(
+            &NSString::from_str(
+                "No conversations yet.\n\nStart a new conversation to get started.",
+            ),
+            mtm,
+        );
+        message.setTextColor(Some(&Theme::text_secondary_color()));
+        message.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+        stack.addArrangedSubview(&message);
+    }
+
+    fn scroll_to_top(&self) {
         if let Some(scroll_view) = &*self.ivars().scroll_view.borrow() {
             scroll_view.layoutSubtreeIfNeeded();
             let clip_view = scroll_view.contentView();
@@ -535,20 +549,38 @@ impl HistoryViewController {
     ) -> Retained<NSView> {
         log_to_file(&format!("Creating row {index}: {title}"));
 
-        // Create a container view to hold the clickable button and delete button
+        let container = Self::build_conversation_container(mtm);
+        let row_button = self.build_conversation_row_button(index, mtm);
+        let content_stack = Self::build_conversation_content_stack(title, date, message_count, mtm);
+        let delete_btn = self.build_delete_button(index, mtm);
+
+        Self::attach_row_content(&row_button, &content_stack);
+        Self::layout_conversation_row(&container, &row_button, &delete_btn);
+
+        log_to_file(&format!("Row {index} created successfully"));
+        Retained::from(&*container as &NSView)
+    }
+
+    fn build_conversation_container(mtm: MainThreadMarker) -> Retained<NSView> {
         let container = NSView::new(mtm);
         container.setTranslatesAutoresizingMaskIntoConstraints(false);
         unsafe {
             let height_constraint = container.heightAnchor().constraintEqualToConstant(40.0);
             height_constraint.setActive(true);
         }
+        container
+    }
 
-        // Create the main row button (clickable area)
+    fn build_conversation_row_button(
+        &self,
+        index: usize,
+        mtm: MainThreadMarker,
+    ) -> Retained<NSButton> {
         let row_button = NSButton::new(mtm);
         row_button.setButtonType(NSButtonType::MomentaryPushIn);
-        row_button.setBezelStyle(NSBezelStyle::Rounded);
+        row_button.setBezelStyle(NSBezelStyle::Automatic);
         row_button.setBordered(false);
-        row_button.setTitle(&NSString::from_str("")); // Clear default "Button" title
+        row_button.setTitle(&NSString::from_str(""));
         row_button.setTag(index as isize);
         unsafe {
             row_button.setTarget(Some(self));
@@ -556,10 +588,8 @@ impl HistoryViewController {
             row_button.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
 
-        // Set button background
         row_button.setWantsLayer(true);
         if let Some(layer) = row_button.layer() {
-            // Alternate row colors for table look
             if index.is_multiple_of(2) {
                 set_layer_background_color(
                     &layer,
@@ -577,7 +607,15 @@ impl HistoryViewController {
             }
         }
 
-        // Create horizontal stack inside the button for content layout
+        row_button
+    }
+
+    fn build_conversation_content_stack(
+        title: &str,
+        date: &str,
+        message_count: usize,
+        mtm: MainThreadMarker,
+    ) -> Retained<NSStackView> {
         let content_stack = NSStackView::new(mtm);
         content_stack.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
         content_stack.setSpacing(8.0);
@@ -590,10 +628,18 @@ impl HistoryViewController {
             right: 8.0,
         });
 
-        // Note: content stack needs to allow button clicks to pass through
-        // NSStackView doesn't have setUserInteractionEnabled, but text fields can be set non-editable
+        let title_label = Self::build_title_label(title, mtm);
+        let date_label = Self::build_date_label(date, mtm);
+        let count_label = Self::build_count_label(message_count, mtm);
 
-        // Title (flexible width)
+        content_stack.addArrangedSubview(&title_label);
+        content_stack.addArrangedSubview(&date_label);
+        content_stack.addArrangedSubview(&count_label);
+
+        content_stack
+    }
+
+    fn build_title_label(title: &str, mtm: MainThreadMarker) -> Retained<NSTextField> {
         let title_label = NSTextField::labelWithString(&NSString::from_str(title), mtm);
         title_label.setTextColor(Some(&Theme::text_primary()));
         title_label.setFont(Some(&NSFont::systemFontOfSize(13.0)));
@@ -607,9 +653,10 @@ impl HistoryViewController {
                 NSLayoutConstraintOrientation::Horizontal,
             );
         }
-        content_stack.addArrangedSubview(&title_label);
+        title_label
+    }
 
-        // Date (fixed width ~120px)
+    fn build_date_label(date: &str, mtm: MainThreadMarker) -> Retained<NSTextField> {
         let date_label = NSTextField::labelWithString(&NSString::from_str(date), mtm);
         date_label.setTextColor(Some(&Theme::text_secondary_color()));
         date_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
@@ -625,9 +672,10 @@ impl HistoryViewController {
             let width_constraint = date_label.widthAnchor().constraintEqualToConstant(120.0);
             width_constraint.setActive(true);
         }
-        content_stack.addArrangedSubview(&date_label);
+        date_label
+    }
 
-        // Message count (fixed width ~40px)
+    fn build_count_label(message_count: usize, mtm: MainThreadMarker) -> Retained<NSTextField> {
         let count_text = format!("{message_count}");
         let count_label = NSTextField::labelWithString(&NSString::from_str(&count_text), mtm);
         count_label.setTextColor(Some(&Theme::text_secondary_color()));
@@ -645,12 +693,35 @@ impl HistoryViewController {
             let width_constraint = count_label.widthAnchor().constraintEqualToConstant(40.0);
             width_constraint.setActive(true);
         }
-        content_stack.addArrangedSubview(&count_label);
+        count_label
+    }
 
-        // Add content stack to button
-        row_button.addSubview(&content_stack);
+    fn build_delete_button(&self, index: usize, mtm: MainThreadMarker) -> Retained<NSButton> {
+        let delete_btn = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str("X"),
+                Some(self),
+                Some(sel!(deleteConversation:)),
+                mtm,
+            )
+        };
+        delete_btn.setBezelStyle(NSBezelStyle::Automatic);
+        delete_btn.setTag(index as isize);
+        unsafe {
+            delete_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+            delete_btn.setContentHuggingPriority_forOrientation(
+                750.0,
+                NSLayoutConstraintOrientation::Horizontal,
+            );
+            let width_constraint = delete_btn.widthAnchor().constraintEqualToConstant(30.0);
+            width_constraint.setActive(true);
+        }
+        delete_btn
+    }
 
-        // Constrain content stack to fill button
+    fn attach_row_content(row_button: &NSButton, content_stack: &NSStackView) {
+        row_button.addSubview(content_stack);
+
         unsafe {
             let leading = content_stack
                 .leadingAnchor()
@@ -669,33 +740,12 @@ impl HistoryViewController {
             top.setActive(true);
             bottom.setActive(true);
         }
+    }
 
-        // Delete button (compact, positioned on the right)
-        let delete_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("X"),
-                Some(self),
-                Some(sel!(deleteConversation:)),
-                mtm,
-            )
-        };
-        delete_btn.setBezelStyle(NSBezelStyle::Rounded);
-        delete_btn.setTag(index as isize);
-        unsafe {
-            delete_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
-            delete_btn.setContentHuggingPriority_forOrientation(
-                750.0,
-                NSLayoutConstraintOrientation::Horizontal,
-            );
-            let width_constraint = delete_btn.widthAnchor().constraintEqualToConstant(30.0);
-            width_constraint.setActive(true);
-        }
+    fn layout_conversation_row(container: &NSView, row_button: &NSButton, delete_btn: &NSButton) {
+        container.addSubview(row_button);
+        container.addSubview(delete_btn);
 
-        // Add both views to container
-        container.addSubview(&row_button);
-        container.addSubview(&delete_btn);
-
-        // Position row button to fill most of the width
         unsafe {
             let leading = row_button
                 .leadingAnchor()
@@ -715,7 +765,6 @@ impl HistoryViewController {
             bottom.setActive(true);
         }
 
-        // Position delete button on the right
         unsafe {
             let trailing = delete_btn
                 .trailingAnchor()
@@ -726,8 +775,5 @@ impl HistoryViewController {
             trailing.setActive(true);
             center_y.setActive(true);
         }
-
-        log_to_file(&format!("Row {index} created successfully"));
-        Retained::from(&*container as &NSView)
     }
 }

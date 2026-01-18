@@ -2,6 +2,9 @@
 //!
 //! This is a minimal implementation that uses native macOS APIs directly
 //! without trying to wrap an eframe window.
+#![allow(unsafe_code)]
+#![allow(unused_unsafe)]
+#![allow(clippy::items_after_statements)]
 
 use std::cell::Cell;
 
@@ -45,16 +48,160 @@ thread_local! {
 /// Load PNG data as an `NSImage` (for menu bar icons)
 /// NOT a template - we want to keep the original colors (red eye)
 fn load_image(png_data: &[u8]) -> Option<Retained<NSImage>> {
+    load_image_data(png_data)
+}
+
+fn load_image_data(png_data: &[u8]) -> Option<Retained<NSImage>> {
     use objc2::AllocAnyThread;
     use objc2_foundation::NSData;
 
     let data = NSData::with_bytes(png_data);
-    let image = NSImage::initWithData(NSImage::alloc(), &data)?;
+    NSImage::initWithData(NSImage::alloc(), &data)
+}
 
-    // Do NOT set as template - we want the original red color
-    // image.setTemplate(true);
+struct ViewControllers {
+    chat: Retained<ChatViewController>,
+    history: Retained<HistoryViewController>,
+    settings: Retained<SettingsViewController>,
+    model_selector: Retained<ModelSelectorViewController>,
+    profile_editor: Retained<ProfileEditorDemoViewController>,
+    mcp_add: Retained<McpAddViewController>,
+    mcp_configure: Retained<McpConfigureViewController>,
+}
 
-    Some(image)
+fn configure_app_appearance(mtm: MainThreadMarker) {
+    let app = NSApplication::sharedApplication(mtm);
+    let dark_appearance_name = unsafe { objc2_app_kit::NSAppearanceNameDarkAqua };
+    if let Some(dark_appearance) =
+        objc2_app_kit::NSAppearance::appearanceNamed(dark_appearance_name)
+    {
+        app.setAppearance(Some(&dark_appearance));
+    }
+}
+
+fn create_status_item(self_ref: &AppDelegate, mtm: MainThreadMarker) -> Retained<NSStatusItem> {
+    let status_bar = NSStatusBar::systemStatusBar();
+    let status_item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
+
+    if let Some(button) = status_item.button(mtm) {
+        let icon_data = include_bytes!("../assets/MenuBarIcon.imageset/icon-32.png");
+        if let Some(image) = load_image(icon_data) {
+            image.setSize(NSSize::new(17.6, 17.6));
+            button.setImage(Some(&image));
+        } else {
+            button.setTitle(&NSString::from_str("PA"));
+        }
+        unsafe {
+            button.setAction(Some(sel!(togglePopover:)));
+            button.setTarget(Some(self_ref));
+        }
+    }
+
+    status_item
+}
+
+fn create_popover(mtm: MainThreadMarker) -> Retained<NSPopover> {
+    let popover = NSPopover::new(mtm);
+    popover.setBehavior(NSPopoverBehavior::ApplicationDefined);
+    popover.setAnimates(true);
+    popover.setContentSize(NSSize::new(400.0, 500.0));
+
+    let dark_name = unsafe { objc2_app_kit::NSAppearanceNameDarkAqua };
+    if let Some(dark_appearance) = objc2_app_kit::NSAppearance::appearanceNamed(dark_name) {
+        popover.setAppearance(Some(&dark_appearance));
+    }
+
+    popover
+}
+
+fn create_view_controllers(mtm: MainThreadMarker) -> ViewControllers {
+    ViewControllers {
+        chat: ChatViewController::new(mtm),
+        history: HistoryViewController::new(mtm),
+        settings: SettingsViewController::new(mtm),
+        model_selector: ModelSelectorViewController::new(mtm),
+        profile_editor: ProfileEditorDemoViewController::new(mtm),
+        mcp_add: McpAddViewController::new(mtm),
+        mcp_configure: McpConfigureViewController::new(mtm),
+    }
+}
+
+fn store_app_state(
+    status_item: Retained<NSStatusItem>,
+    popover: Retained<NSPopover>,
+    controllers: ViewControllers,
+) {
+    STATUS_ITEM.set(Some(status_item));
+    POPOVER.set(Some(popover));
+    CHAT_VIEW_CONTROLLER.set(Some(controllers.chat));
+    HISTORY_VIEW_CONTROLLER.set(Some(controllers.history));
+    SETTINGS_VIEW_CONTROLLER.set(Some(controllers.settings));
+    MODEL_SELECTOR_VIEW_CONTROLLER.set(Some(controllers.model_selector));
+    PROFILE_EDITOR_VIEW_CONTROLLER.set(Some(controllers.profile_editor));
+    MCP_ADD_VIEW_CONTROLLER.set(Some(controllers.mcp_add));
+    MCP_CONFIGURE_VIEW_CONTROLLER.set(Some(controllers.mcp_configure));
+}
+
+fn register_view_notifications(self_ref: &AppDelegate) {
+    use objc2_foundation::NSNotificationCenter;
+
+    let center = NSNotificationCenter::defaultCenter();
+    unsafe {
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(showChatView:),
+            Some(&NSString::from_str("PersonalAgentShowChatView")),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(showSettingsView:),
+            Some(&NSString::from_str("PersonalAgentShowSettingsView")),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(showHistoryView:),
+            Some(&NSString::from_str("PersonalAgentShowHistoryView")),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(showModelSelector:),
+            Some(&NSString::from_str("PersonalAgentShowModelSelector")),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(showProfileEditor:),
+            Some(&NSString::from_str("PersonalAgentShowProfileEditor")),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(modelSelected:),
+            Some(&NSString::from_str("PersonalAgentModelSelected")),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(loadConversation:),
+            Some(&NSString::from_str("PersonalAgentLoadConversation")),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(showAddMcp:),
+            Some(&NSString::from_str("PersonalAgentShowAddMcp")),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            self_ref,
+            sel!(showConfigureMcp:),
+            Some(&NSString::from_str("PersonalAgentShowConfigureMcp")),
+            None,
+        );
+    }
 }
 
 // ============================================================================
@@ -74,140 +221,19 @@ define_class!(
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let mtm = MainThreadMarker::new().unwrap();
 
-            // Force dark appearance for the entire app to avoid blue accents
-            let app = NSApplication::sharedApplication(mtm);
-            // SAFETY: NSAppearanceNameDarkAqua is a constant string provided by AppKit
-            let dark_appearance_name = unsafe { objc2_app_kit::NSAppearanceNameDarkAqua };
-            if let Some(dark_appearance) = objc2_app_kit::NSAppearance::appearanceNamed(dark_appearance_name) {
-                app.setAppearance(Some(&dark_appearance));
-            }
+            configure_app_appearance(mtm);
 
-            // Create status bar item
-            let status_bar = NSStatusBar::systemStatusBar();
-            let status_item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
+            let status_item = create_status_item(self, mtm);
+            let popover = create_popover(mtm);
+            let controllers = create_view_controllers(mtm);
 
-            // Configure status item button with icon
-            if let Some(button) = status_item.button(mtm) {
-                // Load the colored icon (red eye on transparent background)
-                // Use 32px for retina, 16px for standard - macOS will pick appropriately
-                let icon_data = include_bytes!("../assets/MenuBarIcon.imageset/icon-32.png");
-                if let Some(image) = load_image(icon_data) {
-                    // Set the size to 17.6x17.6 points (10% larger than standard 16x16)
-                    image.setSize(NSSize::new(17.6, 17.6));
-                    button.setImage(Some(&image));
-                } else {
-                    // Fallback to text if image fails
-                    button.setTitle(&NSString::from_str("PA"));
-                }
-                // SAFETY: Setting action/target for event handling is standard Cocoa practice
-                unsafe {
-                    button.setAction(Some(sel!(togglePopover:)));
-                    button.setTarget(Some(self));
-                }
-            }
+            popover.setContentViewController(Some(&controllers.chat));
+            store_app_state(status_item, popover, controllers);
 
-            // Create popover
-            let popover = NSPopover::new(mtm);
-            // Use ApplicationDefined so the popover stays open during LLM requests
-            // (Transient would close it when we block the main thread)
-            popover.setBehavior(NSPopoverBehavior::ApplicationDefined);
-            popover.setAnimates(true);
-            popover.setContentSize(NSSize::new(400.0, 500.0));
-
-            // Force dark appearance on the popover itself
-            // SAFETY: NSAppearanceNameDarkAqua is a constant string provided by AppKit
-            let dark_name = unsafe { objc2_app_kit::NSAppearanceNameDarkAqua };
-            if let Some(dark_appearance) = objc2_app_kit::NSAppearance::appearanceNamed(dark_name) {
-                popover.setAppearance(Some(&dark_appearance));
-            }
-
-            // Create view controllers once and store them
-            let chat_view = ChatViewController::new(mtm);
-            let history_view = HistoryViewController::new(mtm);
-            let settings_view = SettingsViewController::new(mtm);
-            let model_selector_view = ModelSelectorViewController::new(mtm);
-            let profile_editor_view = ProfileEditorDemoViewController::new(mtm);
-            let mcp_add_view = McpAddViewController::new(mtm);
-            let mcp_configure_view = McpConfigureViewController::new(mtm);
-
-            // Set initial content to chat view
-            popover.setContentViewController(Some(&chat_view));
-
-            // Store references
-            STATUS_ITEM.set(Some(status_item));
-            POPOVER.set(Some(popover));
-            CHAT_VIEW_CONTROLLER.set(Some(chat_view));
-            HISTORY_VIEW_CONTROLLER.set(Some(history_view));
-            SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
-            MODEL_SELECTOR_VIEW_CONTROLLER.set(Some(model_selector_view));
-            PROFILE_EDITOR_VIEW_CONTROLLER.set(Some(profile_editor_view));
-            MCP_ADD_VIEW_CONTROLLER.set(Some(mcp_add_view));
-            MCP_CONFIGURE_VIEW_CONTROLLER.set(Some(mcp_configure_view));
-
-            // Make this an accessory app (no dock icon, no main menu)
             let app = NSApplication::sharedApplication(mtm);
             app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
-            // Register for view switching notifications
-            use objc2_foundation::NSNotificationCenter;
-            let center = NSNotificationCenter::defaultCenter();
-
-            unsafe {
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(showChatView:),
-                    Some(&NSString::from_str("PersonalAgentShowChatView")),
-                    None,
-                );
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(showSettingsView:),
-                    Some(&NSString::from_str("PersonalAgentShowSettingsView")),
-                    None,
-                );
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(showHistoryView:),
-                    Some(&NSString::from_str("PersonalAgentShowHistoryView")),
-                    None,
-                );
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(showModelSelector:),
-                    Some(&NSString::from_str("PersonalAgentShowModelSelector")),
-                    None,
-                );
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(showProfileEditor:),
-                    Some(&NSString::from_str("PersonalAgentShowProfileEditor")),
-                    None,
-                );
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(modelSelected:),
-                    Some(&NSString::from_str("PersonalAgentModelSelected")),
-                    None,
-                );
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(loadConversation:),
-                    Some(&NSString::from_str("PersonalAgentLoadConversation")),
-                    None,
-                );
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(showAddMcp:),
-                    Some(&NSString::from_str("PersonalAgentShowAddMcp")),
-                    None,
-                );
-                center.addObserver_selector_name_object(
-                    self,
-                    sel!(showConfigureMcp:),
-                    Some(&NSString::from_str("PersonalAgentShowConfigureMcp")),
-                    None,
-                );
-            }
+            register_view_notifications(self);
 
             println!("PersonalAgent started - click 'PA' in menu bar");
         }

@@ -26,13 +26,13 @@ where
             Ok(v)
         }
 
-        fn visit_map<M>(self, mut _map: M) -> Result<bool, M::Error>
+        fn visit_map<M>(self, mut map: M) -> Result<bool, M::Error>
         where
             M: de::MapAccess<'de>,
         {
             // If it's an object (like {"field": "reasoning_content"}), treat as true
             // Just consume the map
-            while let Some((_, _)) = _map.next_entry::<String, serde_json::Value>()? {}
+            while let Some((_, _)) = map.next_entry::<String, serde_json::Value>()? {}
             Ok(true)
         }
     }
@@ -74,7 +74,7 @@ where
         where
             D: Deserializer<'de>,
         {
-            deserializer.deserialize_any(ProviderVisitor)
+            deserializer.deserialize_any(Self)
         }
 
         fn visit_str<E>(self, v: &str) -> Result<Option<String>, E>
@@ -91,12 +91,12 @@ where
             Ok(Some(v))
         }
 
-        fn visit_map<M>(self, mut _map: M) -> Result<Option<String>, M::Error>
+        fn visit_map<M>(self, mut map: M) -> Result<Option<String>, M::Error>
         where
             M: de::MapAccess<'de>,
         {
             // If it's an object (like {"npm": "@ai-sdk/anthropic"}), ignore it
-            while let Some((_, _)) = _map.next_entry::<String, serde_json::Value>()? {}
+            while let Some((_, _)) = map.next_entry::<String, serde_json::Value>()? {}
             Ok(None)
         }
     }

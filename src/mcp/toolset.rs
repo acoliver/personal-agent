@@ -1,16 +1,14 @@
-//! Toolset bridge - converts McpConfig to SerdesAI McpToolset format
+//! Toolset bridge - converts `McpConfig` to `SerdesAI` `McpToolset` format
 
 use crate::mcp::manager::McpError;
 use crate::mcp::secrets::SecretsManager;
-use crate::mcp::{McpAuthType, McpConfig, McpPackageType, McpTransport};
+use crate::mcp::{McpAuthType, McpConfig, McpPackageArgType, McpPackageType, McpTransport};
 use std::collections::HashMap;
-use std::time::Duration;
-
-const MCP_INIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build command and arguments for an MCP based on its package type
+#[must_use]
 pub fn build_command(config: &McpConfig) -> (String, Vec<String>) {
-    match config.package.package_type {
+    let (cmd, mut args) = match config.package.package_type {
         McpPackageType::Npm => {
             let runtime = config.package.runtime_hint.as_deref().unwrap_or("npx");
             (
@@ -28,10 +26,49 @@ pub fn build_command(config: &McpConfig) -> (String, Vec<String>) {
             ],
         ),
         McpPackageType::Http => (String::new(), vec![]),
+    };
+
+    if !config.package_args.is_empty() {
+        let package_arg_values = config
+            .config
+            .get("package_args")
+            .and_then(|value| value.as_object());
+
+        for arg in &config.package_args {
+            let value = package_arg_values
+                .and_then(|values| values.get(&arg.name))
+                .and_then(|value| value.as_str())
+                .or(arg.default.as_deref());
+
+            if let Some(value) = value {
+                let values = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty());
+
+                for entry in values {
+                    match arg.arg_type {
+                        McpPackageArgType::Named => {
+                            args.push(format!("--{}", arg.name));
+                            args.push(entry.to_string());
+                        }
+                        McpPackageArgType::Positional => {
+                            args.push(entry.to_string());
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    (cmd, args)
 }
 
 /// Build environment variables for an MCP based on its auth config
+///
+/// # Errors
+///
+/// Returns `McpError` if secrets cannot be loaded.
 pub fn build_env_for_config(
     config: &McpConfig,
     secrets: &SecretsManager,
@@ -58,8 +95,7 @@ pub fn build_env_for_config(
                 let var_name = config
                     .env_vars
                     .first()
-                    .map(|v| v.name.clone())
-                    .unwrap_or_else(|| "API_KEY".to_string());
+                    .map_or_else(|| "API_KEY".to_string(), |v| v.name.clone());
                 env.insert(var_name, key);
             }
         }
@@ -78,12 +114,13 @@ pub fn build_env_for_config(
 }
 
 /// Build HTTP headers for an MCP (primarily for OAuth tokens)
+#[must_use]
 pub fn build_headers_for_config(config: &McpConfig) -> HashMap<String, String> {
     let mut headers = HashMap::new();
 
     // Priority: oauth_token > keyfile
     if let Some(ref token) = config.oauth_token {
-        headers.insert("Authorization".to_string(), format!("Bearer {}", token));
+        headers.insert("Authorization".to_string(), format!("Bearer {token}"));
     } else if let Some(ref keyfile) = config.keyfile_path {
         if let Ok(token) = std::fs::read_to_string(keyfile) {
             headers.insert(
@@ -97,7 +134,11 @@ pub fn build_headers_for_config(config: &McpConfig) -> HashMap<String, String> {
 }
 
 /// Create a toolset from MCP configuration
-/// Note: This is a placeholder for SerdesAI integration
+/// Note: This is a placeholder for `SerdesAI` integration
+///
+/// # Errors
+///
+/// Returns `McpError` if config validation fails.
 pub async fn create_toolset_from_config(
     config: &McpConfig,
     secrets: &SecretsManager,
@@ -106,7 +147,7 @@ pub async fn create_toolset_from_config(
     // For now, validate the config and return Ok
     let _ = build_env_for_config(config, secrets)?;
     let _ = build_headers_for_config(config);
-    let (cmd, args) = build_command(config);
+    let (cmd, _args) = build_command(config);
 
     if config.transport == McpTransport::Stdio && cmd.is_empty() {
         return Err(McpError::Config(
@@ -140,6 +181,7 @@ mod tests {
             transport: McpTransport::Stdio,
             auth_type: McpAuthType::None,
             env_vars: vec![],
+            package_args: vec![],
             keyfile_path: None,
             config: serde_json::json!({}),
             oauth_token: None,
@@ -212,6 +254,29 @@ mod tests {
             vec!["-y".to_string(), "@mcp/server-filesystem".to_string()]
         );
         assert!(args.contains(&"-y".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_build_command_with_package_args() {
+        let mut config = create_test_config();
+        config.package_args = vec![crate::mcp::McpPackageArg {
+            arg_type: McpPackageArgType::Named,
+            name: "allowed-directories".to_string(),
+            description: None,
+            required: true,
+            default: None,
+        }];
+        config.config = serde_json::json!({
+            "package_args": {
+                "allowed-directories": "/tmp, /var"
+            }
+        });
+
+        let (cmd, args) = build_command(&config);
+        assert_eq!(cmd, "npx");
+        assert!(args.contains(&"--allowed-directories".to_string()));
+        assert!(args.contains(&"/tmp".to_string()));
+        assert!(args.contains(&"/var".to_string()));
     }
 
     #[tokio::test]

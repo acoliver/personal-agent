@@ -200,6 +200,7 @@ impl Config {
     }
 
     /// Get enabled MCPs
+    #[must_use]
     pub fn get_enabled_mcps(&self) -> Vec<&crate::mcp::McpConfig> {
         self.mcps.iter().filter(|m| m.enabled).collect()
     }

@@ -97,8 +97,8 @@ async fn test_entry_to_config_conversion() {
 
 #[tokio::test]
 async fn test_registry_default() {
-    let registry1 = McpRegistry::new();
-    let registry2 = McpRegistry::default();
+    let _registry1 = McpRegistry::new();
+    let _registry2 = McpRegistry::default();
 
     // Both should be equivalent (we can't directly compare them, so just ensure both construct)
     assert!(true, "Both constructors should work");

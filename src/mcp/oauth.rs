@@ -21,16 +21,15 @@ pub struct OAuthToken {
 }
 
 impl OAuthToken {
+    #[must_use]
     pub fn is_expired(&self) -> bool {
-        if let Some(expires_at) = self.expires_at {
+        self.expires_at.is_some_and(|expires_at| {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
+                .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
                 .unwrap_or(0);
             now >= expires_at
-        } else {
-            false // No expiry = never expires
-        }
+        })
     }
 }
 
@@ -50,11 +49,15 @@ pub struct OAuthCallbackResult {
 
 /// Start a local HTTP server to receive OAuth callback
 /// Returns (port, receiver for token)
+///
+/// # Errors
+///
+/// Returns an error if the server fails to start.
 pub async fn start_oauth_callback_server(
 ) -> Result<(u16, oneshot::Receiver<OAuthCallbackResult>), String> {
     // Find available port
-    let server = Server::http("127.0.0.1:0")
-        .map_err(|e| format!("Failed to start callback server: {}", e))?;
+    let server =
+        Server::http("127.0.0.1:0").map_err(|e| format!("Failed to start callback server: {e}"))?;
 
     let port = server
         .server_addr()
@@ -66,14 +69,14 @@ pub async fn start_oauth_callback_server(
 
     // Spawn task to handle callback
     tokio::task::spawn_blocking(move || {
-        handle_oauth_callback(server, tx);
+        handle_oauth_callback(&server, tx);
     });
 
     Ok((port, rx))
 }
 
 /// Handle OAuth callback request
-fn handle_oauth_callback(server: Server, tx: oneshot::Sender<OAuthCallbackResult>) {
+fn handle_oauth_callback(server: &Server, tx: oneshot::Sender<OAuthCallbackResult>) {
     // Wait for single request - recv() returns Result<Request, IoError>
     if let Ok(request) = server.recv() {
         let url = request.url();
@@ -122,6 +125,7 @@ fn handle_oauth_callback(server: Server, tx: oneshot::Sender<OAuthCallbackResult
 }
 
 /// Generate Smithery OAuth URL
+#[must_use]
 pub fn generate_smithery_oauth_url(config: &SmitheryOAuthConfig) -> String {
     // Smithery OAuth URL format: https://smithery.ai/server/{qualified_name}/authorize?redirect_uri={uri}
     format!(
@@ -167,6 +171,7 @@ pub struct OAuthManager {
 }
 
 impl OAuthManager {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             configs: HashMap::new(),
@@ -181,6 +186,7 @@ impl OAuthManager {
     }
 
     /// Get OAuth config for an MCP
+    #[must_use]
     pub fn get_config(&self, mcp_id: &Uuid) -> Option<&OAuthConfig> {
         self.configs.get(mcp_id)
     }
@@ -191,19 +197,22 @@ impl OAuthManager {
     }
 
     /// Get token for an MCP
+    #[must_use]
     pub fn get_token(&self, mcp_id: &Uuid) -> Option<&OAuthToken> {
         self.tokens.get(mcp_id)
     }
 
     /// Check if MCP has valid (non-expired) token
+    #[must_use]
     pub fn has_valid_token(&self, mcp_id: &Uuid) -> bool {
-        self.tokens
-            .get(mcp_id)
-            .map(|t| !t.is_expired())
-            .unwrap_or(false)
+        self.tokens.get(mcp_id).is_some_and(|t| !t.is_expired())
     }
 
     /// Generate authorization URL for OAuth flow
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no OAuth config is registered for the MCP.
     pub fn generate_auth_url(&mut self, mcp_id: Uuid) -> Result<String, String> {
         let config = self
             .configs
@@ -228,16 +237,20 @@ impl OAuthManager {
         );
 
         if !config.scopes.is_empty() {
-            url.push_str(&format!(
+            use std::fmt::Write;
+
+            let _ = write!(
+                url,
                 "&scope={}",
                 urlencoding::encode(&config.scopes.join(" "))
-            ));
+            );
         }
 
         Ok(url)
     }
 
     /// Get MCP ID from OAuth state parameter
+    #[must_use]
     pub fn get_mcp_for_state(&self, state: &str) -> Option<Uuid> {
         self.pending_flows
             .lock()

@@ -10,7 +10,7 @@ fn test_full_agent_creation_path() {
         let profile = ModelProfile::default();
 
         // Create agent in global runtime
-        let agent = PersonalAgent::new(&profile, &[]).await.unwrap();
+        let agent = PersonalAgent::new(&profile, &[]).unwrap();
 
         // Verify agent was created with no tools
         assert_eq!(agent.tool_count(), 0);
@@ -58,12 +58,13 @@ fn test_agent_with_disabled_mcps() {
             transport: McpTransport::Stdio,
             auth_type: McpAuthType::None,
             env_vars: vec![],
+            package_args: vec![],
             keyfile_path: None,
             config: serde_json::json!({}),
             oauth_token: None,
         }];
 
-        let agent = PersonalAgent::new(&profile, &configs).await.unwrap();
+        let agent = PersonalAgent::new(&profile, &configs).unwrap();
 
         // Disabled MCPs should not count
         assert_eq!(agent.tool_count(), 0);

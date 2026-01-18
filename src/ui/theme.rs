@@ -1,4 +1,5 @@
 //! Dark theme color definitions and common UI components
+#![allow(unsafe_code)]
 
 use objc2::rc::Retained;
 use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
@@ -57,6 +58,7 @@ impl Theme {
     pub const BG_DARKER: (f64, f64, f64) = (0.102, 0.102, 0.102); // #1a1a1a - input background
     pub const BG_DARK: (f64, f64, f64) = (0.141, 0.141, 0.141); // #242424 - message bubbles
     pub const TEXT_PRIMARY: (f64, f64, f64) = (0.898, 0.898, 0.898); // #e5e5e5 - main text
+    #[allow(dead_code)]
     pub const TEXT_SECONDARY: (f64, f64, f64) = (0.533, 0.533, 0.533); // #888888 - secondary text
     pub const TEXT_MUTED: (f64, f64, f64) = (0.333, 0.333, 0.333); // #555555 - muted text
 

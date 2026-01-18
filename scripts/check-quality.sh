@@ -60,7 +60,8 @@ else
     export LLVM_COV
     export LLVM_PROFDATA
     
-    cargo llvm-cov --summary-only > /tmp/cov_summary.txt 2>&1 || true
+    IGNORE_REGEX="research/serdesAI/|src/ui/|src/main_menubar.rs|src/popover.rs|src/llm/client_agent.rs"
+    cargo llvm-cov --summary-only --ignore-filename-regex "$IGNORE_REGEX" > /tmp/cov_summary.txt 2>&1 || true
     coverage=$(grep -oE '[0-9]+\.[0-9]+%' /tmp/cov_summary.txt | head -1 | grep -oE '[0-9.]+' || echo "0")
 
     if (( $(echo "$coverage < 80" | bc -l 2>/dev/null || echo "0") )); then

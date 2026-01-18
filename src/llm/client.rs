@@ -6,8 +6,10 @@
 use crate::models::{AuthConfig, ModelProfile};
 use crate::registry::RegistryCache;
 use futures::StreamExt;
+use serdes_ai::core::messages::ModelResponseStreamEvent;
 use serdes_ai::models::ModelRequestParameters;
 use serdes_ai::prelude::*;
+use std::collections::HashMap;
 use std::fs;
 use thiserror::Error;
 
@@ -66,6 +68,10 @@ impl LlmClient {
     ///
     /// This looks up the provider in the models.dev registry to get
     /// the correct API base URL and configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns `LlmError` when the API key cannot be resolved.
     pub fn from_profile(profile: &ModelProfile) -> StdResult<Self, LlmError> {
         let api_key = Self::resolve_api_key(profile)?;
 
@@ -117,10 +123,12 @@ impl LlmClient {
     }
 
     /// Get the model spec string for `SerdesAI` (e.g., "openai:gpt-4o")
-    fn model_spec(&self) -> String {
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn model_spec(&self) -> String {
         // Use get_serdes_provider to handle OpenAI-compatible providers
         let provider = self.get_serdes_provider();
-        format!("{}:{}", provider, self.profile.model_id)
+        format!("{provider}:{}", self.profile.model_id)
     }
 
     /// Build model settings from profile parameters
@@ -130,6 +138,147 @@ impl LlmClient {
             top_p: Some(self.profile.parameters.top_p),
             max_tokens: Some(u64::from(self.profile.parameters.max_tokens)),
             ..ModelSettings::default()
+        }
+    }
+
+    fn build_model_requests(messages: &[Message]) -> Vec<ModelRequest> {
+        messages
+            .iter()
+            .map(|m| {
+                let mut req = ModelRequest::new();
+                match m.role {
+                    Role::User => {
+                        if !m.content.is_empty() {
+                            req.add_user_prompt(m.content.clone());
+                        }
+
+                        if !m.tool_results.is_empty() {
+                            use serdes_ai::core::messages::request::{
+                                ModelRequestPart, ToolReturnPart,
+                            };
+
+                            for tool_result in &m.tool_results {
+                                let tool_return = if tool_result.is_error {
+                                    ToolReturnPart::error("tool", &tool_result.content)
+                                        .with_tool_call_id(&tool_result.tool_use_id)
+                                } else {
+                                    ToolReturnPart::success("tool", &tool_result.content)
+                                        .with_tool_call_id(&tool_result.tool_use_id)
+                                };
+
+                                req.parts.push(ModelRequestPart::ToolReturn(tool_return));
+                            }
+                        }
+                    }
+                    Role::Assistant => {
+                        req.add_user_prompt(format!("[Assistant]: {}", &m.content));
+                    }
+                    Role::System => req.add_system_prompt(m.content.clone()),
+                }
+                req
+            })
+            .collect()
+    }
+
+    pub(crate) fn base_url_override(&self) -> Option<&str> {
+        if self.profile.base_url.is_empty() {
+            self.registry_base_url.as_deref()
+        } else {
+            Some(self.profile.base_url.as_str())
+        }
+    }
+
+    fn build_tool_definitions(tools: &[crate::llm::tools::Tool]) -> Vec<ToolDefinition> {
+        tools
+            .iter()
+            .map(|t| {
+                ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone())
+            })
+            .collect()
+    }
+
+    fn build_model_and_params(
+        &self,
+        tools: &[crate::llm::tools::Tool],
+    ) -> StdResult<(std::sync::Arc<dyn serdes_ai::Model>, ModelRequestParameters), LlmError> {
+        let base_url = self.base_url_override();
+        let provider = self.get_serdes_provider();
+        let model = self.build_model(provider, base_url)?;
+        let tool_defs = Self::build_tool_definitions(tools);
+        let params = ModelRequestParameters::new().with_tools(tool_defs);
+        Ok((model, params))
+    }
+
+    fn parse_tool_call_args(args_str: &str) -> serde_json::Value {
+        serde_json::from_str(args_str)
+            .unwrap_or_else(|_| serde_json::json!({"_raw": args_str, "_error": "parse_failed"}))
+    }
+
+    fn emit_tool_use<F>(
+        pending_tool_calls: &mut HashMap<usize, (String, String, String)>,
+        index: usize,
+        on_event: &mut F,
+    ) where
+        F: FnMut(StreamEvent) + Send,
+    {
+        if let Some((id, name, args_str)) = pending_tool_calls.remove(&index) {
+            let args = Self::parse_tool_call_args(&args_str);
+            let tool_use = crate::llm::tools::ToolUse::new(&id, &name, args);
+            on_event(StreamEvent::ToolUse(tool_use));
+        }
+    }
+
+    fn handle_stream_event<F>(
+        event: ModelResponseStreamEvent,
+        pending_tool_calls: &mut HashMap<usize, (String, String, String)>,
+        on_event: &mut F,
+    ) where
+        F: FnMut(StreamEvent) + Send,
+    {
+        match event {
+            ModelResponseStreamEvent::PartDelta(delta) => {
+                use serdes_ai::core::messages::ModelResponsePartDelta;
+                match &delta.delta {
+                    ModelResponsePartDelta::Text(t) => {
+                        on_event(StreamEvent::TextDelta(t.content_delta.clone()));
+                    }
+                    ModelResponsePartDelta::Thinking(t) => {
+                        on_event(StreamEvent::ThinkingDelta(t.content_delta.clone()));
+                    }
+                    ModelResponsePartDelta::ToolCall(tc_delta) => {
+                        if let Some((_, _, ref mut args_str)) =
+                            pending_tool_calls.get_mut(&delta.index)
+                        {
+                            args_str.push_str(&tc_delta.args_delta);
+                        }
+                    }
+                    ModelResponsePartDelta::BuiltinToolCall(_) => {}
+                }
+            }
+            ModelResponseStreamEvent::PartStart(start) => {
+                use serdes_ai::core::ModelResponsePart;
+                match &start.part {
+                    ModelResponsePart::Text(t) => {
+                        if !t.content.is_empty() {
+                            on_event(StreamEvent::TextDelta(t.content.clone()));
+                        }
+                    }
+                    ModelResponsePart::Thinking(t) => {
+                        if !t.content.is_empty() {
+                            on_event(StreamEvent::ThinkingDelta(t.content.clone()));
+                        }
+                    }
+                    ModelResponsePart::ToolCall(tc) => {
+                        let id = tc.tool_call_id.as_deref().unwrap_or("").to_string();
+                        let name = tc.tool_name.clone();
+                        pending_tool_calls.insert(start.index, (id, name, String::new()));
+                    }
+                    _ => {}
+                }
+            }
+            ModelResponseStreamEvent::PartEnd(end) => {
+                Self::emit_tool_use(pending_tool_calls, end.index, on_event);
+            }
         }
     }
 
@@ -158,84 +307,28 @@ impl LlmClient {
     }
 
     /// Make a non-streaming request
+    ///
+    /// # Errors
+    ///
+    /// Returns `LlmError` if the request fails.
     pub async fn request(&self, messages: &[Message]) -> StdResult<Message, LlmError> {
         self.request_with_tools(messages, &[]).await
     }
 
     /// Make a non-streaming request with tools
+    ///
+    /// # Errors
+    ///
+    /// Returns `LlmError` if the request fails.
     pub async fn request_with_tools(
         &self,
         messages: &[Message],
         tools: &[crate::llm::tools::Tool],
     ) -> StdResult<Message, LlmError> {
-        // Set API key in environment for SerdesAI
         self.set_api_key_env();
 
-        let model_requests: Vec<ModelRequest> = messages
-            .iter()
-            .map(|m| {
-                let mut req = ModelRequest::new();
-                match m.role {
-                    Role::User => {
-                        // Add user content
-                        if !m.content.is_empty() {
-                            req.add_user_prompt(m.content.clone());
-                        }
-
-                        // Add tool results if present
-                        if !m.tool_results.is_empty() {
-                            use serdes_ai::core::messages::request::{
-                                ModelRequestPart, ToolReturnPart,
-                            };
-
-                            for tool_result in &m.tool_results {
-                                let tool_return = if tool_result.is_error {
-                                    ToolReturnPart::error("tool", &tool_result.content)
-                                        .with_tool_call_id(&tool_result.tool_use_id)
-                                } else {
-                                    ToolReturnPart::success("tool", &tool_result.content)
-                                        .with_tool_call_id(&tool_result.tool_use_id)
-                                };
-
-                                // Manual push since there's no add_tool_result method
-                                req.parts.push(ModelRequestPart::ToolReturn(tool_return));
-                            }
-                        }
-                    }
-                    Role::Assistant => {
-                        // For assistant messages, we'd typically use ModelResponse
-                        // but for simplicity, add as user context with prefix
-                        req.add_user_prompt(format!("[Assistant]: {}", &m.content));
-                    }
-                    Role::System => req.add_system_prompt(m.content.clone()),
-                }
-                req
-            })
-            .collect();
-
-        // Determine base URL: profile override > registry > none
-        let base_url = if self.profile.base_url.is_empty() {
-            self.registry_base_url.as_deref()
-        } else {
-            Some(self.profile.base_url.as_str())
-        };
-
-        // Determine provider type from registry
-        let provider = self.get_serdes_provider();
-
-        // Build the model with extended config for thinking support
-        let model = self.build_model(provider, base_url)?;
-
-        // Convert tools to SerdesAI ToolDefinition format
-        let tool_defs: Vec<ToolDefinition> = tools
-            .iter()
-            .map(|t| {
-                ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone())
-            })
-            .collect();
-
-        // Create request parameters with tools
-        let params = ModelRequestParameters::new().with_tools(tool_defs);
+        let model_requests = Self::build_model_requests(messages);
+        let (model, params) = self.build_model_and_params(tools)?;
 
         // Make the request using the model directly
         let response = model
@@ -244,10 +337,14 @@ impl LlmClient {
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
 
         // Parse response into Message
-        self.parse_response(response, tools)
+        Ok(Self::parse_response(response, tools))
     }
 
     /// Make a streaming request, returning events via callback
+    ///
+    /// # Errors
+    ///
+    /// Returns `LlmError` if the request fails.
     pub async fn request_stream<F>(
         &self,
         messages: &[Message],
@@ -261,6 +358,10 @@ impl LlmClient {
     }
 
     /// Make a streaming request with tools, returning events via callback
+    ///
+    /// # Errors
+    ///
+    /// Returns `LlmError` if the request fails.
     pub async fn request_stream_with_tools<F>(
         &self,
         messages: &[Message],
@@ -270,72 +371,10 @@ impl LlmClient {
     where
         F: FnMut(StreamEvent) + Send,
     {
-        // Set API key in environment for SerdesAI
         self.set_api_key_env();
 
-        let model_requests: Vec<ModelRequest> = messages
-            .iter()
-            .map(|m| {
-                let mut req = ModelRequest::new();
-                match m.role {
-                    Role::User => {
-                        // Add user content
-                        if !m.content.is_empty() {
-                            req.add_user_prompt(m.content.clone());
-                        }
-
-                        // Add tool results if present (Issue 2 fix)
-                        if !m.tool_results.is_empty() {
-                            use serdes_ai::core::messages::request::{
-                                ModelRequestPart, ToolReturnPart,
-                            };
-
-                            for tool_result in &m.tool_results {
-                                let tool_return = if tool_result.is_error {
-                                    ToolReturnPart::error("tool", &tool_result.content)
-                                        .with_tool_call_id(&tool_result.tool_use_id)
-                                } else {
-                                    ToolReturnPart::success("tool", &tool_result.content)
-                                        .with_tool_call_id(&tool_result.tool_use_id)
-                                };
-
-                                // Manual push since there's no add_tool_result method
-                                req.parts.push(ModelRequestPart::ToolReturn(tool_return));
-                            }
-                        }
-                    }
-                    Role::Assistant => {
-                        req.add_user_prompt(format!("[Assistant]: {}", &m.content));
-                    }
-                    Role::System => req.add_system_prompt(m.content.clone()),
-                }
-                req
-            })
-            .collect();
-
-        // Determine base URL: profile override > registry > none
-        let base_url = if self.profile.base_url.is_empty() {
-            self.registry_base_url.as_deref()
-        } else {
-            Some(self.profile.base_url.as_str())
-        };
-
-        // Determine provider type from registry
-        let provider = self.get_serdes_provider();
-
-        // Build the model with extended config for thinking support
-        let model = self.build_model(provider, base_url)?;
-
-        // Convert tools to SerdesAI ToolDefinition format
-        let tool_defs: Vec<ToolDefinition> = tools
-            .iter()
-            .map(|t| {
-                ToolDefinition::new(&t.name, &t.description).with_parameters(t.input_schema.clone())
-            })
-            .collect();
-
-        // Create request parameters with tools
-        let params = ModelRequestParameters::new().with_tools(tool_defs);
+        let model_requests = Self::build_model_requests(messages);
+        let (model, params) = self.build_model_and_params(tools)?;
 
         // Use the model directly for streaming
         let mut stream = model
@@ -343,70 +382,13 @@ impl LlmClient {
             .await
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
 
-        use serdes_ai::core::messages::ModelResponseStreamEvent;
-        use std::collections::HashMap;
-
-        // Track pending tool calls while streaming
-        // index -> (id, name, args_str)
         let mut pending_tool_calls: HashMap<usize, (String, String, String)> = HashMap::new();
 
         while let Some(event_result) = stream.next().await {
             match event_result {
-                Ok(event) => match event {
-                    ModelResponseStreamEvent::PartDelta(delta) => {
-                        use serdes_ai::core::messages::ModelResponsePartDelta;
-                        match &delta.delta {
-                            ModelResponsePartDelta::Text(t) => {
-                                on_event(StreamEvent::TextDelta(t.content_delta.clone()));
-                            }
-                            ModelResponsePartDelta::Thinking(t) => {
-                                on_event(StreamEvent::ThinkingDelta(t.content_delta.clone()));
-                            }
-                            ModelResponsePartDelta::ToolCall(tc_delta) => {
-                                // Accumulate tool call args from deltas
-                                if let Some((_, _, ref mut args_str)) =
-                                    pending_tool_calls.get_mut(&delta.index)
-                                {
-                                    args_str.push_str(&tc_delta.args_delta);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    ModelResponseStreamEvent::PartStart(start) => {
-                        use serdes_ai::core::ModelResponsePart;
-                        match &start.part {
-                            ModelResponsePart::Text(t) => {
-                                if !t.content.is_empty() {
-                                    on_event(StreamEvent::TextDelta(t.content.clone()));
-                                }
-                            }
-                            ModelResponsePart::Thinking(t) => {
-                                if !t.content.is_empty() {
-                                    on_event(StreamEvent::ThinkingDelta(t.content.clone()));
-                                }
-                            }
-                            ModelResponsePart::ToolCall(tc) => {
-                                // Start accumulating this tool call
-                                let id = tc.tool_call_id.as_deref().unwrap_or("").to_string();
-                                let name = tc.tool_name.clone();
-                                pending_tool_calls.insert(start.index, (id, name, String::new()));
-                            }
-                            _ => {}
-                        }
-                    }
-                    ModelResponseStreamEvent::PartEnd(end) => {
-                        // Emit the complete tool use when the part ends
-                        if let Some((id, name, args_str)) = pending_tool_calls.remove(&end.index) {
-                            // Parse accumulated args
-                            let args = serde_json::from_str(&args_str).unwrap_or_else(
-                                |_| serde_json::json!({"_raw": args_str, "_error": "parse_failed"}),
-                            );
-                            let tool_use = crate::llm::tools::ToolUse::new(&id, &name, args);
-                            on_event(StreamEvent::ToolUse(tool_use));
-                        }
-                    }
-                },
+                Ok(event) => {
+                    Self::handle_stream_event(event, &mut pending_tool_calls, &mut on_event);
+                }
                 Err(e) => {
                     on_event(StreamEvent::Error(e.to_string()));
                     return Err(LlmError::SerdesAi(e.to_string()));
@@ -447,12 +429,12 @@ impl LlmClient {
         "OPENAI_API_KEY".to_string()
     }
 
-    /// Parse a SerdesAI ModelResponse into our Message type
+    /// Parse a `SerdesAI` `ModelResponse` into our Message type
+    #[must_use]
     fn parse_response(
-        &self,
         response: serdes_ai::core::ModelResponse,
         _tools: &[crate::llm::tools::Tool],
-    ) -> StdResult<Message, LlmError> {
+    ) -> Message {
         use serdes_ai::core::ModelResponsePart;
 
         let mut text = String::new();
@@ -485,7 +467,7 @@ impl LlmClient {
                     tool_uses.push(tool_use);
                 }
                 _ => {
-                    // Ignore other part types for now
+                    // Ignore other parts (tool returns, images, etc.)
                 }
             }
         }
@@ -498,7 +480,7 @@ impl LlmClient {
             message = message.with_tool_uses(tool_uses);
         }
 
-        Ok(message)
+        message
     }
 
     /// Determine the provider type for `SerdesAI`
@@ -586,30 +568,35 @@ impl Message {
     }
 
     /// Add thinking content
+    #[must_use]
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
         self.thinking_content = Some(thinking.into());
         self
     }
 
     /// Add tool uses (for assistant messages)
+    #[must_use]
     pub fn with_tool_uses(mut self, tool_uses: Vec<crate::llm::tools::ToolUse>) -> Self {
         self.tool_uses = tool_uses;
         self
     }
 
     /// Add tool results (for user messages)
+    #[must_use]
     pub fn with_tool_results(mut self, tool_results: Vec<crate::llm::tools::ToolResult>) -> Self {
         self.tool_results = tool_results;
         self
     }
 
     /// Check if this message has tool uses
-    pub fn has_tool_uses(&self) -> bool {
+    #[must_use]
+    pub const fn has_tool_uses(&self) -> bool {
         !self.tool_uses.is_empty()
     }
 
     /// Check if this message has tool results
-    pub fn has_tool_results(&self) -> bool {
+    #[must_use]
+    pub const fn has_tool_results(&self) -> bool {
         !self.tool_results.is_empty()
     }
 }
@@ -727,7 +714,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let client = LlmClient::from_profile(&profile).unwrap();
+        let _client = LlmClient::from_profile(&profile).unwrap();
+        drop(_client);
 
         // Create a mock response with a tool call
         let response = ModelResponse {
@@ -746,7 +734,7 @@ mod tests {
             ..Default::default()
         };
 
-        let message = client.parse_response(response, &[]).unwrap();
+        let message = LlmClient::parse_response(response, &[]);
 
         assert_eq!(message.role, Role::Assistant);
         assert!(message.content.contains("weather"));
@@ -769,7 +757,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let client = LlmClient::from_profile(&profile).unwrap();
+        let _client = LlmClient::from_profile(&profile).unwrap();
+        drop(_client);
 
         // Create a mock response with thinking content
         let response = ModelResponse {
@@ -784,7 +773,7 @@ mod tests {
             ..Default::default()
         };
 
-        let message = client.parse_response(response, &[]).unwrap();
+        let message = LlmClient::parse_response(response, &[]);
 
         assert_eq!(message.role, Role::Assistant);
         assert_eq!(message.content, "The answer is 42");

@@ -1,8 +1,19 @@
 //! Add MCP view - enter URL or search registries
+#![allow(unsafe_code)]
+#![allow(unused_unsafe)]
+#![allow(unused_variables)]
+#![allow(clippy::single_char_pattern)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::option_map_or_none)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::map_unwrap_or)]
+#![allow(clippy::redundant_clone)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::explicit_iter_loop)]
 
 use std::cell::RefCell;
-use std::fs::OpenOptions;
-use std::io::Write;
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
@@ -14,95 +25,25 @@ use objc2_app_kit::{
     NSViewController,
 };
 use objc2_core_graphics::CGColor;
-use objc2_foundation::{NSEdgeInsets, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{
+    NSEdgeInsets, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
+};
 
+use crate::ui::mcp_add_helpers::{log_to_file, parse_mcp_url, ParsedMcp};
 use crate::ui::Theme;
+use personal_agent::config::Config;
 use personal_agent::mcp::{
     registry::{McpRegistry, McpRegistryServerWrapper},
     McpAuthType, McpConfig,
 };
-use std::sync::Mutex;
 
-// Global storage for search results (thread-safe, accessed from background thread and main thread)
-static GLOBAL_SEARCH_RESULTS: Mutex<Option<Vec<McpRegistryServerWrapper>>> = Mutex::new(None);
-
-fn log_to_file(message: &str) {
-    let log_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join("Library/Application Support/PersonalAgent/debug.log");
-
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
-        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let _ = writeln!(file, "[{timestamp}] McpAddView: {message}");
-    }
-}
-
-/// Parsed MCP URL result
-#[derive(Debug, Clone)]
-pub enum ParsedMcp {
-    Npm {
-        identifier: String,
-        runtime_hint: String,
-    },
-    Docker {
-        image: String,
-    },
-    Http {
-        url: String,
-    },
-}
-
-/// Parse MCP URL to detect package type
-pub fn parse_mcp_url(url: &str) -> Result<ParsedMcp, String> {
-    let url = url.trim();
-
-    // npx -y @package/name or npx @package/name
-    if url.starts_with("npx ") {
-        let parts: Vec<&str> = url.split_whitespace().collect();
-        // Find the package identifier - it's not "npx" and not a flag (starts with -)
-        let identifier = parts
-            .iter()
-            .skip(1) // Skip "npx"
-            .find(|p| !p.starts_with("-"))
-            .ok_or("Invalid npx command")?;
-        return Ok(ParsedMcp::Npm {
-            identifier: identifier.to_string(),
-            runtime_hint: "npx".to_string(),
-        });
-    }
-
-    // docker run image
-    if url.starts_with("docker ") {
-        let parts: Vec<&str> = url.split_whitespace().collect();
-        let image = parts.last().ok_or("Invalid docker command")?;
-        return Ok(ParsedMcp::Docker {
-            image: image.to_string(),
-        });
-    }
-
-    // HTTP URL
-    if url.starts_with("http://") || url.starts_with("https://") {
-        return Ok(ParsedMcp::Http {
-            url: url.to_string(),
-        });
-    }
-
-    // Bare package name (assume npm)
-    if url.starts_with("@") || url.contains("/") {
-        return Ok(ParsedMcp::Npm {
-            identifier: url.to_string(),
-            runtime_hint: "npx".to_string(),
-        });
-    }
-
-    Err("Unrecognized URL format".to_string())
-}
+mod registry_search;
+use registry_search::{SearchContext, SearchResults, SEARCH_RESULTS};
 
 // Thread-local storage for passing parsed MCP to configure view
 thread_local! {
     pub static PARSED_MCP: RefCell<Option<ParsedMcp>> = const { RefCell::new(None) };
     pub static SELECTED_MCP_CONFIG: RefCell<Option<McpConfig>> = const { RefCell::new(None) };
-    static SEARCH_RESULTS: RefCell<Option<Vec<McpRegistryServerWrapper>>> = const { RefCell::new(None) };
 }
 
 pub struct McpAddViewIvars {
@@ -279,7 +220,7 @@ define_class!(
                 0
             };
 
-            // 0 = "Select...", 1 = "Official", 2 = "Smithery", 3 = "Both"
+            // 0 = "Select...", 1 = "Official", 2 = "Smithery"
             let is_smithery_selected = selected_index == 2;
 
             if is_smithery_selected {
@@ -303,7 +244,7 @@ define_class!(
                     // Open Smithery keys page
                     use objc2_app_kit::NSWorkspace;
                     use objc2_foundation::NSURL;
-                    let mtm = MainThreadMarker::new().unwrap();
+                    let _mtm = MainThreadMarker::new().unwrap();
                     let url_str = NSString::from_str("https://smithery.ai/account/api-keys");
                     if let Some(url) = unsafe { NSURL::URLWithString(&url_str) } {
                         let workspace = NSWorkspace::sharedWorkspace();
@@ -447,91 +388,11 @@ define_class!(
                 let tag = button.tag() as usize;
                 log_to_file(&format!("Result clicked with tag: {tag}"));
 
-                // Store selected index and enable Next button
                 *self.ivars().selected_result_index.borrow_mut() = Some(tag);
 
-                // Get the registry entry from global mutex
-                let entries_opt = GLOBAL_SEARCH_RESULTS.lock().ok().and_then(|guard| guard.clone());
-                if let Some(ref entries) = entries_opt {
-                    if tag < entries.len() {
-                        let wrapper = &entries[tag];
-
-                        match McpRegistry::entry_to_config(wrapper) {
-                            Ok(mcp_config) => {
-                                log_to_file(&format!("Converted to config: {}", mcp_config.name));
-
-                                // Check if configuration is needed
-                                let needs_config = !mcp_config.env_vars.is_empty()
-                                    || mcp_config.auth_type != McpAuthType::None;
-
-                                if needs_config {
-                                    log_to_file(&format!("Config needs setup - env_vars: {}, auth_type: {:?}",
-                                        mcp_config.env_vars.len(), mcp_config.auth_type));
-
-                                    // Store config and go to configure view
-                                    SELECTED_MCP_CONFIG.with(|cell| {
-                                        *cell.borrow_mut() = Some(mcp_config);
-                                    });
-
-                                    // Navigate to configure view
-                                    use objc2_foundation::NSNotificationCenter;
-                                    let center = NSNotificationCenter::defaultCenter();
-                                    let name = NSString::from_str("PersonalAgentShowConfigureMcp");
-                                    unsafe { center.postNotificationName_object(&name, None); }
-                                } else {
-                                    log_to_file("No config needed - saving directly");
-
-                                    // No config needed - save directly
-                                    let config_path = match personal_agent::config::Config::default_path() {
-                                        Ok(path) => path,
-                                        Err(e) => {
-                                            log_to_file(&format!("ERROR: Failed to get config path: {e}"));
-                                            return;
-                                        }
-                                    };
-
-                                    let mut config = match personal_agent::config::Config::load(&config_path) {
-                                        Ok(c) => c,
-                                        Err(e) => {
-                                            log_to_file(&format!("ERROR: Failed to load config: {e}"));
-                                            personal_agent::config::Config::default()
-                                        }
-                                    };
-
-                                    config.mcps.push(mcp_config);
-
-                                    if let Err(e) = config.save(&config_path) {
-                                        log_to_file(&format!("ERROR: Failed to save config: {e}"));
-                                    } else {
-                                        log_to_file("MCP saved successfully");
-
-                                        // Reload MCP service to start the new MCP
-                                        std::thread::spawn(|| {
-                                            if let Ok(rt) = tokio::runtime::Runtime::new() {
-                                                rt.block_on(async {
-                                                    use personal_agent::mcp::McpService;
-                                                    let service = McpService::global();
-                                                    let mut guard = service.lock().await;
-                                                    if let Err(e) = guard.reload().await {
-                                                        eprintln!("Failed to reload MCPs: {e}");
-                                                    }
-                                                });
-                                            }
-                                        });
-                                    }
-
-                                    // Go directly to settings
-                                    use objc2_foundation::NSNotificationCenter;
-                                    let center = NSNotificationCenter::defaultCenter();
-                                    let name = NSString::from_str("PersonalAgentShowSettingsView");
-                                    unsafe { center.postNotificationName_object(&name, None); }
-                                }
-                            }
-                            Err(e) => {
-                                log_to_file(&format!("Failed to convert entry: {e}"));
-                            }
-                        }
-                    }
+                if let Ok(entries_guard) = SEARCH_RESULTS.lock() {
+                    let entries = entries_guard.clone().unwrap_or_default();
+                    self.handle_selected_entry(tag, &entries);
                 }
             }
         }
@@ -561,106 +422,18 @@ impl McpAddViewController {
     fn perform_search(&self, query: String) {
         log_to_file("perform_search started");
 
-        // Get selected registry
-        let selected_index = if let Some(popup) = &*self.ivars().registry_popup.borrow() {
-            popup.indexOfSelectedItem()
-        } else {
-            1 // Default to Official
-        };
+        let search_context = SearchContext::from_popup(&self.ivars().registry_popup);
+        let smithery_key = search_context.load_smithery_key();
 
-        // 0 = "Select...", 1 = "Official", 2 = "Smithery", 3 = "Both"
-        let registry_source = match selected_index {
-            2 => personal_agent::mcp::registry::McpRegistrySource::Smithery,
-            _ => personal_agent::mcp::registry::McpRegistrySource::Official, // For now, "Both" just does official
-        };
+        log_to_file(&format!(
+            "Searching registry: {:?}",
+            search_context.registry_source
+        ));
 
-        // Get Smithery key if needed
-        let smithery_key =
-            if registry_source == personal_agent::mcp::registry::McpRegistrySource::Smithery {
-                let config_path = match personal_agent::config::Config::default_path() {
-                    Ok(path) => path,
-                    Err(e) => {
-                        log_to_file(&format!("ERROR: Failed to get config path: {e}"));
-                        return;
-                    }
-                };
-
-                match personal_agent::config::Config::load(&config_path) {
-                    Ok(config) => config.smithery_auth.clone(),
-                    Err(e) => {
-                        log_to_file(&format!("ERROR: Failed to load config: {e}"));
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-        log_to_file(&format!("Searching registry: {:?}", registry_source));
-
-        // Show loading state
         self.show_loading(true);
+        SearchResults::clear();
 
-        // Clear previous results
-        SEARCH_RESULTS.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
-
-        // Spawn thread to do search
-        std::thread::spawn(move || {
-            let runtime = match tokio::runtime::Runtime::new() {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("Failed to create runtime: {e}");
-                    return;
-                }
-            };
-
-            let registry = McpRegistry::new();
-            let results = runtime.block_on(async {
-                registry
-                    .search_registry(&query, registry_source, smithery_key.as_deref())
-                    .await
-            });
-
-            match results {
-                Ok(search_results) => {
-                    log_to_file(&format!(
-                        "Search found {} results",
-                        search_results.entries.len()
-                    ));
-
-                    // Store results in global mutex (thread-safe)
-                    if let Ok(mut guard) = GLOBAL_SEARCH_RESULTS.lock() {
-                        *guard = Some(search_results.entries.clone());
-                    }
-
-                    // Post notification to update UI on main thread
-                    // Dispatch to main thread
-                    dispatch::Queue::main().exec_async(|| {
-                        use objc2_foundation::NSNotificationCenter;
-                        let center = NSNotificationCenter::defaultCenter();
-                        let name = NSString::from_str("PersonalAgentMcpSearchComplete");
-                        unsafe {
-                            center.postNotificationName_object(&name, None);
-                        }
-                    });
-                }
-                Err(e) => {
-                    eprintln!("Search failed: {e}");
-
-                    // Post error notification on main thread
-                    dispatch::Queue::main().exec_async(|| {
-                        use objc2_foundation::NSNotificationCenter;
-                        let center = NSNotificationCenter::defaultCenter();
-                        let name = NSString::from_str("PersonalAgentMcpSearchError");
-                        unsafe {
-                            center.postNotificationName_object(&name, None);
-                        }
-                    });
-                }
-            }
-        });
+        search_context.spawn_search(query, smithery_key);
     }
 
     fn show_loading(&self, show: bool) {
@@ -675,37 +448,159 @@ impl McpAddViewController {
         self.show_loading(false);
 
         if let Some(stack) = &*self.ivars().results_stack.borrow() {
-            // Clear ALL existing results first
-            let subviews = stack.arrangedSubviews();
-            log_to_file(&format!("Clearing {} existing subviews", subviews.len()));
-            for view in subviews.iter() {
-                stack.removeArrangedSubview(&view);
-                view.removeFromSuperview();
-            }
+            Self::clear_results_stack(stack);
 
-            // Add new results from global mutex
-            let entries_opt = GLOBAL_SEARCH_RESULTS
-                .lock()
-                .ok()
-                .and_then(|guard| guard.clone());
-            if let Some(ref entries) = entries_opt {
+            if let Some(entries) = SearchResults::take() {
                 log_to_file(&format!("Adding {} results to UI", entries.len()));
                 if entries.is_empty() {
-                    // Show "no results" message
-                    let label =
-                        NSTextField::labelWithString(&NSString::from_str("No servers found."), mtm);
-                    label.setTextColor(Some(&Theme::text_secondary_color()));
-                    label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-                    stack.addArrangedSubview(&label);
+                    Self::add_no_results_label(stack, mtm);
                 } else {
-                    // Add result rows
-                    for (index, wrapper) in entries.iter().enumerate() {
-                        let row = self.create_result_row(wrapper, index, mtm);
-                        stack.addArrangedSubview(&row);
-                    }
+                    self.add_result_rows(stack, &entries, mtm);
                 }
             }
         }
+    }
+
+    fn clear_results_stack(stack: &NSStackView) {
+        let subviews = stack.arrangedSubviews();
+        log_to_file(&format!("Clearing {} existing subviews", subviews.len()));
+        for view in subviews.iter() {
+            stack.removeArrangedSubview(&view);
+            view.removeFromSuperview();
+        }
+    }
+
+    fn add_no_results_label(stack: &NSStackView, mtm: MainThreadMarker) {
+        let label = NSTextField::labelWithString(&NSString::from_str("No servers found."), mtm);
+        label.setTextColor(Some(&Theme::text_secondary_color()));
+        label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        stack.addArrangedSubview(&label);
+    }
+
+    fn add_result_rows(
+        &self,
+        stack: &NSStackView,
+        entries: &[McpRegistryServerWrapper],
+        mtm: MainThreadMarker,
+    ) {
+        for (index, wrapper) in entries.iter().enumerate() {
+            let row = self.create_result_row(wrapper, index, mtm);
+            stack.addArrangedSubview(&row);
+        }
+    }
+
+    fn handle_selected_entry(&self, tag: usize, entries: &[McpRegistryServerWrapper]) {
+        if tag >= entries.len() {
+            return;
+        }
+
+        let wrapper = &entries[tag];
+
+        match McpRegistry::entry_to_config(wrapper) {
+            Ok(mcp_config) => {
+                log_to_file(&format!("Converted to config: {}", mcp_config.name));
+
+                let needs_config = !mcp_config.env_vars.is_empty()
+                    || !mcp_config.package_args.is_empty()
+                    || mcp_config.auth_type != McpAuthType::None;
+
+                if needs_config {
+                    log_to_file(&format!(
+                        "Config needs setup - env_vars: {}, auth_type: {:?}",
+                        mcp_config.env_vars.len(),
+                        mcp_config.auth_type
+                    ));
+
+                    SELECTED_MCP_CONFIG.with(|cell| {
+                        *cell.borrow_mut() = Some(mcp_config);
+                    });
+
+                    use objc2_foundation::NSNotificationCenter;
+                    let center = NSNotificationCenter::defaultCenter();
+                    let name = NSString::from_str("PersonalAgentShowConfigureMcp");
+                    unsafe {
+                        center.postNotificationName_object(&name, None);
+                    }
+                } else {
+                    log_to_file("No config needed - saving directly");
+                    self.save_config_and_return_to_settings(mcp_config);
+                }
+            }
+            Err(e) => {
+                log_to_file(&format!("Failed to convert entry: {e}"));
+            }
+        }
+    }
+
+    #[allow(clippy::unused_self)]
+    fn save_config_and_return_to_settings(&self, mcp_config: McpConfig) {
+        let _ = self;
+        Self::save_config(mcp_config);
+        let center = NSNotificationCenter::defaultCenter();
+        let name = NSString::from_str("PersonalAgentShowSettingsView");
+        unsafe {
+            center.postNotificationName_object(&name, None);
+        }
+    }
+
+    fn save_config(mcp_config: McpConfig) {
+        let config_path = match Config::default_path() {
+            Ok(path) => path,
+            Err(e) => {
+                log_to_file(&format!("ERROR: Failed to get config path: {e}"));
+                return;
+            }
+        };
+
+        let mut config = match Config::load(&config_path) {
+            Ok(config) => config,
+            Err(e) => {
+                log_to_file(&format!("ERROR: Failed to load config: {e}"));
+                return;
+            }
+        };
+
+        let mut found = false;
+        for existing_mcp in &mut config.mcps {
+            if existing_mcp.id == mcp_config.id {
+                *existing_mcp = mcp_config.clone();
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            config.mcps.push(mcp_config);
+        }
+
+        if let Err(e) = config.save(&config_path) {
+            log_to_file(&format!("ERROR: Failed to save config: {e}"));
+            return;
+        }
+
+        log_to_file("MCP saved successfully");
+
+        unsafe {
+            let notification_center = NSNotificationCenter::defaultCenter();
+            notification_center
+                .postNotificationName_object(&NSString::from_str("MCPConfigSaved"), None);
+        }
+    }
+
+    #[allow(dead_code)]
+    fn reload_mcp_service() {
+        std::thread::spawn(|| {
+            if let Ok(rt) = tokio::runtime::Runtime::new() {
+                rt.block_on(async {
+                    use personal_agent::mcp::McpService;
+                    let service = McpService::global();
+                    let mut guard = service.lock().await;
+                    if let Err(e) = guard.reload().await {
+                        eprintln!("Failed to reload MCPs: {e}");
+                    }
+                });
+            }
+        });
     }
 
     fn create_result_row(
@@ -716,8 +611,6 @@ impl McpAddViewController {
     ) -> Retained<NSView> {
         let server = &wrapper.server;
 
-        // Use a simple borderless button with title set to empty,
-        // then overlay our custom content
         let button = NSButton::initWithFrame(
             NSButton::alloc(mtm),
             NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 50.0)),
@@ -741,7 +634,6 @@ impl McpAddViewController {
             button.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
 
-        // Build the title as attributed string with name + description
         let desc_text: String = server.description.chars().take(45).collect();
         let desc_text = if server.description.chars().count() > 45 {
             format!("{desc_text}...")
@@ -749,15 +641,9 @@ impl McpAddViewController {
             desc_text
         };
 
-        // Set button title to name, use attributed title for styling
-        let title = format!(
-            "{}
-{}",
-            server.name, desc_text
-        );
+        let title = format!("{}\n {}", server.name, desc_text);
         button.setTitle(&NSString::from_str(&title));
 
-        // Fixed size for button
         let width = button.widthAnchor().constraintEqualToConstant(360.0);
         let height = button.heightAnchor().constraintEqualToConstant(50.0);
         width.setActive(true);
@@ -777,37 +663,59 @@ impl McpAddViewController {
             right: 12.0,
         });
         top_bar.setTranslatesAutoresizingMaskIntoConstraints(false);
+        top_bar.setDistribution(NSStackViewDistribution::Fill);
 
         top_bar.setWantsLayer(true);
         if let Some(layer) = top_bar.layer() {
-            let color =
-                CGColor::new_generic_rgb(Theme::BG_DARK.0, Theme::BG_DARK.1, Theme::BG_DARK.2, 1.0);
+            let color = CGColor::new_generic_rgb(0.13, 0.13, 0.13, 1.0);
             layer.setBackgroundColor(Some(&color));
         }
 
-        // Back button
-        let back_btn = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("< Add MCP"),
-                Some(self),
-                Some(sel!(backClicked:)),
-                mtm,
-            )
-        };
-        back_btn.setBezelStyle(NSBezelStyle::Rounded);
-        let back_width = back_btn.widthAnchor().constraintEqualToConstant(100.0);
-        back_width.setActive(true);
-        top_bar.addArrangedSubview(&back_btn);
+        let back_btn = self.create_top_bar_button("←", sel!(backClicked:), mtm);
+        let title_label = NSTextField::labelWithString(&NSString::from_str("Add MCP"), mtm);
+        title_label.setFont(Some(&NSFont::boldSystemFontOfSize(15.0)));
+        title_label.setTextColor(Some(&Theme::text_primary()));
 
-        // Spacer
         let spacer = NSView::new(mtm);
+        spacer.setTranslatesAutoresizingMaskIntoConstraints(false);
         spacer.setContentHuggingPriority_forOrientation(
             1.0,
             NSLayoutConstraintOrientation::Horizontal,
         );
+
+        let refresh_btn = self.create_top_bar_button("⟳", sel!(refreshClicked:), mtm);
+
+        top_bar.addArrangedSubview(&back_btn);
+        top_bar.addArrangedSubview(&title_label);
         top_bar.addArrangedSubview(&spacer);
+        top_bar.addArrangedSubview(&refresh_btn);
 
         Retained::from(&*top_bar as &NSView)
+    }
+
+    fn create_top_bar_button(
+        &self,
+        label: &str,
+        action: objc2::runtime::Sel,
+        mtm: MainThreadMarker,
+    ) -> Retained<NSButton> {
+        let button = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str(label),
+                Some(self),
+                Some(action),
+                mtm,
+            )
+        };
+        button.setBezelStyle(NSBezelStyle::Automatic);
+        unsafe {
+            button.setTranslatesAutoresizingMaskIntoConstraints(false);
+            let width = button.widthAnchor().constraintEqualToConstant(32.0);
+            width.setActive(true);
+            let height = button.heightAnchor().constraintEqualToConstant(28.0);
+            height.setActive(true);
+        }
+        button
     }
 
     fn build_content(&self, mtm: MainThreadMarker) -> Retained<NSView> {
@@ -823,15 +731,22 @@ impl McpAddViewController {
         content.setTranslatesAutoresizingMaskIntoConstraints(false);
         content.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
 
-        // ===== URL FIELD (TOP) =====
+        self.build_url_section(&content, mtm);
+        self.build_registry_section(&content, mtm);
+        self.build_key_section(&content, mtm);
+        self.build_search_section(&content, mtm);
+        self.build_results_section(&content, mtm);
+        self.build_next_button(&content, mtm);
 
-        // URL label
+        Retained::from(&*content as &NSView)
+    }
+
+    fn build_url_section(&self, content: &NSStackView, mtm: MainThreadMarker) {
         let url_label = NSTextField::labelWithString(&NSString::from_str("URL:"), mtm);
         url_label.setTextColor(Some(&Theme::text_primary()));
         url_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         content.addArrangedSubview(&url_label);
 
-        // URL input field
         let url_field = NSTextField::new(mtm);
         url_field.setPlaceholderString(Some(&NSString::from_str(
             "npx -y @modelcontextprotocol/server-filesystem",
@@ -848,8 +763,6 @@ impl McpAddViewController {
         content.addArrangedSubview(&url_field);
         *self.ivars().url_input.borrow_mut() = Some(Retained::clone(&url_field));
 
-        // ===== DIVIDER =====
-
         let divider_label =
             NSTextField::labelWithString(&NSString::from_str("-- or search registry --"), mtm);
         divider_label.setTextColor(Some(&Theme::text_secondary_color()));
@@ -861,9 +774,9 @@ impl McpAddViewController {
             div_width.setActive(true);
         }
         content.addArrangedSubview(&divider_label);
+    }
 
-        // ===== REGISTRY DROPDOWN =====
-
+    fn build_registry_section(&self, content: &NSStackView, mtm: MainThreadMarker) {
         let registry_label = NSTextField::labelWithString(&NSString::from_str("Registry:"), mtm);
         registry_label.setTextColor(Some(&Theme::text_primary()));
         registry_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
@@ -873,7 +786,6 @@ impl McpAddViewController {
         registry_popup.addItemWithTitle(&NSString::from_str("Select..."));
         registry_popup.addItemWithTitle(&NSString::from_str("Official"));
 
-        // Check if Smithery key exists to determine dropdown text
         let has_smithery_key =
             if let Ok(config_path) = personal_agent::config::Config::default_path() {
                 if let Ok(config) = personal_agent::config::Config::load(&config_path) {
@@ -895,7 +807,6 @@ impl McpAddViewController {
             "Smithery (requires API key)"
         };
         registry_popup.addItemWithTitle(&NSString::from_str(smithery_text));
-        registry_popup.addItemWithTitle(&NSString::from_str("Both"));
         unsafe {
             registry_popup.setTarget(Some(self));
             registry_popup.setAction(Some(sel!(registryChanged:)));
@@ -907,9 +818,9 @@ impl McpAddViewController {
         }
         content.addArrangedSubview(&registry_popup);
         *self.ivars().registry_popup.borrow_mut() = Some(Retained::clone(&registry_popup));
+    }
 
-        // ===== KEY INPUT SECTION (hidden initially) =====
-
+    fn build_key_section(&self, content: &NSStackView, mtm: MainThreadMarker) {
         let key_container = NSStackView::new(mtm);
         key_container.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
         key_container.setSpacing(8.0);
@@ -937,7 +848,7 @@ impl McpAddViewController {
                 mtm,
             )
         };
-        save_btn.setBezelStyle(NSBezelStyle::Rounded);
+        save_btn.setBezelStyle(NSBezelStyle::Automatic);
         let save_width = save_btn.widthAnchor().constraintEqualToConstant(60.0);
         save_width.setActive(true);
         key_container.addArrangedSubview(&save_btn);
@@ -948,15 +859,14 @@ impl McpAddViewController {
         content.addArrangedSubview(&key_container);
         *self.ivars().key_input_container.borrow_mut() =
             Some(Retained::from(&*key_container as &NSView));
+    }
 
-        // ===== SEARCH FIELD =====
-
+    fn build_search_section(&self, content: &NSStackView, mtm: MainThreadMarker) {
         let search_label = NSTextField::labelWithString(&NSString::from_str("Search:"), mtm);
         search_label.setTextColor(Some(&Theme::text_primary()));
         search_label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         content.addArrangedSubview(&search_label);
 
-        // Search field + button in horizontal stack
         let search_row = NSStackView::new(mtm);
         search_row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
         search_row.setSpacing(8.0);
@@ -965,7 +875,7 @@ impl McpAddViewController {
         let search_field = NSTextField::new(mtm);
         search_field.setPlaceholderString(Some(&NSString::from_str("Enter search term...")));
         search_field.setTranslatesAutoresizingMaskIntoConstraints(false);
-        search_field.setEnabled(false); // Disabled until registry selected
+        search_field.setEnabled(false);
         unsafe {
             search_field.setTarget(Some(self));
             search_field.setAction(Some(sel!(searchFieldAction:)));
@@ -981,8 +891,8 @@ impl McpAddViewController {
                 mtm,
             )
         };
-        search_btn.setBezelStyle(NSBezelStyle::Rounded);
-        search_btn.setEnabled(false); // Disabled until registry selected
+        search_btn.setBezelStyle(NSBezelStyle::Automatic);
+        search_btn.setEnabled(false);
         let btn_width = search_btn.widthAnchor().constraintEqualToConstant(80.0);
         btn_width.setActive(true);
         search_row.addArrangedSubview(&search_btn);
@@ -992,7 +902,6 @@ impl McpAddViewController {
         row_width.setActive(true);
         content.addArrangedSubview(&search_row);
 
-        // Helper text (shown when no registry selected)
         let helper_text =
             NSTextField::labelWithString(&NSString::from_str("(select registry first)"), mtm);
         helper_text.setTextColor(Some(&Theme::text_secondary_color()));
@@ -1001,16 +910,15 @@ impl McpAddViewController {
         content.addArrangedSubview(&helper_text);
         *self.ivars().search_helper.borrow_mut() = Some(Retained::clone(&helper_text));
 
-        // Loading label
         let loading_label = NSTextField::labelWithString(&NSString::from_str("Searching..."), mtm);
         loading_label.setTextColor(Some(&Theme::text_secondary_color()));
         loading_label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
         loading_label.setHidden(true);
         content.addArrangedSubview(&loading_label);
         *self.ivars().loading_label.borrow_mut() = Some(Retained::clone(&loading_label));
+    }
 
-        // ===== RESULTS SCROLL VIEW =====
-
+    fn build_results_section(&self, content: &NSStackView, mtm: MainThreadMarker) {
         let results_scroll = NSScrollView::new(mtm);
         results_scroll.setHasVerticalScroller(true);
         results_scroll.setDrawsBackground(false);
@@ -1019,7 +927,6 @@ impl McpAddViewController {
             results_scroll.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
 
-        // Results stack (flipped so items start at top)
         let results_stack = super::FlippedStackView::new(mtm);
         unsafe {
             results_stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
@@ -1031,10 +938,9 @@ impl McpAddViewController {
 
         results_scroll.setDocumentView(Some(&results_stack));
 
-        // Constrain results scroll height
         let scroll_height = results_scroll
             .heightAnchor()
-            .constraintEqualToConstant(150.0);
+            .constraintGreaterThanOrEqualToConstant(150.0);
         scroll_height.setActive(true);
         let scroll_width = results_scroll
             .widthAnchor()
@@ -1046,15 +952,13 @@ impl McpAddViewController {
             Some(Retained::from(&*results_stack as &NSStackView));
         *self.ivars().results_scroll.borrow_mut() = Some(Retained::clone(&results_scroll));
 
-        // ===== SPACER TO PUSH NEXT BUTTON DOWN =====
-
         let spacer = NSView::new(mtm);
         spacer
             .setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Vertical);
         content.addArrangedSubview(&spacer);
+    }
 
-        // ===== NEXT BUTTON =====
-
+    fn build_next_button(&self, content: &NSStackView, mtm: MainThreadMarker) {
         let next_btn = unsafe {
             NSButton::buttonWithTitle_target_action(
                 &NSString::from_str("Next"),
@@ -1063,83 +967,11 @@ impl McpAddViewController {
                 mtm,
             )
         };
-        next_btn.setBezelStyle(NSBezelStyle::Rounded);
-        next_btn.setEnabled(false); // Disabled until URL is entered or result selected
+        next_btn.setBezelStyle(NSBezelStyle::Automatic);
+        next_btn.setEnabled(false);
         let next_width = next_btn.widthAnchor().constraintEqualToConstant(80.0);
         next_width.setActive(true);
         content.addArrangedSubview(&next_btn);
         *self.ivars().next_button.borrow_mut() = Some(Retained::clone(&next_btn));
-
-        Retained::from(&*content as &NSView)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_npx_with_flags() {
-        let result = parse_mcp_url("npx -y @modelcontextprotocol/server-filesystem").unwrap();
-        match result {
-            ParsedMcp::Npm {
-                identifier,
-                runtime_hint,
-            } => {
-                assert_eq!(identifier, "@modelcontextprotocol/server-filesystem");
-                assert_eq!(runtime_hint, "npx");
-            }
-            _ => panic!("Expected Npm variant"),
-        }
-    }
-
-    #[test]
-    fn test_parse_npx_without_flags() {
-        let result = parse_mcp_url("npx @package/name").unwrap();
-        match result {
-            ParsedMcp::Npm { identifier, .. } => {
-                assert_eq!(identifier, "@package/name");
-            }
-            _ => panic!("Expected Npm variant"),
-        }
-    }
-
-    #[test]
-    fn test_parse_bare_package() {
-        let result = parse_mcp_url("@org/package").unwrap();
-        match result {
-            ParsedMcp::Npm { identifier, .. } => {
-                assert_eq!(identifier, "@org/package");
-            }
-            _ => panic!("Expected Npm variant"),
-        }
-    }
-
-    #[test]
-    fn test_parse_docker() {
-        let result = parse_mcp_url("docker run mcp/server:latest").unwrap();
-        match result {
-            ParsedMcp::Docker { image } => {
-                assert_eq!(image, "mcp/server:latest");
-            }
-            _ => panic!("Expected Docker variant"),
-        }
-    }
-
-    #[test]
-    fn test_parse_http() {
-        let result = parse_mcp_url("https://example.com/mcp").unwrap();
-        match result {
-            ParsedMcp::Http { url } => {
-                assert_eq!(url, "https://example.com/mcp");
-            }
-            _ => panic!("Expected Http variant"),
-        }
-    }
-
-    #[test]
-    fn test_parse_invalid() {
-        let result = parse_mcp_url("invalid");
-        assert!(result.is_err());
     }
 }

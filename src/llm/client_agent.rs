@@ -1,15 +1,13 @@
 //! Agent-based LLM client with MCP tool integration
 //!
-//! This module provides Agent integration for PersonalAgent using SerdesAI Agent.
+//! This module provides Agent integration for `PersonalAgent` using `SerdesAI` Agent.
 
 use crate::llm::{LlmError, Message, Role, StreamEvent};
-use crate::registry::RegistryCache;
 use futures::StreamExt;
 use serdes_ai::UserContent;
 use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
-use std::sync::Arc;
 
 // Use std Result to avoid conflict with serdes_ai::prelude::Result
 type StdResult<T, E> = std::result::Result<T, E>;
@@ -34,9 +32,9 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
     ) -> Result<ToolReturn, ToolError> {
         // Get the global MCP service and call the tool
         let service_arc = crate::mcp::McpService::global();
-        let mut svc = service_arc.lock().await;
-
-        let result = svc
+        let result = service_arc
+            .lock()
+            .await
             .call_tool(&self.tool_name, args.clone())
             .await
             .map_err(|e| {
@@ -48,11 +46,11 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
     }
 }
 
-/// Agent client extensions for LlmClient
+/// Agent client extensions for `LlmClient`
 pub trait AgentClientExt {
     /// Create an Agent with MCP tools integrated
     ///
-    /// This builds a SerdesAI Agent with the current profile's model and system prompt,
+    /// This builds a `SerdesAI` Agent with the current profile's model and system prompt,
     /// and registers MCP tools as native Agent tools using a bridge executor.
     fn create_agent(
         &self,
@@ -71,52 +69,56 @@ pub trait AgentClientExt {
         F: FnMut(StreamEvent) + Send;
 }
 
+impl crate::llm::LlmClient {
+    fn build_agent_model(&self) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        let base_url = self.base_url_override();
+        let provider = self.get_serdes_provider();
+        self.build_model(provider, base_url)
+    }
+
+    fn build_agent_builder(
+        &self,
+        model: std::sync::Arc<dyn serdes_ai::Model>,
+        system_prompt: &str,
+    ) -> AgentBuilder<McpToolContext> {
+        let mut builder = AgentBuilder::from_arc(model)
+            .temperature(self.profile.parameters.temperature)
+            .top_p(self.profile.parameters.top_p)
+            .max_tokens(u64::from(self.profile.parameters.max_tokens));
+
+        if !system_prompt.is_empty() {
+            builder = builder.system_prompt(system_prompt);
+        }
+
+        builder
+    }
+
+    fn register_mcp_tools(
+        mut builder: AgentBuilder<McpToolContext>,
+        mcp_tools: Vec<crate::llm::tools::Tool>,
+    ) -> AgentBuilder<McpToolContext> {
+        for tool in mcp_tools {
+            let tool_name = tool.name.clone();
+            let tool_def = ToolDefinition::new(&tool_name, &tool.description)
+                .with_parameters(tool.input_schema.clone());
+            let executor = McpToolExecutor { tool_name };
+            builder = builder.tool_with_executor(tool_def, executor);
+        }
+        builder
+    }
+}
+
 impl AgentClientExt for crate::llm::LlmClient {
     async fn create_agent(
         &self,
         mcp_tools: Vec<crate::llm::tools::Tool>,
         system_prompt: &str,
     ) -> StdResult<Agent<McpToolContext>, LlmError> {
-        // Set API key in environment
         self.set_api_key_env();
 
-        // Determine base URL: profile override > registry > none
-        let base_url = if self.profile.base_url.is_empty() {
-            self.registry_base_url.as_deref()
-        } else {
-            Some(self.profile.base_url.as_str())
-        };
-
-        // Determine provider type from registry
-        let provider = self.get_serdes_provider();
-
-        // Build the model with extended config for thinking support
-        let model = self.build_model(provider, base_url)?;
-
-        // Create Agent builder
-        let mut builder = AgentBuilder::from_arc(model)
-            .temperature(self.profile.parameters.temperature)
-            .top_p(self.profile.parameters.top_p)
-            .max_tokens(u64::from(self.profile.parameters.max_tokens));
-
-        // Add system prompt if not empty
-        if !system_prompt.is_empty() {
-            builder = builder.system_prompt(system_prompt);
-        }
-
-        // Add each MCP tool as an async tool using the bridge executor
-        for tool in mcp_tools {
-            let tool_name = tool.name.clone();
-            let tool_def = ToolDefinition::new(&tool_name, &tool.description)
-                .with_parameters(tool.input_schema.clone());
-
-            // Create a bridge executor that calls MCP
-            let executor = McpToolExecutor {
-                tool_name: tool_name.clone(),
-            };
-
-            builder = builder.tool_with_executor(tool_def, executor);
-        }
+        let model = self.build_agent_model()?;
+        let mut builder = self.build_agent_builder(model, system_prompt);
+        builder = Self::register_mcp_tools(builder, mcp_tools);
 
         Ok(builder.build())
     }
@@ -164,7 +166,7 @@ impl AgentClientExt for crate::llm::LlmClient {
                     }
                     AgentStreamEvent::ToolCallStart { tool_name, .. } => {
                         // Log tool execution start
-                        eprintln!("Tool call started: {}", tool_name);
+                        eprintln!("Tool call started: {tool_name}");
                     }
                     AgentStreamEvent::ToolExecuted {
                         tool_name,
@@ -173,9 +175,9 @@ impl AgentClientExt for crate::llm::LlmClient {
                         ..
                     } => {
                         if success {
-                            eprintln!("Tool completed: {}", tool_name);
+                            eprintln!("Tool completed: {tool_name}");
                         } else {
-                            eprintln!("Tool failed: {} - {:?}", tool_name, error);
+                            eprintln!("Tool failed: {tool_name} - {error:?}");
                         }
                     }
                     AgentStreamEvent::RunComplete { .. } => {

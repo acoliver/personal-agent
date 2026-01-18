@@ -25,6 +25,7 @@ static AGENT_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
 ///
 /// This runtime persists for the entire application lifetime and should be used
 /// for all agent and MCP operations to avoid runtime shutdown issues.
+#[must_use]
 pub fn agent_runtime() -> &'static Runtime {
     &AGENT_RUNTIME
 }
@@ -51,7 +52,7 @@ where
 
 /// Spawn a task in the agent runtime (non-blocking).
 ///
-/// This function returns immediately with a JoinHandle.
+/// This function returns immediately with a `JoinHandle`.
 /// Use this when you want to fire-and-forget an async task or when you
 /// can await the handle later.
 ///
