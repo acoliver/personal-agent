@@ -1,6 +1,6 @@
 //! Streaming functionality for LLM responses
 
-use super::client::LLMClient;
+use super::client::LlmClient;
 use super::error::{LlmError, LlmResult};
 use super::events::ChatStreamEvent;
 use crate::models::{AuthConfig, Conversation, MessageRole};
@@ -53,11 +53,11 @@ fn conversation_to_model_requests(conversation: &Conversation) -> Vec<ModelReque
 ///
 /// Returns an error if the agent cannot be created or the stream fails.
 pub async fn send_message_stream(
-    client: &LLMClient,
+    client: &LlmClient,
     conversation: &Conversation,
     user_message: String,
 ) -> LlmResult<Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>>> {
-    let profile = client.profile();
+    let profile = &client.profile;
     
     // Get API key
     let api_key = match &profile.auth {
@@ -135,49 +135,4 @@ pub async fn send_message_stream(
     });
     
     Ok(Box::pin(mapped_stream))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::{Message, ModelProfile};
-    use uuid::Uuid;
-
-    fn test_profile() -> ModelProfile {
-        ModelProfile::new(
-            "Test".to_string(),
-            "openai".to_string(),
-            "gpt-4".to_string(),
-            "https://api.openai.com/v1".to_string(),
-            AuthConfig::Key {
-                value: "test-key-123".to_string(),
-            },
-        )
-    }
-
-    #[test]
-    fn test_model_spec_format() {
-        let profile = test_profile();
-        let client = LLMClient::new(profile).unwrap();
-        assert_eq!(client.model_spec(), "openai:gpt-4");
-    }
-
-    #[test]
-    fn test_conversation_to_model_requests_empty() {
-        let conv = Conversation::new(Uuid::new_v4());
-        let requests = conversation_to_model_requests(&conv);
-        assert!(requests.is_empty());
-    }
-
-    #[test]
-    fn test_conversation_to_model_requests_filters_system() {
-        let mut conv = Conversation::new(Uuid::new_v4());
-        conv.add_message(Message::system("You are helpful.".to_string()));
-        conv.add_message(Message::user("Hello".to_string()));
-        conv.add_message(Message::assistant("Hi there!".to_string()));
-        
-        let requests = conversation_to_model_requests(&conv);
-        // Should have 2 requests (user + assistant), not 3 (system filtered)
-        assert_eq!(requests.len(), 2);
-    }
 }

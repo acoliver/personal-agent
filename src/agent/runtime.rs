@@ -75,44 +75,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
-    fn test_global_runtime_exists() {
-        let runtime = agent_runtime();
-        // Runtime exists and can spawn tasks
-        let handle = runtime.spawn(async { 42 });
-        let result = runtime.block_on(handle).unwrap();
-        assert_eq!(result, 42);
+    fn run_in_agent_runtime_returns_future_result() {
+        let output = run_in_agent_runtime(async { 42 });
+        assert_eq!(output, 42);
     }
 
     #[test]
-    fn test_runtime_survives_multiple_calls() {
-        // First spawn
-        let result1 = run_in_agent_runtime(async { 1 });
-        assert_eq!(result1, 1);
-
-        // Second spawn - same runtime, still works
-        let result2 = run_in_agent_runtime(async { 2 });
-        assert_eq!(result2, 2);
-    }
-
-    #[test]
-    fn test_spawn_in_global_runtime() {
-        let result = run_in_agent_runtime(async {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            42
-        });
-        assert_eq!(result, 42);
-    }
-
-    #[test]
-    fn test_concurrent_operations() {
-        let handles: Vec<_> = (0..10)
-            .map(|i| std::thread::spawn(move || run_in_agent_runtime(async move { i * 2 })))
-            .collect();
-
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-        assert_eq!(results.len(), 10);
+    fn spawn_in_agent_runtime_executes_task() {
+        let handle = spawn_in_agent_runtime(async { "done".to_string() });
+        let output = run_in_agent_runtime(async move { handle.await.unwrap() });
+        assert_eq!(output, "done");
     }
 }

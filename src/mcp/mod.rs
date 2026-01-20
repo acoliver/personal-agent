@@ -14,7 +14,10 @@ pub use oauth::{
     generate_smithery_oauth_url, start_oauth_callback_server, OAuthCallbackResult, OAuthConfig,
     OAuthFlowState, OAuthManager, OAuthToken, SmitheryOAuthConfig,
 };
-pub use registry::{McpRegistry, McpRegistryServerWrapper, McpRegistrySource, McpSearchResult};
+pub use registry::{
+    McpRegistry, McpRegistryRemote, McpRegistryServer, McpRegistryServerWrapper,
+    McpRegistrySource, McpSearchResult,
+};
 pub use runtime::{McpConnection, McpRuntime, McpTool};
 pub use secrets::SecretsManager;
 pub use service::{McpService, ToolDefinition};

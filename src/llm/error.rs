@@ -36,6 +36,18 @@ pub enum LlmError {
     /// JSON error
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// Failed to read API key file
+    #[error("Failed to read keyfile {path}: {source}")]
+    KeyfileRead {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// No API key configured
+    #[error("No API key configured for profile")]
+    NoApiKey,
 }
 
 /// Result type for LLM operations
@@ -58,43 +70,5 @@ impl LlmError {
             self,
             Self::InvalidConfig(_) | Self::Auth(_) | Self::UnsupportedModel(_)
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_display() {
-        let err = LlmError::InvalidConfig("test".to_string());
-        assert!(err.to_string().contains("Invalid model configuration"));
-    }
-
-    #[test]
-    fn test_is_recoverable() {
-        assert!(LlmError::Stream("test".to_string()).is_recoverable());
-        assert!(!LlmError::InvalidConfig("test".to_string()).is_recoverable());
-    }
-
-    #[test]
-    fn test_is_config_error() {
-        assert!(LlmError::InvalidConfig("test".to_string()).is_config_error());
-        assert!(LlmError::Auth("test".to_string()).is_config_error());
-        assert!(!LlmError::Stream("test".to_string()).is_config_error());
-    }
-
-    #[test]
-    fn test_from_io_error() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let llm_err: LlmError = io_err.into();
-        assert!(matches!(llm_err, LlmError::Io(_)));
-    }
-
-    #[test]
-    fn test_from_json_error() {
-        let json_err = serde_json::from_str::<String>("invalid json").unwrap_err();
-        let llm_err: LlmError = json_err.into();
-        assert!(matches!(llm_err, LlmError::Json(_)));
     }
 }

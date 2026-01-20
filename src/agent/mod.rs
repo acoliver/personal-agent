@@ -118,66 +118,43 @@ pub async fn init_global_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::{McpAuthType, McpPackage, McpPackageType, McpSource, McpTransport};
+    use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_agent_creation_no_mcps() {
+    async fn init_global_agent_tracks_enabled_mcps() {
         let profile = ModelProfile::default();
-        let agent = PersonalAgent::new(&profile, &[]).unwrap();
-        assert!(agent.tool_count() == 0);
-    }
-
-    #[tokio::test]
-    async fn test_agent_creation_with_disabled_mcp() {
-        let profile = ModelProfile::default();
-        let config = McpConfig {
-            enabled: false,
-            id: uuid::Uuid::new_v4(),
-            name: "test".to_string(),
-            source: crate::mcp::McpSource::Official {
-                name: "test".to_string(),
-                version: "1.0.0".to_string(),
+        let enabled = McpConfig {
+            id: Uuid::new_v4(),
+            name: "Enabled".to_string(),
+            enabled: true,
+            source: McpSource::Manual {
+                url: "https://example.com".to_string(),
             },
-            package: crate::mcp::McpPackage {
-                package_type: crate::mcp::McpPackageType::Npm,
-                identifier: "@test/mcp".to_string(),
-                runtime_hint: Some("node".to_string()),
+            package: McpPackage {
+                package_type: McpPackageType::Http,
+                identifier: "https://example.com".to_string(),
+                runtime_hint: None,
             },
-            transport: crate::mcp::McpTransport::Stdio,
-            auth_type: crate::mcp::McpAuthType::None,
+            transport: McpTransport::Http,
+            auth_type: McpAuthType::None,
             env_vars: vec![],
             package_args: vec![],
             keyfile_path: None,
             config: serde_json::json!({}),
             oauth_token: None,
         };
+        let mut disabled = enabled.clone();
+        disabled.id = Uuid::new_v4();
+        disabled.name = "Disabled".to_string();
+        disabled.enabled = false;
 
-        let agent = PersonalAgent::new(&profile, &[config]).unwrap();
-        // Disabled MCPs should not create toolsets
-        assert!(agent.tool_count() == 0);
-    }
+        init_global_agent(&profile, &[enabled.clone(), disabled])
+            .await
+            .unwrap();
 
-    #[test]
-    fn test_agent_can_be_shared_across_threads() {
-        use crate::agent::runtime::run_in_agent_runtime;
-        use std::sync::Arc;
-
-        let agent = Arc::new(run_in_agent_runtime(async {
-            let profile = ModelProfile::default();
-            PersonalAgent::new(&profile, &[]).unwrap()
-        }));
-
-        let handles: Vec<_> = (0..5)
-            .map(|_| {
-                let agent = Arc::clone(&agent);
-                std::thread::spawn(move || {
-                    // Just verify we can access the agent from multiple threads
-                    agent.tool_count()
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            assert_eq!(handle.join().unwrap(), 0);
-        }
+        let lock = global_agent().read().await;
+        let agent = lock.as_ref().expect("agent initialized");
+        assert_eq!(agent.tool_count(), 1);
     }
 }

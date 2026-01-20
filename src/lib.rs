@@ -7,6 +7,7 @@ pub mod agent;
 pub mod config;
 pub mod error;
 pub mod llm;
+pub mod main_utils;
 pub mod mcp;
 pub mod models;
 pub mod registry;
