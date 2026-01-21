@@ -2,6 +2,7 @@ pub mod chat_view;
 pub mod chat_view_helpers;
 pub mod chat_view_simple;
 pub mod history_view;
+pub mod keyboard_shortcuts;
 pub mod mcp_add_helpers;
 pub mod mcp_add_view;
 pub mod mcp_configure_helpers;

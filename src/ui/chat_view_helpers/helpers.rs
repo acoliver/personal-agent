@@ -153,10 +153,9 @@ pub fn update_title_and_model(controller: &ChatViewController) {
         .and_then(|c| c.title.clone())
         .unwrap_or_else(|| "New Conversation".to_string());
 
+    // Repopulate the popup with fresh data from storage, then select current title
     if let Some(popup) = &*controller.ivars().title_popup.borrow() {
-        if let Some(item) = popup.itemWithTitle(&NSString::from_str(&conv_title)) {
-            popup.selectItem(Some(&item));
-        }
+        populate_title_popup(popup, &conv_title);
     }
 
     if let Some(field) = &*controller.ivars().title_edit_field.borrow() {
@@ -166,6 +165,29 @@ pub fn update_title_and_model(controller: &ChatViewController) {
 
 pub fn populate_title_popup(popup: &objc2_app_kit::NSPopUpButton, current_title: &str) {
     popup.removeAllItems();
+
+    // Load all conversations from storage and add their titles to the popup
+    if let Ok(storage) = ConversationStorage::with_default_path() {
+        if let Ok(conversations) = storage.load_all() {
+            for conv in &conversations {
+                if let Some(title) = &conv.title {
+                    popup.addItemWithTitle(&NSString::from_str(title));
+                }
+            }
+
+            // Select the current title if it exists in the list
+            if let Some(item) = popup.itemWithTitle(&NSString::from_str(current_title)) {
+                popup.selectItem(Some(&item));
+            }
+
+            // If we got conversations, we're done
+            if !conversations.is_empty() {
+                return;
+            }
+        }
+    }
+
+    // Fallback: just add the current title if storage failed or was empty
     popup.addItemWithTitle(&NSString::from_str(current_title));
 }
 

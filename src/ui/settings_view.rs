@@ -55,6 +55,7 @@ fn log_to_file(message: &str) {
 // Thread-local storage for passing profile ID to profile editor
 thread_local! {
     pub static EDITING_PROFILE_ID: Cell<Option<Uuid>> = const { Cell::new(None) };
+    pub static EDITING_MCP_ID: Cell<Option<Uuid>> = const { Cell::new(None) };
 }
 
 // ============================================================================
@@ -82,6 +83,14 @@ pub fn set_layer_border(layer: &CALayer, width: f64, r: f64, g: f64, b: f64) {
 // SettingsViewController ivars
 // ============================================================================
 
+/// Which section has keyboard focus
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusMode {
+    None,
+    Profiles,
+    Mcps,
+}
+
 pub struct SettingsViewIvars {
     pub(super) scroll_view: RefCell<Option<Retained<NSScrollView>>>,
     pub(super) profiles_list: RefCell<Option<Retained<super::FlippedStackView>>>,
@@ -99,6 +108,9 @@ pub struct SettingsViewIvars {
     // Maps to track UUID to index for tags
     pub(super) profile_uuid_map: RefCell<Vec<Uuid>>,
     pub(super) mcp_uuid_map: RefCell<Vec<Uuid>>,
+    // Keyboard navigation state
+    pub(super) focus_mode: RefCell<FocusMode>,
+    pub(super) selected_index: RefCell<usize>,
 }
 
 // ============================================================================
@@ -472,6 +484,121 @@ define_class!(
                 }
             }
         }
+        
+        // Keyboard shortcut handlers
+        #[unsafe(method(focusProfilesShortcut:))]
+        fn focus_profiles_shortcut(&self, _sender: Option<&NSObject>) {
+            log_to_file("SettingsView: Focusing profiles");
+            *self.ivars().focus_mode.borrow_mut() = FocusMode::Profiles;
+            *self.ivars().selected_index.borrow_mut() = 0;
+            self.select_profile_at_index(0);
+        }
+        
+        #[unsafe(method(focusMcpsShortcut:))]
+        fn focus_mcps_shortcut(&self, _sender: Option<&NSObject>) {
+            log_to_file("SettingsView: Focusing MCPs");
+            *self.ivars().focus_mode.borrow_mut() = FocusMode::Mcps;
+            *self.ivars().selected_index.borrow_mut() = 0;
+            self.select_mcp_at_index(0);
+        }
+        
+        #[unsafe(method(addItemShortcut:))]
+        fn add_item_shortcut(&self, _sender: Option<&NSObject>) {
+            let mode = *self.ivars().focus_mode.borrow();
+            match mode {
+                FocusMode::Profiles => {
+                    log_to_file("SettingsView: Add profile via shortcut");
+                    self.do_add_profile();
+                }
+                FocusMode::Mcps => {
+                    log_to_file("SettingsView: Add MCP via shortcut");
+                    self.do_add_mcp();
+                }
+                FocusMode::None => {
+                    log_to_file("SettingsView: No focus mode, ignoring add");
+                }
+            }
+        }
+        
+        #[unsafe(method(deleteItemShortcut:))]
+        fn delete_item_shortcut(&self, _sender: Option<&NSObject>) {
+            let mode = *self.ivars().focus_mode.borrow();
+            match mode {
+                FocusMode::Profiles => {
+                    log_to_file("SettingsView: Delete profile via shortcut");
+                    self.do_delete_profile();
+                }
+                FocusMode::Mcps => {
+                    log_to_file("SettingsView: Delete MCP via shortcut");
+                    self.do_delete_mcp();
+                }
+                FocusMode::None => {
+                    log_to_file("SettingsView: No focus mode, ignoring delete");
+                }
+            }
+        }
+        
+        #[unsafe(method(editItemShortcut:))]
+        fn edit_item_shortcut(&self, _sender: Option<&NSObject>) {
+            let mode = *self.ivars().focus_mode.borrow();
+            match mode {
+                FocusMode::Profiles => {
+                    log_to_file("SettingsView: Edit profile via shortcut");
+                    self.do_edit_profile();
+                }
+                FocusMode::Mcps => {
+                    log_to_file("SettingsView: Edit MCP via shortcut");
+                    self.do_edit_mcp();
+                }
+                FocusMode::None => {
+                    log_to_file("SettingsView: No focus mode, ignoring edit");
+                }
+            }
+        }
+        
+        #[unsafe(method(toggleMcpShortcut:))]
+        fn toggle_mcp_shortcut(&self, _sender: Option<&NSObject>) {
+            let mode = *self.ivars().focus_mode.borrow();
+            if mode == FocusMode::Mcps {
+                log_to_file("SettingsView: Toggle MCP via shortcut");
+                self.toggle_selected_mcp();
+            }
+        }
+        
+        #[unsafe(method(moveSelectionUp:))]
+        fn move_selection_up(&self, _sender: Option<&NSObject>) {
+            let mode = *self.ivars().focus_mode.borrow();
+            let current = *self.ivars().selected_index.borrow();
+            if current > 0 {
+                let new_index = current - 1;
+                *self.ivars().selected_index.borrow_mut() = new_index;
+                match mode {
+                    FocusMode::Profiles => self.select_profile_at_index(new_index),
+                    FocusMode::Mcps => self.select_mcp_at_index(new_index),
+                    FocusMode::None => {}
+                }
+            }
+        }
+        
+        #[unsafe(method(moveSelectionDown:))]
+        fn move_selection_down(&self, _sender: Option<&NSObject>) {
+            let mode = *self.ivars().focus_mode.borrow();
+            let current = *self.ivars().selected_index.borrow();
+            let max_index = match mode {
+                FocusMode::Profiles => self.ivars().profile_uuid_map.borrow().len().saturating_sub(1),
+                FocusMode::Mcps => self.ivars().mcp_uuid_map.borrow().len().saturating_sub(1),
+                FocusMode::None => 0,
+            };
+            if current < max_index {
+                let new_index = current + 1;
+                *self.ivars().selected_index.borrow_mut() = new_index;
+                match mode {
+                    FocusMode::Profiles => self.select_profile_at_index(new_index),
+                    FocusMode::Mcps => self.select_mcp_at_index(new_index),
+                    FocusMode::None => {}
+                }
+            }
+        }
     }
 );
 
@@ -492,6 +619,8 @@ impl SettingsViewController {
             mcp_edit_btn: RefCell::new(None),
             profile_uuid_map: RefCell::new(Vec::new()),
             mcp_uuid_map: RefCell::new(Vec::new()),
+            focus_mode: RefCell::new(FocusMode::None),
+            selected_index: RefCell::new(0),
         };
 
         let this = Self::alloc(mtm).set_ivars(ivars);
@@ -502,6 +631,12 @@ impl SettingsViewController {
     pub fn reload_profiles(&self) {
         self.load_profiles();
         self.load_mcps();
+        
+        // Scroll to top after loading
+        if let Some(scroll_view) = &*self.ivars().scroll_view.borrow() {
+            let clip_view = scroll_view.contentView();
+            clip_view.scrollToPoint(objc2_foundation::NSPoint::new(0.0, 0.0));
+        }
     }
 
     // ========================================================================
@@ -657,6 +792,7 @@ impl SettingsViewController {
         log_to_file(&format!("Config has {} profiles", config.profiles.len()));
 
         if let Some(list_stack) = &*self.ivars().profiles_list.borrow() {
+            log_to_file(&format!("profiles_list found, clearing {} subviews", list_stack.subviews().len()));
             let subviews: Vec<_> = list_stack.subviews().to_vec();
             for view in subviews {
                 unsafe {
@@ -666,6 +802,7 @@ impl SettingsViewController {
             }
 
             if config.profiles.is_empty() {
+                log_to_file("No profiles, showing empty message");
                 let message = NSTextField::labelWithString(
                     &NSString::from_str("No profiles yet. Click + to add one."),
                     mtm,
@@ -678,12 +815,16 @@ impl SettingsViewController {
                 }
                 sync_profile_selection(self, &[]);
             } else {
+                log_to_file(&format!("Building {} profile rows", config.profiles.len()));
                 let rows = build_profile_rows(self, &config.profiles, mtm);
-                for row in rows {
+                log_to_file(&format!("Built {} rows, adding to list_stack", rows.len()));
+                for (i, row) in rows.iter().enumerate() {
+                    log_to_file(&format!("Adding profile row {}", i));
                     unsafe {
-                        list_stack.addArrangedSubview(&row);
+                        list_stack.addArrangedSubview(row);
                     }
                 }
+                log_to_file(&format!("list_stack now has {} arranged subviews", list_stack.arrangedSubviews().len()));
                 let profile_ids: Vec<Uuid> =
                     config.profiles.iter().map(|profile| profile.id).collect();
                 sync_profile_selection(self, &profile_ids);
@@ -691,9 +832,12 @@ impl SettingsViewController {
                     *self.ivars().selected_profile_id.borrow_mut() = Some(default_id);
                 }
             }
+        } else {
+            log_to_file("ERROR: profiles_list is None!");
         }
 
         self.update_profile_button_states();
+        self.highlight_selected_profile();
     }
 
     fn load_mcps(&self) {
@@ -770,8 +914,40 @@ impl SettingsViewController {
             return;
         }
 
+        log_to_file(&format!("Applied selected profile: {profile_id}"));
         *self.ivars().selected_profile_id.borrow_mut() = Some(profile_id);
-        self.load_profiles();
+        self.update_profile_button_states();
+        self.highlight_selected_profile();
+    }
+    
+    fn highlight_selected_profile(&self) {
+        let selected_id = *self.ivars().selected_profile_id.borrow();
+        let uuid_map = self.ivars().profile_uuid_map.borrow();
+
+        if let Some(list_stack) = &*self.ivars().profiles_list.borrow() {
+            let subviews = list_stack.arrangedSubviews();
+            for (index, view) in subviews.iter().enumerate() {
+                let is_selected = uuid_map
+                    .get(index)
+                    .map(|&id| Some(id) == selected_id)
+                    .unwrap_or(false);
+
+                if let Some(layer) = view.layer() {
+                    if is_selected {
+                        // Highlight color (blue-ish)
+                        set_layer_background_color(&layer, 0.2, 0.4, 0.8);
+                    } else {
+                        // Normal color
+                        set_layer_background_color(
+                            &layer,
+                            Theme::BG_DARKER.0,
+                            Theme::BG_DARKER.1,
+                            Theme::BG_DARKER.2,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn select_mcp(&self, mcp_id: Uuid) {
@@ -839,6 +1015,177 @@ impl SettingsViewController {
             btn.setEnabled(has_selection);
         } else {
             log_to_file("mcp_edit_btn is None!");
+        }
+    }
+    
+    // Keyboard navigation helpers
+    fn select_profile_at_index(&self, index: usize) {
+        let uuid_map = self.ivars().profile_uuid_map.borrow();
+        if let Some(&uuid) = uuid_map.get(index) {
+            log_to_file(&format!("Selecting profile at index {index}: {uuid}"));
+            self.apply_selected_profile(uuid);
+        }
+    }
+    
+    fn select_mcp_at_index(&self, index: usize) {
+        let uuid_map = self.ivars().mcp_uuid_map.borrow();
+        if let Some(&uuid) = uuid_map.get(index) {
+            log_to_file(&format!("Selecting MCP at index {index}: {uuid}"));
+            self.select_mcp(uuid);
+        }
+    }
+    
+    fn toggle_selected_mcp(&self) {
+        let selected_id = *self.ivars().selected_mcp_id.borrow();
+        if let Some(mcp_id) = selected_id {
+            log_to_file(&format!("Toggling MCP: {mcp_id}"));
+            
+            let config_path = match Config::default_path() {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!("Failed to get config path: {e}");
+                    return;
+                }
+            };
+
+            let mut config = match Config::load(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to load config: {e}");
+                    return;
+                }
+            };
+
+            if let Some(mcp) = config.mcps.iter_mut().find(|m| m.id == mcp_id) {
+                mcp.enabled = !mcp.enabled;
+                log_to_file(&format!("MCP {} enabled: {}", mcp.name, mcp.enabled));
+            }
+
+            if let Err(e) = config.save(&config_path) {
+                eprintln!("Failed to save config: {e}");
+                return;
+            }
+            
+            // Reload to update UI
+            self.load_mcps();
+        }
+    }
+    
+    // Helper methods to avoid calling the objc methods from within the class
+    fn do_add_profile(&self) {
+        log_to_file("Add profile (shortcut)");
+        use objc2_foundation::NSNotificationCenter;
+        let center = NSNotificationCenter::defaultCenter();
+        let name = NSString::from_str("PersonalAgentShowModelSelector");
+        unsafe {
+            center.postNotificationName_object(&name, None);
+        }
+    }
+    
+    fn do_add_mcp(&self) {
+        log_to_file("Add MCP (shortcut)");
+        use objc2_foundation::NSNotificationCenter;
+        let center = NSNotificationCenter::defaultCenter();
+        let name = NSString::from_str("PersonalAgentShowMcpAdd");
+        unsafe {
+            center.postNotificationName_object(&name, None);
+        }
+    }
+    
+    fn do_edit_profile(&self) {
+        if let Some(profile_id) = *self.ivars().selected_profile_id.borrow() {
+            log_to_file(&format!("Edit profile (shortcut): {profile_id}"));
+            EDITING_PROFILE_ID.set(Some(profile_id));
+            use objc2_foundation::NSNotificationCenter;
+            let center = NSNotificationCenter::defaultCenter();
+            let name = NSString::from_str("PersonalAgentShowProfileEditor");
+            unsafe {
+                center.postNotificationName_object(&name, None);
+            }
+        }
+    }
+    
+    fn do_edit_mcp(&self) {
+        if let Some(mcp_id) = *self.ivars().selected_mcp_id.borrow() {
+            log_to_file(&format!("Edit MCP (shortcut): {mcp_id}"));
+            EDITING_MCP_ID.set(Some(mcp_id));
+            use objc2_foundation::NSNotificationCenter;
+            let center = NSNotificationCenter::defaultCenter();
+            let name = NSString::from_str("PersonalAgentShowMcpConfigure");
+            unsafe {
+                center.postNotificationName_object(&name, None);
+            }
+        }
+    }
+    
+    fn do_delete_profile(&self) {
+        if let Some(profile_id) = *self.ivars().selected_profile_id.borrow() {
+            log_to_file(&format!("Delete profile (shortcut): {profile_id}"));
+            // For shortcuts, just do it without confirm dialog
+            let config_path = match Config::default_path() {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!("Failed to get config path: {e}");
+                    return;
+                }
+            };
+
+            let mut config = match Config::load(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to load config: {e}");
+                    return;
+                }
+            };
+
+            config.profiles.retain(|p| p.id != profile_id);
+            if config.default_profile == Some(profile_id) {
+                config.default_profile = config.profiles.first().map(|p| p.id);
+            }
+
+            if let Err(e) = config.save(&config_path) {
+                eprintln!("Failed to save config: {e}");
+                return;
+            }
+
+            *self.ivars().selected_profile_id.borrow_mut() = None;
+            self.ivars().profile_uuid_map.borrow_mut().clear();
+            self.load_profiles();
+            self.update_profile_button_states();
+        }
+    }
+    
+    fn do_delete_mcp(&self) {
+        if let Some(mcp_id) = *self.ivars().selected_mcp_id.borrow() {
+            log_to_file(&format!("Delete MCP (shortcut): {mcp_id}"));
+            // For shortcuts, just do it without confirm dialog
+            let config_path = match Config::default_path() {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!("Failed to get config path: {e}");
+                    return;
+                }
+            };
+
+            let mut config = match Config::load(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to load config: {e}");
+                    return;
+                }
+            };
+
+            config.mcps.retain(|m| m.id != mcp_id);
+
+            if let Err(e) = config.save(&config_path) {
+                eprintln!("Failed to save config: {e}");
+                return;
+            }
+
+            *self.ivars().selected_mcp_id.borrow_mut() = None;
+            self.ivars().mcp_uuid_map.borrow_mut().clear();
+            self.load_mcps();
+            self.update_mcp_button_states();
         }
     }
 }

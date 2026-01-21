@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "screenshot": {
+      "command": "npx",
+      "args": [
+        "@anthropics/mcp-server-puppeteer"
+      ]
+    }
+  }
+}

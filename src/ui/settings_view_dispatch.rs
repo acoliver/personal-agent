@@ -29,6 +29,13 @@ pub fn build_content_area(
 
     scroll_view.setDocumentView(Some(&content_stack));
 
+    // CRITICAL: Constrain content_stack width to scroll view's content width
+    let content_view = scroll_view.contentView();
+    let width_constraint = content_stack
+        .widthAnchor()
+        .constraintEqualToAnchor_constant(&content_view.widthAnchor(), -28.0);
+    width_constraint.setActive(true);
+
     *controller.ivars().scroll_view.borrow_mut() = Some(scroll_view.clone());
     scroll_view
 }
@@ -46,6 +53,12 @@ fn build_scroll_view(mtm: MainThreadMarker) -> Retained<NSScrollView> {
             250.0,
             NSLayoutConstraintOrientation::Vertical,
         );
+        
+        // CRITICAL: Add minimum height constraint to prevent collapse
+        let min_height = scroll_view
+            .heightAnchor()
+            .constraintGreaterThanOrEqualToConstant(100.0);
+        min_height.setActive(true);
     }
     scroll_view
 }
@@ -63,6 +76,8 @@ fn build_content_stack(mtm: MainThreadMarker) -> Retained<NSStackView> {
             bottom: 16.0,
             right: 14.0,
         });
+        // CRITICAL: Set translatesAutoresizingMaskIntoConstraints for proper Auto Layout
+        content_stack.setTranslatesAutoresizingMaskIntoConstraints(false);
     }
 
     content_stack.setWantsLayer(true);
@@ -86,7 +101,8 @@ fn build_profiles_section(
     unsafe {
         section.setOrientation(objc2_app_kit::NSUserInterfaceLayoutOrientation::Vertical);
         section.setSpacing(8.0);
-        section.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
+        section.setAlignment(objc2_app_kit::NSLayoutAttribute::Width);
+        section.setTranslatesAutoresizingMaskIntoConstraints(false);
     }
 
     let header = build_section_header("PROFILES", mtm);
@@ -94,7 +110,8 @@ fn build_profiles_section(
         section.addArrangedSubview(&header);
     }
 
-    let (list_container, list_stack, toolbar) = build_list_box(controller, 120.0, mtm);
+    // Reduced height from 120 to 100 to leave room for hotkey section
+    let (list_container, list_stack, toolbar) = build_list_box(controller, 100.0, mtm);
     controller.setup_profiles_toolbar(&toolbar, mtm);
 
     unsafe {
@@ -116,7 +133,8 @@ fn build_mcps_section(
     unsafe {
         section.setOrientation(objc2_app_kit::NSUserInterfaceLayoutOrientation::Vertical);
         section.setSpacing(8.0);
-        section.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
+        section.setAlignment(objc2_app_kit::NSLayoutAttribute::Width);
+        section.setTranslatesAutoresizingMaskIntoConstraints(false);
     }
 
     let header = build_section_header("MCP TOOLS", mtm);
@@ -124,7 +142,8 @@ fn build_mcps_section(
         section.addArrangedSubview(&header);
     }
 
-    let (list_container, list_stack, toolbar) = build_list_box(controller, 120.0, mtm);
+    // Reduced height from 120 to 100 to leave room for hotkey section
+    let (list_container, list_stack, toolbar) = build_list_box(controller, 100.0, mtm);
     controller.setup_mcps_toolbar(&toolbar, mtm);
 
     unsafe {
@@ -147,6 +166,14 @@ fn build_hotkey_section(
         section.setOrientation(objc2_app_kit::NSUserInterfaceLayoutOrientation::Vertical);
         section.setSpacing(6.0);
         section.setAlignment(objc2_app_kit::NSLayoutAttribute::Leading);
+        section.setTranslatesAutoresizingMaskIntoConstraints(false);
+        // Add left margin to match other sections
+        section.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+            top: 0.0,
+            left: 0.0,
+            bottom: 0.0,
+            right: 0.0,
+        });
     }
 
     let header = build_section_header("GLOBAL HOTKEY", mtm);
@@ -175,7 +202,7 @@ fn build_hotkey_field(
 ) -> Retained<NSView> {
     let field = NSTextField::initWithFrame(
         NSTextField::alloc(mtm),
-        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(372.0, 24.0)),
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 24.0)),
     );
     field.setPlaceholderString(Some(&objc2_foundation::NSString::from_str("Cmd+Shift+P")));
     field.setBackgroundColor(Some(&Theme::bg_darker()));
@@ -184,7 +211,8 @@ fn build_hotkey_field(
     field.setBordered(true);
     unsafe {
         field.setTranslatesAutoresizingMaskIntoConstraints(false);
-        let width_constraint = field.widthAnchor().constraintEqualToConstant(372.0);
+        // Match the width of the list boxes (360px)
+        let width_constraint = field.widthAnchor().constraintEqualToConstant(360.0);
         width_constraint.setActive(true);
     }
 

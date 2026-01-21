@@ -41,10 +41,14 @@ pub fn start_streaming_request(
     streaming_tool_uses: Arc<Mutex<Vec<personal_agent::llm::tools::ToolUse>>>,
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    log_to_file("Starting streaming request in background...");
+    log_to_file(&format!("Starting streaming request in background with profile: {} ({}:{})", 
+        profile.name, profile.provider_id, profile.model_id));
+    log_to_file(&format!("Number of messages: {}, tools: {}", llm_messages.len(), tools.len()));
     spawn_in_agent_runtime(async move {
+        log_to_file("Inside async block, creating client...");
         match LlmClient::from_profile(&profile) {
             Ok(client) => {
+                log_to_file("Client created successfully, starting stream...");
                 let streaming_response_clone = Arc::clone(&streaming_response);
                 let streaming_thinking_clone = Arc::clone(&streaming_thinking);
                 let streaming_tool_uses_clone = Arc::clone(&streaming_tool_uses);

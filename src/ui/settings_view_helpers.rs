@@ -60,6 +60,12 @@ fn build_list_container(mtm: MainThreadMarker) -> Retained<NSView> {
         set_layer_border(&layer, 1.0, 0.3, 0.3, 0.3);
     }
 
+    // Set a fixed width for consistent sizing
+    unsafe {
+        let width_constraint = container.widthAnchor().constraintEqualToConstant(360.0);
+        width_constraint.setActive(true);
+    }
+
     container
 }
 
@@ -165,17 +171,33 @@ pub fn create_profile_row(
     index: usize,
     mtm: MainThreadMarker,
 ) -> Retained<NSView> {
-    let row_btn = unsafe {
-        NSButton::buttonWithTitle_target_action(
-            &NSString::from_str(""),
-            Some(controller),
-            Some(sel!(profileRowClicked:)),
-            mtm,
-        )
-    };
-    row_btn.setBezelStyle(NSBezelStyle::Automatic);
+    // Create button the same way as MCP row - using initWithFrame
+    let row_btn = NSButton::initWithFrame(
+        NSButton::alloc(mtm),
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 32.0)),
+    );
+    row_btn.setButtonType(NSButtonType::MomentaryLight);
+    row_btn.setBezelStyle(NSBezelStyle::SmallSquare);
     row_btn.setBordered(false);
+    row_btn.setTitle(&NSString::from_str(""));
     row_btn.setTag(index_tag(index));
+
+    unsafe {
+        row_btn.setTarget(Some(controller));
+        row_btn.setAction(Some(sel!(profileRowClicked:)));
+        row_btn.setTranslatesAutoresizingMaskIntoConstraints(false);
+    }
+
+    // Apply background
+    row_btn.setWantsLayer(true);
+    if let Some(layer) = row_btn.layer() {
+        set_layer_background_color(
+            &layer,
+            Theme::BG_DARKER.0,
+            Theme::BG_DARKER.1,
+            Theme::BG_DARKER.2,
+        );
+    }
 
     let row = NSStackView::new(mtm);
     unsafe {
@@ -188,21 +210,6 @@ pub fn create_profile_row(
             bottom: 4.0,
             right: 8.0,
         });
-    }
-
-    row.setWantsLayer(true);
-    if let Some(layer) = row.layer() {
-        set_layer_background_color(
-            &layer,
-            Theme::BG_DARKER.0,
-            Theme::BG_DARKER.1,
-            Theme::BG_DARKER.2,
-        );
-    }
-
-    unsafe {
-        let height_constraint = row.heightAnchor().constraintEqualToConstant(24.0);
-        height_constraint.setActive(true);
     }
 
     let text = format!(
@@ -357,15 +364,22 @@ fn apply_mcp_status_color(status_view: &NSView, mcp: &McpConfig) {
 }
 
 fn build_mcp_row_label(mcp: &McpConfig, mtm: MainThreadMarker) -> Retained<NSTextField> {
-    let source_type = match &mcp.source {
-        McpSource::Official { name, version } => format!("Official: {name} v{version}"),
-        McpSource::Smithery { qualified_name } => format!("Smithery: {qualified_name}"),
-        McpSource::Manual { url } => format!("Manual: {url}"),
+    // Use just the name, truncated from the left (show end) if too long
+    let display_name = if mcp.name.len() > 35 {
+        format!("...{}", &mcp.name[mcp.name.len()-32..])
+    } else {
+        mcp.name.clone()
     };
-    let text = format!("{} - {}", mcp.name, source_type);
-    let label = NSTextField::labelWithString(&NSString::from_str(&text), mtm);
+    let label = NSTextField::labelWithString(&NSString::from_str(&display_name), mtm);
     label.setTextColor(Some(&Theme::text_primary()));
     label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+    // Truncate from head (left) if still too long - shows the end of the name
+    label.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingHead);
+    // Set max width to prevent overflow
+    unsafe {
+        let max_width = label.widthAnchor().constraintLessThanOrEqualToConstant(280.0);
+        max_width.setActive(true);
+    }
     label
 }
 

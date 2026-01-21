@@ -134,6 +134,8 @@ fn build_title_edit_field(
 ) -> Retained<NSTextField> {
     let title_edit = NSTextField::new(mtm);
     title_edit.setStringValue(&NSString::from_str(default_title));
+    // Start hidden - only shown when renaming or creating new conversation
+    title_edit.setHidden(true);
     unsafe {
         title_edit.setTarget(Some(controller));
         title_edit.setAction(Some(sel!(titleEditDone:)));
