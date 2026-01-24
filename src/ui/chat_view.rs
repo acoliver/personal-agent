@@ -187,6 +187,15 @@ define_class!(
                     "Added message to conversation, now has {} messages",
                     conversation.messages.len()
                 ));
+                
+                // Save immediately after adding user message to prevent data loss
+                if let Ok(storage) = ConversationStorage::with_default_path() {
+                    if let Err(e) = storage.save(conversation) {
+                        log_to_file(&format!("Failed to save conversation after user message: {e}"));
+                    } else {
+                        log_to_file("Saved conversation after user message");
+                    }
+                }
             } else {
                 log_to_file("ERROR: No conversation object!");
             }

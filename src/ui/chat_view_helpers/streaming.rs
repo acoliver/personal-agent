@@ -67,6 +67,10 @@ pub fn start_streaming_request(
                         );
                         if is_complete {
                             log_to_file("Streaming complete");
+                            // Append end-of-text marker so check_streaming_done detects completion
+                            if let Ok(mut buf) = streaming_response_clone.lock() {
+                                buf.push('␄');
+                            }
                         }
                     })
                     .await;
@@ -258,6 +262,10 @@ pub fn run_followup_stream(
                         );
                         if is_complete {
                             log_to_file("Streaming complete");
+                            // Append end-of-text marker so check_streaming_done detects completion
+                            if let Ok(mut buf) = streaming_response_clone.lock() {
+                                buf.push('␄');
+                            }
                         }
                     })
                     .await;
@@ -294,6 +302,30 @@ pub fn finalize_streaming(controller: &ChatViewController) {
         state.thinking_text.as_deref(),
         show_thinking,
     );
+
+    // Add assistant message to conversation and save
+    if let Some(ref mut conversation) = *controller.ivars().conversation.borrow_mut() {
+        let mut assistant_msg = personal_agent::models::Message::assistant(state.final_text.clone());
+        if let Some(thinking) = &state.thinking_text {
+            if !thinking.is_empty() {
+                assistant_msg.thinking_content = Some(thinking.clone());
+            }
+        }
+        conversation.add_message(assistant_msg);
+        log_to_file(&format!(
+            "Added assistant message to conversation, now has {} messages",
+            conversation.messages.len()
+        ));
+        
+        // Save conversation after assistant response
+        if let Ok(storage) = personal_agent::storage::ConversationStorage::with_default_path() {
+            if let Err(e) = storage.save(conversation) {
+                log_to_file(&format!("Failed to save conversation after assistant response: {e}"));
+            } else {
+                log_to_file("Saved conversation after assistant response");
+            }
+        }
+    }
 
     mark_streaming_complete(controller);
 
