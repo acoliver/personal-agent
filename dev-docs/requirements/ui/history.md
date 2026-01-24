@@ -161,7 +161,7 @@ The History View displays saved conversations and allows users to load or delete
 | Step | Action | Visual Feedback |
 |------|--------|-----------------|
 | 1 | View appears | |
-| 2 | Call ConversationService.load_all_metadata() | |
+| 2 | Call ConversationService.list() | |
 | 3 | Sort by created_at descending | Newest first |
 | 4a | If empty | Show empty state |
 | 4b | If has data | Render cards |
@@ -253,7 +253,7 @@ struct ConversationMetadata {
 
 | Action | Service | Method |
 |--------|---------|--------|
-| List conversations | ConversationService | load_all_metadata() |
+| List conversations | ConversationService | list() |
 | Delete conversation | ConversationService | delete(id) |
 | Load conversation | Via notification | Chat View handles |
 

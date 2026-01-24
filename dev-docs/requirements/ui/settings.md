@@ -397,7 +397,7 @@ The Settings View manages model profiles and MCP configurations. **The view is p
 | Action | Service | Method |
 |--------|---------|--------|
 | List profiles | ProfileService | list() |
-| Set default profile | ProfileService | set_default(id) |
+| Set default profile | AppSettingsService | set_default_profile_id(id) |
 | Delete profile | ProfileService | delete(id) |
 | List MCPs | McpService | list() |
 | Get MCP status | McpService | status(id) |

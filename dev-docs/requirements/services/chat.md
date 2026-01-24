@@ -1,17 +1,50 @@
 # Chat Service Requirements
 
-The Chat Service handles sending messages to LLMs, managing streaming responses, and executing tool calls. **It is responsible for all stream processing** - the UI receives clean, ready-to-render events.
+The Chat Service handles sending messages to LLMs, managing streaming responses, and coordinating tool execution. **It uses SerdesAI Agent mode** for the core LLM interaction loop, delegating tool execution and response streaming to the agent framework.
 
 ---
 
 ## Responsibilities
 
-- Build LLM requests from conversation context
-- Stream responses from LLM providers
-- **Parse and clean all stream events before emitting to UI**
-- **Strip markers, split thinking from response**
-- Handle tool calls via MCP integration
-- Manage cancellation
+- Coordinate message sending through SerdesAI Agent
+- Manage streaming response events from agent
+- Provide clean, pre-processed events to UI
+- Handle cancellation (drop stream, return partial content)
+- Coordinate with ConversationService for persistence
+- Coordinate with McpService for tool availability
+- Apply context compression via HistoryProcessor
+
+---
+
+## Architecture: Agent Mode
+
+### Why Agent Mode?
+
+The previous approach had manual tool execution loops in the UI layer. Agent mode moves this responsibility to SerdesAI:
+
+| Manual Loop (Old) | Agent Mode (New) |
+|-------------------|------------------|
+| UI manages tool execution | Agent manages tool execution |
+| Complex state in view controller | State in agent runtime |
+| 39KB chat_view.rs | Thin UI + service layer |
+| Difficult to test | Testable service layer |
+
+### SerdesAI Agent Integration
+
+```rust
+pub struct ChatServiceImpl {
+    profile_service: Arc<dyn ProfileService>,
+    conversation_service: Arc<dyn ConversationService>,
+    mcp_service: Arc<dyn McpService>,
+}
+```
+
+**Key Decision:** McpService owns and manages MCP toolsets. ChatService requests available tools via `mcp_service.get_toolsets()`. This allows:
+- Settings view to show MCP status
+- MCPs shared across conversations
+- Central lifecycle management
+
+**Key Decision:** ChatService gets API keys through ProfileService.get_model_config(), NOT directly from SecretsService. ProfileService owns the secrets relationship.
 
 ---
 
@@ -25,17 +58,27 @@ pub trait ChatService: Send + Sync {
         &self,
         conversation_id: Uuid,
         user_message: &str,
-        profile: &ModelProfile,
     ) -> Result<StreamHandle>;
     
     /// Cancel an active stream
-    /// Will emit a Complete event with partial content
+    /// Will emit a Cancelled event with partial content
     fn cancel(&self, handle: &StreamHandle) -> Result<()>;
+    
+    /// Check if a stream is still active
+    fn is_streaming(&self, handle: &StreamHandle) -> bool;
 }
 
 pub struct StreamHandle {
     pub id: Uuid,
     pub receiver: mpsc::Receiver<StreamEvent>,
+    cancel_sender: oneshot::Sender<()>,
+}
+
+impl StreamHandle {
+    /// Get the next event (blocks until available)
+    pub async fn next(&mut self) -> Option<StreamEvent> {
+        self.receiver.recv().await
+    }
 }
 ```
 
@@ -43,312 +86,589 @@ pub struct StreamHandle {
 
 ## Stream Events (Clean Output)
 
-These events are **clean and ready for UI rendering**. No parsing, marker stripping, or buffer management needed by the UI.
+These events are **clean and ready for UI rendering**. The agent and service handle all parsing internally.
 
 ```rust
 pub enum StreamEvent {
+    /// Stream has started
+    Started { 
+        /// Model being used for this response
+        model_id: String,
+    },
+    
     /// Clean text content chunk
-    /// - No end markers (␄)
-    /// - No thinking content mixed in
-    /// - Ready to append directly to UI
+    /// Ready to append directly to UI
     TextDelta { content: String },
     
     /// Clean thinking content chunk
-    /// - No end markers
-    /// - Separated from response text
-    /// - Ready to append directly to thinking UI
+    /// Ready to append directly to thinking UI
     ThinkingDelta { content: String },
     
-    /// Tool call initiated
-    ToolCallStart { 
+    /// Tool execution started
+    ToolStart { 
         id: String, 
         name: String,
     },
     
-    /// Tool call arguments (may come in chunks)
-    ToolCallDelta { 
+    /// Tool execution completed
+    ToolComplete { 
         id: String, 
-        arguments: String,
-    },
-    
-    /// Tool result received
-    ToolResult { 
-        id: String, 
-        result: String,
-        is_error: bool,
+        name: String,
+        success: bool,
+        /// Brief result summary for UI (not full output)
+        summary: Option<String>,
     },
     
     /// Stream completed successfully
-    /// Contains final clean content for persistence
     Complete { 
-        text: String,              // Final response text (clean)
-        thinking: Option<String>,  // Final thinking content (clean)
-        tool_calls: Vec<ToolCall>, // All tool calls made
+        /// Final response text (clean, no markers)
+        text: String,
+        /// Final thinking content (clean, always included if model provided it)
+        thinking: Option<String>,
+        /// All tool calls made during this response
+        tool_calls: Vec<ToolCallSummary>,
+        /// Model that generated this response
+        model_id: String,
+    },
+    
+    /// Stream was cancelled
+    /// Partial content is persisted with [cancelled] marker
+    Cancelled {
+        /// Partial text accumulated before cancel
+        partial_text: String,
+        /// Partial thinking accumulated (always included if present)
+        partial_thinking: Option<String>,
+        /// Model that was generating this response
+        model_id: String,
     },
     
     /// Error occurred
-    Error { message: String },
+    Error { 
+        message: String,
+        /// If true, SerdesAI retry logic applies
+        retryable: bool,
+    },
 }
+
+pub struct ToolCallSummary {
+    pub id: String,
+    pub name: String,
+    pub success: bool,
+}
+```
+
+**Decision:** Usage stats (tokens) not included in events for now. Will add later as message footer along with context size.
+
+---
+
+## Message Flow
+
+### Send Message Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         ChatService                              │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+    1. send_message(conversation_id, user_message)
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Load conversation from ConversationService                      │
+│  Get resolved config from ProfileService.get_model_config()      │
+│  (includes profile AND resolved API key)                         │
+│  Get toolsets from McpService                                    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Save user message to ConversationService                        │
+│  (persist immediately before LLM call)                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Build SerdesAI Agent                                            │
+│  - ModelConfig with profile settings                             │
+│  - System prompt from profile                                    │
+│  - Parameters (temp, max_tokens, thinking)                       │
+│  - HistoryProcessor for context management                       │
+│  - Attach MCP toolsets                                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  AgentStream::new() with message_history from conversation       │
+│                                                                  │
+│  Agent internally:                                               │
+│  - Applies HistoryProcessor (context compression)                │
+│  - Sends to LLM                                                  │
+│  - Handles tool calls with retry logic                           │
+│  - Feeds results back                                            │
+│  - Continues until done                                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Map agent events to StreamEvent                                 │
+│  Send to UI via channel                                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  On Complete: Save assistant message to ConversationService      │
+│  On Cancelled: Save partial message with [cancelled] marker      │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Internal Processing
+## Agent Configuration
 
-The service handles all the messy parsing internally. The UI never sees raw provider data.
-
-### Stream Processing Pipeline
-
-```
-Provider Stream
-     │
-     ▼
-┌─────────────────────────────────┐
-│  1. Receive raw provider event  │
-│     (TextDelta, ThinkingDelta,  │
-│      ToolUse, etc.)             │
-└─────────────────────────────────┘
-     │
-     ▼
-┌─────────────────────────────────┐
-│  2. Parse and categorize        │
-│     - Detect thinking vs text   │
-│     - Parse tool calls          │
-└─────────────────────────────────┘
-     │
-     ▼
-┌─────────────────────────────────┐
-│  3. Clean content               │
-│     - Strip end markers (␄)     │
-│     - Trim whitespace edges     │
-│     - Remove control chars      │
-└─────────────────────────────────┘
-     │
-     ▼
-┌─────────────────────────────────┐
-│  4. Emit clean StreamEvent      │
-│     to UI via channel           │
-└─────────────────────────────────┘
-```
-
-### Marker Handling
-
-| Marker | Source | Handling |
-|--------|--------|----------|
-| `␄` (end of text) | Stream complete | Strip before emitting, trigger Complete event |
-| `▌` (cursor) | UI display | **Not in stream** - UI adds/removes this |
-
-### Buffer Management
-
-The service maintains internal buffers:
+### Building the Agent
 
 ```rust
-struct StreamState {
-    response_buffer: String,   // Accumulated response text
-    thinking_buffer: String,   // Accumulated thinking text
-    tool_calls: Vec<ToolCall>, // Accumulated tool calls
-    is_complete: bool,
-}
-```
-
-On stream end or cancellation:
-1. Strip any trailing markers from buffers
-2. Emit `Complete` event with clean final content
-3. Clear buffers
-
----
-
-## Request Building
-
-### Steps
-
-1. Load conversation from ConversationService
-2. Get context from ContextStrategy (may compress)
-3. Add system prompt from profile
-4. Configure model settings
-5. Add MCP tools from McpService
-6. Build provider-specific request
-
-### Context Integration
-
-```rust
-async fn build_request(
+async fn build_agent(
     &self,
-    conversation_id: Uuid,
-    profile: &ModelProfile,
-) -> Result<ModelRequest> {
-    // 1. Load conversation
-    let conversation = self.conversation_service.load(conversation_id)?;
+    config: &ResolvedModelConfig,  // From ProfileService.get_model_config()
+    conversation: &Conversation,
+) -> Result<Agent<(), String>> {
+    let profile = &config.profile;
     
-    // 2. Build context (may compress long conversations)
-    let context = self.context_strategy.build_context(
-        &conversation.messages,
-        conversation.context_state.as_ref(),
-        profile.context_limit(),
-    );
+    // 1. Build model spec: "provider:model_id"
+    // SerdesAI uses format like "openai:gpt-4o" or "anthropic:claude-3-5-sonnet"
+    let spec = format!("{}:{}", profile.api_type.as_str(), profile.model_id);
     
-    // 3. Build request with clean context
-    let mut request = ModelRequest::new()
-        .model(&profile.model_id)
-        .messages(context.messages);
+    // 2. Build model config with thinking/reasoning support
+    // API key comes from ResolvedModelConfig - ChatService doesn't touch SecretsService
+    // api_key is Option<String> - None for AuthMethod::None (local models)
+    let mut model_config = ModelConfig::new(&spec)
+        .with_base_url(&profile.base_url);
     
-    // 4. Add system prompt
-    if !profile.system_prompt.is_empty() {
-        request = request.system_prompt(&profile.system_prompt);
+    if let Some(ref api_key) = config.api_key {
+        model_config = model_config.with_api_key(api_key);
     }
+    
+    // Enable thinking if profile specifies (otherwise model default)
+    if profile.parameters.enable_thinking {
+        model_config = model_config.with_thinking(profile.parameters.thinking_budget);
+    }
+    
+    if let Some(ref effort) = profile.parameters.reasoning_effort {
+        model_config = model_config.with_reasoning_effort(effort);
+    }
+    
+    // 4. Build agent
+    let mut builder = AgentBuilder::from_config(model_config)?
+        .system_prompt(&profile.system_prompt);
     
     // 5. Add model parameters
     if let Some(temp) = profile.parameters.temperature {
-        request = request.temperature(temp);
+        builder = builder.temperature(temp);
     }
     if let Some(max) = profile.parameters.max_tokens {
-        request = request.max_tokens(max);
+        builder = builder.max_tokens(max);
     }
     
-    // 6. Add thinking config
-    if profile.parameters.enable_thinking {
-        request = request.with_thinking(
-            profile.parameters.thinking_budget.unwrap_or(10000)
-        );
+    // 6. Add context management via HistoryProcessor
+    // context_limit is required (u32, not Option) - pre-filled from models.dev
+    let context_limit = profile.parameters.context_limit;
+    builder = builder.history_processor(
+        TruncateByTokens::new(context_limit)
+            .keep_first(true)  // Keep system prompt
+    );
+    
+    // 7. Add MCP toolsets
+    let toolsets = self.mcp_service.get_toolsets();
+    for toolset in toolsets {
+        builder = builder.toolset(toolset);
     }
     
-    // 7. Add MCP tools
-    let tools = self.mcp_service.available_tools();
-    for tool in tools {
-        request = request.add_tool(tool);
-    }
-    
-    Ok(request)
+    Ok(builder.build())
 }
 ```
+
+### Running with Message History
+
+```rust
+async fn run_stream(
+    &self,
+    agent: &Agent<(), String>,
+    conversation: &Conversation,
+    user_message: &str,
+) -> Result<AgentStream<(), String>> {
+    // Convert conversation messages to SerdesAI format
+    let history = self.convert_to_model_requests(&conversation.messages);
+    
+    // Create run options with history
+    let options = RunOptions::new()
+        .message_history(history);
+    
+    // Start streaming
+    let stream = AgentStream::new(
+        agent,
+        UserContent::text(user_message),
+        (),  // No deps needed
+        options,
+    ).await?;
+    
+    Ok(stream)
+}
+```
+
+---
+
+## Context Management
+
+**Decision:** Use SerdesAI's built-in `HistoryProcessor` for context compression.
+
+### Available Processors
+
+| Processor | Use Case |
+|-----------|----------|
+| `TruncateByTokens` | Limit by estimated token count (our primary) |
+| `TruncateHistory` | Limit by message count |
+| `FilterHistory` | Remove system prompts, tool returns, retries |
+| `SummarizeHistory` | Placeholder for future LLM-based summarization |
+| `ChainedProcessor` | Combine multiple processors |
+| `FnProcessor` | Custom logic |
+
+### Default Configuration
+
+```rust
+// Primary: Token-based truncation
+// context_limit is required (u32) - comes from models.dev via profile
+TruncateByTokens::new(profile.parameters.context_limit as u64)
+    .keep_first(true)  // Always keep system prompt
+    .chars_per_token(4.0)  // Reasonable estimate for English
+```
+
+### Future: Sandwich Strategy
+
+For more sophisticated context management (important messages protected):
+
+```rust
+ChainedProcessor::new()
+    .add(FnProcessor::new(|ctx, msgs| {
+        // Mark important messages (first, last N, tool results)
+        // Compress middle section
+        // Return optimized history
+    }))
+    .add(TruncateByTokens::new(limit))
+```
+
+---
+
+## Retry Support
+
+**Decision:** Use SerdesAI's built-in retry logic rather than implementing our own.
+
+### What SerdesAI Provides
+
+| Feature | Configuration | Default |
+|---------|---------------|---------|
+| Output validation retries | `builder.max_output_retries(n)` | 3 |
+| Tool execution retries | `builder.max_tool_retries(n)` | 3 |
+| Per-tool retry limit | `tool.max_retries` | Inherits from agent |
+| Retryable errors | `error.is_retryable()` | Model/tool dependent |
+
+### How It Works
+
+1. **Output Validation Fails:** Agent sends `RetryPrompt` to model, model tries again
+2. **Tool Execution Fails:** If `error.is_retryable()`, agent retries up to `max_retries`
+3. **Max Retries Exceeded:** `AgentRunError::MaxRetriesExceeded` emitted
+
+### ChatService Integration
+
+```rust
+// In agent builder
+let agent = AgentBuilder::from_config(model_config)?
+    .max_output_retries(3)  // Retry output validation
+    .max_tool_retries(2)    // Retry failed tools
+    // ...
+    .build();
+
+// In stream event mapping
+match agent_event {
+    AgentStreamEvent::Error(e) => {
+        StreamEvent::Error {
+            message: e.to_string(),
+            retryable: e.is_retryable(),  // Pass through for UI info
+        }
+    }
+    // ...
+}
+```
+
+**Note:** We don't auto-retry at ChatService level. SerdesAI handles retries internally. If it still fails after retries, we surface the error to UI and let user decide.
 
 ---
 
 ## Cancellation
 
-### Flow
+### Current Implementation (Drop Stream)
 
-1. UI calls `cancel(handle)`
-2. Service sets cancellation flag
-3. Stream loop detects flag
-4. Service emits `Complete` with partial content
-5. Buffers cleared
-
-### Partial Content
-
-On cancel, emit whatever was accumulated:
+SerdesAI doesn't have native cancellation support yet (Issue #6). For now:
 
 ```rust
-fn handle_cancel(&mut self, sender: &mpsc::Sender<StreamEvent>) {
-    // Clean the buffers
-    let text = self.response_buffer.trim_end_matches('␄').to_string();
-    let thinking = if self.thinking_buffer.is_empty() {
-        None
-    } else {
-        Some(self.thinking_buffer.trim_end_matches('␄').to_string())
-    };
+fn cancel(&self, handle: &StreamHandle) -> Result<()> {
+    // Signal cancellation
+    let _ = handle.cancel_sender.send(());
+    Ok(())
+}
+
+// In streaming task
+async fn stream_task(
+    stream: AgentStream,
+    sender: mpsc::Sender<StreamEvent>,
+    mut cancel_receiver: oneshot::Receiver<()>,
+) {
+    let mut text_buffer = String::new();
+    let mut thinking_buffer = String::new();
     
-    // Emit complete with partial content
-    let _ = sender.send(StreamEvent::Complete {
-        text,
-        thinking,
-        tool_calls: self.tool_calls.clone(),
-    });
-}
-```
-
----
-
-## Tool Call Handling
-
-### Flow
-
-1. Provider emits tool call request
-2. Service emits `ToolCallStart` to UI
-3. Service calls MCP tool via McpService
-4. Service emits `ToolResult` to UI
-5. Service feeds result back to LLM
-6. LLM continues response
-
-### Error Handling
-
-Tool errors don't stop the stream:
-
-```rust
-async fn execute_tool(&self, tool_call: &ToolCall) -> ToolResult {
-    match self.mcp_service.call_tool(&tool_call.name, &tool_call.arguments).await {
-        Ok(result) => ToolResult {
-            id: tool_call.id.clone(),
-            result,
-            is_error: false,
-        },
-        Err(e) => ToolResult {
-            id: tool_call.id.clone(),
-            result: format!("Error: {}", e),
-            is_error: true,
-        },
-    }
-}
-```
-
----
-
-## Provider Abstraction
-
-### Supported Providers
-
-| Provider | Implementation | Notes |
-|----------|----------------|-------|
-| Anthropic | Native client | Messages API |
-| OpenAI | Native client | Chat Completions |
-| Google | Native client | Gemini API |
-| OpenRouter | OpenAI-compatible | Via base_url |
-| Ollama | OpenAI-compatible | Local |
-| Custom | OpenAI-compatible | User-configured base_url |
-
-### Client Selection
-
-```rust
-fn get_client(&self, profile: &ModelProfile) -> Box<dyn LlmClient> {
-    match profile.provider_id.as_str() {
-        "anthropic" => Box::new(AnthropicClient::new(&profile.api_key)),
-        "openai" => Box::new(OpenAIClient::new(&profile.api_key)),
-        "google" => Box::new(GoogleClient::new(&profile.api_key)),
-        _ => {
-            // OpenAI-compatible with custom base URL
-            Box::new(OpenAIClient::with_base_url(
-                &profile.api_key,
-                profile.base_url.as_deref().unwrap_or(""),
-            ))
+    loop {
+        tokio::select! {
+            // Check for cancellation
+            _ = &mut cancel_receiver => {
+                // Drop the stream (closes HTTP connection)
+                drop(stream);
+                
+                // Emit cancelled event with partial content
+                let _ = sender.send(StreamEvent::Cancelled {
+                    partial_text: text_buffer,
+                    partial_thinking: if thinking_buffer.is_empty() { 
+                        None 
+                    } else { 
+                        Some(thinking_buffer) 
+                    },
+                }).await;
+                break;
+            }
+            
+            // Process next agent event
+            event = stream.next() => {
+                match event {
+                    Some(Ok(agent_event)) => {
+                        // Accumulate for cancellation
+                        if let AgentStreamEvent::TextDelta { text } = &agent_event {
+                            text_buffer.push_str(text);
+                        }
+                        if let AgentStreamEvent::ThinkingDelta { text } = &agent_event {
+                            thinking_buffer.push_str(text);
+                        }
+                        
+                        // Map and send
+                        if let Some(stream_event) = map_agent_event(agent_event) {
+                            if sender.send(stream_event).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(e)) => {
+                        let _ = sender.send(StreamEvent::Error {
+                            message: e.to_string(),
+                            retryable: e.is_retryable(),
+                        }).await;
+                        break;
+                    }
+                    None => break,
+                }
+            }
         }
     }
 }
 ```
 
+### Pydantic-AI Cancellation Pattern
+
+Pydantic-AI uses Python's native `asyncio.CancelledError`:
+
+```python
+task = asyncio.create_task(run_agent())
+
+try:
+    async with receive_stream:
+        async for message in receive_stream:
+            yield message
+    result = await task
+except asyncio.CancelledError as e:
+    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+    raise
+```
+
+**Key insight:** When the async context manager exits (due to cancellation), the task is cancelled and the exception propagates. No special cancellation token - just language-native task cancellation.
+
+### Future: SerdesAI Cancellation (Issue #6)
+
+When implemented, SerdesAI should add:
+
+```rust
+// Option A: CancellationToken (recommended)
+let cancel_token = CancellationToken::new();
+let stream = AgentStream::new_with_cancel(&agent, prompt, deps, options, cancel_token.clone())?;
+
+// Cancel from another task
+cancel_token.cancel();
+
+// Option B: Stream method
+stream.cancel();
+```
+
+The stream should:
+1. Stop the HTTP connection
+2. Cancel pending tool calls via MCP `notifications/cancelled` (see McpService.cancel_tool_call)
+3. Emit `AgentStreamEvent::Cancelled { partial_text, partial_thinking, pending_tools }`
+
+**MCP Tool Cancellation:** When cancelling during a tool call, SerdesAI should call through to `McpService.cancel_tool_call()` which sends the MCP-standard `notifications/cancelled` message. This is best-effort - MCP servers SHOULD honor it but may not.
+
 ---
 
-## Error Handling
+## Persistence
 
-| Error | StreamEvent | Notes |
-|-------|-------------|-------|
-| Network error | Error { message } | "Connection failed" |
-| Auth error (401) | Error { message } | "Invalid API key" |
-| Rate limit (429) | Error { message } | "Rate limited, try again" |
-| Model error | Error { message } | Provider error message |
-| Tool timeout | ToolResult { is_error: true } | Continue stream |
-| Parse error | Error { message } | "Failed to parse response" |
+### When to Persist
+
+| Event | Persistence Action |
+|-------|-------------------|
+| Before `AgentStream::new()` | Save user message |
+| `StreamEvent::Complete` | Save assistant message |
+| `StreamEvent::Cancelled` | Save partial message with `[cancelled]` marker |
+| `StreamEvent::Error` | Don't save (user can retry) |
+
+### Cancelled Message Format
+
+**Decision:** Save cancelled messages so user can see what was generated.
+
+```rust
+// On Cancelled event
+if let StreamEvent::Cancelled { partial_text, partial_thinking } = event {
+    let content = if partial_text.is_empty() {
+        "[cancelled]".to_string()
+    } else {
+        format!("{}\n\n[cancelled]", partial_text)
+    };
+    
+    let mut message = Message::assistant(&content);
+    message.cancelled = true;
+    
+    if let Some(thinking) = partial_thinking {
+        message = message.with_thinking(&thinking);
+    }
+    
+    self.conversation_service.append_message(conversation_id, &message)?;
+}
+```
 
 ---
 
-## Persistence Integration
+## Conversation Management
 
-The ChatService coordinates with ConversationService for persistence:
+**Decision:** Conversation management is **our responsibility**, not SerdesAI's.
 
-| Action | When | Service Call |
-|--------|------|--------------|
-| Save user message | Before streaming | ConversationService.append_message() |
-| Save assistant message | On Complete event | ConversationService.append_message() |
-| Update context state | If compression occurred | ConversationService.update_context_state() |
+### What SerdesAI Provides
+
+- `message_history` parameter in `RunOptions` - accepts previous messages
+- `HistoryProcessor` - processes history before sending to model
+- No persistence, no conversation state
+
+### What We Manage
+
+| Responsibility | Service |
+|----------------|---------|
+| Store conversations | ConversationService |
+| Store messages | ConversationService |
+| Convert to/from SerdesAI format | ChatService |
+| Track conversation metadata | ConversationService |
+
+### Message Format Conversion
+
+```rust
+fn convert_to_model_requests(&self, messages: &[Message]) -> Vec<ModelRequest> {
+    messages.iter().map(|m| {
+        let mut req = ModelRequest::new();
+        match m.role {
+            MessageRole::User => {
+                req.add_user_prompt(&m.content);
+            }
+            MessageRole::Assistant => {
+                let mut response = ModelResponse::new();
+                response.add_text(&m.content);
+                if let Some(thinking) = &m.thinking {
+                    response.add_thinking(thinking);
+                }
+                req.add_response(response);
+            }
+            MessageRole::System => {
+                req.add_system_prompt(&m.content);
+            }
+        }
+        req
+    }).collect()
+}
+```
+
+---
+
+## UI Integration
+
+### Chat View Usage
+
+```rust
+// In ChatPresenter
+async fn send_message(&self, content: String) {
+    let conversation_id = self.current_conversation_id()?;
+    
+    // Get stream handle
+    let mut handle = self.chat_service.send_message(
+        conversation_id,
+        &content,
+    )?;
+    
+    // Update UI immediately
+    self.view.add_user_message(&content);
+    self.view.clear_input();
+    self.view.set_streaming(true);
+    
+    // Process events
+    while let Some(event) = handle.next().await {
+        match event {
+            StreamEvent::Started => {
+                self.view.add_assistant_placeholder();
+            }
+            StreamEvent::TextDelta { content } => {
+                self.view.append_to_assistant(&content);
+            }
+            StreamEvent::ThinkingDelta { content } => {
+                self.view.append_to_thinking(&content);
+            }
+            StreamEvent::ToolStart { name, .. } => {
+                self.view.show_tool_indicator(&name);
+            }
+            StreamEvent::ToolComplete { name, success, .. } => {
+                self.view.update_tool_indicator(&name, success);
+            }
+            StreamEvent::Complete { .. } => {
+                self.view.finalize_assistant_message();
+                self.view.set_streaming(false);
+            }
+            StreamEvent::Cancelled { partial_text, .. } => {
+                // Show what was cancelled
+                self.view.finalize_assistant_message_cancelled(&partial_text);
+                self.view.set_streaming(false);
+            }
+            StreamEvent::Error { message, retryable } => {
+                self.view.show_error(&message, retryable);
+                self.view.set_streaming(false);
+            }
+        }
+    }
+}
+
+async fn cancel_streaming(&self) {
+    if let Some(handle) = &self.stream_handle {
+        self.chat_service.cancel(handle)?;
+    }
+}
+```
 
 ---
 
@@ -356,13 +676,19 @@ The ChatService coordinates with ConversationService for persistence:
 
 | ID | Test |
 |----|------|
-| CH-T1 | TextDelta events have no ␄ markers |
-| CH-T2 | ThinkingDelta events have no ␄ markers |
-| CH-T3 | Complete event has clean final text |
-| CH-T4 | Complete event has clean thinking (if present) |
-| CH-T5 | Cancel emits Complete with partial content |
-| CH-T6 | Tool errors don't stop the stream |
-| CH-T7 | Context strategy applied to request |
-| CH-T8 | System prompt included in request |
-| CH-T9 | MCP tools added to request |
-| CH-T10 | Provider-specific client selected |
+| CH-T1 | send_message returns StreamHandle |
+| CH-T2 | Started event emitted first |
+| CH-T3 | TextDelta events have clean content |
+| CH-T4 | ThinkingDelta events have clean content |
+| CH-T5 | Complete event has final text and thinking |
+| CH-T6 | Cancel emits Cancelled with partial content |
+| CH-T7 | Cancelled message persisted with marker |
+| CH-T8 | Tool errors handled by agent retry logic |
+| CH-T9 | User message persisted before streaming |
+| CH-T10 | Assistant message persisted on Complete |
+| CH-T11 | HistoryProcessor applied to messages |
+| CH-T12 | Profile parameters passed to agent |
+| CH-T13 | MCP toolsets attached from McpService |
+| CH-T14 | Agent handles multi-turn tool execution |
+| CH-T15 | Error events include retryable flag |
+| CH-T16 | Context limit from profile applied |

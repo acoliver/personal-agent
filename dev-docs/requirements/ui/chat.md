@@ -17,9 +17,9 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 │ TITLE BAR (32px, dark background)                            │
 │                                                              │
 │  ┌─────────────────────────────┐                             │
-│  │ My Conversation Title     ▼ │  claude-3-5-sonnet          │
+│  │ My Conversation Title     ▼ │  claude-sonnet-4            │
 │  └─────────────────────────────┘  (muted text)               │
-│   NSPopUpButton (200px min)       Model label                │
+│   NSPopUpButton (200px min)       Current profile model      │
 │                                                              │
 │  ┌─────────────────────────────┐  ← Edit field (hidden by    │
 │  │ New title here...           │    default, replaces        │
@@ -34,6 +34,7 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 │                            ↑ Right-aligned, green (#2a4a2a)  │
 │                              max-width 300px, 12px radius    │
 │                                                              │
+│  claude-sonnet-4-20250514        ← Model label (10pt, muted) │
 │  ┌──────────────────────────────┐                            │
 │  │ ▼ Thinking...                │ ← Collapsible header       │
 │  │ ┌──────────────────────────┐ │                            │
@@ -41,13 +42,21 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 │  │ │ italic, secondary color  │ │   Only if show_thinking    │
 │  │ └──────────────────────────┘ │                            │
 │  └──────────────────────────────┘                            │
-│                                                              │
 │  ┌──────────────────────────────┐                            │
 │  │ Assistant response text      │                            │
 │  │ with streaming cursor▌       │                            │
 │  └──────────────────────────────┘                            │
 │   ↑ Left-aligned, dark gray (#1a1a1a)                        │
 │     max-width 300px, 12px radius                             │
+│                                                              │
+│                           ┌──────────────────────────────┐   │
+│                           │ Follow-up user message       │   │
+│                           └──────────────────────────────┘   │
+│                                                              │
+│  gpt-4o                          ← Different model (profile  │
+│  ┌──────────────────────────────┐   was changed mid-chat)    │
+│  │ Response from new model      │                            │
+│  └──────────────────────────────┘                            │
 │                                                              │
 ├──────────────────────────────────────────────────────────────┤
 │ INPUT BAR (50px, dark background #1a1a1a, top border)        │
@@ -88,7 +97,8 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 |---------|------|------|-------|
 | App title | System Bold | 14pt | #e5e5e5 |
 | Conversation title | System Regular | 13pt | #e5e5e5 |
-| Model label | System Regular | 11pt | #888888 |
+| Title bar model label | System Regular | 11pt | #888888 |
+| Message model label | System Regular | 10pt | #888888 |
 | Message text | System Regular | 13pt | #e5e5e5 |
 | Thinking text | System Italic | 12pt | #888888 |
 | Button labels | System Medium | 12pt | #e5e5e5 |
@@ -135,7 +145,7 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 | TT-2 | Dropdown Items | All conversations, newest first | From ConversationService |
 | TT-3 | Selection | Loads selected conversation | Service call |
 | TT-4 | Current Highlight | Checkmark on current item | Standard popup behavior |
-| TT-5 | Model Label | 11pt, #888888, right of dropdown | "provider:model" format |
+| TT-5 | Model Label | 11pt, #888888, right of dropdown | Current profile's model_id |
 | TT-6 | Edit Field | NSTextField, hidden by default | Replaces dropdown when active |
 | TT-7 | Edit Field Width | Matches dropdown width | Consistent layout |
 | TT-8 | Edit Placeholder | "Enter conversation title..." | Hint text |
@@ -174,9 +184,38 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 | UM-8 | Text Wrap | Word wrap, multi-line |
 | UM-9 | Font | System 13pt |
 
+### Assistant Message Group
+
+**Layout:** Left-aligned vertical stack with model label, optional thinking, and response bubble
+
+```
+model-id-label                       ← Model that generated this response
+┌──────────────────────────────┐
+│ ▼ Thinking...   (optional)   │     ← Only if show_thinking AND has thinking
+│ ┌──────────────────────────┐ │
+│ │ Thinking content...      │ │
+│ └──────────────────────────┘ │
+└──────────────────────────────┘
+┌──────────────────────────────┐
+│ Assistant response text      │     ← Main response bubble
+└──────────────────────────────┘
+[flexible spacer]
+```
+
+### Assistant Model Label
+
+| ID | Element | Spec |
+|----|---------|------|
+| ML-1 | Position | Above thinking/response, left-aligned |
+| ML-2 | Content | Message's model_id (e.g., "claude-sonnet-4-20250514") |
+| ML-3 | Font | System Regular 10pt |
+| ML-4 | Color | #888888 (muted) |
+| ML-5 | Bottom Margin | 2px before thinking/bubble |
+| ML-6 | Visibility | Always shown for assistant messages |
+
 ### Assistant Message Bubbles
 
-**Layout:** Left-aligned with right spacer
+**Layout:** Left-aligned with right spacer (within the message group)
 
 ```
 [bubble max 300px] [flexible spacer]
@@ -251,17 +290,31 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 
 ## Behavioral Requirements
 
+### First Launch: No Profile Configured
+
+If `AppSettingsService.get_default_profile_id()` returns `None`:
+
+| Step | Action |
+|------|--------|
+| 1 | ChatView detects no default profile |
+| 2 | Automatically navigate to Settings View |
+| 3 | Show toast/banner: "Add a profile to get started" |
+
+**Rationale:** Users can't do anything without a profile, so take them directly to configuration rather than showing a dead-end empty state.
+
 ### Button States
 
 | Button | Condition | State |
 |--------|-----------|-------|
 | Send | Input empty | Disabled (gray) |
 | Send | Input has text | Enabled (green) |
-| Send | Streaming active | Disabled (gray) |
-| Stop | Not streaming | Disabled (gray) |
-| Stop | Streaming active | Enabled (red) |
+| Send | Streaming active | Hidden |
+| Stop | Not streaming | Hidden |
+| Stop | Streaming active | Visible, enabled (red) |
 | [T] | Thinking disabled | Normal |
 | [T] | Thinking enabled | Active (blue bg) |
+
+**Note:** Send and Stop are mutually exclusive - only one is visible at a time. Stop becomes visible when streaming starts and Send reappears when streaming completes or is cancelled.
 
 ### Message Sending Flow
 
@@ -291,6 +344,8 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 | 8 | | Edit field hides, Dropdown reappears |
 | 9 | | Dropdown shows new title |
 | 10 | | Conversation saved via service |
+
+**Note:** The [T] thinking toggle state is **preserved** when creating a new conversation. It does not reset to the profile default. The toggle only resets to profile default on app launch or profile change.
 
 ### Rename Conversation Flow
 
@@ -326,21 +381,30 @@ The Chat View is the main/default view of PersonalAgent. It displays conversatio
 |------|---------|-----------|
 | 1 | Click Stop button (while streaming) | |
 | 2 | | Stop button → disabled |
-| 3 | | Streaming stops |
-| 4 | | Cursor "▌" removed |
-| 5 | | Partial response kept in bubble |
-| 6 | | Send button → enabled |
+| 3 | | ChatService.cancel(handle) called |
+| 4 | | Cancelled event received from service |
+| 5 | | Cursor "▌" removed |
+| 6 | | Partial response kept with "[cancelled]" appended |
+| 7 | | Message persisted to conversation history |
+| 8 | | Send button → enabled |
 
 ### Thinking Toggle Flow
+
+The [T] button controls **runtime visibility** of thinking content. It does NOT persist the setting.
 
 | Step | Trigger | UI Action |
 |------|---------|-----------|
 | 1 | Click [T] button | |
 | 2 | If was OFF | Button gets blue background |
-| 3 | | Future responses will show thinking |
+| 3 | | All thinking sections become visible (including old messages) |
 | 4 | If was ON | Button returns to normal |
-| 5 | | Future responses hide thinking |
-| 6 | | Setting persisted to profile |
+| 5 | | All thinking sections become hidden |
+| 6 | | Runtime state only - NOT persisted |
+
+**Reset behavior:**
+- On app restart: resets to profile's `show_thinking` setting
+- On profile change: resets to new profile's `show_thinking` setting
+- The profile's default can be configured in Profile Editor (Settings)
 
 ---
 
@@ -350,12 +414,16 @@ The view receives **clean, pre-processed events** from ChatService. No parsing n
 
 | Event | UI Action |
 |-------|-----------|
+| Started { model_id } | Add model label + assistant placeholder bubble with cursor "▌" |
 | TextDelta { content } | Append content to assistant bubble |
-| ThinkingDelta { content } | Append content to thinking section (if visible) |
-| ToolCallStart { name } | (Optional) Show tool indicator |
-| ToolResult { result } | (Optional) Update tool indicator |
-| Complete { text, thinking } | Remove cursor, finalize bubble |
-| Error { message } | Show error in chat area |
+| ThinkingDelta { content } | Append content to thinking section (always stored, visibility controlled by show_thinking) |
+| ToolStart { id, name } | Show tool indicator with name (future enhancement) |
+| ToolComplete { id, name, success, summary } | Update tool indicator with status (future enhancement) |
+| Complete { text, thinking, tool_calls, model_id } | Remove cursor "▌", finalize bubble, ensure model_id label is set |
+| Cancelled { partial_text, partial_thinking, model_id } | Remove cursor, show partial text + "[cancelled]" marker |
+| Error { message, retryable } | Show error in chat area. If retryable, enable Send immediately |
+
+**Thinking Storage:** Thinking content is ALWAYS stored in the message even if `show_thinking` is false. The toggle only controls visibility. Users can toggle thinking ON later to see previously hidden thoughts.
 
 ---
 
@@ -369,6 +437,9 @@ The view receives **clean, pre-processed events** from ChatService. No parsing n
 | is_streaming | bool | Button states |
 | stream_handle | Option<StreamHandle> | For cancellation |
 | edit_field_visible | bool | Title edit mode |
+| show_thinking | bool | Runtime toggle for thinking visibility |
+
+**Note:** `show_thinking` is runtime state only. It is initialized from the current profile's `parameters.show_thinking` on app launch and when the profile changes. The [T] button toggles this at runtime but does NOT persist the change.
 
 ### UI References
 
@@ -392,13 +463,19 @@ The view receives **clean, pre-processed events** from ChatService. No parsing n
 
 | Action | Service | Method |
 |--------|---------|--------|
-| Send message | ChatService | send_message() → StreamHandle |
+| Send message | ChatService | send_message(conv_id, text) → StreamHandle |
 | Cancel streaming | ChatService | cancel(handle) |
-| Load conversation | ConversationService | load(id) |
-| Create conversation | ConversationService | create() |
-| Update title | ConversationService | update_metadata() |
-| List conversations | ConversationService | load_all_metadata() |
-| Get current profile | ProfileService | get_default() |
+| Check streaming | ChatService | is_streaming(handle) → bool |
+| Load conversation | ConversationService | load(id) → Conversation |
+| Create conversation | ConversationService | create() → Conversation |
+| Update title | ConversationService | rename(id, title) |
+| List conversations | ConversationService | list() → Vec<ConversationMetadata> |
+| Get default profile ID | AppSettingsService | get_default_profile_id() → Option<Uuid> |
+| Get profile | ProfileService | get(id) → ModelProfile |
+| Get current conversation ID | AppSettingsService | get_current_conversation_id() → Option<Uuid> |
+| Set current conversation | AppSettingsService | set_current_conversation_id(id) |
+
+**Note:** The [T] toggle does NOT call any service - it only changes local view state. The profile's default `show_thinking` value is read from the profile (via `ProfileService.get(id)`) to initialize the toggle on app launch or profile change.
 
 ---
 
@@ -417,6 +494,8 @@ The view receives **clean, pre-processed events** from ChatService. No parsing n
 
 - [ ] User bubble right-aligned with green background
 - [ ] Assistant bubble left-aligned with dark background
+- [ ] Model label appears above assistant messages (muted, 10pt)
+- [ ] Different model labels shown when profile changed mid-conversation
 - [ ] Thinking section blue tint, collapsible
 - [ ] Stop button red when enabled, gray when disabled
 - [ ] Send button green when enabled, gray when disabled
@@ -439,3 +518,6 @@ The view receives **clean, pre-processed events** from ChatService. No parsing n
 - [ ] Stop disabled when not streaming
 - [ ] Stop enabled during streaming
 - [ ] [T] button shows active state when thinking enabled
+- [ ] [T] toggle shows/hides ALL thinking sections (including old messages)
+- [ ] [T] toggle resets to profile default on profile change
+- [ ] [T] toggle resets to profile default on app restart

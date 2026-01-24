@@ -98,6 +98,19 @@ The Profile Editor is the second step in adding a profile (after Model Selector)
 │                                                              │
 │  12px gap                                                    │
 │                                                              │
+│  CONTEXT LIMIT                             ← 11pt, #888888   │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │ 200000                                                 │  │
+│  └────────────────────────────────────────────────────────┘  │
+│   Required, pre-filled from model selection                  │
+│                                                              │
+│  12px gap                                                    │
+│                                                              │
+│  [x] Show Thinking                                           │
+│   Default visibility for thinking content in Chat View       │
+│                                                              │
+│  12px gap                                                    │
+│                                                              │
 │  [ ] Enable Extended Thinking                                │
 │                                                              │
 │  ─── If checked: ───                                         │
@@ -205,19 +218,26 @@ The Profile Editor is the second step in adding a profile (after Model Selector)
 |----|---------|------|
 | AT-1 | Label | "API TYPE", 11pt, #888888 |
 | AT-2 | Dropdown | NSPopUpButton, 360px wide |
-| AT-3 | Options | "openai", "anthropic" |
+| AT-3 | Options | "Anthropic", "OpenAI" (display), maps to `ApiType` enum |
 | AT-4 | Default | From backend (parsed from npm field) |
 | AT-5 | Editable | Yes, user can override |
 | AT-6 | Purpose | Determines which API client to use |
 
-**Backend provides clean values:**
+**ApiType Enum:**
 
-| Backend npm field | API Type value |
-|-------------------|----------------|
-| `@ai-sdk/anthropic` | "anthropic" |
-| `@ai-sdk/openai` | "openai" |
-| `@ai-sdk/openai-compatible` | "openai" |
-| Any other | "openai" |
+| Display | Enum Value | Use Case |
+|---------|------------|----------|
+| "Anthropic" | `ApiType::Anthropic` | Anthropic Claude API |
+| "OpenAI" | `ApiType::OpenAI` | OpenAI API and OpenAI-compatible (Ollama, LM Studio, etc.) |
+
+**Backend provides clean values (from Model Selector):**
+
+| Backend npm field | ApiType |
+|-------------------|---------|
+| `@ai-sdk/anthropic` | `ApiType::Anthropic` |
+| `@ai-sdk/openai` | `ApiType::OpenAI` |
+| `@ai-sdk/openai-compatible` | `ApiType::OpenAI` |
+| Any other | `ApiType::OpenAI` |
 
 ### Base URL Field
 
@@ -236,9 +256,17 @@ The Profile Editor is the second step in adding a profile (after Model Selector)
 |----|---------|------|
 | AM-1 | Label | "AUTH METHOD", 11pt, #888888 |
 | AM-2 | Dropdown | NSPopUpButton, 360px wide |
-| AM-3 | Options | "None", "API Key", "Key File" |
+| AM-3 | Options | "None", "API Key", "Key File" (display), maps to `AuthMethod` enum |
 | AM-4 | Default | "API Key" |
 | AM-5 | Effect | Shows/hides appropriate auth field below |
+
+**AuthMethod Enum Mapping:**
+
+| Display | Enum Value | Use Case |
+|---------|------------|----------|
+| "None" | `AuthMethod::None` | Local models (Ollama, LM Studio) that don't need auth |
+| "API Key" | `AuthMethod::ApiKey` | API key stored securely in SecretsService |
+| "Key File" | `AuthMethod::Keyfile { path }` | Read key from file at runtime |
 
 **Conditional Display:**
 
@@ -333,6 +361,30 @@ The Profile Editor is the second step in adding a profile (after Model Selector)
 | MT-3 | Default | 4096 |
 | MT-4 | Validation | Positive integer |
 | MT-5 | Placeholder | "4096" |
+
+**Context Limit Field:**
+
+| ID | Element | Spec |
+|----|---------|------|
+| CL-1 | Label | "CONTEXT LIMIT", 11pt, #888888 |
+| CL-2 | Field | NSTextField (number), 360px x 24px |
+| CL-3 | Default (new) | Pre-filled from Model Selector's `context` value |
+| CL-4 | Default (edit) | Existing value from profile |
+| CL-5 | Validation | Required, positive integer |
+| CL-6 | Placeholder | "128000" |
+| CL-7 | Purpose | Used by HistoryProcessor to truncate context before sending to model |
+
+**Important:** This field must always have a value. Models don't report their context limit at runtime, so we must capture it from models.dev during profile creation.
+
+**Show Thinking Checkbox:**
+
+| ID | Element | Spec |
+|----|---------|------|
+| ST-1 | Checkbox | "Show Thinking" |
+| ST-2 | Style | NSButton checkbox type |
+| ST-3 | Default | Checked |
+| ST-4 | Purpose | Default visibility for thinking content in Chat View |
+| ST-5 | Note | Chat View can toggle at runtime, but this is the default on profile change/app start |
 
 **Extended Thinking Checkbox:**
 
@@ -484,6 +536,7 @@ The Profile Editor is the second step in adding a profile (after Model Selector)
 | Keyfile (if method=Key File) | Non-empty, file exists | Highlight field, show error |
 | Temperature | 0.0 - 2.0 | Clamp to range |
 | Max Tokens | Positive integer | Show error, revert to default |
+| Context Limit | Required, positive integer | Highlight field, disable Save |
 | Thinking Budget | Positive integer | Show error, revert to default |
 
 **Save enabled when:**
@@ -500,41 +553,48 @@ The Profile Editor is the second step in adding a profile (after Model Selector)
 ```rust
 struct SelectedModel {
     model_id: String,       // "claude-3-5-sonnet-20241022"
-    api_type: String,       // "anthropic" or "openai" (parsed by backend)
+    api_type: ApiType,      // ApiType::Anthropic or ApiType::OpenAI
     base_url: String,       // "https://api.anthropic.com/v1"
-    context: u64,           // 200000
+    context: u64,           // 200000 (used to pre-fill context_limit)
 }
 ```
 
 **Output to ProfileService:**
 
 ```rust
-struct ModelProfile {
-    id: Uuid,
+struct NewProfile {
     name: String,
     model_id: String,               // "claude-3-5-sonnet-20241022"
-    api_type: String,               // "openai" or "anthropic"
-    base_url: String,
+    api_type: ApiType,              // Enum: Anthropic, OpenAI
+    base_url: Option<String>,       // None = use default for api_type
     auth_method: AuthMethod,
-    api_key: Option<String>,        // Sanitized (trimmed, no newlines)
-    keyfile_path: Option<PathBuf>,  // Sanitized
+    api_key: Option<String>,        // If AuthMethod::ApiKey, key to store (sanitized)
     system_prompt: String,
     parameters: ModelParameters,
 }
 
+enum ApiType {
+    Anthropic,
+    OpenAI,  // Also used for OpenAI-compatible (Ollama, LM Studio, etc.)
+}
+
 enum AuthMethod {
-    None,
-    ApiKey,
-    KeyFile,
+    None,                           // No auth (local models)
+    ApiKey,                         // Stored in SecretsService
+    Keyfile { path: PathBuf },      // Read from file at runtime
 }
 
 struct ModelParameters {
-    temperature: f64,
-    max_tokens: u32,
+    temperature: Option<f32>,
+    max_tokens: Option<u32>,
+    context_limit: u32,             // Required - pre-filled from models.dev
     enable_thinking: bool,
     thinking_budget: Option<u32>,
+    show_thinking: bool,            // Default visibility in Chat View
 }
 ```
+
+**Note:** For edits, use `ProfileUpdate` which has all fields as `Option<T>` for partial updates.
 
 ---
 
@@ -566,7 +626,9 @@ struct ModelParameters {
 | temperature_field | NSTextField | Temp value |
 | temperature_stepper | NSStepper | Temp control |
 | max_tokens_field | NSTextField | Token limit |
-| thinking_checkbox | NSButton | Enable thinking |
+| context_limit_field | NSTextField | Context window size |
+| show_thinking_checkbox | NSButton | Default thinking visibility |
+| thinking_checkbox | NSButton | Enable extended thinking |
 | thinking_budget_field | NSTextField | Budget value |
 | system_prompt_view | NSTextView | System prompt |
 | save_button | NSButton | Save action |
@@ -595,6 +657,8 @@ struct ModelParameters {
 - [ ] API key masked when Mask checked
 - [ ] API key visible when Mask unchecked
 - [ ] Temperature shows stepper arrows
+- [ ] Context Limit field visible
+- [ ] Show Thinking checkbox visible
 
 ### Interaction Tests
 
@@ -608,6 +672,7 @@ struct ModelParameters {
 - [ ] Temperature stepper increments by 0.1
 - [ ] Mask toggle switches field type
 - [ ] Auth Method change shows/hides correct fields
+- [ ] Show Thinking checkbox toggles correctly
 
 ### Sanitization Tests
 
@@ -625,4 +690,6 @@ struct ModelParameters {
 - [ ] Empty base URL prevents save
 - [ ] Invalid keyfile path shows error
 - [ ] Non-numeric max tokens shows error
+- [ ] Empty context limit prevents save
+- [ ] Non-numeric context limit shows error
 - [ ] Temperature clamped to 0-2 range
