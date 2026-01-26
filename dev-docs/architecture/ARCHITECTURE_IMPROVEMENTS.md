@@ -142,6 +142,34 @@ src/
       mcp_row.rs
 ```
 
+
+## Service Dependency Graph
+
+```
+[UI Views]
+  -> [Presenters]
+      -> [ChatService] -----> [ConversationService] -----> [ConversationRepository]
+      -> [ChatService] -----> [ContextStrategy] ----------> (uses ModelClient for compression only)
+      -> [ChatService] -----> [McpService] --------------> [McpRuntime]
+      -> [ChatService] -----> [ProfileService] ----------> [ConfigRepository]
+      -> [ModelsRegistryService] ------------------------> [ModelsRegistryRepository]
+      -> [McpRegistryService] --------------------------> [McpRegistryRepository]
+
+[ConversationService] <---- [ProfileService] (profile_id reference only)
+[ConversationService] <---- [ContextStrategy] (new ContextState via update_context_state)
+[ModelsRegistryService] ---> [ProfileService] (base_url + model_id selection)
+```
+
+### Data Flow Direction
+
+- UI → Presenters → Services for all user actions.
+- ChatService is the only service that orchestrates ContextStrategy + MCP + Conversation persistence.
+- ConversationService owns Conversation, Message, and ContextState persistence.
+- ProfileService owns ModelProfile persistence.
+- ModelsRegistryService owns Provider + ModelInfo normalization and filtering.
+- McpService owns McpConfig persistence and runtime lifecycle.
+- McpRegistryService owns McpSource discovery metadata (EnvVarSpec, config schemas).
+
 ---
 
 ## Service Interfaces

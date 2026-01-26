@@ -346,6 +346,22 @@ struct SelectedMcp {
     env_vars: Vec<EnvVarSpec>,       // Auth requirements
     config_schema: Option<JsonSchema>,
 }
+```
+
+## Service Calls
+
+| User Action | Service Method | Success Response | Error Response | UI State Change |
+|-------------|----------------|------------------|----------------|-----------------|
+| Search MCPs | McpRegistryService.search(query, registry) | Vec<McpSearchResult> | Error {code,message} | Populate results or show empty state |
+| Load details | McpRegistryService.get_details(source) | McpSearchResult | Error {code,message} | Enable Next or show #error-banner |
+
+## Negative Test Cases
+
+| ID | Scenario | Expected Result |
+|----|----------|----------------|
+| UI-MA-NT1 | Search with empty query | Show empty state, no request |
+| UI-MA-NT2 | Registry request fails | Show "Service unavailable" in #error-banner |
+| UI-MA-NT3 | Result selection cleared | Next disabled, no selection highlight |
 
 enum McpSource {
     Official { name: String, version: String },

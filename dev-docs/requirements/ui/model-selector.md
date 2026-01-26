@@ -381,6 +381,22 @@ struct Provider {
 | Search models | ModelsRegistryService | search(query) |
 | Refresh cache | ModelsRegistryService | refresh() |
 
+## Service Calls
+
+| User Action | Service Method | Success Response | Error Response | UI State Change |
+|-------------|----------------|------------------|----------------|-----------------|
+| View appears | ModelsRegistryService.providers() + all_models() | Providers + ModelInfo list | Error {code,message} | Render model list or show #error-banner |
+| Search input | ModelsRegistryService.search(query) | ModelInfo list | Error {code,message} | Filter results or show empty state |
+| Refresh models | ModelsRegistryService.refresh() | Success | Error {code,message} | Update list or show #error-banner |
+
+## Negative Test Cases
+
+| ID | Scenario | Expected Result |
+|----|----------|----------------|
+| UI-MS-NT1 | Search query > 200 chars | Show "Query too long" in #error-banner |
+| UI-MS-NT2 | Refresh fails with no cache | Show "Network error" in #error-banner, list empty |
+| UI-MS-NT3 | Provider filter yields no results | Show empty state text in #empty-state-label |
+
 ---
 
 ## Test Coverage

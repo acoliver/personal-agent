@@ -563,7 +563,26 @@ struct OAuthTokens {
 - [ ] Auth Method change shows correct fields
 - [ ] Array add creates new row
 - [ ] Array remove deletes row
-- [ ] Cancel returns without saving
+
+## Service Calls
+
+| User Action | Service Method | Success Response | Error Response | UI State Change |
+|-------------|----------------|------------------|----------------|-----------------|
+| View appears (edit) | McpService.get(id) | McpConfig | Error {code,message} | Populate fields or show #error-banner |
+| Click Save (new) | McpService.create(config) | Success | Error {code,message,field} | Navigate back, show updated list |
+| Click Save (edit) | McpService.update(config) | Success | Error {code,message,field} | Navigate back, show updated list |
+| OAuth exchange | OAuthService.exchange_code(code,state) | OAuthTokens | Error {code,message} | Update status label |
+| Store secret | SecretsService.store(mcp_id,key,value) | Success | Error {code,message} | Show error banner and keep form |
+
+## Negative Test Cases
+
+| ID | Scenario | Expected Result |
+|----|----------|----------------|
+| UI-MC-NT1 | Save with empty name | Highlight name field, show "Name is required" |
+| UI-MC-NT2 | Save with missing required auth | Highlight auth field, disable Save |
+| UI-MC-NT3 | OAuth callback fails | Show error in #oauth-status-label |
+| UI-MC-NT4 | Secrets store fails | Show "Service unavailable" in #error-banner |
+| UI-MC-NT5 | Cancel returns without saving | Navigate back, no config changes |
 
 ### Sanitization Tests
 

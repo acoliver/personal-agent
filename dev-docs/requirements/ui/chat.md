@@ -477,6 +477,27 @@ The view receives **clean, pre-processed events** from ChatService. No parsing n
 
 **Note:** The [T] toggle does NOT call any service - it only changes local view state. The profile's default `show_thinking` value is read from the profile (via `ProfileService.get(id)`) to initialize the toggle on app launch or profile change.
 
+## Service Calls
+
+| User Action | Service Method | Success Response | Error Response | UI State Change |
+|-------------|----------------|------------------|----------------|-----------------|
+| Click Send | ChatService.send_message(conversation_id, content, profile_id) | StreamHandle + StreamEvent stream | Error {code,message,field} | Append user bubble, show streaming placeholder |
+| Click Stop | ChatService.cancel(handle) | Complete event | Error {code,message} | Stop streaming, keep partial response |
+| Click [+] | ConversationService.create() | Conversation | Error {code,message} | Clear chat, update dropdown |
+| Select conversation | ConversationService.load(id) | Conversation | Error {code,message} | Render messages or empty state |
+| Rename conversation | ConversationService.update_metadata(id, title) | Updated metadata | Error {code,message,field} | Update dropdown title or show inline error |
+| Toggle thinking | ProfileService.update(profile) | Updated profile | Error {code,message,field} | Update [T] state, persist setting |
+
+## Negative Test Cases
+
+| ID | Scenario | Expected Result |
+|----|----------|----------------|
+| UI-CH-NT1 | Send with empty input | Show "Message cannot be empty" in #error-banner, no message bubble |
+| UI-CH-NT2 | Send when no conversation selected | Show "Conversation not found" in #error-banner |
+| UI-CH-NT3 | Network error during stream | Show "Network error" in #error-banner, stop cursor |
+| UI-CH-NT4 | Cancel when not streaming | Disable Stop button, no state change |
+
+
 ---
 
 ## Known Issues

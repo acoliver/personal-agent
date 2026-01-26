@@ -1,8 +1,19 @@
 # PersonalAgent - Application Requirements
 
+
+## Service Boundaries
+
+- UI requirements live under `dev-docs/requirements/ui/` and define rendering and view-state behavior.
+- Service requirements live under `dev-docs/requirements/services/` and define contracts, validation, persistence, and error shapes.
+- This document captures application-level capabilities and non-UI behaviors only.
+
 ## Overview
 
 PersonalAgent is a macOS menu bar application that provides a conversational AI interface. It lives in the system tray (status bar), displays a popover when clicked, and allows users to chat with various LLM providers through a unified interface with tool/MCP support.
+
+## Canonical Data Model Glossary
+
+See `dev-docs/requirements/data-models.md` for canonical definitions and ownership. All services and UI requirements must use these terms without drift.
 
 ---
 
@@ -198,9 +209,63 @@ PersonalAgent is a macOS menu bar application that provides a conversational AI 
 | SS-4 | Secrets not logged | [OK] |
 | SS-5 | macOS Keychain integration | [ERROR] Future |
 
+
+## End-to-End Flows (Cross-Service)
+
+### Send Message with Persistence and Context Compression
+
+1. UI sends user message via ChatService.send_message(conversation_id, content, profile_id).
+2. ChatService validates input and calls ConversationService.append_message(user message).
+3. ChatService loads conversation + ContextStrategy.build_context(...).
+4. ChatService builds model request and starts provider stream.
+5. On stream completion, ChatService calls ConversationService.append_message(assistant message).
+6. If ContextStrategy produced new ContextState, ChatService calls ConversationService.update_context_state(...).
+7. Persistence is complete only after both message append calls succeed.
+8. Retry: if append of assistant message fails, retry up to 2 times with backoff (200ms, 500ms).
+9. Rollback: if user message append succeeded but streaming fails before any assistant output, append a system message noting failure and keep conversation consistent.
+
+### Create Conversation and First Message
+
+1. UI triggers ConversationService.create().
+2. ConversationService persists empty .jsonl and .meta.json.
+3. UI selects conversation and calls ChatService.send_message(...).
+4. On failure to create conversation, UI shows error in #error-banner and keeps previous conversation selected.
+
+### Delete Conversation
+
+1. UI confirms deletion.
+2. ConversationService.delete(id) removes .jsonl and .meta.json.
+3. UI removes row and clears selection.
+4. If delete fails, UI shows error in #error-banner and keeps row visible.
+
 ---
 
 ## Error Handling & UX
+
+### Standard Error Contract
+
+All services return errors using a consistent shape so UI can map to stable states.
+
+```json
+{ "code": "string", "message": "string", "field": "string" }
+```
+
+- `code` is required and stable for test assertions.
+- `message` is user-presentable.
+- `field` is optional and used for validation errors tied to a specific field.
+
+### Error Code → UI State Mapping
+
+| Error Code | UI State | UI Behavior |
+|------------|----------|-------------|
+| VALIDATION_ERROR | Inline field error | Highlight field, show message in field error label |
+| NOT_FOUND | Empty state | Show empty state with message in #empty-state-label |
+| CONFLICT | Banner error | Show non-blocking banner in #error-banner |
+| UNAUTHORIZED | Inline auth error | Show "Invalid credentials" in #error-banner |
+| NETWORK_ERROR | Inline error | Show "Network error" in #error-banner, allow retry |
+| RATE_LIMITED | Inline error | Show "Rate limited" in #error-banner, disable send 30s |
+| SERVICE_UNAVAILABLE | Inline error | Show "Service unavailable" in #error-banner |
+| STREAM_CANCELLED | Inline info | Show "Streaming stopped" in #info-banner |
 
 ### 14. Error States
 

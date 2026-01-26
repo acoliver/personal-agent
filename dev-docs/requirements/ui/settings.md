@@ -434,6 +434,29 @@ The Settings View manages model profiles and MCP configurations. **The view is p
 ### State Tests
 
 - [ ] Default profile pre-selected on load
+
+## Service Calls
+
+| User Action | Service Method | Success Response | Error Response | UI State Change |
+|-------------|----------------|------------------|----------------|-----------------|
+| View appears | ProfileService.list() + McpService.list() | Profiles + Mcps | Error {code,message} | Render lists or show #error-banner |
+| Select profile | ProfileService.set_default(id) | Success | Error {code,message} | Highlight row or show #error-banner |
+| Delete profile | ProfileService.delete(id) | Success | Error {code,message} | Remove row or show #error-banner |
+| Toggle MCP | McpService.update(config) + start/stop | Success | Error {code,message} | Toggle switch + status indicator |
+| Delete MCP | McpService.delete(id) | Success | Error {code,message} | Remove row or show #error-banner |
+| Refresh models | ModelsRegistryService.refresh() | Success | Error {code,message} | Show success/empty state in #error-banner |
+
+## Negative Test Cases
+
+| ID | Scenario | Expected Result |
+|----|----------|----------------|
+| UI-ST-NT1 | Delete last profile | Show "Cannot delete last profile" in #error-banner |
+| UI-ST-NT2 | Set default with missing id | Show "Profile not found" in #error-banner |
+| UI-ST-NT3 | MCP start fails | Show "Service unavailable" in #error-banner, toggle resets |
+| UI-ST-NT4 | Refresh models fails | Show "Network error" in #error-banner |
+
+### State Tests
+
 - [ ] Selection persists after toggle
 - [ ] Button states update on selection change
 - [ ] MCP status reflects running state

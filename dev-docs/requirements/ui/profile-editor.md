@@ -674,6 +674,25 @@ struct ModelParameters {
 - [ ] Auth Method change shows/hides correct fields
 - [ ] Show Thinking checkbox toggles correctly
 
+## Service Calls
+
+| User Action | Service Method | Success Response | Error Response | UI State Change |
+|-------------|----------------|------------------|----------------|-----------------|
+| View appears (edit) | ProfileService.get(id) | ModelProfile | Error {code,message} | Populate fields or show #error-banner |
+| Click Save (new) | ProfileService.create(profile) | Success | Error {code,message,field} | Navigate back to Settings |
+| Click Save (edit) | ProfileService.update(profile) | Success | Error {code,message,field} | Navigate back to Settings |
+| Validate profile | ProfileService.validate(profile) | ValidationResult | Error {code,message} | Highlight invalid fields |
+
+## Negative Test Cases
+
+| ID | Scenario | Expected Result |
+|----|----------|----------------|
+| UI-PR-NT1 | Save with empty name | Highlight name field, show "Name is required" |
+| UI-PR-NT2 | Save with invalid base URL | Highlight base URL field, show "Base URL invalid" |
+| UI-PR-NT3 | Save with missing auth | Highlight auth section, disable Save |
+| UI-PR-NT4 | Update missing profile id | Show "Profile not found" in #error-banner |
+
+
 ### Sanitization Tests
 
 - [ ] API key trimmed on save

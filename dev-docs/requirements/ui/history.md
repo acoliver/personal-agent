@@ -259,6 +259,23 @@ struct ConversationMetadata {
 
 ---
 
+
+## Service Calls
+
+| User Action | Service Method | Success Response | Error Response | UI State Change |
+|-------------|----------------|------------------|----------------|-----------------|
+| View appears | ConversationService.load_all_metadata() | Vec<ConversationMetadata> | Error {code,message,field} | Render cards or empty state |
+| Click Load | ConversationService.load(id) | Conversation | Error {code,message} | Navigate to Chat + render messages |
+| Confirm Delete | ConversationService.delete(id) | Success | Error {code,message} | Remove card or show #error-banner |
+
+## Negative Test Cases
+
+| ID | Scenario | Expected Result |
+|----|----------|----------------|
+| UI-HS-NT1 | load_all_metadata returns NETWORK_ERROR | Show "Network error" in #error-banner and keep prior list |
+| UI-HS-NT2 | delete missing conversation | Show "Conversation not found" in #error-banner |
+| UI-HS-NT3 | load conversation parse error | Show "Service unavailable" in #error-banner |
+
 ## Known Issues
 
 1. **No search/filter** - Can't find specific conversations by keyword

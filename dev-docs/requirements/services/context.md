@@ -1,90 +1,147 @@
-# Context Service Requirements
+# Context Management Service Requirements
 
-> **Status: Superseded by SerdesAI HistoryProcessor**
->
-> Context compression is now handled by SerdesAI's built-in `HistoryProcessor` at runtime. This document is retained for reference and potential future use with `SummarizeHistory` processor, but **no custom ContextService implementation is needed** for the initial release.
+The Context Service manages conversation context for LLM requests, including compression and token management.
 
 ---
 
-## Current Approach: SerdesAI HistoryProcessor
+## Canonical Terminology
 
-ChatService configures context management when building the SerdesAI Agent:
+- ContextState is defined in `dev-docs/requirements/data-models.md` and owned by ConversationService.
+- ContextStrategy produces ContextState but does not persist it directly.
+
+
+## Responsibilities
+
+- Estimate token count for messages
+- Determine when compression is needed
+- Build context for LLM requests
+- Compress/summarize middle messages
+- Cache and manage summaries
+
+---
+
+## Strategy Interface
 
 ```rust
-// In ChatService.build_agent()
-let context_limit = profile.parameters.context_limit.unwrap_or(128_000);
-
-let agent = AgentBuilder::from_config(model_config)?
-    .history_processor(
-        TruncateByTokens::new(context_limit)
-            .keep_first(true)  // Preserve system prompt
-            .chars_per_token(4.0)
-    )
-    // ...
-    .build();
+/// Pluggable strategy for managing conversation context
+pub trait ContextStrategy: Send + Sync {
+    /// Strategy name for display/config
+    fn name(&self) -> &str;
+    
+    /// Number of messages to preserve at start
+    fn preserve_top(&self) -> usize;
+    
+    /// Number of messages to preserve at end
+    fn preserve_bottom(&self) -> usize;
+    
+    /// Threshold (0.0-1.0) of context usage to trigger compression
+    fn compression_threshold(&self) -> f64;
+    
+    /// Check if compression is needed
+    fn needs_compression(
+        &self,
+        messages: &[Message],
+        max_context_tokens: usize,
+    ) -> bool;
+    
+    /// Build context to send to model
+    fn build_context(
+        &self,
+        messages: &[Message],
+        cached_summary: Option<&ContextState>,
+        max_context_tokens: usize,
+    ) -> ContextResult;
+    
+    /// Compress messages into summary
+    async fn compress(
+        &self,
+        messages: &[Message],
+        model: &dyn ChatModel,
+    ) -> Result<String>;
+}
 ```
 
-### Available HistoryProcessors in SerdesAI
-
-| Processor | Description | Use Case |
-|-----------|-------------|----------|
-| `TruncateByTokens` | Limits by estimated token count | **Primary - used by default** |
-| `TruncateHistory` | Limits by message count | Simple truncation |
-| `FilterHistory` | Removes specific message types | Clean up retries, tool returns |
-| `SummarizeHistory` | Placeholder for LLM summarization | Future enhancement |
-| `ChainedProcessor` | Combines multiple processors | Complex strategies |
-| `FnProcessor` | Custom function | Custom logic |
-
-### Why SerdesAI Over Custom Service?
-
-| Custom Service (Old) | SerdesAI HistoryProcessor (New) |
-|----------------------|--------------------------------|
-| Separate service call | Integrated into agent runtime |
-| Persist compression state | Stateless, recompute each time |
-| Complex summarization | Simple truncation (for now) |
-| Custom token counting | Built-in estimation |
-| Tight coupling | Loose coupling via trait |
-
 ---
 
-## Future: LLM-Based Summarization
+## Default Strategy: Sandwich
 
-SerdesAI's `SummarizeHistory` processor is a placeholder. When implemented, it could provide sandwich-style compression:
+Preserves conversation beginning and end, compresses middle.
 
-```rust
-// Future: When SerdesAI SummarizeHistory is implemented
-let agent = AgentBuilder::from_config(model_config)?
-    .history_processor(
-        SummarizeHistory::new(
-            keep_recent: 10,
-            threshold_tokens: 100_000,
-        )
-        .with_summarization_model("claude-3-haiku")
-    )
-    .build();
+### Configuration
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| preserve_top | 5 | Messages to keep at start |
+| preserve_bottom | 5 | Messages to keep at end |
+| compression_threshold | 0.7 | Trigger at 70% of context |
+
+### Algorithm
+
+```
+IF token_count < (max_tokens * 0.7):
+    RETURN full message history
+    
+IF message_count <= (preserve_top + preserve_bottom):
+    RETURN full message history (not enough to compress)
+
+top_messages = messages[0..preserve_top]
+middle_messages = messages[preserve_top..message_count-preserve_bottom]
+bottom_messages = messages[message_count-preserve_bottom..]
+
+IF cached_summary covers middle_messages:
+    USE cached_summary
+ELSE:
+    summary = compress(middle_messages)
+    CACHE summary with range
+
+RETURN [
+    top_messages,
+    system_message("[Earlier conversation summary: {summary}]"),
+    bottom_messages
+]
 ```
 
-Until then, `TruncateByTokens` provides a simpler solution that:
-- Keeps the system prompt (first message)
-- Keeps most recent messages that fit
-- Drops older messages when over limit
+### Context Result
+
+```rust
+pub struct ContextResult {
+    /// Messages to send to the model
+    pub messages: Vec<Message>,
+    
+    /// Whether a summary was prepended
+    pub summary_used: bool,
+    
+    /// Estimated token count
+    pub tokens_used: usize,
+    
+    /// New context state to cache (if compression occurred)
+    pub new_state: Option<ContextState>,
+}
+```
 
 ---
 
-## Retained: Data Model
+## Context State (Cached)
 
-These types may be used for future summarization state:
+Stored in conversation's `.meta.json`:
 
 ```rust
-/// Compression state (future use with SummarizeHistory)
 pub struct ContextState {
-    /// Strategy that created this state
+    /// Strategy name that created this state
     pub strategy: String,
     
-    /// Compressed summary of omitted messages
+    /// Compressed summary of middle messages
     pub summary: String,
+
+## Context Lifecycle
+
+- ContextState is created when compression is triggered (token usage > threshold and enough messages).
+- ContextState is updated whenever the middle section grows beyond summary_range.
+- ContextState is reused only if summary_range matches preserve_top and preserve_bottom for current message count.
+- ContextState is cleared when strategy changes or conversation is deleted.
+
     
-    /// Range of message indices covered [start, end)
+    /// Range of message indices covered by summary [start, end)
     pub summary_range: (usize, usize),
     
     /// When compression was performed
@@ -92,132 +149,160 @@ pub struct ContextState {
 }
 ```
 
-This is stored in `ConversationMetadata.context_state` but is **not currently used**.
+### Cache Validity
+
+Summary is valid if:
+1. `summary_range.0 == preserve_top` (starts after top messages)
+2. `summary_range.1 == message_count - preserve_bottom` (ends before bottom messages)
+
+If new messages were added, the middle has grown and re-compression is needed.
 
 ---
 
-## Retained: Token Estimation Reference
+## Token Estimation
 
-For reference, here's how token estimation works:
+### Approach
+
+Simple character-based estimation (accurate enough for triggering):
 
 ```rust
-// SerdesAI TruncateByTokens uses ~4 chars per token
-fn estimate_tokens(text: &str) -> u64 {
-    (text.len() as f64 / 4.0).ceil() as u64
+fn estimate_tokens(messages: &[Message]) -> usize {
+    messages.iter()
+        .map(|m| m.content.len() / 4)  // ~4 chars per token
+        .sum()
 }
+```
 
-// For more accuracy, could use tiktoken
-fn estimate_tokens_tiktoken(text: &str) -> u64 {
-    let encoding = tiktoken::get_encoding("cl100k_base");
-    encoding.encode(text).len() as u64
-}
+### Per-Model Context Limits
+
+| Provider | Model | Context Window |
+|----------|-------|----------------|
+| Anthropic | claude-3-5-sonnet | 200,000 |
+| Anthropic | claude-3-opus | 200,000 |
+| OpenAI | gpt-4-turbo | 128,000 |
+| OpenAI | gpt-4o | 128,000 |
+| Google | gemini-pro | 32,000 |
+
+Context limit should come from profile or models.dev data.
+
+---
+
+## Compression Prompt
+
+```
+Summarize this conversation excerpt concisely. Preserve:
+- Key facts and decisions made
+- Important context needed to continue the discussion
+- User preferences or requirements mentioned
+- Any commitments or action items
+
+Do not include greetings or filler. Focus on information density.
+
+Conversation:
+---
+{formatted_messages}
+---
 ```
 
 ---
 
-## Retained: Default Context Limits
+## Operations
 
-Reference for model context windows:
+### Check If Compression Needed
 
-| Model | Context Window |
-|-------|---------------|
-| claude-3-opus | 200,000 |
-| claude-3-sonnet | 200,000 |
-| claude-sonnet-4 | 200,000 |
-| gpt-4-turbo | 128,000 |
-| gpt-4o | 128,000 |
-| gpt-4 | 8,192 |
-| gpt-3.5-turbo | 16,385 |
-| Default | 100,000 |
+| Input | Output |
+|-------|--------|
 
-These are used when `profile.parameters.context_limit` is not set.
+## Validation Rules
+
+| Field | Rule | Error Code | Error Message |
+|-------|------|------------|---------------|
+| max_context_tokens | > 0 | VALIDATION_ERROR | Context limit must be positive |
+| messages | At least 1 message | VALIDATION_ERROR | Conversation has no messages |
+
+## Negative Test Cases
+
+| ID | Scenario | Expected Result |
+|----|----------|----------------|
+| CX-NT1 | build_context with zero max_context_tokens | VALIDATION_ERROR, no context returned |
+| CX-NT2 | compress with empty messages | VALIDATION_ERROR, no summary created |
+| CX-NT3 | compression model failure | SERVICE_UNAVAILABLE, cached summary unchanged |
+
+| messages, max_tokens | bool |
+
+```rust
+fn needs_compression(&self, messages: &[Message], max_tokens: usize) -> bool {
+    let tokens = estimate_tokens(messages);
+    let threshold = (max_tokens as f64 * self.compression_threshold) as usize;
+    tokens > threshold && messages.len() > (self.preserve_top + self.preserve_bottom)
+}
+```
+
+### Build Context
+
+| Input | Output |
+|-------|--------|
+| messages, cached_state, max_tokens | ContextResult |
+
+1. Check if compression needed
+2. If not, return full history
+3. If cached summary valid, use it
+4. Otherwise, compress and return new state
+
+### Compress Middle
+
+| Input | Output |
+|-------|--------|
+| middle_messages, model | summary string |
+
+1. Format messages for summarization
+2. Call model with compression prompt
+3. Return summary text
 
 ---
 
-## Migration Notes
+## Alternative Strategies (Future)
 
-### From Custom Strategy to HistoryProcessor
+### Sliding Window
 
-If you had custom context strategy code:
-
-**Before (Custom Service):**
 ```rust
-let context = context_service.build_context(
-    &conversation.messages,
-    conversation.metadata.context_state.as_ref(),
-    profile.context_limit,
-);
-
-if let Some(state) = context.new_state {
-    conversation_service.update_context_state(id, &state)?;
+pub struct SlidingWindowStrategy {
+    pub keep_last_n: usize,  // e.g., 20
 }
 ```
 
-**After (SerdesAI):**
-```rust
-// Just configure the agent - it handles everything
-let agent = AgentBuilder::from_config(model_config)?
-    .history_processor(TruncateByTokens::new(profile.context_limit))
-    .build();
+Simple: just keep last N messages. Loses beginning context.
 
-// Pass full message history - agent compresses internally
-let stream = AgentStream::new(&agent, prompt, (), RunOptions::new()
-    .message_history(all_messages)
-).await?;
+### Full History
+
+```rust
+pub struct FullHistoryStrategy;
 ```
 
----
+Never compress. For models with huge context windows (200K+).
 
-## Future Sandwich Strategy (Optional)
-
-If we want sandwich-style compression (protect first + last, summarize middle), we could implement a custom HistoryProcessor:
+### Tree Summarization
 
 ```rust
-pub struct SandwichProcessor {
-    keep_first: usize,
-    keep_last: usize,
-    max_tokens: u64,
-}
-
-#[async_trait]
-impl<Deps: Send + Sync> HistoryProcessor<Deps> for SandwichProcessor {
-    async fn process(
-        &self,
-        ctx: &RunContext<Deps>,
-        messages: Vec<ModelRequest>,
-    ) -> Vec<ModelRequest> {
-        let total_tokens = estimate_total_tokens(&messages);
-        
-        if total_tokens <= self.max_tokens {
-            return messages;
-        }
-        
-        let n = messages.len();
-        let first = &messages[..self.keep_first.min(n)];
-        let last_start = n.saturating_sub(self.keep_last);
-        let last = &messages[last_start..];
-        
-        // For now, just drop middle
-        // Future: Generate summary using ctx
-        let mut result = first.to_vec();
-        result.extend(last.iter().cloned());
-        result
-    }
+pub struct TreeSummaryStrategy {
+    pub chunk_size: usize,
+    pub levels: usize,
 }
 ```
 
-This is **not needed for initial release** - `TruncateByTokens` is sufficient.
+Hierarchical summarization for very long conversations.
 
 ---
 
 ## Test Requirements
 
-Since we're using SerdesAI's built-in processors, tests focus on configuration:
-
 | ID | Test |
 |----|------|
-| CX-T1 | ChatService configures HistoryProcessor with profile context_limit |
-| CX-T2 | Default context limit used when not specified |
-| CX-T3 | keep_first(true) preserves system prompt |
-| CX-T4 | Agent handles long conversations without error |
-| CX-T5 | Messages truncated when over limit |
+| CX-T1 | Under threshold returns full history |
+| CX-T2 | Over threshold triggers compression |
+| CX-T3 | Top 5 messages always preserved |
+| CX-T4 | Bottom 5 messages always preserved |
+| CX-T5 | Cached summary reused when valid |
+| CX-T6 | Cache invalidated when middle grows |
+| CX-T7 | Summary prepended as system message |
+| CX-T8 | Token estimation reasonable accuracy |
