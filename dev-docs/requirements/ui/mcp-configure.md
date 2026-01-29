@@ -529,15 +529,30 @@ struct OAuthTokens {
 
 ---
 
-## Service Dependencies
+## Event Emissions
 
-| Action | Service | Method |
-|--------|---------|--------|
-| Load MCP | McpService | get(id) |
-| Create MCP | McpService | create(config) |
-| Update MCP | McpService | update(config) |
-| Store secret | SecretsService | store(mcp_id, key, value) |
-| OAuth exchange | OAuthService | exchange_code(code, state) |
+The MCP Configure View emits `UserEvent` variants on user actions. **The view never calls services directly.**
+
+| User Action | Event Emitted |
+|-------------|---------------|
+| Click Cancel | `UserEvent::NavigateBack` |
+| Click Save | `UserEvent::SaveMcpConfig { id, config: McpConfigData }` |
+| Click [Browse] | (local file picker, updates field) |
+| Click Authorize (OAuth) | `UserEvent::StartMcpOAuth { id, provider }` |
+
+---
+
+## Event Subscriptions
+
+The MCP Configure View receives updates via events (handled by McpConfigurePresenter, which calls view methods):
+
+| Event | View Update |
+|-------|-------------|
+| `McpEvent::ConfigSaved` | Navigate back to Settings |
+| `McpEvent::OAuthStarted` | Show "Authorizing..." status |
+| `McpEvent::OAuthCompleted { username }` | Show "Connected as @username" |
+| `McpEvent::OAuthFailed { error }` | Show error status |
+| `NavigationEvent::Navigated { view: McpConfigure }` | Load MCP config if editing |
 
 ---
 

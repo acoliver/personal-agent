@@ -560,6 +560,18 @@ impl SecretsService {
 
 ---
 
+## Event Emissions
+
+SecretsService does **not** emit events directly. It is a low-level infrastructure service.
+
+Events related to secrets are emitted by higher-level services:
+- `ProfileEvent::Created/Updated` when profiles with API keys are saved (emitted by ProfileService)
+- `McpEvent::ConfigSaved` when MCP env vars are stored (emitted by McpService)
+
+**Rationale:** Secret operations are implementation details of higher-level operations. The UI cares about "profile saved" not "secret stored".
+
+---
+
 ## Test Requirements
 
 | ID | Test |

@@ -1,0 +1,78 @@
+# Structural Verification Results
+
+## Event Subscription
+**Command:** grep -n "subscribe()" src/presentation/chat_presenter.rs
+**Line 76:** `let mut rx = self.event_bus.subscribe();`
+[OK] Event subscription exists in start() method
+
+## Event Loop
+**Command:** grep -n "recv().await" src/presentation/chat_presenter.rs
+**Line 84:** `match rx.recv().await {`
+[OK] Event loop with recv().await exists
+
+## ChatEvent Handlers
+**Command:** grep -n "ChatEvent::" src/presentation/chat_presenter.rs
+
+Lines with ChatEvent pattern matches:
+- Line 187: `ChatEvent::StreamStarted { conversation_id, message_id: _, model_id: _ } => {`
+- Line 190: `ChatEvent::TextDelta { text } => {`
+- Line 196: `ChatEvent::ThinkingDelta { text } => {`
+- Line 202: `ChatEvent::ToolCallStarted { tool_call_id: _, tool_name } => {`
+- Line 209: `ChatEvent::ToolCallCompleted { tool_call_id: _, tool_name, success, result, duration_ms } => {`
+- Line 219: `ChatEvent::StreamCompleted { conversation_id, message_id: _, total_tokens } => {`
+- Line 226: `ChatEvent::StreamCancelled { conversation_id, message_id: _, partial_content } => {`
+- Line 233: `ChatEvent::StreamError { conversation_id, error, recoverable } => {`
+- Line 245: `ChatEvent::MessageSaved { conversation_id, message_id: _ } => {`
+- Lines 680, 707: Test code using ChatEvent
+
+[OK] 9 ChatEvent variants handled in production code
+
+## AppEvent Matching
+**Command:** grep -n "AppEvent::" src/presentation/chat_presenter.rs
+
+Lines with AppEvent pattern matches:
+- Line 132: `AppEvent::User(user_evt) => {`
+- Line 135: `AppEvent::Chat(chat_evt) => {`
+- Line 138: `AppEvent::Conversation(conv_evt) => {`
+- Line 140: `_ => {} // Ignore other events`
+
+[OK] AppEvent variants properly matched in handle_event()
+
+## ViewCommand Emission
+**Command:** grep -c "ViewCommand::" src/presentation/chat_presenter.rs
+**Result:** 39 occurrences
+
+[OK] ViewCommands extensively emitted throughout handlers
+
+## Handler Methods
+**Command:** grep -n "fn handle_|fn on_" src/presentation/chat_presenter.rs
+
+Handler methods found:
+1. Line 125: `async fn handle_event(` - Main event dispatcher
+2. Line 149: `async fn handle_user_event(` - User event handler
+3. Line 182: `async fn handle_chat_event(` - Chat event handler
+4. Line 257: `async fn handle_send_message(` - SendMessage handler
+5. Line 316: `async fn handle_toggle_thinking(` - ToggleThinking handler
+6. Line 326: `async fn handle_rename_conversation(` - ConfirmRenameConversation handler
+7. Line 355: `async fn handle_conversation_event(` - ConversationEvent handler
+8. Line 394: `async fn handle_stop_streaming(` - StopStreaming handler
+9. Line 406: `async fn handle_new_conversation(` - NewConversation handler
+10. Line 439: `async fn handle_select_conversation(` - SelectConversation handler
+
+[OK] 10 handler methods implemented
+
+## Event Loop Spawning
+**Location:** Lines 76-102 in `start()` method
+```rust
+let mut rx = self.event_bus.subscribe();
+tokio::spawn(async move {
+    while running.load(std::sync::atomic::Ordering::Relaxed) {
+        match rx.recv().await {
+            Ok(event) => { /* handle */ }
+            Err(broadcast::error::RecvError::Lagged(n)) => { /* warn */ }
+            Err(broadcast::error::RecvError::Closed) => { /* break */ }
+        }
+    }
+});
+```
+[OK] Event loop properly spawned with tokio::spawn

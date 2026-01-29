@@ -1,0 +1,836 @@
+warning: unused import: `futures::StreamExt`
+   --> src/presentation/chat_presenter.rs:598:17
+    |
+598 |             use futures::StreamExt;
+    |                 ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `super::*`
+   --> src/presentation/history_presenter.rs:233:9
+    |
+233 |     use super::*;
+    |         ^^^^^^^^
+
+warning: unused import: `std::path::PathBuf`
+ --> src/services/app_settings.rs:8:5
+  |
+8 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::Mutex`
+ --> src/services/app_settings.rs:9:5
+  |
+9 | use tokio::sync::Mutex;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Message`
+  --> src/services/chat_impl.rs:12:21
+   |
+12 | use crate::models::{Message, MessageRole};
+   |                     ^^^^^^^
+
+warning: unused import: `MessageRole`
+   --> src/services/chat_impl.rs:267:63
+    |
+267 |     use crate::models::{AuthConfig, ModelParameters, Message, MessageRole};
+    |                                                               ^^^^^^^^^^^
+
+warning: unused imports: `PathBuf` and `Path`
+ --> src/services/conversation.rs:7:17
+  |
+7 | use std::path::{Path, PathBuf};
+  |                 ^^^^  ^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> src/services/conversation.rs:8:5
+  |
+8 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::Mutex`
+ --> src/services/conversation.rs:9:5
+  |
+9 | use tokio::sync::Mutex;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MessageRole`
+  --> src/services/conversation.rs:12:44
+   |
+12 | use crate::models::{Conversation, Message, MessageRole};
+   |                                            ^^^^^^^^^^^
+
+warning: unused import: `ServiceError`
+  --> src/services/conversation.rs:13:23
+   |
+13 | use crate::services::{ServiceError, ServiceResult};
+   |                       ^^^^^^^^^^^^
+
+warning: unused import: `MessageRole`
+ --> src/services/conversation_impl.rs:7:44
+  |
+7 | use crate::models::{Conversation, Message, MessageRole};
+  |                                            ^^^^^^^^^^^
+
+warning: unused import: `ServiceError`
+  --> src/services/mcp.rs:12:13
+   |
+12 | use super::{ServiceError, ServiceResult};
+   |             ^^^^^^^^^^^^
+
+warning: unused import: `Ordering`
+ --> src/services/mcp_impl.rs:9:37
+  |
+9 | use std::sync::atomic::{AtomicBool, Ordering};
+  |                                     ^^^^^^^^
+
+warning: unused import: `crate::mcp::registry::McpRegistry`
+  --> src/services/mcp_impl.rs:13:5
+   |
+13 | use crate::mcp::registry::McpRegistry;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `McpRegistrySource`
+ --> src/services/mcp_registry_impl.rs:4:41
+  |
+4 | use crate::mcp::registry::{McpRegistry, McpRegistrySource};
+  |                                         ^^^^^^^^^^^^^^^^^
+
+warning: unexpected `cfg` condition value: `reqwest`
+  --> src/services/models_registry_impl.rs:45:15
+   |
+45 |         #[cfg(feature = "reqwest")]
+   |               ^^^^^^^^^^^^^^^^^^^ help: remove the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `reqwest`
+  --> src/services/models_registry_impl.rs:77:19
+   |
+77 |         #[cfg(not(feature = "reqwest"))]
+   |                   ^^^^^^^^^^^^^^^^^^^ help: remove the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused import: `StreamExt`
+  --> src/services/chat_impl.rs:14:31
+   |
+14 | use futures::{stream, Stream, StreamExt};
+   |                               ^^^^^^^^^
+
+warning: unused variable: `title`
+   --> src/presentation/chat_presenter.rs:360:46
+    |
+360 |             ConversationEvent::Created { id, title } => {
+    |                                              ^^^^^ help: try ignoring the field: `title: _`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `event_tx`
+   --> src/presentation/chat_presenter.rs:617:14
+    |
+617 |         let (event_tx, _) = broadcast::channel::<AppEvent>(100);
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_event_tx`
+
+warning: unused variable: `conversation_id`
+   --> src/presentation/error_presenter.rs:162:38
+    |
+162 |             ChatEvent::StreamError { conversation_id, error, recoverable } => {
+    |                                      ^^^^^^^^^^^^^^^ help: try ignoring the field: `conversation_id: _`
+
+warning: unused variable: `id`
+   --> src/presentation/error_presenter.rs:182:37
+    |
+182 |             McpEvent::StartFailed { id, name, error } => {
+    |                                     ^^ help: try ignoring the field: `id: _`
+
+warning: unused variable: `id`
+   --> src/presentation/error_presenter.rs:189:35
+    |
+189 |             McpEvent::Unhealthy { id, name, error } => {
+    |                                   ^^ help: try ignoring the field: `id: _`
+
+warning: unused variable: `event_tx`
+   --> src/presentation/error_presenter.rs:234:14
+    |
+234 |         let (event_tx, _) = broadcast::channel::<AppEvent>(100);
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_event_tx`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:271:13
+    |
+271 |         let config = McpServerConfig {
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:447:13
+    |
+447 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:470:13
+    |
+470 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:496:13
+    |
+496 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:527:13
+    |
+527 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:557:13
+    |
+557 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:585:13
+    |
+585 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:613:13
+    |
+613 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `profile`
+   --> src/services/profile_impl.rs:316:13
+    |
+316 |         let profile = service
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_profile`
+
+warning: methods `stop` and `is_running` are never used
+  --> src/app.rs:55:8
+   |
+50 | trait PresenterLifecycle: Send + Sync {
+   |       ------------------ methods in this trait
+...
+55 |     fn stop(&mut self) -> Result<(), AppError>;
+   |        ^^^^
+...
+58 |     fn is_running(&self) -> bool;
+   |        ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `presenter` is never read
+   --> src/app.rs:331:5
+    |
+330 | struct ChatPresenterWrapper {
+    |        -------------------- field in this struct
+331 |     presenter: ChatPresenter,
+    |     ^^^^^^^^^
+
+warning: field `presenter` is never read
+   --> src/app.rs:356:5
+    |
+355 | struct SettingsPresenterWrapper {
+    |        ------------------------ field in this struct
+356 |     presenter: SettingsPresenter,
+    |     ^^^^^^^^^
+
+warning: field `presenter` is never read
+   --> src/app.rs:379:5
+    |
+378 | struct HistoryPresenterWrapper {
+    |        ----------------------- field in this struct
+379 |     presenter: HistoryPresenter,
+    |     ^^^^^^^^^
+
+warning: field `presenter` is never read
+   --> src/app.rs:402:5
+    |
+401 | struct ErrorPresenterWrapper {
+    |        --------------------- field in this struct
+402 |     presenter: ErrorPresenter,
+    |     ^^^^^^^^^
+
+warning: field `app_settings_service` is never read
+  --> src/presentation/settings_presenter.rs:31:5
+   |
+23 | pub struct SettingsPresenter {
+   |            ----------------- field in this struct
+...
+31 |     app_settings_service: Arc<dyn AppSettingsService>,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: associated function `on_config_saved` is never used
+   --> src/presentation/mcp_configure_presenter.rs:187:14
+    |
+ 35 | impl McpConfigurePresenter {
+    | -------------------------- associated function in this implementation
+...
+187 |     async fn on_config_saved(
+    |              ^^^^^^^^^^^^^^^
+
+warning: struct `Settings` is never constructed
+  --> src/services/app_settings.rs:60:8
+   |
+60 | struct Settings {
+   |        ^^^^^^^^
+
+warning: field `is_refreshing` is never read
+  --> src/services/mcp_impl.rs:20:5
+   |
+16 | pub struct McpServiceImpl {
+   |            -------------- field in this struct
+...
+20 |     is_refreshing: Arc<AtomicBool>,
+   |     ^^^^^^^^^^^^^
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:128:9
+    |
+128 | /         emit(AppEvent::Chat(ChatEvent::StreamStarted {
+129 | |             conversation_id,
+130 | |             message_id,
+131 | |             model_id: model_id.clone(),
+132 | |         }));
+    | |___________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+128 |         let _ = emit(AppEvent::Chat(ChatEvent::StreamStarted {
+    |         +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:167:21
+    |
+167 | /                     emit(AppEvent::Chat(ChatEvent::StreamError {
+168 | |                         conversation_id: event_conversation_id,
+169 | |                         error: err_msg.clone(),
+170 | |                         recoverable: false,
+171 | |                     }));
+    | |_______________________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+167 |                     let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+    |                     +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:184:25
+    |
+184 |                         emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+184 |                         let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+    |                         +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:190:25
+    |
+190 |                         emit(AppEvent::Chat(ChatEvent::ThinkingDelta { text: text.clone() }));
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+190 |                         let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta { text: text.clone() }));
+    |                         +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:197:25
+    |
+197 | /                         emit(AppEvent::Chat(ChatEvent::StreamError {
+198 | |                             conversation_id: event_conversation_id,
+199 | |                             error: err.clone(),
+200 | |                             recoverable: false,
+201 | |                         }));
+    | |___________________________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+197 |                         let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+    |                         +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:210:17
+    |
+210 | /                 emit(AppEvent::Chat(ChatEvent::StreamError {
+211 | |                     conversation_id: event_conversation_id,
+212 | |                     error: err_msg.clone(),
+213 | |                     recoverable: false,
+214 | |                 }));
+    | |___________________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+210 |                 let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+    |                 +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:231:13
+    |
+231 | /             emit(AppEvent::Chat(ChatEvent::StreamCompleted {
+232 | |                 conversation_id: event_conversation_id,
+233 | |                 message_id: Uuid::new_v4(),
+234 | |                 total_tokens: None,
+235 | |             }));
+    | |_______________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+231 |             let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
+    |             +++++++
+
+warning: `personal_agent` (lib test) generated 50 warnings (run `cargo fix --lib -p personal_agent --tests` to apply 31 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.20s
+     Running unittests src/lib.rs (target/debug/deps/personal_agent-a69a44b2aa1a12bd)
+
+running 5 tests
+test presentation::chat_presenter::tests::test_handle_stream_completed ... ok
+test presentation::chat_presenter::tests::test_handle_stop_streaming ... ok
+test presentation::chat_presenter::tests::test_handle_text_delta_produces_view_command ... ok
+test presentation::chat_presenter::tests::test_handle_new_conversation ... ok
+test presentation::chat_presenter::tests::test_handle_send_message_emits_events ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 81 filtered out; finished in 0.02s
+
+warning: unused import: `futures::StreamExt`
+   --> src/presentation/chat_presenter.rs:598:17
+    |
+598 |             use futures::StreamExt;
+    |                 ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `super::*`
+   --> src/presentation/history_presenter.rs:233:9
+    |
+233 |     use super::*;
+    |         ^^^^^^^^
+
+warning: unused import: `std::path::PathBuf`
+ --> src/services/app_settings.rs:8:5
+  |
+8 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::Mutex`
+ --> src/services/app_settings.rs:9:5
+  |
+9 | use tokio::sync::Mutex;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Message`
+  --> src/services/chat_impl.rs:12:21
+   |
+12 | use crate::models::{Message, MessageRole};
+   |                     ^^^^^^^
+
+warning: unused import: `MessageRole`
+   --> src/services/chat_impl.rs:267:63
+    |
+267 |     use crate::models::{AuthConfig, ModelParameters, Message, MessageRole};
+    |                                                               ^^^^^^^^^^^
+
+warning: unused imports: `PathBuf` and `Path`
+ --> src/services/conversation.rs:7:17
+  |
+7 | use std::path::{Path, PathBuf};
+  |                 ^^^^  ^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> src/services/conversation.rs:8:5
+  |
+8 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::Mutex`
+ --> src/services/conversation.rs:9:5
+  |
+9 | use tokio::sync::Mutex;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MessageRole`
+  --> src/services/conversation.rs:12:44
+   |
+12 | use crate::models::{Conversation, Message, MessageRole};
+   |                                            ^^^^^^^^^^^
+
+warning: unused import: `ServiceError`
+  --> src/services/conversation.rs:13:23
+   |
+13 | use crate::services::{ServiceError, ServiceResult};
+   |                       ^^^^^^^^^^^^
+
+warning: unused import: `MessageRole`
+ --> src/services/conversation_impl.rs:7:44
+  |
+7 | use crate::models::{Conversation, Message, MessageRole};
+  |                                            ^^^^^^^^^^^
+
+warning: unused import: `ServiceError`
+  --> src/services/mcp.rs:12:13
+   |
+12 | use super::{ServiceError, ServiceResult};
+   |             ^^^^^^^^^^^^
+
+warning: unused import: `Ordering`
+ --> src/services/mcp_impl.rs:9:37
+  |
+9 | use std::sync::atomic::{AtomicBool, Ordering};
+  |                                     ^^^^^^^^
+
+warning: unused import: `crate::mcp::registry::McpRegistry`
+  --> src/services/mcp_impl.rs:13:5
+   |
+13 | use crate::mcp::registry::McpRegistry;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `McpRegistrySource`
+ --> src/services/mcp_registry_impl.rs:4:41
+  |
+4 | use crate::mcp::registry::{McpRegistry, McpRegistrySource};
+  |                                         ^^^^^^^^^^^^^^^^^
+
+warning: unexpected `cfg` condition value: `reqwest`
+  --> src/services/models_registry_impl.rs:45:15
+   |
+45 |         #[cfg(feature = "reqwest")]
+   |               ^^^^^^^^^^^^^^^^^^^ help: remove the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `reqwest`
+  --> src/services/models_registry_impl.rs:77:19
+   |
+77 |         #[cfg(not(feature = "reqwest"))]
+   |                   ^^^^^^^^^^^^^^^^^^^ help: remove the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused import: `StreamExt`
+  --> src/services/chat_impl.rs:14:31
+   |
+14 | use futures::{stream, Stream, StreamExt};
+   |                               ^^^^^^^^^
+
+warning: unused variable: `title`
+   --> src/presentation/chat_presenter.rs:360:46
+    |
+360 |             ConversationEvent::Created { id, title } => {
+    |                                              ^^^^^ help: try ignoring the field: `title: _`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `event_tx`
+   --> src/presentation/chat_presenter.rs:617:14
+    |
+617 |         let (event_tx, _) = broadcast::channel::<AppEvent>(100);
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_event_tx`
+
+warning: unused variable: `conversation_id`
+   --> src/presentation/error_presenter.rs:162:38
+    |
+162 |             ChatEvent::StreamError { conversation_id, error, recoverable } => {
+    |                                      ^^^^^^^^^^^^^^^ help: try ignoring the field: `conversation_id: _`
+
+warning: unused variable: `id`
+   --> src/presentation/error_presenter.rs:182:37
+    |
+182 |             McpEvent::StartFailed { id, name, error } => {
+    |                                     ^^ help: try ignoring the field: `id: _`
+
+warning: unused variable: `id`
+   --> src/presentation/error_presenter.rs:189:35
+    |
+189 |             McpEvent::Unhealthy { id, name, error } => {
+    |                                   ^^ help: try ignoring the field: `id: _`
+
+warning: unused variable: `event_tx`
+   --> src/presentation/error_presenter.rs:234:14
+    |
+234 |         let (event_tx, _) = broadcast::channel::<AppEvent>(100);
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_event_tx`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:271:13
+    |
+271 |         let config = McpServerConfig {
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:447:13
+    |
+447 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:470:13
+    |
+470 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:496:13
+    |
+496 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:527:13
+    |
+527 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:557:13
+    |
+557 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:585:13
+    |
+585 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `config`
+   --> src/services/mcp_impl.rs:613:13
+    |
+613 |         let config = service
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `profile`
+   --> src/services/profile_impl.rs:316:13
+    |
+316 |         let profile = service
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_profile`
+
+warning: methods `stop` and `is_running` are never used
+  --> src/app.rs:55:8
+   |
+50 | trait PresenterLifecycle: Send + Sync {
+   |       ------------------ methods in this trait
+...
+55 |     fn stop(&mut self) -> Result<(), AppError>;
+   |        ^^^^
+...
+58 |     fn is_running(&self) -> bool;
+   |        ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `presenter` is never read
+   --> src/app.rs:331:5
+    |
+330 | struct ChatPresenterWrapper {
+    |        -------------------- field in this struct
+331 |     presenter: ChatPresenter,
+    |     ^^^^^^^^^
+
+warning: field `presenter` is never read
+   --> src/app.rs:356:5
+    |
+355 | struct SettingsPresenterWrapper {
+    |        ------------------------ field in this struct
+356 |     presenter: SettingsPresenter,
+    |     ^^^^^^^^^
+
+warning: field `presenter` is never read
+   --> src/app.rs:379:5
+    |
+378 | struct HistoryPresenterWrapper {
+    |        ----------------------- field in this struct
+379 |     presenter: HistoryPresenter,
+    |     ^^^^^^^^^
+
+warning: field `presenter` is never read
+   --> src/app.rs:402:5
+    |
+401 | struct ErrorPresenterWrapper {
+    |        --------------------- field in this struct
+402 |     presenter: ErrorPresenter,
+    |     ^^^^^^^^^
+
+warning: field `app_settings_service` is never read
+  --> src/presentation/settings_presenter.rs:31:5
+   |
+23 | pub struct SettingsPresenter {
+   |            ----------------- field in this struct
+...
+31 |     app_settings_service: Arc<dyn AppSettingsService>,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: associated function `on_config_saved` is never used
+   --> src/presentation/mcp_configure_presenter.rs:187:14
+    |
+ 35 | impl McpConfigurePresenter {
+    | -------------------------- associated function in this implementation
+...
+187 |     async fn on_config_saved(
+    |              ^^^^^^^^^^^^^^^
+
+warning: struct `Settings` is never constructed
+  --> src/services/app_settings.rs:60:8
+   |
+60 | struct Settings {
+   |        ^^^^^^^^
+
+warning: field `is_refreshing` is never read
+  --> src/services/mcp_impl.rs:20:5
+   |
+16 | pub struct McpServiceImpl {
+   |            -------------- field in this struct
+...
+20 |     is_refreshing: Arc<AtomicBool>,
+   |     ^^^^^^^^^^^^^
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:128:9
+    |
+128 | /         emit(AppEvent::Chat(ChatEvent::StreamStarted {
+129 | |             conversation_id,
+130 | |             message_id,
+131 | |             model_id: model_id.clone(),
+132 | |         }));
+    | |___________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+128 |         let _ = emit(AppEvent::Chat(ChatEvent::StreamStarted {
+    |         +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:167:21
+    |
+167 | /                     emit(AppEvent::Chat(ChatEvent::StreamError {
+168 | |                         conversation_id: event_conversation_id,
+169 | |                         error: err_msg.clone(),
+170 | |                         recoverable: false,
+171 | |                     }));
+    | |_______________________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+167 |                     let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+    |                     +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:184:25
+    |
+184 |                         emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+184 |                         let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+    |                         +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:190:25
+    |
+190 |                         emit(AppEvent::Chat(ChatEvent::ThinkingDelta { text: text.clone() }));
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+190 |                         let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta { text: text.clone() }));
+    |                         +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:197:25
+    |
+197 | /                         emit(AppEvent::Chat(ChatEvent::StreamError {
+198 | |                             conversation_id: event_conversation_id,
+199 | |                             error: err.clone(),
+200 | |                             recoverable: false,
+201 | |                         }));
+    | |___________________________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+197 |                         let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+    |                         +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:210:17
+    |
+210 | /                 emit(AppEvent::Chat(ChatEvent::StreamError {
+211 | |                     conversation_id: event_conversation_id,
+212 | |                     error: err_msg.clone(),
+213 | |                     recoverable: false,
+214 | |                 }));
+    | |___________________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+210 |                 let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+    |                 +++++++
+
+warning: unused `std::result::Result` that must be used
+   --> src/services/chat_impl.rs:231:13
+    |
+231 | /             emit(AppEvent::Chat(ChatEvent::StreamCompleted {
+232 | |                 conversation_id: event_conversation_id,
+233 | |                 message_id: Uuid::new_v4(),
+234 | |                 total_tokens: None,
+235 | |             }));
+    | |_______________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+231 |             let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
+    |             +++++++
+
+warning: `personal_agent` (lib test) generated 50 warnings (run `cargo fix --lib -p personal_agent --tests` to apply 31 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running unittests src/lib.rs (target/debug/deps/personal_agent-a69a44b2aa1a12bd)
+
+running 13 tests
+test presentation::history_presenter::tests::test_handle_confirm_rename ... ok
+test presentation::history_presenter::tests::test_handle_select_conversation ... ok
+test presentation::error_presenter::tests::test_handle_mcp_unhealthy ... ok
+test presentation::error_presenter::tests::test_handle_chat_stream_error ... ok
+test presentation::chat_presenter::tests::test_handle_stop_streaming ... ok
+test presentation::chat_presenter::tests::test_handle_text_delta_produces_view_command ... ok
+test presentation::chat_presenter::tests::test_handle_stream_completed ... ok
+test presentation::settings_presenter::tests::test_handle_select_profile ... ok
+test presentation::error_presenter::tests::test_handle_system_error ... ok
+test presentation::error_presenter::tests::test_handle_mcp_start_failed ... ok
+test presentation::settings_presenter::tests::test_handle_toggle_mcp ... ok
+test presentation::chat_presenter::tests::test_handle_send_message_emits_events ... ok
+test presentation::chat_presenter::tests::test_handle_new_conversation ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 73 filtered out; finished in 0.01s
+

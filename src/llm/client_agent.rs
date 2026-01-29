@@ -164,21 +164,28 @@ impl AgentClientExt for crate::llm::LlmClient {
                     AgentStreamEvent::ThinkingDelta { text } => {
                         on_event(StreamEvent::ThinkingDelta(text));
                     }
-                    AgentStreamEvent::ToolCallStart { tool_name, .. } => {
-                        // Log tool execution start
-                        eprintln!("Tool call started: {tool_name}");
+                    AgentStreamEvent::ToolCallStart { tool_name, tool_call_id, .. } => {
+                        // Emit tool call started event
+                        on_event(StreamEvent::ToolCallStarted {
+                            tool_name: tool_name.clone(),
+                            call_id: tool_call_id.clone().unwrap_or_default(),
+                        });
                     }
                     AgentStreamEvent::ToolExecuted {
                         tool_name,
+                        tool_call_id,
                         success,
                         error,
                         ..
                     } => {
-                        if success {
-                            eprintln!("Tool completed: {tool_name}");
-                        } else {
-                            eprintln!("Tool failed: {tool_name} - {error:?}");
-                        }
+                        // Emit tool call completed event
+                        on_event(StreamEvent::ToolCallCompleted {
+                            tool_name,
+                            call_id: tool_call_id.unwrap_or_default(),
+                            success,
+                            result: None, // SerdesAI doesn't include result in event
+                            error,
+                        });
                     }
                     AgentStreamEvent::RunComplete { .. } => {
                         on_event(StreamEvent::Complete);

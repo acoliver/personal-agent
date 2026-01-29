@@ -1,0 +1,26 @@
+Event Type Verification
+========================
+
+Command: grep -n "^pub enum\|^    [A-Z]" src/events/types.rs | head -100
+
+AppEvent enum structure:
+- Line 18: pub enum AppEvent
+- Line 20: User(UserEvent)
+- Line 23: Chat(ChatEvent)
+- Line 26: Mcp(McpEvent)
+- Line 29: Profile(ProfileEvent)
+- Line 32: Conversation(ConversationEvent)
+- Line 35: Navigation(NavigationEvent)
+- Line 38: System(SystemEvent)
+
+ChatEvent variants (all 8 present):
+164:    StreamStarted {
+171:    TextDelta { text: String },
+174:    ThinkingDelta { text: String },
+177:    ToolCallStarted {
+183:    ToolCallCompleted {
+192:    StreamCompleted {
+199:    StreamCancelled {
+206:    StreamError {
+
+Result: PASS - All 8 ChatEvent variants exist (StreamStarted, TextDelta, ThinkingDelta, ToolCallStarted, ToolCallCompleted, StreamCompleted, StreamCancelled, StreamError)

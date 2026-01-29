@@ -4,7 +4,7 @@
 //! and the `SerdesAI` library for making LLM requests.
 
 mod client;
-mod client_agent;
+pub mod client_agent;
 pub mod error;
 pub mod events;
 mod stream;

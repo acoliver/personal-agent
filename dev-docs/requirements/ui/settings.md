@@ -392,18 +392,45 @@ The Settings View manages model profiles and MCP configurations. **The view is p
 
 ---
 
-## Service Dependencies
+## Event Emissions
 
-| Action | Service | Method |
-|--------|---------|--------|
-| List profiles | ProfileService | list() |
-| Set default profile | AppSettingsService | set_default_profile_id(id) |
-| Delete profile | ProfileService | delete(id) |
-| List MCPs | McpService | list() |
-| Get MCP status | McpService | status(id) |
-| Toggle MCP | McpService | start(id) / stop(id) |
-| Delete MCP | McpService | delete(id) |
-| Refresh models | ModelsRegistryService | refresh() |
+The Settings View emits `UserEvent` variants on user actions. **The view never calls services directly.**
+
+| User Action | Event Emitted |
+|-------------|---------------|
+| Click [<] back | `UserEvent::Navigate { to: ViewId::Chat }` |
+| Click profile row | `UserEvent::SelectProfile { id }` |
+| Click [+] profile | `UserEvent::Navigate { to: ViewId::ModelSelector }` |
+| Click [-] profile | `UserEvent::DeleteProfile { id }` |
+| Confirm delete profile | `UserEvent::ConfirmDeleteProfile { id }` |
+| Click [Edit] profile | `UserEvent::EditProfile { id }` |
+| Click MCP row | (local selection, no event) |
+| Click MCP toggle | `UserEvent::ToggleMcp { id, enabled }` |
+| Click [+] MCP | `UserEvent::AddMcp` |
+| Click [-] MCP | `UserEvent::DeleteMcp { id }` |
+| Confirm delete MCP | `UserEvent::ConfirmDeleteMcp { id }` |
+| Click [Edit] MCP | `UserEvent::ConfigureMcp { id }` |
+| Click [Refresh Models] | `UserEvent::RefreshModelsRegistry` |
+
+---
+
+## Event Subscriptions
+
+The Settings View receives updates via events (handled by SettingsPresenter, which calls view methods):
+
+| Event | View Update |
+|-------|-------------|
+| `ProfileEvent::Created` | Add profile row |
+| `ProfileEvent::Updated` | Update profile row |
+| `ProfileEvent::Deleted` | Remove profile row |
+| `ProfileEvent::DefaultChanged` | Update selection highlight |
+| `McpEvent::Starting` | Show loading indicator on MCP row |
+| `McpEvent::Started` | Update status to green, show tool count |
+| `McpEvent::StartFailed` | Update status to red, show error |
+| `McpEvent::Stopped` | Update status to gray |
+| `McpEvent::Deleted` | Remove MCP row |
+| `SystemEvent::ModelsRegistryRefreshed` | (feedback that refresh completed) |
+| `NavigationEvent::Navigated { view: Settings }` | Load profiles and MCPs |
 
 ---
 

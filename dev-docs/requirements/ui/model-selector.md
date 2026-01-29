@@ -372,14 +372,32 @@ struct Provider {
 
 ---
 
-## Service Dependencies
+## Event Emissions
 
-| Action | Service | Method |
-|--------|---------|--------|
-| Get providers | ModelsRegistryService | providers() |
-| Get all models | ModelsRegistryService | all_models() |
-| Search models | ModelsRegistryService | search(query) |
-| Refresh cache | ModelsRegistryService | refresh() |
+The Model Selector View emits `UserEvent` variants on user actions. **The view never calls services directly.**
+
+| User Action | Event Emitted |
+|-------------|---------------|
+| Click Cancel | `UserEvent::NavigateBack` |
+| Type in search field | `UserEvent::SearchModels { query }` |
+| Change provider dropdown | `UserEvent::FilterModelsByProvider { provider_id }` |
+| Toggle Reasoning checkbox | (local filter, no event) |
+| Toggle Vision checkbox | (local filter, no event) |
+| Click model row | `UserEvent::SelectModel { provider_id, model_id }` |
+
+**Note:** Capability toggles (Reasoning, Vision) are local UI filters that don't require service calls - they filter the already-loaded model list.
+
+---
+
+## Event Subscriptions
+
+The Model Selector View receives updates via events (handled by ModelSelectorPresenter, which calls view methods):
+
+| Event | View Update |
+|-------|-------------|
+| `ModelsRegistryEvent::ModelsLoaded { providers, models }` | Populate list |
+| `ModelsRegistryEvent::SearchCompleted { results }` | Update filtered list |
+| `NavigationEvent::Navigated { view: ModelSelector }` | Load models, focus search |
 
 ## Service Calls
 

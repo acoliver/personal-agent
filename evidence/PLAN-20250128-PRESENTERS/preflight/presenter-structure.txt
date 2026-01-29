@@ -1,0 +1,35 @@
+Presenter Structure Verification
+===============================
+
+Command: ls -la src/presentation/*.rs
+Output:
+-rw-r--r--  23207 Jan 28 02:13 src/presentation/chat_presenter.rs
+-rw-r--r--  11553 Jan 28 02:23 src/presentation/error_presenter.rs
+-rw-r--r--   8226 Jan 28 02:17 src/presentation/history_presenter.rs
+-rw-r--r--   6347 Jan 28 02:09 src/presentation/mcp_add_presenter.rs
+-rw-r--r--   6529 Jan 28 02:10 src/presentation/mcp_configure_presenter.rs
+-rw-r--r--   4647 Jan 28 02:17 src/presentation/mod.rs
+-rw-r--r--   6888 Jan 28 02:15 src/presentation/model_selector_presenter.rs
+-rw-r--r--   6944 Jan 28 02:09 src/presentation/profile_editor_presenter.rs
+-rw-r--r--   8433 Jan 28 02:12 src/presentation/settings_presenter.rs
+-rw-r--r--   6461 Jan 28 01:03 src/presentation/view_command.rs
+
+Command: grep -rn "^pub struct.*Presenter" src/presentation/
+Output:
+src/presentation/mcp_configure_presenter.rs:21:pub struct McpConfigurePresenter {
+src/presentation/chat_presenter.rs:24:pub struct ChatPresenter {
+src/presentation/model_selector_presenter.rs:20:pub struct ModelSelectorPresenter {
+src/presentation/profile_editor_presenter.rs:21:pub struct ProfileEditorPresenter {
+src/presentation/error_presenter.rs:22:pub struct ErrorPresenter {
+src/presentation/settings_presenter.rs:23:pub struct SettingsPresenter {
+src/presentation/history_presenter.rs:21:pub struct HistoryPresenter {
+src/presentation/mcp_add_presenter.rs:20:pub struct McpAddPresenter {
+
+Command: grep -rn "event_bus\|EventBus" src/presentation/
+Summary:
+- All presenters already have EventBus integration
+- Pattern: event_bus: &broadcast::Sender<AppEvent>
+- All use: let rx = event_bus.subscribe()
+- Each has async event handling methods
+
+Result: PASS - All expected presenters exist and already use EventBus

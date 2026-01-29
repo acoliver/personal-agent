@@ -83,7 +83,10 @@ fn multiple_new_conversations_are_distinct() {
     conv1.title = Some("New 2026-01-21 12:00".to_string());
     storage.save(&conv1).unwrap();
     
-    // Wait a moment and create second (in real app, timestamp would differ)
+    // Small delay to ensure different timestamp (filename is based on created_at)
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    
+    // Create second conversation
     let mut conv2 = Conversation::new(Uuid::new_v4());
     conv2.title = Some("New 2026-01-21 12:01".to_string());
     storage.save(&conv2).unwrap();

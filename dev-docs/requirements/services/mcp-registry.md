@@ -446,6 +446,16 @@ Navigate to MCP Configure View
 
 ---
 
+## Event Emissions
+
+McpRegistryService does **not** emit events directly. It is a read-only query service.
+
+Search and fetch operations are synchronous queries that return data directly to the caller.
+
+**Rationale:** The registry service provides data on-demand; there's no background state changes to notify about.
+
+---
+
 ## Test Requirements
 
 | ID | Test |

@@ -420,6 +420,60 @@ fn delete_conversation(&self, id: Uuid) -> Result<()> {
 
 ---
 
+## Event Emissions
+
+AppSettingsService emits events via the EventBus when settings change.
+
+| Operation | Event Emitted |
+|-----------|---------------|
+| set_default_profile_id() | `ProfileEvent::DefaultChanged { profile_id }` |
+| clear_default_profile() | `ProfileEvent::DefaultChanged { profile_id: None }` |
+| set_current_conversation_id() | `ConversationEvent::Activated { id }` |
+| clear_current_conversation() | `ConversationEvent::Deactivated` |
+| set_hotkey() | `SystemEvent::HotkeyChanged { hotkey }` |
+
+**Note:** `ProfileEvent::DefaultChanged` is emitted here, not by ProfileService, because AppSettingsService owns the "default profile" concept.
+
+**Integration with EventBus:**
+
+```rust
+fn set_default_profile_id(&self, id: Uuid) -> Result<()> {
+    let mut settings = self.get()?;
+    settings.default_profile_id = Some(id);
+    self.save(&settings)?;
+    
+    self.event_bus.emit(ProfileEvent::DefaultChanged {
+        profile_id: Some(id),
+    }.into());
+    
+    Ok(())
+}
+
+fn clear_default_profile(&self) -> Result<()> {
+    let mut settings = self.get()?;
+    settings.default_profile_id = None;
+    self.save(&settings)?;
+    
+    self.event_bus.emit(ProfileEvent::DefaultChanged {
+        profile_id: None,
+    }.into());
+    
+    Ok(())
+}
+
+fn set_current_conversation_id(&self, id: Uuid) -> Result<()> {
+    let mut settings = self.get()?;
+    settings.current_conversation_id = Some(id);
+    self.save(&settings)?;
+    
+    self.event_bus.emit(ConversationEvent::Activated { id }.into());
+    
+    Ok(())
+}
+```
+
+---
+
 ## Test Requirements
 
 | ID | Test |
@@ -436,3 +490,7 @@ fn delete_conversation(&self, id: Uuid) -> Result<()> {
 | AS-T10 | Migration runs on old version |
 | AS-T11 | Invalid JSON returns error |
 | AS-T12 | update() merges partial updates |
+| AS-T13 | set_default_profile_id() emits ProfileEvent::DefaultChanged |
+| AS-T14 | clear_default_profile() emits ProfileEvent::DefaultChanged with None |
+| AS-T15 | set_current_conversation_id() emits ConversationEvent::Activated |
+| AS-T16 | set_hotkey() emits SystemEvent::HotkeyChanged |

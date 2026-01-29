@@ -249,13 +249,29 @@ struct ConversationMetadata {
 
 ---
 
-## Service Dependencies
+## Event Emissions
 
-| Action | Service | Method |
-|--------|---------|--------|
-| List conversations | ConversationService | list() |
-| Delete conversation | ConversationService | delete(id) |
-| Load conversation | Via notification | Chat View handles |
+The History View emits `UserEvent` variants on user actions. **The view never calls services directly.**
+
+| User Action | Event Emitted |
+|-------------|---------------|
+| Click [<] back | `UserEvent::Navigate { to: ViewId::Chat }` |
+| Click [Load] on card | `UserEvent::SelectConversation { id }` |
+| Click [Delete] on card | `UserEvent::DeleteConversation { id }` |
+| Confirm delete in alert | `UserEvent::ConfirmDeleteConversation { id }` |
+
+---
+
+## Event Subscriptions
+
+The History View receives updates via events (handled by HistoryPresenter, which calls view methods):
+
+| Event | View Update |
+|-------|-------------|
+| `ConversationEvent::ListRefreshed` | Re-render conversation cards |
+| `ConversationEvent::Deleted` | Remove card, animate out |
+| `ConversationEvent::TitleUpdated` | Update card title |
+| `NavigationEvent::Navigated { view: History }` | Load and display conversations |
 
 ---
 

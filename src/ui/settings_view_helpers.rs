@@ -11,7 +11,7 @@ use std::convert::TryFrom;
 
 use crate::ui::{set_layer_background_color, set_layer_border, set_layer_corner_radius, Theme};
 
-use personal_agent::mcp::{McpConfig, McpService, McpSource, McpStatus};
+use personal_agent::mcp::{McpConfig, McpService, McpStatus};
 use personal_agent::models::ModelProfile;
 
 use super::SettingsViewController;

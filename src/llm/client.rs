@@ -25,6 +25,26 @@ pub enum StreamEvent {
     ThinkingDelta(String),
     /// Tool use requested by the model
     ToolUse(crate::llm::tools::ToolUse),
+    /// Tool call started (Agent mode)
+    ToolCallStarted {
+        /// Tool name being called
+        tool_name: String,
+        /// Unique call ID
+        call_id: String,
+    },
+    /// Tool call completed (Agent mode)
+    ToolCallCompleted {
+        /// Tool name that was called
+        tool_name: String,
+        /// Unique call ID
+        call_id: String,
+        /// Whether the tool execution succeeded
+        success: bool,
+        /// Tool result (if successful)
+        result: Option<String>,
+        /// Error message (if failed)
+        error: Option<String>,
+    },
     /// Stream completed
     Complete,
     /// Error occurred
@@ -32,6 +52,7 @@ pub enum StreamEvent {
 }
 
 /// LLM client that uses `SerdesAI`
+#[derive(Clone)]
 pub struct LlmClient {
     pub(crate) profile: ModelProfile,
     pub(crate) api_key: String,

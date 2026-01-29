@@ -635,14 +635,29 @@ struct ModelParameters {
 
 ---
 
-## Service Dependencies
+## Event Emissions
 
-| Action | Service | Method |
-|--------|---------|--------|
-| Load profile | ProfileService | get(id) |
-| Create profile | ProfileService | create(profile) |
-| Update profile | ProfileService | update(profile) |
-| Validate | ProfileService | validate(profile) |
+The Profile Editor View emits `UserEvent` variants on user actions. **The view never calls services directly.**
+
+| User Action | Event Emitted |
+|-------------|---------------|
+| Click Cancel | `UserEvent::NavigateBack` |
+| Click Save | `UserEvent::SaveProfile { profile: ProfileData }` |
+| Click [Change] model | `UserEvent::Navigate { to: ViewId::ModelSelector }` |
+| Click [Test Connection] | `UserEvent::TestProfileConnection { id }` |
+
+---
+
+## Event Subscriptions
+
+The Profile Editor View receives updates via events (handled by ProfileEditorPresenter, which calls view methods):
+
+| Event | View Update |
+|-------|-------------|
+| `ProfileEvent::TestStarted` | Show "Testing..." indicator |
+| `ProfileEvent::TestCompleted { success, response_time_ms }` | Show success/failure with timing |
+| `ProfileEvent::ValidationFailed { errors }` | Highlight invalid fields, show errors |
+| `NavigationEvent::Navigated { view: ProfileEditor }` | Load profile data if editing |
 
 ---
 

@@ -1,0 +1,30 @@
+Configuration Verification
+==========================
+
+Command: ls -la ~/.llxprt/profiles/synthetic.json
+Output:
+-rw-r--r--  1 acoliver  staff  347 Nov  4 21:50 /Users/acoliver/.llxprt/profiles/synthetic.json
+
+File exists: YES
+
+Command: cat ~/.llxprt/profiles/synthetic.json | head -10
+Content:
+{
+  "version": 1,
+  "provider": "openai",
+  "model": "hf:zai-org/GLM-4.6",
+  "modelParams": {
+    "temperature": 1
+  },
+  "ephemeralSettings": {
+    "context-limit": 190000,
+    "base-url": "https://api.synthetic.new/openai/v1",
+
+Command: ls -la ~/.synthetic_key
+Output:
+-rw-r--r--  1 acoliver  staff  37 Nov  9 22:40 /Users/acoliver/.synthetic_key
+
+File exists: YES
+(Skipped content display for security)
+
+Result: PASS - Synthetic profile and API key files both exist

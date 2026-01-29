@@ -401,10 +401,18 @@ The [T] button controls **runtime visibility** of thinking content. It does NOT 
 | 5 | | All thinking sections become hidden |
 | 6 | | Runtime state only - NOT persisted |
 
-**Reset behavior:**
-- On app restart: resets to profile's `show_thinking` setting
-- On profile change: resets to new profile's `show_thinking` setting
-- The profile's default can be configured in Profile Editor (Settings)
+### Thinking Toggle Behavior Summary
+
+| Event | Effect on show_thinking |
+|-------|-------------------------|
+| App launch | Set from default profile's `show_thinking` |
+| Toggle [T] clicked | Inverted (not persisted) |
+| Switch conversation | No change |
+| New conversation | No change (preserved from previous) |
+| Profile changed | Reset to new profile's `show_thinking` |
+| App restart | Reset to default profile's `show_thinking` |
+
+**Note:** The toggle is transient. It does not persist across profile changes or app restarts. Switching conversations does NOT affect the toggle state.
 
 ---
 
@@ -421,7 +429,36 @@ The view receives **clean, pre-processed events** from ChatService. No parsing n
 | ToolComplete { id, name, success, summary } | Update tool indicator with status (future enhancement) |
 | Complete { text, thinking, tool_calls, model_id } | Remove cursor "▌", finalize bubble, ensure model_id label is set |
 | Cancelled { partial_text, partial_thinking, model_id } | Remove cursor, show partial text + "[cancelled]" marker |
-| Error { message, retryable } | Show error in chat area. If retryable, enable Send immediately |
+| Error { message, retryable } | Show error inline in chat area (see Error Display below) |
+
+### Error Display
+
+When `ChatEvent::Error` is received, display an inline error message in the chat area:
+
+```
+┌─────────────────────────────────────────┐
+│ [!] Keyfile not found: ~/.synthetic_key │
+│                                          │
+│ The API key file for this profile is    │
+│ missing or cannot be read.              │
+│                          [Go to Settings]│
+└─────────────────────────────────────────┘
+```
+
+| ID | Element | Spec |
+|----|---------|------|
+| ER-1 | Container | Full width, left-aligned, 12px padding |
+| ER-2 | Background | #2a1a1a (red tint) |
+| ER-3 | Border | 1px #4a2a2a, 8px radius |
+| ER-4 | Icon | SF Symbol exclamationmark.triangle or [!] text |
+| ER-5 | Title | Error message from event, 13pt bold |
+| ER-6 | Details | Optional explanation, 12pt, #aaaaaa |
+| ER-7 | Action | Optional "Go to Settings" button for recoverable errors |
+
+**Common errors:**
+- `KeyfileReadFailed`: "Keyfile not found: {path}" - Show "Go to Settings" action
+- `ConnectionFailed`: "Could not connect to {base_url}" - May be retryable
+- `AuthFailed`: "Authentication failed" - Show "Go to Settings" action
 
 **Thinking Storage:** Thinking content is ALWAYS stored in the message even if `show_thinking` is false. The toggle only controls visibility. Users can toggle thinking ON later to see previously hidden thoughts.
 
@@ -459,23 +496,45 @@ The view receives **clean, pre-processed events** from ChatService. No parsing n
 
 ---
 
-## Service Dependencies
+## Event Emissions
 
-| Action | Service | Method |
-|--------|---------|--------|
-| Send message | ChatService | send_message(conv_id, text) → StreamHandle |
-| Cancel streaming | ChatService | cancel(handle) |
-| Check streaming | ChatService | is_streaming(handle) → bool |
-| Load conversation | ConversationService | load(id) → Conversation |
-| Create conversation | ConversationService | create() → Conversation |
-| Update title | ConversationService | rename(id, title) |
-| List conversations | ConversationService | list() → Vec<ConversationMetadata> |
-| Get default profile ID | AppSettingsService | get_default_profile_id() → Option<Uuid> |
-| Get profile | ProfileService | get(id) → ModelProfile |
-| Get current conversation ID | AppSettingsService | get_current_conversation_id() → Option<Uuid> |
-| Set current conversation | AppSettingsService | set_current_conversation_id(id) |
+The Chat View emits `UserEvent` variants on user actions. **The view never calls services directly.**
 
-**Note:** The [T] toggle does NOT call any service - it only changes local view state. The profile's default `show_thinking` value is read from the profile (via `ProfileService.get(id)`) to initialize the toggle on app launch or profile change.
+| User Action | Event Emitted |
+|-------------|---------------|
+| Click Send or press Enter | `UserEvent::SendMessage { text }` |
+| Click Stop button | `UserEvent::StopStreaming` |
+| Click [+] new conversation | `UserEvent::NewConversation` |
+| Select from dropdown | `UserEvent::SelectConversation { id }` |
+| Double-click to rename | `UserEvent::StartRenameConversation { id }` |
+| Confirm rename (Enter) | `UserEvent::ConfirmRenameConversation { id, title }` |
+| Cancel rename (Escape) | `UserEvent::CancelRenameConversation` |
+| Click [T] thinking toggle | `UserEvent::ToggleThinking` |
+| Click [H] history | `UserEvent::Navigate { to: ViewId::History }` |
+| Click [] settings | `UserEvent::Navigate { to: ViewId::Settings }` |
+
+**Note:** The [T] toggle emits `UserEvent::ToggleThinking` and the presenter updates view state. The profile's default `show_thinking` value is used to initialize the toggle on app launch or profile change.
+
+---
+
+## Event Subscriptions
+
+The Chat View receives updates via events (handled by ChatPresenter, which calls view methods):
+
+| Event | View Update |
+|-------|-------------|
+| `ChatEvent::StreamStarted` | Add model label + assistant bubble with cursor "▌" |
+| `ChatEvent::TextDelta` | Append text to current assistant bubble |
+| `ChatEvent::ThinkingDelta` | Append to thinking section |
+| `ChatEvent::ToolCallStarted` | Show tool indicator |
+| `ChatEvent::ToolCallCompleted` | Update tool status |
+| `ChatEvent::StreamCompleted` | Remove cursor, finalize bubble |
+| `ChatEvent::StreamCancelled` | Show partial + "[cancelled]" |
+| `ChatEvent::StreamError` | Show error message |
+| `ConversationEvent::Loaded` | Render conversation messages |
+| `ConversationEvent::Created` | Clear chat, update dropdown |
+| `ConversationEvent::TitleUpdated` | Update dropdown title |
+| `ConversationEvent::ListRefreshed` | Refresh dropdown items |
 
 ## Service Calls
 

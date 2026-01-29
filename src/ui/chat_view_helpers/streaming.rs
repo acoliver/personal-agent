@@ -127,6 +127,28 @@ pub fn handle_stream_event(
                 buf.push(tool_use);
             }
         }
+        StreamEvent::ToolCallStarted { tool_name, call_id } => {
+            log_to_file(&format!(
+                "Tool call started: {} ({})",
+                tool_name, call_id
+            ));
+        }
+        StreamEvent::ToolCallCompleted { tool_name, call_id, success, result, error } => {
+            if success {
+                log_to_file(&format!(
+                    "Tool call completed: {} ({}) - success",
+                    tool_name, call_id
+                ));
+                if let Some(r) = result {
+                    log_to_file(&format!("Tool result: {}", r.chars().take(200).collect::<String>()));
+                }
+            } else {
+                log_to_file(&format!(
+                    "Tool call failed: {} ({}) - {:?}",
+                    tool_name, call_id, error
+                ));
+            }
+        }
         StreamEvent::Complete => {
             if is_followup {
                 log_to_file("Streaming complete (after tool execution)");

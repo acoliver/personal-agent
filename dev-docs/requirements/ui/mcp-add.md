@@ -399,12 +399,31 @@ enum McpSource {
 
 ---
 
-## Service Dependencies
+## Event Emissions
 
-| Action | Service | Method |
-|--------|---------|--------|
-| Search MCPs | McpRegistryService | search(query, registry) |
-| Get MCP details | McpRegistryService | get_details(source) |
+The MCP Add View emits `UserEvent` variants on user actions. **The view never calls services directly.**
+
+| User Action | Event Emitted |
+|-------------|---------------|
+| Click Cancel | `UserEvent::NavigateBack` |
+| Type in search field (debounced) | `UserEvent::SearchMcpRegistry { query, source }` |
+| Change registry dropdown | `UserEvent::SearchMcpRegistry { query, source }` (re-search) |
+| Click result row | (local selection, no event) |
+| Click Next (with manual entry) | `UserEvent::SelectMcpFromRegistry { source: McpSource::Manual }` |
+| Click Next (with result selected) | `UserEvent::SelectMcpFromRegistry { source }` |
+
+---
+
+## Event Subscriptions
+
+The MCP Add View receives updates via events (handled by McpAddPresenter, which calls view methods):
+
+| Event | View Update |
+|-------|-------------|
+| `McpRegistryEvent::SearchStarted` | Show loading spinner |
+| `McpRegistryEvent::SearchCompleted { results }` | Populate results list |
+| `McpRegistryEvent::SearchFailed { error }` | Show error message |
+| `NavigationEvent::Navigated { view: McpAdd }` | Reset state, focus manual entry |
 
 ---
 

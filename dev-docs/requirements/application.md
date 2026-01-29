@@ -172,7 +172,7 @@ See `dev-docs/requirements/data-models.md` for canonical definitions and ownersh
 | MR-1 | Spawn MCP processes on demand | [OK] |
 | MR-2 | Pass credentials via environment variables | [OK] |
 | MR-3 | Support stdio transport (npx, docker) | [OK] |
-| MR-4 | Support HTTP transport (hosted MCP servers) | WARNING: Partial |
+| MR-4 | Support HTTP transport (hosted MCP servers) | [OK] |
 | MR-5 | Display MCP status (running, error, disabled) | WARNING: Partial |
 | MR-6 | Tools from enabled MCPs available to agent | [OK] |
 | MR-7 | Tool execution results displayed in chat | [OK] |

@@ -1,0 +1,15 @@
+EventBus API Verification
+=========================
+
+Command: grep -n "pub fn" src/events/bus.rs
+Output:
+31:    pub fn new(capacity: usize) -> Self {
+44:    pub fn publish(&self, event: AppEvent) -> Result<usize, EventBusError> {
+55:    pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
+63:    pub fn subscriber_count(&self) -> usize {
+
+Command: grep -n "broadcast::Receiver" src/events/bus.rs
+Output:
+55:    pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
+
+Result: PASS - EventBus has subscribe() returning broadcast::Receiver<AppEvent>

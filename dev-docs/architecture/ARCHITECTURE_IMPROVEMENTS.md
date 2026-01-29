@@ -7,7 +7,7 @@
 The current code has business logic deeply embedded in UI view controllers:
 
 ```
-src/ui/chat_view.rs (39KB!)
+src/ui/chat_view.rs (980 lines!)
   - Message persistence logic
   - Streaming response handling
   - Conversation management
@@ -20,7 +20,7 @@ src/ui/chat_view.rs (39KB!)
 - Impossible to unit test business logic without mocking NSViews
 - UI changes require touching business logic
 - Business logic changes risk breaking UI
-- Massive file sizes (chat_view.rs is 39KB)
+- Massive file sizes (target: <500 lines per file)
 
 ### 2. Scattered State Management
 
@@ -35,111 +35,144 @@ State is spread across:
 - State synchronization bugs (dropdown not updating, etc.)
 - Hard to reason about what state is "current"
 
-### 3. Async Runtime Fragility
+### 3. No Event-Driven Architecture
 
-The previous MCP runtime issue where temporary tokio runtimes killed MCP clients demonstrates:
-- No clear ownership of async operations
-- Runtime lifecycle not managed properly
-- Background tasks orphaned when views deallocate
+Current code uses direct method calls:
+- Views call services directly
+- Services call callbacks directly
+- No central place to log/debug what's happening
+- Components tightly coupled
 
 ### 4. Missing Abstraction Layers
 
 No clear separation between:
 - Data access (storage, config)
 - Domain logic (conversations, profiles, MCPs)
-- Presentation (UI views)
-- Infrastructure (LLM clients, MCP clients)
+- Presentation logic (what to show when)
+- UI rendering (NSViews)
 
 ---
 
 ## Target Architecture
 
-### Layer Diagram
+### Five-Layer Architecture with Event Bus
 
 ```
-+-----------------------------------------------------------+
-|                     UI Layer (Views)                      |
-|  NSViewControllers, NSViews, UI Components                |
-|  - Receives ViewModels, renders UI                        |
-|  - Sends user actions to Presenters                       |
-+-----------------------------------------------------------+
-                           |
-                           v
-+-----------------------------------------------------------+
-|                   Presentation Layer                      |
-|  Presenters / View Models                                 |
-|  - Transforms domain models to view models                |
-|  - Handles UI state (loading, error, success)             |
-|  - Coordinates between views and use cases                |
-+-----------------------------------------------------------+
-                           |
-                           v
-+-----------------------------------------------------------+
-|                    Domain Layer                           |
-|  Use Cases / Interactors / Services                       |
-|  - ConversationService, ProfileService, McpService        |
-|  - Business rules and validation                          |
-|  - Pure Rust, no UI dependencies                          |
-+-----------------------------------------------------------+
-                           |
-                           v
-+-----------------------------------------------------------+
-|                 Infrastructure Layer                      |
-|  Repositories, Clients, Storage                           |
-|  - ConversationRepository (file storage)                  |
-|  - ConfigRepository (config.json)                         |
-|  - LlmClient (SerdesAI)                                   |
-|  - McpClient (SerdesAI MCP)                               |
-+-----------------------------------------------------------+
+┌─────────────────────────────────────────────────────────────┐
+│                     UI Layer (Views)                        │
+│  NSViewControllers, NSViews, UI Components                  │
+│  - Renders state from Presenters                            │
+│  - Emits UserEvents on user actions                         │
+│  - Pure rendering, no business logic                        │
+│  - Target: <500 lines per view                              │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ emit(UserEvent)
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Event Layer (EventBus)                   │
+│  broadcast::channel<AppEvent>                               │
+│  - Central nervous system for the app                       │
+│  - Routes events to subscribers                             │
+│  - Enables logging, debugging, replay                       │
+│  - Decouples producers from consumers                       │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ subscribe + dispatch
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Presentation Layer (Presenters)            │
+│  ChatPresenter, SettingsPresenter, HistoryPresenter         │
+│  - Subscribe to events they care about                      │
+│  - Transform domain models to view state                    │
+│  - Handle UI state (loading, error, success)                │
+│  - Call services and emit result events                     │
+│  - Update views with new state                              │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ calls services, emit(DomainEvent)
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Domain Layer (Services)                  │
+│  ConversationService, ProfileService, ChatService, etc.     │
+│  - Business rules and validation                            │
+│  - Emit domain events as operations progress                │
+│  - Pure Rust, no UI dependencies                            │
+│  - Orchestrate infrastructure components                    │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ calls
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Infrastructure Layer                        │
+│  Repositories, Clients, Storage                             │
+│  - ConversationRepository (file storage)                    │
+│  - ConfigRepository (config.json)                           │
+│  - LlmClient (SerdesAI)                                     │
+│  - McpRuntime (SerdesAI MCP)                                │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Module Structure
 
 ```
 src/
-  domain/
+  events/
     mod.rs
-    conversation.rs      # Conversation, Message models
-    profile.rs           # ModelProfile, Parameters
-    mcp.rs               # McpConfig, McpStatus
+    bus.rs                   # EventBus implementation
+    types.rs                 # AppEvent, UserEvent, ChatEvent, etc.
+    
+  presentation/
+    mod.rs
+    chat_presenter.rs        # Handles chat-related events
+    settings_presenter.rs    # Handles settings-related events
+    history_presenter.rs     # Handles history-related events
+    profile_editor_presenter.rs
+    mcp_add_presenter.rs
+    mcp_configure_presenter.rs
+    model_selector_presenter.rs
+    error_presenter.rs       # Global error handling
     
   services/
     mod.rs
-    conversation_service.rs  # Create, load, save, switch conversations
-    profile_service.rs       # CRUD profiles, set default
-    mcp_service.rs           # MCP lifecycle, tool management
-    chat_service.rs          # Send message, handle streaming
+    conversation.rs          # Conversation CRUD, activation
+    profile.rs               # Profile CRUD, default management
+    chat.rs                  # Send message, streaming orchestration
+    mcp.rs                   # MCP lifecycle, tool management
+    mcp_registry.rs          # Registry search, caching
+    secrets.rs               # Credential storage
+    app_settings.rs          # Global app settings
+    model_registry.rs        # models.dev registry
     
-  repositories/
+  domain/
     mod.rs
-    conversation_repo.rs     # File-based conversation storage
-    config_repo.rs           # Config file operations
-    secrets_repo.rs          # Secure credential storage
+    conversation.rs          # Conversation, Message models
+    profile.rs               # ModelProfile, Parameters
+    mcp.rs                   # McpConfig, McpStatus
     
   infrastructure/
     mod.rs
+    storage/
+      conversations.rs       # File-based conversation storage
+      config.rs              # Config file operations
+      secrets.rs             # Keychain integration
     llm/
       client.rs              # SerdesAI LLM client wrapper
-      streaming.rs           # Stream event handling
+      agent.rs               # Agent mode integration
     mcp/
       runtime.rs             # Global MCP runtime
       toolset.rs             # MCP toolset creation
       
-  presentation/
-    mod.rs
-    chat_presenter.rs        # Chat view logic
-    settings_presenter.rs    # Settings view logic
-    history_presenter.rs     # History view logic
-    
   ui/
     mod.rs
-    chat_view.rs             # Pure UI, delegates to presenter
-    settings_view.rs         # Pure UI, delegates to presenter
-    history_view.rs          # Pure UI, delegates to presenter
+    chat_view.rs             # Pure UI, emits UserEvents
+    settings_view.rs         # Pure UI, emits UserEvents
+    history_view.rs          # Pure UI, emits UserEvents
+    profile_editor_view.rs
+    mcp_add_view.rs
+    mcp_configure_view.rs
+    model_selector_view.rs
     components/              # Reusable UI components
       message_bubble.rs
       profile_row.rs
       mcp_row.rs
+      tool_indicator.rs
 ```
 
 
@@ -172,112 +205,77 @@ src/
 
 ---
 
-## Service Interfaces
+## Event System
 
-### ConversationService
+See [events.md](../requirements/events.md) for complete event definitions.
 
-```rust
-pub trait ConversationService: Send + Sync {
-    /// Create a new conversation with default title
-    fn create_conversation(&self, profile_id: Uuid) -> Result<Conversation>;
-    
-    /// Load conversation by ID
-    fn load_conversation(&self, id: Uuid) -> Result<Conversation>;
-    
-    /// List all conversations (metadata only)
-    fn list_conversations(&self) -> Result<Vec<ConversationSummary>>;
-    
-    /// Add user message and save
-    fn add_user_message(&self, conv_id: Uuid, content: String) -> Result<()>;
-    
-    /// Add assistant message and save
-    fn add_assistant_message(&self, conv_id: Uuid, content: String, thinking: Option<String>) -> Result<()>;
-    
-    /// Update conversation title
-    fn rename_conversation(&self, conv_id: Uuid, title: String) -> Result<()>;
-    
-    /// Delete conversation
-    fn delete_conversation(&self, conv_id: Uuid) -> Result<()>;
-}
+### Event Flow Example: User Sends Message
+
+```
+1. User clicks Send
+   └─▶ ChatView emits: UserEvent::SendMessage { text: "Hello" }
+
+2. EventBus broadcasts to all subscribers
+   └─▶ Logged: "UserEvent::SendMessage received"
+
+3. ChatPresenter handles UserEvent::SendMessage
+   ├─▶ Validates input (not empty)
+   ├─▶ Updates ChatView: clear_input(), add_user_bubble(), show_loading()
+   └─▶ Calls ChatService.send_message(conversation_id, text)
+
+4. ChatService streams response, emits events:
+   ├─▶ ChatEvent::StreamStarted { conversation_id, model_id }
+   ├─▶ ChatEvent::TextDelta { text: "Hi" }
+   ├─▶ ChatEvent::TextDelta { text: " there!" }
+   ├─▶ ChatEvent::ToolCallStarted { tool_name: "search" }
+   ├─▶ ChatEvent::ToolCallCompleted { success: true }
+   └─▶ ChatEvent::StreamCompleted { message_id }
+
+5. ChatPresenter handles each ChatEvent:
+   ├─▶ StreamStarted → (no-op, loading already shown)
+   ├─▶ TextDelta → view.append_to_message(text)
+   ├─▶ ToolCallStarted → view.show_tool_indicator(name)
+   ├─▶ ToolCallCompleted → view.update_tool_indicator(success)
+   └─▶ StreamCompleted → view.hide_loading(), view.enable_input()
 ```
 
-### ChatService
+### EventBus Implementation
 
 ```rust
-pub trait ChatService: Send + Sync {
-    /// Send a message and get streaming response
-    async fn send_message(
-        &self,
-        conversation_id: Uuid,
-        content: String,
-        on_event: impl Fn(ChatEvent) + Send + 'static,
-    ) -> Result<()>;
-    
-    /// Cancel ongoing streaming
-    fn cancel_streaming(&self);
+use std::sync::Arc;
+use tokio::sync::broadcast;
+
+pub struct EventBus {
+    sender: broadcast::Sender<AppEvent>,
 }
 
-pub enum ChatEvent {
-    UserMessageSaved,
-    StreamingStarted,
-    TextDelta(String),
-    ThinkingDelta(String),
-    ToolCallStart { name: String, id: String },
-    ToolCallComplete { name: String, success: bool },
-    StreamingComplete,
-    AssistantMessageSaved,
-    Error(String),
+impl EventBus {
+    pub fn new(capacity: usize) -> Self {
+        let (sender, _) = broadcast::channel(capacity);
+        Self { sender }
+    }
+    
+    pub fn emit(&self, event: AppEvent) {
+        tracing::debug!(event_type = %event.type_name(), ?event, "Event emitted");
+        let _ = self.sender.send(event);
+    }
+    
+    pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
+        self.sender.subscribe()
+    }
 }
-```
 
-### ProfileService
+// Global access
+static EVENT_BUS: OnceLock<Arc<EventBus>> = OnceLock::new();
 
-```rust
-pub trait ProfileService: Send + Sync {
-    /// Get all profiles
-    fn list_profiles(&self) -> Result<Vec<ModelProfile>>;
-    
-    /// Get default profile
-    fn get_default_profile(&self) -> Result<Option<ModelProfile>>;
-    
-    /// Set default profile
-    fn set_default_profile(&self, id: Uuid) -> Result<()>;
-    
-    /// Create profile
-    fn create_profile(&self, profile: ModelProfile) -> Result<()>;
-    
-    /// Update profile
-    fn update_profile(&self, profile: ModelProfile) -> Result<()>;
-    
-    /// Delete profile
-    fn delete_profile(&self, id: Uuid) -> Result<()>;
+pub fn emit(event: impl Into<AppEvent>) {
+    if let Some(bus) = EVENT_BUS.get() {
+        bus.emit(event.into());
+    }
 }
-```
 
-### McpService
-
-```rust
-pub trait McpService: Send + Sync {
-    /// Get all configured MCPs
-    fn list_mcps(&self) -> Result<Vec<McpConfig>>;
-    
-    /// Get MCP status
-    fn get_status(&self, id: Uuid) -> McpStatus;
-    
-    /// Enable/disable MCP
-    fn set_enabled(&self, id: Uuid, enabled: bool) -> Result<()>;
-    
-    /// Get tools from all enabled MCPs
-    fn get_available_tools(&self) -> Vec<ToolDefinition>;
-    
-    /// Add new MCP
-    fn add_mcp(&self, config: McpConfig) -> Result<()>;
-    
-    /// Update MCP
-    fn update_mcp(&self, config: McpConfig) -> Result<()>;
-    
-    /// Delete MCP
-    fn delete_mcp(&self, id: Uuid) -> Result<()>;
+pub fn subscribe() -> broadcast::Receiver<AppEvent> {
+    EVENT_BUS.get().expect("EventBus not initialized").subscribe()
 }
 ```
 
@@ -285,77 +283,129 @@ pub trait McpService: Send + Sync {
 
 ## Presenter Pattern
 
+### Presenter Responsibilities
+
+1. **Subscribe** to relevant events from EventBus
+2. **Handle** user events by calling services
+3. **Transform** domain events into view updates
+4. **Manage** UI state (loading, error, streaming)
+5. **Update** views with new state
+
 ### ChatPresenter Example
 
 ```rust
 pub struct ChatPresenter {
-    conversation_service: Arc<dyn ConversationService>,
+    // Dependencies
     chat_service: Arc<dyn ChatService>,
-    profile_service: Arc<dyn ProfileService>,
+    conversation_service: Arc<dyn ConversationService>,
+    
+    // View reference (weak to avoid cycles)
+    view: Weak<dyn ChatViewProtocol>,
     
     // State
-    current_conversation: RwLock<Option<Uuid>>,
-    messages: RwLock<Vec<MessageViewModel>>,
+    current_conversation_id: RwLock<Option<Uuid>>,
     is_streaming: AtomicBool,
+    pending_message: RwLock<String>,
 }
 
 impl ChatPresenter {
-    /// Called when user sends a message
-    pub fn send_message(&self, content: String, view: Weak<dyn ChatView>) {
-        let conv_id = match *self.current_conversation.read() {
-            Some(id) => id,
-            None => {
-                if let Some(v) = view.upgrade() {
-                    v.show_error("No conversation selected");
-                }
-                return;
-            }
-        };
-        
-        // Update UI immediately
-        self.add_message_to_ui(MessageViewModel::user(content.clone()), &view);
-        
-        // Start streaming
-        let presenter = self.clone();
-        let view_weak = view.clone();
-        
-        spawn_in_agent_runtime(async move {
-            let result = presenter.chat_service.send_message(
-                conv_id,
-                content,
-                move |event| {
-                    if let Some(v) = view_weak.upgrade() {
-                        presenter.handle_chat_event(event, &v);
-                    }
-                },
-            ).await;
-            
-            if let Err(e) = result {
-                if let Some(v) = view_weak.upgrade() {
-                    v.show_error(&e.to_string());
-                }
+    pub fn start(&self) {
+        let this = Arc::clone(&self);
+        spawn(async move {
+            let mut rx = subscribe();
+            while let Ok(event) = rx.recv().await {
+                this.handle_event(event).await;
             }
         });
     }
     
-    fn handle_chat_event(&self, event: ChatEvent, view: &dyn ChatView) {
+    async fn handle_event(&self, event: AppEvent) {
         match event {
-            ChatEvent::TextDelta(text) => {
-                self.append_to_current_message(&text);
-                view.update_last_message(self.get_current_message_text());
+            // User actions
+            AppEvent::User(UserEvent::SendMessage { text }) => {
+                self.handle_send_message(text).await;
             }
-            ChatEvent::ThinkingDelta(text) => {
-                self.append_to_thinking(&text);
-                view.update_thinking(self.get_thinking_text());
+            AppEvent::User(UserEvent::StopStreaming) => {
+                self.handle_stop_streaming();
             }
-            ChatEvent::StreamingComplete => {
+            AppEvent::User(UserEvent::SelectConversation { id }) => {
+                self.handle_select_conversation(id).await;
+            }
+            AppEvent::User(UserEvent::NewConversation) => {
+                self.handle_new_conversation().await;
+            }
+            
+            // Domain events
+            AppEvent::Chat(ChatEvent::TextDelta { text }) => {
+                if let Some(view) = self.view.upgrade() {
+                    view.append_to_message(&text);
+                }
+            }
+            AppEvent::Chat(ChatEvent::StreamCompleted { .. }) => {
                 self.is_streaming.store(false, Ordering::SeqCst);
-                view.streaming_complete();
+                if let Some(view) = self.view.upgrade() {
+                    view.hide_loading();
+                    view.enable_input();
+                }
             }
-            ChatEvent::Error(msg) => {
-                view.show_error(&msg);
+            AppEvent::Chat(ChatEvent::StreamError { error, .. }) => {
+                if let Some(view) = self.view.upgrade() {
+                    view.show_error(&error);
+                }
             }
-            _ => {}
+            
+            // MCP events that affect chat
+            AppEvent::Mcp(McpEvent::Started { tools, .. }) => {
+                if let Some(view) = self.view.upgrade() {
+                    view.update_tool_count(tools.len());
+                }
+            }
+            
+            _ => {} // Ignore events we don't care about
+        }
+    }
+    
+    async fn handle_send_message(&self, text: String) {
+        if text.trim().is_empty() {
+            return;
+        }
+        
+        let conv_id = match *self.current_conversation_id.read() {
+            Some(id) => id,
+            None => {
+                // Auto-create conversation
+                match self.conversation_service.create().await {
+                    Ok(conv) => {
+                        *self.current_conversation_id.write() = Some(conv.id);
+                        conv.id
+                    }
+                    Err(e) => {
+                        emit(SystemEvent::Error {
+                            source: "ChatPresenter".into(),
+                            error: e.to_string(),
+                            context: Some("Creating conversation".into()),
+                        });
+                        return;
+                    }
+                }
+            }
+        };
+        
+        // Update view
+        if let Some(view) = self.view.upgrade() {
+            view.clear_input();
+            view.add_user_message(&text);
+            view.show_loading();
+        }
+        
+        // Start streaming (ChatService will emit ChatEvents)
+        self.is_streaming.store(true, Ordering::SeqCst);
+        if let Err(e) = self.chat_service.send_message(conv_id, text).await {
+            emit(ChatEvent::StreamError {
+                conversation_id: conv_id,
+                error: e.to_string(),
+                recoverable: true,
+            });
         }
     }
 }
@@ -365,14 +415,159 @@ impl ChatPresenter {
 
 ```rust
 /// Protocol for ChatView - implemented by UI layer
-pub trait ChatView: Send + Sync {
-    fn add_message(&self, message: MessageViewModel);
-    fn update_last_message(&self, text: &str);
+pub trait ChatViewProtocol: Send + Sync {
+    // Message display
+    fn add_user_message(&self, text: &str);
+    fn add_assistant_message(&self, text: &str);
+    fn append_to_message(&self, text: &str);
     fn update_thinking(&self, text: &str);
-    fn streaming_complete(&self);
-    fn show_error(&self, message: &str);
+    
+    // Tool indicators
+    fn show_tool_indicator(&self, name: &str);
+    fn update_tool_indicator(&self, name: &str, success: bool);
+    
+    // Loading state
+    fn show_loading(&self);
+    fn hide_loading(&self);
+    
+    // Input
     fn clear_input(&self);
+    fn enable_input(&self);
+    fn disable_input(&self);
+    
+    // Errors
+    fn show_error(&self, message: &str);
+    
+    // Tools count
+    fn update_tool_count(&self, count: usize);
+    
+    // Scroll
     fn scroll_to_bottom(&self);
+}
+```
+
+---
+
+## Service Interfaces
+
+### ConversationService
+
+```rust
+#[async_trait]
+pub trait ConversationService: Send + Sync {
+    /// Create a new conversation
+    async fn create(&self) -> Result<Conversation>;
+    
+    /// Load conversation by ID
+    async fn load(&self, id: Uuid) -> Result<Conversation>;
+    
+    /// List all conversations (metadata only, sorted by date)
+    async fn list(&self) -> Result<Vec<ConversationSummary>>;
+    
+    /// Add user message
+    async fn add_user_message(&self, conv_id: Uuid, content: String) -> Result<Message>;
+    
+    /// Add assistant message
+    async fn add_assistant_message(
+        &self,
+        conv_id: Uuid,
+        content: String,
+        model_id: String,
+        thinking: Option<String>,
+    ) -> Result<Message>;
+    
+    /// Update conversation title
+    async fn rename(&self, conv_id: Uuid, title: String) -> Result<()>;
+    
+    /// Delete conversation
+    async fn delete(&self, conv_id: Uuid) -> Result<()>;
+    
+    /// Set active conversation (global state)
+    async fn set_active(&self, conv_id: Uuid) -> Result<()>;
+    
+    /// Get active conversation ID
+    fn get_active(&self) -> Option<Uuid>;
+}
+```
+
+### ChatService
+
+```rust
+#[async_trait]
+pub trait ChatService: Send + Sync {
+    /// Send a message and stream response
+    /// Emits ChatEvent::* as streaming progresses
+    async fn send_message(&self, conversation_id: Uuid, content: String) -> Result<()>;
+    
+    /// Cancel ongoing streaming
+    fn cancel(&self);
+    
+    /// Check if currently streaming
+    fn is_streaming(&self) -> bool;
+}
+```
+
+### ProfileService
+
+```rust
+#[async_trait]
+pub trait ProfileService: Send + Sync {
+    /// List all profiles
+    async fn list(&self) -> Result<Vec<ModelProfile>>;
+    
+    /// Get profile by ID
+    async fn get(&self, id: Uuid) -> Result<ModelProfile>;
+    
+    /// Get default profile
+    async fn get_default(&self) -> Result<Option<ModelProfile>>;
+    
+    /// Set default profile
+    async fn set_default(&self, id: Uuid) -> Result<()>;
+    
+    /// Create profile
+    async fn create(&self, profile: ModelProfile) -> Result<()>;
+    
+    /// Update profile
+    async fn update(&self, profile: ModelProfile) -> Result<()>;
+    
+    /// Delete profile
+    async fn delete(&self, id: Uuid) -> Result<()>;
+    
+    /// Test profile connection
+    /// Emits ProfileEvent::TestStarted and ProfileEvent::TestCompleted
+    async fn test_connection(&self, id: Uuid) -> Result<()>;
+}
+```
+
+### McpService
+
+```rust
+#[async_trait]
+pub trait McpService: Send + Sync {
+    /// List all configured MCPs
+    async fn list(&self) -> Result<Vec<McpConfig>>;
+    
+    /// Get MCP status
+    fn get_status(&self, id: Uuid) -> McpStatus;
+    
+    /// Enable/disable MCP
+    /// Emits McpEvent::Starting, McpEvent::Started or McpEvent::StartFailed
+    async fn set_enabled(&self, id: Uuid, enabled: bool) -> Result<()>;
+    
+    /// Get tools from all enabled MCPs
+    fn get_available_tools(&self) -> Vec<ToolDefinition>;
+    
+    /// Add new MCP
+    async fn add(&self, config: McpConfig) -> Result<()>;
+    
+    /// Update MCP configuration
+    async fn update(&self, config: McpConfig) -> Result<()>;
+    
+    /// Delete MCP
+    async fn delete(&self, id: Uuid) -> Result<()>;
+    
+    /// Restart MCP
+    async fn restart(&self, id: Uuid) -> Result<()>;
 }
 ```
 
@@ -396,56 +591,85 @@ fn send_message(&self) {
 }
 ```
 
-### Target (Using Agent Mode)
+### Target (Event-Driven with Agent Mode)
 
 ```rust
-// In infrastructure/llm/agent_client.rs
-pub struct AgentClient {
-    runtime: &'static Runtime,
-    agent: RwLock<Option<Agent>>,
-}
-
-impl AgentClient {
-    /// Initialize or reinitialize agent with current profile and MCPs
-    pub async fn initialize(
-        &self,
-        profile: &ModelProfile,
-        mcp_toolsets: Vec<McpToolset>,
-    ) -> Result<()> {
-        let agent = build_agent(profile, mcp_toolsets).await?;
-        *self.agent.write() = Some(agent);
-        Ok(())
-    }
-    
-    /// Stream a response
-    pub async fn stream_response(
-        &self,
-        messages: &[LlmMessage],
-        on_event: impl Fn(StreamEvent) + Send,
-    ) -> Result<()> {
-        let agent = self.agent.read();
-        let agent = agent.as_ref().ok_or(Error::NotInitialized)?;
+// In services/chat.rs
+impl ChatServiceImpl {
+    pub async fn send_message(&self, conversation_id: Uuid, content: String) -> Result<()> {
+        // 1. Save user message
+        self.conversation_service.add_user_message(conversation_id, content.clone()).await?;
         
-        let mut stream = agent.run_stream(messages).await?;
+        // 2. Get conversation history
+        let conversation = self.conversation_service.load(conversation_id).await?;
+        let messages = self.build_llm_messages(&conversation);
+        
+        // 3. Get current profile
+        let profile = self.profile_service.get_default().await?
+            .ok_or(Error::NoDefaultProfile)?;
+        
+        // 4. Get MCP tools
+        let tools = self.mcp_service.get_available_tools();
+        
+        // 5. Emit stream started
+        emit(ChatEvent::StreamStarted {
+            conversation_id,
+            message_id: Uuid::new_v4(),
+            model_id: profile.model_id.clone(),
+        });
+        
+        // 6. Stream with Agent mode
+        let mut stream = self.agent_client
+            .stream_with_tools(&messages, &profile, tools)
+            .await?;
+        
+        let mut full_content = String::new();
+        let mut thinking_content = String::new();
         
         while let Some(event) = stream.next().await {
             match event? {
-                AgentStreamEvent::TextDelta { text } => {
-                    on_event(StreamEvent::TextDelta(text));
+                AgentEvent::TextDelta { text } => {
+                    full_content.push_str(&text);
+                    emit(ChatEvent::TextDelta { text });
                 }
-                AgentStreamEvent::ThinkingDelta { text } => {
-                    on_event(StreamEvent::ThinkingDelta(text));
+                AgentEvent::ThinkingDelta { text } => {
+                    thinking_content.push_str(&text);
+                    emit(ChatEvent::ThinkingDelta { text });
                 }
-                AgentStreamEvent::ToolExecuted { tool_name, success, .. } => {
-                    on_event(StreamEvent::ToolComplete { name: tool_name, success });
+                AgentEvent::ToolCallStart { name, id } => {
+                    emit(ChatEvent::ToolCallStarted { tool_call_id: id, tool_name: name });
                 }
-                AgentStreamEvent::RunComplete { .. } => {
-                    on_event(StreamEvent::Complete);
+                AgentEvent::ToolCallComplete { name, id, success, result, duration_ms } => {
+                    emit(ChatEvent::ToolCallCompleted {
+                        tool_call_id: id,
+                        tool_name: name,
+                        success,
+                        result,
+                        duration_ms,
+                    });
                 }
-                AgentStreamEvent::Error { message } => {
-                    on_event(StreamEvent::Error(message));
+                AgentEvent::Complete { usage } => {
+                    // Save assistant message
+                    let message = self.conversation_service.add_assistant_message(
+                        conversation_id,
+                        full_content.clone(),
+                        profile.model_id.clone(),
+                        if thinking_content.is_empty() { None } else { Some(thinking_content.clone()) },
+                    ).await?;
+                    
+                    emit(ChatEvent::StreamCompleted {
+                        conversation_id,
+                        message_id: message.id,
+                        total_tokens: usage.map(|u| u.total_tokens),
+                    });
                 }
-                _ => {}
+                AgentEvent::Error { message } => {
+                    emit(ChatEvent::StreamError {
+                        conversation_id,
+                        error: message,
+                        recoverable: true,
+                    });
+                }
             }
         }
         
@@ -458,135 +682,103 @@ impl AgentClient {
 
 ## Migration Strategy
 
-### Phase 1: Extract Domain Models (1-2 days)
+### Phase 1: Event System (2 days)
 
-1. Create `src/domain/` module
-2. Move `Conversation`, `Message` models
-3. Move `ModelProfile`, `ModelParameters` models
-4. Move `McpConfig`, `McpStatus` types
-5. Update imports throughout codebase
+1. Create `src/events/` module
+2. Implement `EventBus` with broadcast channel
+3. Define all event types (AppEvent hierarchy)
+4. Add global `emit()` and `subscribe()` functions
+5. Add event logging with tracing
 
-### Phase 2: Extract Repositories (1-2 days)
+### Phase 2: Extract Services (3-4 days)
 
-1. Create `src/repositories/` module
-2. Extract `ConversationRepository` from `storage.rs`
-3. Extract `ConfigRepository` from `config.rs`
-4. Extract `SecretsRepository` from `mcp/secrets.rs`
-5. Define repository traits
+1. Create `src/services/` module with traits
+2. Implement `ConversationService` (wrap existing storage)
+3. Implement `ProfileService` (wrap existing config)
+4. Implement `ChatService` (move streaming logic here)
+5. Refactor `McpService` to emit events
+6. Each service emits domain events as operations progress
 
-### Phase 3: Extract Services (2-3 days)
-
-1. Create `src/services/` module
-2. Implement `ConversationService`
-3. Implement `ProfileService`
-4. Implement `ChatService` (wraps LLM client)
-5. Refactor `McpService` to use new pattern
-
-### Phase 4: Create Presenters (2-3 days)
+### Phase 3: Create Presenters (3-4 days)
 
 1. Create `src/presentation/` module
-2. Implement `ChatPresenter`
+2. Implement `ChatPresenter` (subscribe to events, update view)
 3. Implement `SettingsPresenter`
 4. Implement `HistoryPresenter`
-5. Define view protocols
+5. Implement other presenters
+6. Define view protocols (traits)
 
-### Phase 5: Refactor UI Views (3-4 days)
+### Phase 4: Refactor UI Views (4-5 days)
 
-1. Slim down `chat_view.rs` to pure UI
-2. Delegate business logic to `ChatPresenter`
-3. Repeat for `settings_view.rs`
-4. Repeat for `history_view.rs`
-5. Extract reusable components
+1. Have views emit `UserEvent` instead of calling methods
+2. Views implement presenter protocols
+3. Remove business logic from views
+4. Slim `chat_view.rs` from 980 to <500 lines
+5. Slim `settings_view.rs` from 1191 to <500 lines
+6. Extract reusable components
 
-### Phase 6: Agent Mode Migration (2-3 days)
+### Phase 5: Update Models (1-2 days)
 
-1. Implement `AgentClient` using SerdesAI Agent
-2. Update `ChatService` to use `AgentClient`
-3. Remove manual tool execution loop
-4. Update MCP toolset integration
+1. Remove `profile_id` from `Conversation`
+2. Add `model_id`, `cancelled`, `tool_calls` to `Message`
+3. Update storage format to match requirements
+4. Migrate existing conversations
 
 ---
 
 ## Testing Strategy
 
-### Unit Tests (Services, Repositories)
-
-```rust
-#[test]
-fn test_conversation_service_creates_with_default_title() {
-    let repo = MockConversationRepo::new();
-    let service = ConversationServiceImpl::new(Arc::new(repo));
-    
-    let conv = service.create_conversation(Uuid::new_v4()).unwrap();
-    
-    assert!(conv.title.unwrap().starts_with("New "));
-}
-
-#[test]
-fn test_chat_service_saves_user_message() {
-    let conv_repo = MockConversationRepo::new();
-    let llm_client = MockLlmClient::new();
-    let service = ChatServiceImpl::new(Arc::new(conv_repo), Arc::new(llm_client));
-    
-    let conv_id = Uuid::new_v4();
-    conv_repo.save(Conversation::new(conv_id));
-    
-    service.add_user_message(conv_id, "Hello".to_string()).unwrap();
-    
-    let conv = conv_repo.load(conv_id).unwrap();
-    assert_eq!(conv.messages.len(), 1);
-    assert_eq!(conv.messages[0].content, "Hello");
-}
-```
-
-### Integration Tests (End-to-End)
+### Unit Tests (Services)
 
 ```rust
 #[tokio::test]
-async fn test_full_chat_flow() {
-    let temp_dir = tempdir().unwrap();
-    let services = create_test_services(temp_dir.path());
+async fn test_chat_service_emits_correct_events() {
+    let (tx, mut rx) = broadcast::channel(16);
+    let service = ChatServiceImpl::new(mock_deps(), tx);
     
-    // Create conversation
-    let conv = services.conversation.create_conversation(profile_id).unwrap();
+    service.send_message(conv_id, "Hello".into()).await.unwrap();
     
-    // Send message and collect events
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let events_clone = Arc::clone(&events);
-    
-    services.chat.send_message(
-        conv.id,
-        "Hello".to_string(),
-        move |event| events_clone.lock().push(event),
-    ).await.unwrap();
-    
-    // Verify events
-    let events = events.lock();
-    assert!(events.iter().any(|e| matches!(e, ChatEvent::UserMessageSaved)));
-    assert!(events.iter().any(|e| matches!(e, ChatEvent::StreamingComplete)));
-    assert!(events.iter().any(|e| matches!(e, ChatEvent::AssistantMessageSaved)));
-    
-    // Verify persistence
-    let loaded = services.conversation.load_conversation(conv.id).unwrap();
-    assert_eq!(loaded.messages.len(), 2);
+    // Verify event sequence
+    assert!(matches!(rx.recv().await?, ChatEvent::StreamStarted { .. }));
+    // ... verify TextDelta events
+    assert!(matches!(rx.recv().await?, ChatEvent::StreamCompleted { .. }));
 }
 ```
 
-### UI Tests (With Mocks)
+### Integration Tests (Event Flow)
 
 ```rust
-#[test]
-fn test_chat_view_displays_messages() {
-    let presenter = MockChatPresenter::new();
-    presenter.set_messages(vec![
-        MessageViewModel::user("Hello"),
-        MessageViewModel::assistant("Hi there!"),
-    ]);
+#[tokio::test]
+async fn test_full_send_message_flow() {
+    let app = TestApp::new().await;
     
-    let view = ChatViewController::new(presenter);
+    // Emit user event
+    emit(UserEvent::SendMessage { text: "Hello".into() });
     
-    // Verify UI state
-    assert_eq!(view.message_count(), 2);
+    // Wait for completion
+    let events = app.collect_events_until(|e| matches!(e, ChatEvent::StreamCompleted { .. })).await;
+    
+    // Verify sequence
+    assert!(events.iter().any(|e| matches!(e, ChatEvent::StreamStarted { .. })));
+    assert!(events.iter().any(|e| matches!(e, ChatEvent::TextDelta { .. })));
+    assert!(events.iter().any(|e| matches!(e, ChatEvent::StreamCompleted { .. })));
+}
+```
+
+### Presenter Tests
+
+```rust
+#[tokio::test]
+async fn test_chat_presenter_handles_send_message() {
+    let mock_view = MockChatView::new();
+    let mock_service = MockChatService::new();
+    let presenter = ChatPresenter::new(mock_view.clone(), mock_service);
+    
+    presenter.handle_event(UserEvent::SendMessage { text: "Hello".into() }).await;
+    
+    assert!(mock_view.clear_input_called());
+    assert!(mock_view.add_user_message_called_with("Hello"));
+    assert!(mock_view.show_loading_called());
 }
 ```
 
@@ -594,18 +786,19 @@ fn test_chat_view_displays_messages() {
 
 ## Success Criteria
 
-1. **Testability**: 80%+ code coverage on services and repositories
+1. **Testability**: 80%+ code coverage on services and presenters
 2. **Separation**: UI files under 500 lines each
-3. **Performance**: No regression in streaming latency
-4. **Reliability**: No tokio runtime issues
-5. **Maintainability**: New features don't require touching UI code
+3. **Debuggability**: All events logged, easy to trace issues
+4. **Performance**: No regression in streaming latency
+5. **Reliability**: No tokio runtime issues
+6. **Maintainability**: New features don't require touching UI code
 
 ---
 
 ## Open Questions
 
-1. Should we use `async_trait` for service traits or return boxed futures?
+1. Should EventBus use `tokio::sync::broadcast` or `async-broadcast` crate?
 2. How to handle UI thread affinity for NSView updates?
-3. Should presenters be `Send + Sync` or UI-thread only?
+3. Should presenters buffer events or process immediately?
 4. How to manage presenter lifecycle with view lifecycle?
-5. Should we use dependency injection framework or manual wiring?
+5. Should we implement event replay for debugging?

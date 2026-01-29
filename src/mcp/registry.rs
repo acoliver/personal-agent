@@ -5,7 +5,7 @@ use crate::mcp::{
     McpPackageArgType, McpPackageType, McpSource, McpTransport, RegistryEnvVar,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Resolve Smithery API key from either a path or raw key
@@ -87,7 +87,7 @@ pub struct McpRegistryServerWrapper {
 }
 
 /// Server definition from the official MCP registry
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpRegistryServer {
     pub name: String,
     pub description: String,
@@ -100,7 +100,7 @@ pub struct McpRegistryServer {
     pub remotes: Vec<McpRegistryRemote>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct McpRegistryRepository {
     #[serde(default)]
     pub url: Option<String>,
@@ -108,7 +108,7 @@ pub struct McpRegistryRepository {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpRegistryPackage {
     #[serde(rename = "registryType")]
     pub registry_type: String,
@@ -122,7 +122,7 @@ pub struct McpRegistryPackage {
     pub package_arguments: Vec<McpRegistryPackageArgument>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpRegistryPackageArgument {
     #[serde(rename = "type")]
     pub argument_type: String,
@@ -135,20 +135,20 @@ pub struct McpRegistryPackageArgument {
     pub default: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpRegistryTransport {
     #[serde(rename = "type")]
     pub transport_type: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpRegistryRemote {
     #[serde(rename = "type")]
     pub remote_type: String,
     pub url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpRegistryEnvVar {
     pub name: String,
     #[serde(default)]
