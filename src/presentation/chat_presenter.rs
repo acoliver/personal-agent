@@ -128,11 +128,13 @@ impl ChatPresenter {
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: AppEvent,
     ) {
+        tracing::debug!("ChatPresenter::handle_event: {:?}", event);
         match event {
             AppEvent::User(user_evt) => {
                 Self::handle_user_event(conversation_service, chat_service, view_tx, user_evt).await;
             }
             AppEvent::Chat(chat_evt) => {
+                tracing::info!("ChatPresenter handling ChatEvent: {:?}", chat_evt);
                 Self::handle_chat_event(view_tx, chat_evt).await;
             }
             AppEvent::Conversation(conv_evt) => {

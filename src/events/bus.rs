@@ -63,6 +63,17 @@ impl EventBus {
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
     }
+    
+    /// Get a reference to the internal sender for presenter creation
+    pub fn sender(&self) -> &broadcast::Sender<AppEvent> {
+        &self.sender
+    }
+    
+    /// Create an EventBus from an existing sender
+    /// Used to share the same channel across different instances
+    pub fn from_sender(sender: broadcast::Sender<AppEvent>) -> Self {
+        Self { sender }
+    }
 }
 
 #[cfg(test)]

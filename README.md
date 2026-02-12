@@ -81,15 +81,41 @@ personalAgent/
 │   ├── models/            # Data models (profiles, conversations)
 │   ├── storage/           # Conversation persistence
 │   ├── llm/               # LLM client integration
-│   └── ui/                # UI components
-│       ├── chat_view.rs   # Main chat interface
-│       ├── settings_view.rs
-│       ├── profile_editor*.rs
-│       └── theme.rs       # Color theme
+│   ├── ui/                # Legacy UI components (deprecated)
+│   └── ui_gpui/           # GPUI-based UI system (active development)
+│       ├── bridge/        # Runtime bridge between GPUI and tokio
+│       ├── components/    # Reusable UI components
+│       ├── views/         # Main view components
+│       ├── app.rs         # GPUI application
+│       └── theme.rs       # Color theming
 ├── assets/                # Icons and images
 └── research/
     └── serdesAI/          # LLM communication library
 ```
+
+## GPUI-based UI System
+
+PersonalAgent is transitioning to a GPUI-based UI system for better performance and native UI experience. The new UI system is currently implemented behind a feature flag.
+
+### Feature Flag
+
+Enable the GPUI UI system with:
+```bash
+cargo run --features gpui --bin personal_agent_menubar
+```
+
+### Architecture
+
+The `ui_gpui` module implements a new UI architecture based on GPUI (smol-based) that communicates with the presenter/service layer (tokio-based) through a bridge pattern:
+
+1. **Bridge Layer**: `GpuiBridge` and `ViewCommandSink` provide runtime communication
+2. **Components**: Reusable UI components like `TabBar`, `MessageBubble`, `InputBar`, and `Button`
+3. **Views**: Main view components including `ChatView`, `HistoryView`, `SettingsView`, and `MainPanel`
+4. **Integration**: `TrayBridge`, `PopupWindow`, and `GpuiApp` integrate with system UI
+
+Event flow follows: UserEvent → Bridge → EventBus → Presenter → ViewCommand → Bridge → UI
+
+See `src/ui_gpui/` for more detailed documentation.
 
 ## Dependencies
 

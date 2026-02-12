@@ -18,6 +18,7 @@ pub mod presentation;
 pub mod registry;
 pub mod services;
 pub mod storage;
+pub mod ui_gpui;
 
 // Re-export commonly used types
 pub use app::{App, AppContext, ServiceRegistry};

@@ -142,15 +142,63 @@ impl ModelSelectorPresenter {
         }
     }
 
-    /// Handle open model selector event
+    /// Handle open model selector event - load models from registry
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     async fn on_open_selector(
-        _models_registry_service: &Arc<dyn ModelsRegistryService>,
-        _view_tx: &broadcast::Sender<ViewCommand>,
+        models_registry_service: &Arc<dyn ModelsRegistryService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
     ) {
-        // Placeholder service call - would load available models
-        tracing::info!("Opening model selector");
+        tracing::info!("Opening model selector - loading models from registry");
+        
+        // First try to get cached models, then refresh if needed
+        let models = match models_registry_service.list_all().await {
+            Ok(models) if !models.is_empty() => {
+                tracing::info!("Loaded {} models from cache", models.len());
+                models
+            }
+            _ => {
+                // Try to refresh
+                tracing::info!("Cache empty or failed, refreshing from models.dev...");
+                if let Err(e) = models_registry_service.refresh().await {
+                    tracing::warn!("Failed to refresh models registry: {:?}", e);
+                }
+                // Try again after refresh
+                match models_registry_service.list_all().await {
+                    Ok(models) => {
+                        tracing::info!("Loaded {} models after refresh", models.len());
+                        models
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load models: {:?}", e);
+                        // Send error to view
+                        let _ = view_tx.send(ViewCommand::ShowError {
+                            title: "Failed to load models".to_string(),
+                            message: format!("Could not load models from registry: {:?}", e),
+                            severity: super::view_command::ErrorSeverity::Warning,
+                        });
+                        return;
+                    }
+                }
+            }
+        };
+        
+        // Convert to ViewCommand format
+        // ModelInfo from registry has: id, name, provider (Option<String>), reasoning (bool), 
+        // modalities (Option with input/output Vec<String>), cost (Option with input/output f64),
+        // limit (Option with context/output u64)
+        let model_infos: Vec<super::view_command::ModelInfo> = models
+            .into_iter()
+            .map(|m| super::view_command::ModelInfo {
+                model_id: m.id.clone(),
+                name: m.name.clone(),
+                provider_id: m.provider.as_deref().unwrap_or("unknown").to_string(),
+                context_length: m.limit.as_ref().map(|l| l.context as u32),
+            })
+            .collect();
+        
+        tracing::info!("Sending {} models to view", model_infos.len());
+        let _ = view_tx.send(ViewCommand::ModelSearchResults { models: model_infos });
     }
 
     /// Handle search models event

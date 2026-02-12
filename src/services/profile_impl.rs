@@ -43,6 +43,10 @@ impl ProfileServiceImpl {
     /// Returns an error if the profiles cannot be loaded from disk.
     pub async fn initialize(&self) -> Result<(), super::ServiceError> {
         let profiles = self.load_profiles_from_disk()?;
+        tracing::info!("ProfileService: loaded {} profiles from disk", profiles.len());
+        for p in &profiles {
+            tracing::info!("  Profile: {} ({}) id={}", p.name, p.model_id, p.id);
+        }
         let mut profiles_lock = self.profiles.write().await;
         *profiles_lock = profiles;
         Ok(())
@@ -52,7 +56,9 @@ impl ProfileServiceImpl {
     fn load_profiles_from_disk(&self) -> Result<Vec<ModelProfile>, super::ServiceError> {
         let mut profiles = Vec::new();
 
+        tracing::info!("load_profiles_from_disk: looking in {:?}", self.profiles_dir);
         if !self.profiles_dir.exists() {
+            tracing::warn!("load_profiles_from_disk: directory does not exist");
             return Ok(profiles);
         }
 
@@ -70,17 +76,23 @@ impl ProfileServiceImpl {
                 continue;
             }
 
+            // Skip default.json (it's just a UUID reference, not a profile)
+            if path.file_name().and_then(|n| n.to_str()) == Some("default.json") {
+                continue;
+            }
+
             // Read and parse profile
             let content = fs::read_to_string(&path).map_err(|e| {
                 super::ServiceError::Io(format!("Failed to read profile file {}: {e}", path.display()))
             })?;
 
-            let profile: ModelProfile = serde_json::from_str(&content).map_err(|e| {
-                super::ServiceError::Serialization(format!(
-                    "Failed to parse profile file {}: {e}",
-                    path.display()
-                ))
-            })?;
+            let profile: ModelProfile = match serde_json::from_str(&content) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("Skipping invalid profile {}: {}", path.display(), e);
+                    continue;
+                }
+            };
 
             profiles.push(profile);
         }
@@ -270,13 +282,20 @@ impl ProfileService for ProfileServiceImpl {
     /// Get the default profile
     async fn get_default(&self) -> ServiceResult<Option<ModelProfile>> {
         let default_id = self.load_default_id()?;
+        tracing::info!("get_default: default_id = {:?}", default_id);
 
         match default_id {
             Some(id) => {
                 let profiles = self.profiles.read().await;
-                Ok(profiles.iter().find(|p| p.id == id).cloned())
+                tracing::info!("get_default: searching {} profiles for id {}", profiles.len(), id);
+                let found = profiles.iter().find(|p| p.id == id).cloned();
+                tracing::info!("get_default: found = {:?}", found.as_ref().map(|p| &p.name));
+                Ok(found)
             }
-            None => Ok(None),
+            None => {
+                tracing::info!("get_default: no default id set");
+                Ok(None)
+            }
         }
     }
 

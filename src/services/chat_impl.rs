@@ -181,6 +181,7 @@ impl ChatService for ChatServiceImpl {
                 match event {
                     LlmStreamEvent::TextDelta(text) => {
                         // Emit ChatEvent via EventBus for real-time UI updates
+                        tracing::info!("ChatService emitting TextDelta: '{}'", text);
                         emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
                         // Also send to stream for caller
                         let _ = tx.send(ChatStreamEvent::Token(text.clone()));

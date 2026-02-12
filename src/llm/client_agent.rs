@@ -114,6 +114,7 @@ impl AgentClientExt for crate::llm::LlmClient {
         mcp_tools: Vec<crate::llm::tools::Tool>,
         system_prompt: &str,
     ) -> StdResult<Agent<McpToolContext>, LlmError> {
+        tracing::info!("create_agent: model={}, base_url={}", self.profile.model_id, self.profile.base_url);
         self.set_api_key_env();
 
         let model = self.build_agent_model()?;
@@ -140,11 +141,14 @@ impl AgentClientExt for crate::llm::LlmClient {
             .find(|m| matches!(m.role, Role::User))
             .map(|m| m.content.clone())
             .unwrap_or_default();
+        
+        tracing::info!("run_agent_stream: prompt='{}'", prompt);
 
         // Create the McpToolContext
         let context = McpToolContext;
 
         // Create the agent stream
+        tracing::info!("run_agent_stream: creating AgentStream...");
         let mut stream = AgentStream::new(
             agent,
             UserContent::text(prompt),
@@ -152,13 +156,18 @@ impl AgentClientExt for crate::llm::LlmClient {
             RunOptions::default(),
         )
         .await
-        .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!("run_agent_stream: AgentStream creation failed: {}", e);
+            LlmError::SerdesAi(e.to_string())
+        })?;
+        tracing::info!("run_agent_stream: AgentStream created, processing events...");
 
         // Process stream events
         while let Some(event_result) = stream.next().await {
             match event_result {
                 Ok(event) => match event {
                     AgentStreamEvent::TextDelta { text } => {
+                        tracing::info!("run_agent_stream: TextDelta: '{}'", text);
                         on_event(StreamEvent::TextDelta(text));
                     }
                     AgentStreamEvent::ThinkingDelta { text } => {
@@ -188,12 +197,16 @@ impl AgentClientExt for crate::llm::LlmClient {
                         });
                     }
                     AgentStreamEvent::RunComplete { .. } => {
+                        tracing::info!("run_agent_stream: RunComplete");
                         on_event(StreamEvent::Complete);
                     }
                     AgentStreamEvent::Error { message } => {
+                        tracing::error!("run_agent_stream: Error: {}", message);
                         on_event(StreamEvent::Error(message));
                     }
-                    _ => {} // Ignore other events
+                    other => {
+                        tracing::debug!("run_agent_stream: other event: {:?}", other);
+                    } // Ignore other events
                 },
                 Err(e) => {
                     on_event(StreamEvent::Error(e.to_string()));

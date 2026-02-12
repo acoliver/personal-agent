@@ -9,11 +9,11 @@ use std::path::PathBuf;
 
 /// Cache metadata and data
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CachedRegistry {
+pub struct CachedRegistry {
     /// Timestamp when the cache was created
-    cached_at: DateTime<Utc>,
+    pub cached_at: DateTime<Utc>,
     /// The cached registry data
-    data: ModelRegistry,
+    pub data: ModelRegistry,
 }
 
 /// Cache manager for model registry

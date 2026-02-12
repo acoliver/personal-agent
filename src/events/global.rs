@@ -68,3 +68,14 @@ pub fn subscribe() -> broadcast::Receiver<AppEvent> {
     let bus = get_or_init_event_bus();
     bus.subscribe()
 }
+
+/// Get a clone of the global EventBus for use in Arc
+///
+/// This is used when you need to share the event bus across threads.
+/// The underlying broadcast channel is shared.
+pub fn get_event_bus_clone() -> EventBus {
+    // Create a new EventBus that shares the same sender
+    // We can't clone the static EventBus, so we subscribe to it
+    let bus = get_or_init_event_bus();
+    EventBus::from_sender(bus.sender().clone())
+}

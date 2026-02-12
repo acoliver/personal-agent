@@ -4,7 +4,7 @@ mod cache;
 mod models_dev;
 mod types;
 
-pub use cache::{CacheMetadata, RegistryCache};
+pub use cache::{CacheMetadata, CachedRegistry, RegistryCache};
 pub use models_dev::ModelsDevClient;
 pub use types::{Cost, Limit, Modalities, ModelInfo, ModelRegistry, Provider};
 

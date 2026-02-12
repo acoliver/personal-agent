@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-const REGISTRY_URL: &str = "https://models.dev.json";
+const REGISTRY_URL: &str = "https://models.dev/api.json";
 const CACHE_EXPIRY_HOURS: i64 = 24;
 
 /// HTTP cache implementation of ModelsRegistryService
@@ -42,45 +42,35 @@ impl ModelsRegistryServiceImpl {
 
     /// Fetch the registry from the URL
     async fn fetch_from_url(&self) -> Result<ModelRegistry, ServiceError> {
-        #[cfg(feature = "reqwest")]
-        {
-            let client = reqwest::Client::new();
-            let response = client
-                .get(REGISTRY_URL)
-                .send()
-                .await
-                .map_err(|e| ServiceError::Network(format!("Failed to fetch registry: {e}")))?;
+        // reqwest is always available as a dependency
+        let client = reqwest::Client::new();
+        let response = client
+            .get(REGISTRY_URL)
+            .send()
+            .await
+            .map_err(|e| ServiceError::Network(format!("Failed to fetch registry: {e}")))?;
 
-            if !response.status().is_success() {
-                return Err(ServiceError::Network(format!(
-                    "Registry returned status: {}",
-                    response.status()
-                )));
-            }
+        if !response.status().is_success() {
+            return Err(ServiceError::Network(format!(
+                "Registry returned status: {}",
+                response.status()
+            )));
+        }
 
-            // First try to parse as wrapped cache format
-            let text = response
-                .text()
-                .await
-                .map_err(|e| ServiceError::Network(format!("Failed to read response body: {e}")))?;
+        // First try to parse as wrapped cache format
+        let text = response
+            .text()
+            .await
+            .map_err(|e| ServiceError::Network(format!("Failed to read response body: {e}")))?;
 
             // Try to parse as CachedRegistry format (with cached_at and data fields)
-            if let Ok(cached) = serde_json::from_str::<crate::registry::cache::CachedRegistry>(&text) {
+            if let Ok(cached) = serde_json::from_str::<crate::registry::CachedRegistry>(&text) {
                 return Ok(cached.data);
             }
 
-            // Otherwise try direct ModelRegistry format
-            serde_json::from_str(&text)
-                .map_err(|e| ServiceError::Serialization(format!("Failed to parse registry: {e}")))
-        }
-
-        #[cfg(not(feature = "reqwest"))]
-        {
-            let _ = REGISTRY_URL; // Suppress unused warning
-            Err(ServiceError::Network(
-                "HTTP client not available. Build with 'reqwest' feature to enable fetching.".to_string(),
-            ))
-        }
+        // Otherwise try direct ModelRegistry format
+        serde_json::from_str(&text)
+            .map_err(|e| ServiceError::Serialization(format!("Failed to parse registry: {e}")))
     }
 }
 
@@ -188,9 +178,13 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
         })?;
 
         let mut all_models = Vec::new();
-        for provider in registry.providers.values() {
+        for (provider_id, provider) in &registry.providers {
             for model in provider.models.values() {
-                all_models.push(model.clone());
+                // Clone the model and set the provider field to the provider_id
+                // since the model's own provider field is often None or refers to something else
+                let mut model_with_provider = model.clone();
+                model_with_provider.provider = Some(provider_id.clone());
+                all_models.push(model_with_provider);
             }
         }
 
@@ -215,7 +209,7 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
 
-        for provider in registry.providers.values() {
+        for (provider_id, provider) in &registry.providers {
             for model in provider.models.values() {
                 if model.id.to_lowercase().contains(&query_lower)
                     || model.name.to_lowercase().contains(&query_lower)
@@ -224,7 +218,10 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
                         .as_ref()
                         .is_some_and(|f| f.to_lowercase().contains(&query_lower))
                 {
-                    results.push(model.clone());
+                    // Clone the model and set the provider field
+                    let mut model_with_provider = model.clone();
+                    model_with_provider.provider = Some(provider_id.clone());
+                    results.push(model_with_provider);
                 }
             }
         }

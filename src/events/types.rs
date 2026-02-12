@@ -116,6 +116,19 @@ pub enum UserEvent {
     /// User confirmed delete in dialog
     ConfirmDeleteMcp { id: Uuid },
 
+    // ===== Conversation Actions =====
+    /// User clicked delete conversation in history
+    /// @plan PLAN-20250130-GPUIREDUX.P05
+    DeleteConversation { id: Uuid },
+
+    /// User confirmed delete conversation
+    /// @plan PLAN-20250130-GPUIREDUX.P05
+    ConfirmDeleteConversation { id: Uuid },
+
+    /// User requested history refresh
+    /// @plan PLAN-20250130-GPUIREDUX.P05
+    RefreshHistory,
+
     /// User initiated OAuth flow
     StartMcpOAuth { id: Uuid, provider: String },
 
@@ -131,6 +144,29 @@ pub enum UserEvent {
 
     /// User selected a model
     SelectModel { provider_id: String, model_id: String },
+
+    /// User clicked refresh models registry
+    /// @plan PLAN-20250130-GPUIREDUX.P06
+    RefreshModelsRegistry,
+
+    // ===== Profile Editor Actions =====
+    /// User clicked save in profile editor (without full profile data)
+    /// @plan PLAN-20250130-GPUIREDUX.P08
+    SaveProfileEditor,
+
+    /// User clicked browse for keyfile
+    /// @plan PLAN-20250130-GPUIREDUX.P08
+    BrowseKeyfile,
+
+    // ===== MCP Add Actions =====
+    /// User clicked Next in MCP Add view
+    /// @plan PLAN-20250130-GPUIREDUX.P09
+    McpAddNext,
+
+    // ===== MCP Configure Actions =====
+    /// User clicked Save in MCP Configure view
+    /// @plan PLAN-20250130-GPUIREDUX.P10
+    SaveMcp,
 
     // ===== Navigation =====
     /// User clicked to navigate to a view
