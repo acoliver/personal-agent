@@ -4,13 +4,10 @@
 //! Provides CRUD operations and management of conversation history.
 
 use async_trait::async_trait;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::models::{Conversation, Message, MessageRole};
-use crate::services::{ServiceError, ServiceResult};
+use crate::models::{Conversation, Message};
+use crate::services::ServiceResult;
 
 /// Conversation service trait
 #[async_trait]

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use serdes_ai_mcp::McpServerConfig;
 
-use super::{ServiceError, ServiceResult};
+use super::ServiceResult;
 
 /// Status of an MCP server connection
 #[derive(Debug, Clone, PartialEq, Eq)]

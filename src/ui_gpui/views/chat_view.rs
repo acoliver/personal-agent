@@ -4,10 +4,10 @@
 //! @requirement REQ-GPUI-003
 
 use gpui::{div, prelude::*, px, SharedString, MouseButton, FocusHandle, FontWeight};
-use crate::ui_gpui::components::{UserBubble, AssistantBubble, IconButton};
+use crate::ui_gpui::components::AssistantBubble;
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::bridge::GpuiBridge;
-use crate::presentation::view_command::{ViewCommand, ViewId};
+use crate::presentation::view_command::ViewCommand;
 use crate::events::types::UserEvent;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -305,24 +305,11 @@ impl ChatView {
             .flex()
             .items_center()
             .justify_between()
-            // Left: icon + title
+            // Left: title
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
-                    .child(
-                        div()
-                            .size(px(24.0))
-                            .rounded(px(4.0))
-                            .bg(Theme::accent())
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(gpui::white())
-                            .text_size(px(14.0))
-                            .child("P")
-                    )
                     .child(
                         div()
                             .text_size(px(14.0))
@@ -347,10 +334,10 @@ impl ChatView {
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .when(show_thinking, |d| d.bg(Theme::accent()))
+                            .when(show_thinking, |d| d.bg(Theme::bg_dark()))
                             .when(!show_thinking, |d| d.hover(|s| s.bg(Theme::bg_dark())))
                             .text_size(px(14.0))
-                            .text_color(if show_thinking { gpui::white() } else { Theme::text_secondary() })
+                            .text_color(Theme::text_primary())
                             .child("T")
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
                                 tracing::info!("Toggle thinking clicked - emitting UserEvent");
@@ -372,7 +359,7 @@ impl ChatView {
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_dark()))
                             .text_size(px(14.0))
-                            .text_color(Theme::text_secondary())
+                            .text_color(Theme::text_primary())
                             .child("R")
                             .on_click(|_event, window, _cx| {
                                 println!(">>> RENAME BUTTON CLICKED <<<");
@@ -392,9 +379,9 @@ impl ChatView {
                             .cursor_pointer()
                             .bg(Theme::bg_darker())
                             .hover(|s| s.bg(Theme::bg_dark()))
-                            .active(|s| s.bg(Theme::accent()))
+                            .active(|s| s.bg(Theme::bg_dark()))
                             .text_size(px(14.0))
-                            .text_color(Theme::text_secondary())
+                            .text_color(Theme::text_primary())
                             .child("H")
                             .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
                                 println!(">>> HISTORY BUTTON CLICKED - using navigation_channel <<<");
@@ -415,7 +402,7 @@ impl ChatView {
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_dark()))
                             .text_size(px(14.0))
-                            .text_color(Theme::text_secondary())
+                            .text_color(Theme::text_primary())
                             .child("+")
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
                                 tracing::info!("New conversation clicked - emitting UserEvent");
@@ -439,9 +426,9 @@ impl ChatView {
                             .cursor_pointer()
                             .bg(Theme::bg_darker())
                             .hover(|s| s.bg(Theme::bg_dark()))
-                            .active(|s| s.bg(Theme::accent()))
+                            .active(|s| s.bg(Theme::bg_dark()))
                             .text_size(px(14.0))
-                            .text_color(Theme::text_secondary())
+                            .text_color(Theme::text_primary())
                             .child("\u{2699}")
                             .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
                                 println!(">>> SETTINGS BUTTON CLICKED - using navigation_channel <<<");
@@ -477,8 +464,6 @@ impl ChatView {
                     .py(px(4.0))
                     .rounded(px(4.0))
                     .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
                     .flex()
                     .items_center()
                     .justify_between()
@@ -492,17 +477,17 @@ impl ChatView {
                     .child(
                         div()
                             .text_size(px(10.0))
-                            .text_color(Theme::text_secondary())
+                            .text_color(Theme::text_primary())
                             .child("v")
                     )
             )
             // Model label
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(Theme::text_muted())
-                    .child(current_model)
-            )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(Theme::text_secondary())
+                            .child(current_model)
+                    )
     }
 
     /// Render the chat area with messages
@@ -529,7 +514,7 @@ impl ChatView {
                     .child(
                         div()
                             .text_size(px(14.0))
-                            .text_color(Theme::text_muted())
+                            .text_color(Theme::text_secondary())
                             .child("No messages yet")
                     )
             })
@@ -685,8 +670,6 @@ impl ChatView {
                     .p(px(Theme::SPACING_SM))
                     .bg(Theme::bg_darkest())
                     .rounded(px(Theme::RADIUS_MD))
-                    .border_1()
-                    .border_color(Theme::accent())
                     .cursor_text()
                     .on_mouse_down(MouseButton::Left, {
                         let focus_handle = focus_handle.clone();
@@ -698,8 +681,8 @@ impl ChatView {
                     .child(
                         if input_text.is_empty() {
                             div()
-                                .text_color(Theme::text_muted())
-                                .child("Type your message...")
+                                .text_color(Theme::text_secondary())
+                                .child("Type a message...")
                         } else {
                             div()
                                 .text_color(Theme::text_primary())
@@ -728,9 +711,9 @@ impl ChatView {
                             }))
                     })
                     .when(!is_streaming && has_text, |d| {
-                        d.bg(Theme::accent())
-                            .text_color(gpui::white())
-                            .hover(|s| s.bg(Theme::accent_hover()))
+                        d.bg(Theme::bg_dark())
+                            .text_color(Theme::text_primary())
+                            .hover(|s| s.bg(Theme::bg_darker()))
                             .child("Send")
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
                                 let text = this.state.input_text.clone();
@@ -752,7 +735,7 @@ impl ChatView {
                     })
                     .when(!is_streaming && !has_text, |d| {
                         d.bg(Theme::bg_dark())
-                            .text_color(Theme::text_muted())
+                            .text_color(Theme::text_secondary())
                             .child("Send")
                     })
             )

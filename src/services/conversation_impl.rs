@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use uuid::Uuid;
 use async_trait::async_trait;
 
-use crate::models::{Conversation, Message, MessageRole};
+use crate::models::{Conversation, Message};
 use crate::services::{ServiceError, ServiceResult};
 use crate::services::conversation::ConversationService;
 

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::bridge::GpuiBridge;
-use crate::events::types::{UserEvent, ViewId};
+use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
 
 /// Represents a profile in the settings list
@@ -235,7 +235,7 @@ impl SettingsView {
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
                     .text_size(px(12.0))
-                    .text_color(Theme::text_secondary())
+                    .text_color(Theme::text_primary())
                     .child("Refresh Models")
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
                         tracing::info!("Refresh Models clicked");
@@ -286,7 +286,7 @@ impl SettingsView {
             .child(
                 div()
                     .text_size(px(11.0))
-                    .text_color(Theme::text_secondary())
+                    .text_color(Theme::text_primary())
                     .child("PROFILES")
             )
             // List box
@@ -484,7 +484,7 @@ impl SettingsView {
             .child(
                 div()
                     .text_size(px(11.0))
-                    .text_color(Theme::text_secondary())
+                    .text_color(Theme::text_primary())
                     .child("MCP TOOLS")
             )
             // List box
@@ -605,7 +605,7 @@ impl SettingsView {
             .child(
                 div()
                     .text_size(px(11.0))
-                    .text_color(Theme::text_secondary())
+                    .text_color(Theme::text_primary())
                     .child("GLOBAL HOTKEY")
             )
             // Hotkey field

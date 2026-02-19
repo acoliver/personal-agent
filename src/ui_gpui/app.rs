@@ -7,15 +7,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::events::EventBus;
-use crate::presentation::view_command::{ViewCommand, ViewId};
-use crate::ui_gpui::bridge::{GpuiBridge, GpuiNotifier, ViewCommandSink};
+use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::tray_bridge::TrayBridge;
 use crate::ui_gpui::popup_window::PopupWindow;
 
 /// Main GPUI application struct
 pub struct GpuiApp {
     /// Event bus for application-wide event handling
-    event_bus: Arc<EventBus>,
+    _event_bus: Arc<EventBus>,
     /// GPUI bridge for UI event handling
     gpui_bridge: Arc<GpuiBridge>,
     /// Tray bridge for menu bar integration
@@ -37,7 +36,7 @@ impl GpuiApp {
         let _ = (user_rx, view_cmd_tx);
         
         Ok(Self {
-            event_bus,
+            _event_bus: event_bus,
             gpui_bridge,
             tray_bridge: None,
             popup_window: None,

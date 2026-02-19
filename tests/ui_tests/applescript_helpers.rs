@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! AppleScript helpers for UI automation testing
 //!
 //! This module provides utilities to run AppleScript commands from Rust tests

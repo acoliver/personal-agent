@@ -49,7 +49,7 @@ use objc2_app_kit::{
     NSStatusBar, NSStatusItem, NSVariableStatusItemLength, NSImage, NSEvent,
 };
 #[cfg(target_os = "macos")]
-use objc2_foundation::{NSData, NSSize, NSString};
+use objc2_foundation::{NSData, NSRect, NSSize, NSString};
 
 // ============================================================================
 // Thread-local storage for status item
@@ -113,9 +113,7 @@ impl SystemTray {
         info!("Set activation policy to Regular");
         
         // Activate the application to ensure it receives events
-        unsafe {
-            app.activateIgnoringOtherApps(true);
-        }
+        app.activate();
         info!("Application activated");
 
         // Create status item
@@ -175,17 +173,20 @@ impl SystemTray {
                 if was_down && !is_down {
                     // Check if mouse is over our status item
                     let mouse_loc = NSEvent::mouseLocation();
-                    
+
                     let status_item = STATUS_ITEM.take();
                     let is_our_click = if let Some(ref item) = status_item {
                         if let Some(mtm) = MainThreadMarker::new() {
                             if let Some(button) = item.button(mtm) {
                                 if let Some(window) = button.window() {
-                                    let frame = window.frame();
-                                    let in_x = mouse_loc.x >= frame.origin.x 
-                                        && mouse_loc.x <= frame.origin.x + frame.size.width;
-                                    let in_y = mouse_loc.y >= frame.origin.y 
-                                        && mouse_loc.y <= frame.origin.y + frame.size.height;
+                                    let button_bounds = button.bounds();
+                                    let button_in_window = button.convertRect_toView(button_bounds, None);
+                                    let button_on_screen = window.convertRectToScreen(button_in_window);
+
+                                    let in_x = mouse_loc.x >= button_on_screen.origin.x
+                                        && mouse_loc.x <= button_on_screen.origin.x + button_on_screen.size.width;
+                                    let in_y = mouse_loc.y >= button_on_screen.origin.y
+                                        && mouse_loc.y <= button_on_screen.origin.y + button_on_screen.size.height;
                                     in_x && in_y
                                 } else {
                                     false
@@ -200,7 +201,7 @@ impl SystemTray {
                         false
                     };
                     STATUS_ITEM.set(status_item);
-                    
+
                     if is_our_click {
                         println!(">>> POLLING: Click on status item detected! <<<");
                         let _ = cx.update_global::<SystemTray, _>(|tray, cx| {
@@ -290,10 +291,33 @@ impl SystemTray {
             if let Some(mtm) = MainThreadMarker::new() {
                 if let Some(button) = item.button(mtm) {
                     if let Some(window) = button.window() {
-                        let frame = window.frame();
-                        let x = frame.origin.x as f32 + (frame.size.width as f32 / 2.0) - (menu_width / 2.0);
-                        let y = frame.origin.y as f32 - menu_height - 5.0;
-                        (x, y)
+                        let button_bounds = button.bounds();
+                        let button_in_window = button.convertRect_toView(button_bounds, None);
+                        let button_on_screen = window.convertRectToScreen(button_in_window);
+
+                        let icon_center_x =
+                            button_on_screen.origin.x + (button_on_screen.size.width / 2.0);
+                        let icon_bottom_y = button_on_screen.origin.y;
+
+                        // GPUI expects window origins in display-relative top-left coordinates.
+                        // AppKit screen coordinates are bottom-left based, so convert accordingly.
+                        if let Some(screen) = window.screen() {
+                            let screen_frame = screen.frame();
+                            let popup_left = icon_center_x - (menu_width as f64 / 2.0);
+                            let popup_top = icon_bottom_y - 6.0;
+                            let min_popup_top = screen_frame.origin.y + menu_height as f64;
+                            let popup_top = popup_top.max(min_popup_top);
+
+                            let x = (popup_left - screen_frame.origin.x) as f32;
+                            let y =
+                                (screen_frame.origin.y + screen_frame.size.height - popup_top)
+                                    as f32;
+                            (x, y)
+                        } else {
+                            let x = icon_center_x as f32 - (menu_width / 2.0);
+                            let y = icon_bottom_y as f32 - menu_height - 6.0;
+                            (x, y)
+                        }
                     } else {
                         (100.0, 30.0)
                     }
@@ -310,6 +334,7 @@ impl SystemTray {
         result
     }
 }
+
 
 #[cfg(not(target_os = "macos"))]
 impl SystemTray {
@@ -372,49 +397,11 @@ fn main() {
         cx.set_global(main_panel_state);
 
         // Initialize system tray
-        let mut tray = SystemTray::new(mtm);
+        let tray = SystemTray::new(mtm);
         tray.start_click_listener(cx);
         cx.set_global(tray);
         
-        // Open a simple test window instead of using system tray popup
-        // This ensures GPUI event handling works
-        info!("Opening test window...");
-        let test_window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: Point {
-                    x: px(100.0),
-                    y: px(100.0),
-                },
-                size: Size {
-                    width: px(400.0),
-                    height: px(600.0),
-                },
-            })),
-            kind: WindowKind::Normal,
-            focus: true,
-            show: true,
-            display_id: None,
-            titlebar: None,
-            window_background: WindowBackgroundAppearance::Opaque,
-            app_id: Some("com.personalagent.gpui".to_string()),
-            window_min_size: None,
-            window_decorations: Some(WindowDecorations::Client),
-            is_movable: true,
-            is_resizable: true,
-            is_minimizable: true,
-            tabbing_identifier: None,
-        };
-        
-        match cx.open_window(test_window_options, |_window, cx| {
-            cx.new(|cx| MainPanel::new(cx))
-        }) {
-            Ok(_) => {
-                info!("Test window opened successfully");
-            }
-            Err(e) => {
-                tracing::error!("Failed to open test window: {:?}", e);
-            }
-        }
+        info!("GPUI initialized in tray mode; click the status icon to open popup");
 
         // Spawn tokio runtime for services and presenters
         let event_bus_for_tokio = Arc::clone(&event_bus);
@@ -439,7 +426,7 @@ fn main() {
                 let _ = std::fs::create_dir_all(&conversations_dir);
                 
                 // Initialize services (following app.rs pattern)
-                let secrets_service: Arc<dyn SecretsService> = Arc::new(
+                let _secrets_service: Arc<dyn SecretsService> = Arc::new(
                     SecretsServiceImpl::new(secrets_path)
                         .expect("Failed to create SecretsService")
                 );

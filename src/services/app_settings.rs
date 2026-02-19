@@ -5,8 +5,6 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use super::ServiceResult;
@@ -57,6 +55,7 @@ pub trait AppSettingsService: Send + Sync {
 /// Application settings data structure
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[allow(dead_code)]
 struct Settings {
     /// Schema version for migrations
     version: u32,

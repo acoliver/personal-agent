@@ -1,7 +1,7 @@
 //! MCP registry service implementation
 
 use super::{McpRegistryEntry, McpRegistryService, ServiceError, ServiceResult};
-use crate::mcp::registry::{McpRegistry, McpRegistrySource};
+use crate::mcp::registry::McpRegistry;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::bridge::GpuiBridge;
-use crate::events::types::{UserEvent, ViewId};
+use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
 
 /// Auth method enum for display
@@ -841,7 +841,7 @@ impl ProfileEditorView {
             .flex_1()
             .w_full()
             .bg(Theme::bg_base())
-            .overflow_hidden()
+            .overflow_y_scroll()
             .p(px(12.0))
             .flex()
             .flex_col()

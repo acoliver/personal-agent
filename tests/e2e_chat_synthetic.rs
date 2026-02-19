@@ -8,7 +8,6 @@
 //! - ~/.synthetic_key (API key)
 
 use personal_agent::{AuthConfig, LlmClient, ModelProfile};
-use std::path::PathBuf;
 
 /// Load synthetic profile from ~/.llxprt/profiles/synthetic.json
 fn load_synthetic_profile() -> ModelProfile {

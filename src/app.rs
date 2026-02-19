@@ -50,12 +50,6 @@ pub struct App {
 trait PresenterLifecycle: Send + Sync {
     /// Start the presenter
     fn start(&mut self) -> Result<(), AppError>;
-
-    /// Stop the presenter
-    fn stop(&mut self) -> Result<(), AppError>;
-
-    /// Check if running
-    fn is_running(&self) -> bool;
 }
 
 /// Application error type
@@ -205,40 +199,36 @@ impl App {
 
         // Create presenters with their dependencies
         let chat_presenter = ChatPresenterWrapper {
-            presenter: ChatPresenter::new(
+            _presenter: ChatPresenter::new(
                 Arc::clone(&_event_bus),
                 Arc::clone(&services.conversation),
                 Arc::clone(&services.chat),
                 chat_view_tx,
             ),
-            running: false,
         };
         presenters.push(Box::new(chat_presenter));
 
         let settings_presenter = SettingsPresenterWrapper {
-            presenter: SettingsPresenter::new(
+            _presenter: SettingsPresenter::new(
                 Arc::clone(&services.profile),
                 Arc::clone(&services.app_settings),
                 &dummy_app_tx,
                 settings_view_tx,
             ),
-            running: false,
         };
         presenters.push(Box::new(settings_presenter));
 
         let history_presenter = HistoryPresenterWrapper {
-            presenter: HistoryPresenter::new(
+            _presenter: HistoryPresenter::new(
                 Arc::clone(&(_event_bus)),
                 Arc::clone(&services.conversation),
                 history_view_tx,
             ),
-            running: false,
         };
         presenters.push(Box::new(history_presenter));
 
         let error_presenter = ErrorPresenterWrapper {
-            presenter: ErrorPresenter::new(&dummy_app_tx, error_view_tx),
-            running: false,
+            _presenter: ErrorPresenter::new(&dummy_app_tx, error_view_tx),
         };
         presenters.push(Box::new(error_presenter));
 
@@ -264,10 +254,8 @@ impl App {
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
     pub async fn shutdown(mut self) -> Result<(), AppError> {
-        // Stop all presenters (no-op for now - they'll stop when app drops)
-        for _presenter in &mut self.presenters {
-            // presenter.stop()?; // Commented out to avoid runtime issues
-        }
+        // Presenters will stop when app drops.
+        let _ = &mut self.presenters;
 
         Ok(())
     }
@@ -328,96 +316,42 @@ impl AppContext {
 // Presenter wrappers to implement PresenterLifecycle trait
 
 struct ChatPresenterWrapper {
-    presenter: ChatPresenter,
-    running: bool,
+    _presenter: ChatPresenter,
 }
 
 impl PresenterLifecycle for ChatPresenterWrapper {
     fn start(&mut self) -> Result<(), AppError> {
-        // Don't block - the presenter spawns its own task
-        // Mark as running immediately
-        self.running = true;
         Ok(())
-    }
-
-    fn stop(&mut self) -> Result<(), AppError> {
-        // Mark as stopped immediately
-        self.running = false;
-        // The presenter task will exit on its own when it sees the running flag is false
-        Ok(())
-    }
-
-    fn is_running(&self) -> bool {
-        self.running
     }
 }
 
 struct SettingsPresenterWrapper {
-    presenter: SettingsPresenter,
-    running: bool,
+    _presenter: SettingsPresenter,
 }
 
 impl PresenterLifecycle for SettingsPresenterWrapper {
     fn start(&mut self) -> Result<(), AppError> {
-        self.running = true;
         Ok(())
-    }
-
-    fn stop(&mut self) -> Result<(), AppError> {
-        // Mark as stopped immediately
-        self.running = false;
-        // The presenter task will exit on its own when it sees the running flag is false
-        Ok(())
-    }
-
-    fn is_running(&self) -> bool {
-        self.running
     }
 }
 
 struct HistoryPresenterWrapper {
-    presenter: HistoryPresenter,
-    running: bool,
+    _presenter: HistoryPresenter,
 }
 
 impl PresenterLifecycle for HistoryPresenterWrapper {
     fn start(&mut self) -> Result<(), AppError> {
-        self.running = true;
         Ok(())
-    }
-
-    fn stop(&mut self) -> Result<(), AppError> {
-        // Mark as stopped immediately
-        self.running = false;
-        // The presenter task will exit on its own when it sees the running flag is false
-        Ok(())
-    }
-
-    fn is_running(&self) -> bool {
-        self.running
     }
 }
 
 struct ErrorPresenterWrapper {
-    presenter: ErrorPresenter,
-    running: bool,
+    _presenter: ErrorPresenter,
 }
 
 impl PresenterLifecycle for ErrorPresenterWrapper {
     fn start(&mut self) -> Result<(), AppError> {
-        self.running = true;
         Ok(())
-    }
-
-    fn stop(&mut self) -> Result<(), AppError> {
-        // Mark as stopped immediately
-        self.running = false;
-        // The presenter task will exit on its own when it sees the running flag is false
-        Ok(())
-    }
-
-    fn is_running(&self) -> bool {
-        self.running
     }
 }
 

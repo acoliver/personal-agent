@@ -181,16 +181,6 @@ impl McpConfigurePresenter {
         }
     }
 
-    /// Handle config saved event
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    async fn on_config_saved(
-        view_tx: &broadcast::Sender<ViewCommand>,
-        id: Uuid,
-    ) {
-        let _ = view_tx.send(ViewCommand::McpConfigSaved { id });
-        tracing::info!("MCP server configured: {}", id);
-    }
 }
 
 // Implement Presenter trait

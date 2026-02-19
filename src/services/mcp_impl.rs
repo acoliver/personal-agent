@@ -6,18 +6,17 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
-use crate::mcp::registry::McpRegistry;
 
 /// File-based implementation of McpService
 pub struct McpServiceImpl {
     config_dir: PathBuf,
     configs: Arc<RwLock<Vec<StoredMcpConfig>>>,
     status_map: Arc<RwLock<HashMap<Uuid, McpServerStatus>>>,
-    is_refreshing: Arc<AtomicBool>,
+    _is_refreshing: Arc<AtomicBool>,
 }
 
 /// Internal storage format for MCP configs with UUID
@@ -94,7 +93,7 @@ impl McpServiceImpl {
             config_dir,
             configs: Arc::new(RwLock::new(Vec::new())),
             status_map: Arc::new(RwLock::new(HashMap::new())),
-            is_refreshing: Arc::new(AtomicBool::new(false)),
+            _is_refreshing: Arc::new(AtomicBool::new(false)),
         };
 
         // Don't load existing configs in new() to avoid blocking_write()
@@ -268,7 +267,7 @@ impl McpService for McpServiceImpl {
         // Note: ignoring env for now as McpTransportConfig::Stdio doesn't support it
         let _ = env;
         let server_uuid = Uuid::new_v4();
-        let config = McpServerConfig {
+        let _config = McpServerConfig {
             name: name.clone(),
             transport: McpTransportConfig::Stdio {
                 command: command.clone(),
@@ -444,7 +443,7 @@ mod tests {
         service.initialize().await.unwrap();
 
         // Add server
-        let config = service
+        let _config = service
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
@@ -467,7 +466,7 @@ mod tests {
         let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let config = service
+        let _config = service
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
@@ -493,7 +492,7 @@ mod tests {
         let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let config = service
+        let _config = service
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
@@ -524,7 +523,7 @@ mod tests {
         let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let config = service
+        let _config = service
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
@@ -554,7 +553,7 @@ mod tests {
         let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let config = service
+        let _config = service
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
@@ -582,7 +581,7 @@ mod tests {
         let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let config = service
+        let _config = service
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
@@ -610,7 +609,7 @@ mod tests {
         let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let config = service
+        let _config = service
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),

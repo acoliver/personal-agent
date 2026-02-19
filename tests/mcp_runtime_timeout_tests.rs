@@ -1,5 +1,3 @@
-use personal_agent::mcp::McpRuntime;
-
 struct HangingTransport;
 
 #[async_trait::async_trait]
@@ -30,7 +28,7 @@ impl serdes_ai::mcp::McpTransport for HangingTransport {
 #[tokio::test]
 async fn call_tool_times_out_and_sets_error() {
     let transport = HangingTransport;
-    let mut client = serdes_ai::mcp::McpClient::new(transport);
+    let client = serdes_ai::mcp::McpClient::new(transport);
 
     let result = client
         .call_tool("hang", serde_json::json!({}))

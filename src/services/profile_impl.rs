@@ -332,7 +332,7 @@ mod tests {
         let auth = AuthConfig::Key { value: "test-key".to_string() };
         let params = ModelParameters::default();
 
-        let profile = service
+        let _profile = service
             .create("Profile 1".to_string(), "openai".to_string(), "gpt-4".to_string(), auth, params)
             .await
             .unwrap();

@@ -153,7 +153,7 @@ impl HistoryPresenter {
         event: ConversationEvent,
     ) {
         match event {
-            ConversationEvent::Created { id, title } => {
+            ConversationEvent::Created { id, title: _ } => {
                 let _ = view_tx.send(ViewCommand::ConversationCreated {
                     id,
                     profile_id: Uuid::nil(),
@@ -223,7 +223,7 @@ impl Presenter for HistoryPresenter {
 /// @requirement REQ-025.1
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     /// Test handle select conversation
     /// @plan PLAN-20250128-PRESENTERS.P02

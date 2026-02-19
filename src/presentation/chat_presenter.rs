@@ -359,7 +359,7 @@ impl ChatPresenter {
         event: ConversationEvent,
     ) {
         match event {
-            ConversationEvent::Created { id, title } => {
+            ConversationEvent::Created { id, title: _ } => {
                 let _ = view_tx.send(ViewCommand::ConversationCreated {
                     id,
                     profile_id: Uuid::nil(),
@@ -597,7 +597,7 @@ mod tests {
         _content: String,
     ) -> Result<Box<dyn futures::Stream<Item = crate::services::ChatStreamEvent> + Send + Unpin>, crate::services::ServiceError> {
             // Return empty stream
-            use futures::StreamExt;
+            
             let stream = futures::stream::empty::<crate::services::ChatStreamEvent>();
             Ok(Box::new(stream))
         }
@@ -616,7 +616,7 @@ mod tests {
     /// @requirement REQ-027.1
     #[tokio::test]
     async fn test_handle_send_message_emits_events() {
-        let (event_tx, _) = broadcast::channel::<AppEvent>(100);
+        let (_event_tx, _) = broadcast::channel::<AppEvent>(100);
         let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
 
         let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;

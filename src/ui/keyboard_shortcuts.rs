@@ -23,6 +23,7 @@ use objc2_app_kit::{NSMenu, NSMenuItem, NSEventModifierFlags};
 use objc2_foundation::{MainThreadMarker, NSString};
 
 /// Create the application menu with keyboard shortcuts
+#[allow(dead_code)]
 pub fn create_app_menu_with_shortcuts(mtm: MainThreadMarker) -> Retained<NSMenu> {
     let menu = NSMenu::initWithTitle(mtm.alloc(), &NSString::from_str("PersonalAgent"));
     
@@ -53,6 +54,7 @@ pub fn create_app_menu_with_shortcuts(mtm: MainThreadMarker) -> Retained<NSMenu>
     menu
 }
 
+#[allow(dead_code)]
 unsafe fn add_menu_item(
     menu: &NSMenu,
     mtm: MainThreadMarker,
@@ -82,6 +84,7 @@ unsafe fn add_menu_item(
 }
 
 /// Add shortcuts menu to the main menu bar
+#[allow(dead_code)]
 pub fn add_shortcuts_to_menu_bar(main_menu: &NSMenu, mtm: MainThreadMarker) {
     let shortcuts_menu = create_app_menu_with_shortcuts(mtm);
     

@@ -287,7 +287,7 @@ impl ModelSelectorView {
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
                     .text_size(px(12.0))
-                    .text_color(Theme::text_secondary())
+                    .text_color(Theme::text_primary())
                     .child("Cancel")
                     .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
                         crate::ui_gpui::navigation_channel().request_navigate(
@@ -366,7 +366,7 @@ impl ModelSelectorView {
                     .child(
                         div()
                             .text_size(px(11.0))
-                            .text_color(Theme::text_secondary())
+                            .text_color(Theme::text_primary())
                             .child("Provider:")
                     )
                     .child(
@@ -442,7 +442,7 @@ impl ModelSelectorView {
                     .child(
                         div()
                             .text_size(px(11.0))
-                            .text_color(Theme::text_secondary())
+                            .text_color(Theme::text_primary())
                             .child("Reasoning")
                     )
             )
@@ -474,7 +474,7 @@ impl ModelSelectorView {
                     .child(
                         div()
                             .text_size(px(11.0))
-                            .text_color(Theme::text_secondary())
+                            .text_color(Theme::text_primary())
                             .child("Vision")
                     )
             )
@@ -493,8 +493,8 @@ impl ModelSelectorView {
             .px(px(12.0))
             .flex()
             .items_center()
-            .text_size(px(10.0))
-            .text_color(Theme::text_secondary())
+                    .text_size(px(10.0))
+                    .text_color(Theme::text_primary())
             .child(
                 div()
                     .flex_1()
@@ -576,7 +576,7 @@ impl ModelSelectorView {
                     .w(px(50.0))
                     .flex()
                     .justify_end()
-                    .text_color(Theme::text_secondary())
+                    .text_color(Theme::text_primary())
                     .child(context)
             )
             .child(
@@ -584,7 +584,7 @@ impl ModelSelectorView {
                     .w(px(40.0))
                     .flex()
                     .justify_center()
-                    .text_color(Theme::text_muted())
+                    .text_color(Theme::text_secondary())
                     .child(caps)
             )
             .child(
@@ -592,7 +592,7 @@ impl ModelSelectorView {
                     .w(px(50.0))
                     .flex()
                     .justify_end()
-                    .text_color(Theme::text_secondary())
+                    .text_color(Theme::text_primary())
                     .child(cost_in)
             )
             .child(
@@ -600,7 +600,7 @@ impl ModelSelectorView {
                     .w(px(50.0))
                     .flex()
                     .justify_end()
-                    .text_color(Theme::text_secondary())
+                    .text_color(Theme::text_primary())
                     .child(cost_out)
             )
     }
@@ -685,7 +685,7 @@ impl ModelSelectorView {
             .flex()
             .items_center()
             .text_size(px(11.0))
-            .text_color(Theme::text_secondary())
+            .text_color(Theme::text_primary())
             .child(format!("{} models from {} providers", model_count, provider_count))
     }
     

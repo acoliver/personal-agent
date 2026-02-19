@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use gpui::{div, px, prelude::*, Entity, Global, FocusHandle, MouseButton};
+use gpui::{div, prelude::*, Entity, Global, FocusHandle, MouseButton};
 use crate::presentation::view_command::{ViewCommand, ViewId};
 use crate::ui_gpui::navigation::NavigationState;
 use crate::ui_gpui::views::chat_view::{ChatView, ChatState};
@@ -64,7 +64,7 @@ impl MainPanel {
         tracing::info!("MainPanel::init - bridge is_some: {}", bridge.is_some());
         
         // Set up navigation channel notify callback to trigger MainPanel redraw
-        let entity_id = cx.entity_id();
+        let _entity_id = cx.entity_id();
         // We can't directly call cx.notify() from outside, so we use a shared flag
         // that render() will check
         println!(">>> MainPanel::init - setting up navigation notify callback <<<");

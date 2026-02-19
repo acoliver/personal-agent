@@ -159,7 +159,7 @@ Context: {}", source, error, ctx)
         event: ChatEvent,
     ) {
         match event {
-            ChatEvent::StreamError { conversation_id, error, recoverable } => {
+            ChatEvent::StreamError { conversation_id: _, error, recoverable } => {
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "Chat Error".to_string(),
                     message: error.clone(),
@@ -179,14 +179,14 @@ Context: {}", source, error, ctx)
         event: McpEvent,
     ) {
         match event {
-            McpEvent::StartFailed { id, name, error } => {
+            McpEvent::StartFailed { id: _, name, error } => {
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "MCP Server Error".to_string(),
                     message: format!("Failed to start MCP server '{}': {}", name, error),
                     severity: ErrorSeverity::Error,
                 }).await;
             }
-            McpEvent::Unhealthy { id, name, error } => {
+            McpEvent::Unhealthy { id: _, name, error } => {
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "MCP Server Unhealthy".to_string(),
                     message: format!("MCP server '{}' is unhealthy: {}", name, error),
@@ -231,7 +231,7 @@ mod tests {
     /// @requirement REQ-027.4
     #[tokio::test]
     async fn test_handle_system_error() {
-        let (event_tx, _) = broadcast::channel::<AppEvent>(100);
+        let (_event_tx, _) = broadcast::channel::<AppEvent>(100);
         let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
 
         let event = SystemEvent::Error {

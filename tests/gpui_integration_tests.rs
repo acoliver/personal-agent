@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use personal_agent::events::types::UserEvent;
 use personal_agent::ui_gpui::bridge::GpuiBridge;
-use personal_agent::ui_gpui::views::chat_view::{ChatState, ChatMessage, StreamingState};
-use personal_agent::ui_gpui::views::main_panel::MainPanel;
+use personal_agent::ui_gpui::navigation::NavigationState;
+use personal_agent::ui_gpui::views::chat_view::{ChatMessage, ChatState, MessageRole, StreamingState};
 use personal_agent::presentation::view_command::ViewId;
 
 // ============================================================================
@@ -16,9 +16,9 @@ use personal_agent::presentation::view_command::ViewId;
 // ============================================================================
 
 #[test]
-fn test_main_panel_initial_state() {
-    let panel = MainPanel::new();
-    assert_eq!(panel.current_view(), ViewId::Chat);
+fn test_navigation_initial_state() {
+    let navigation = NavigationState::new();
+    assert_eq!(navigation.current(), ViewId::Chat);
 }
 
 #[test]
@@ -87,10 +87,10 @@ fn test_chat_state_message_persistence() {
     let mut state = ChatState::new();
     
     // Add multiple messages
-    state.add_message(ChatMessage::new("user", "First message"));
-    state.add_message(ChatMessage::new("assistant", "First response"));
-    state.add_message(ChatMessage::new("user", "Second message"));
-    state.add_message(ChatMessage::new("assistant", "Second response"));
+    state.add_message(ChatMessage::user("First message"));
+    state.add_message(ChatMessage::assistant("First response", "test-model"));
+    state.add_message(ChatMessage::user("Second message"));
+    state.add_message(ChatMessage::assistant("Second response", "test-model"));
     
     assert_eq!(state.messages.len(), 4);
     assert_eq!(state.messages[0].content, "First message");
@@ -101,11 +101,9 @@ fn test_chat_state_message_persistence() {
 
 #[test]
 fn test_chat_message_with_metadata() {
-    let msg = ChatMessage::new("assistant", "Response")
-        .with_timestamp(1234567890)
-        .with_model_id("claude-3");
-    
-    assert_eq!(msg.role, "assistant");
+    let msg = ChatMessage::assistant("Response", "claude-3").with_timestamp(1234567890);
+
+    assert_eq!(msg.role, MessageRole::Assistant);
     assert_eq!(msg.content, "Response");
     assert_eq!(msg.timestamp, Some(1234567890));
     assert_eq!(msg.model_id, Some("claude-3".to_string()));

@@ -9,9 +9,9 @@ use crate::events::types::ChatEvent;
 use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::llm::AgentClientExt;
 use crate::mcp::McpService;
-use crate::models::{Message, MessageRole};
+use crate::models::MessageRole;
 use crate::services::ConversationService;
-use futures::{stream, Stream, StreamExt};
+use futures::{stream, Stream};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -125,7 +125,7 @@ impl ChatService for ChatServiceImpl {
         let model_id = profile.model_id.clone();
 
         // Emit stream started event
-        emit(AppEvent::Chat(ChatEvent::StreamStarted {
+        let _ = emit(AppEvent::Chat(ChatEvent::StreamStarted {
             conversation_id,
             message_id,
             model_id: model_id.clone(),
@@ -164,7 +164,7 @@ impl ChatService for ChatServiceImpl {
                 Ok(a) => a,
                 Err(e) => {
                     let err_msg = format!("Failed to create agent: {}", e);
-                    emit(AppEvent::Chat(ChatEvent::StreamError {
+                    let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
                         conversation_id: event_conversation_id,
                         error: err_msg.clone(),
                         recoverable: false,
@@ -182,20 +182,20 @@ impl ChatService for ChatServiceImpl {
                     LlmStreamEvent::TextDelta(text) => {
                         // Emit ChatEvent via EventBus for real-time UI updates
                         tracing::info!("ChatService emitting TextDelta: '{}'", text);
-                        emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+                        let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
                         // Also send to stream for caller
                         let _ = tx.send(ChatStreamEvent::Token(text.clone()));
                         response_text.push_str(&text);
                     }
                     LlmStreamEvent::ThinkingDelta(text) => {
-                        emit(AppEvent::Chat(ChatEvent::ThinkingDelta { text: text.clone() }));
+                        let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta { text: text.clone() }));
                         thinking_text.push_str(&text);
                     }
                     LlmStreamEvent::Complete => {
                         let _ = tx.send(ChatStreamEvent::Complete);
                     }
                     LlmStreamEvent::Error(err) => {
-                        emit(AppEvent::Chat(ChatEvent::StreamError {
+                        let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
                             conversation_id: event_conversation_id,
                             error: err.clone(),
                             recoverable: false,
@@ -208,7 +208,7 @@ impl ChatService for ChatServiceImpl {
                 }
             }).await {
                 let err_msg = e.to_string();
-                emit(AppEvent::Chat(ChatEvent::StreamError {
+                let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
                     conversation_id: event_conversation_id,
                     error: err_msg.clone(),
                     recoverable: false,
@@ -229,7 +229,7 @@ impl ChatService for ChatServiceImpl {
             }
 
             // Emit StreamCompleted event
-            emit(AppEvent::Chat(ChatEvent::StreamCompleted {
+            let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
                 conversation_id: event_conversation_id,
                 message_id: Uuid::new_v4(),
                 total_tokens: None,
@@ -265,7 +265,7 @@ impl ChatService for ChatServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AuthConfig, ModelParameters, Message, MessageRole};
+    use crate::models::{AuthConfig, ModelParameters, Message};
     use std::sync::Arc;
 
     struct MockConversationService {

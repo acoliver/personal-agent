@@ -17,12 +17,11 @@
 use personal_agent::{
     events::{AppEvent, bus::EventBus, types::{ChatEvent, UserEvent}},
     presentation::{chat_presenter::ChatPresenter, view_command::ViewCommand},
-    services::{ChatService, ConversationService, chat_impl::ChatServiceImpl, conversation_impl::ConversationServiceImpl, profile_impl::ProfileServiceImpl, secrets_impl::SecretsServiceImpl, app_settings_impl::AppSettingsServiceImpl},
+    services::{ChatService, ConversationService, chat_impl::ChatServiceImpl, conversation_impl::ConversationServiceImpl, profile_impl::ProfileServiceImpl, secrets_impl::SecretsServiceImpl},
     models::ModelProfile,
     LlmClient,
 };
 use std::sync::Arc;
-use std::path::PathBuf;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -79,29 +78,6 @@ impl ViewCommandCollector {
             receiver,
             timeout_ms,
         }
-    }
-
-    /// Collect ViewCommands until we receive the expected count or timeout
-    async fn collect_at_least(&mut self, min_count: usize) -> Vec<ViewCommand> {
-        let mut commands = Vec::new();
-        let start = std::time::Instant::now();
-        let timeout = tokio::time::Duration::from_millis(self.timeout_ms);
-
-        while commands.len() < min_count {
-            let elapsed = start.elapsed();
-            if elapsed >= timeout {
-                break;
-            }
-            let remaining = timeout - elapsed;
-
-            match tokio::time::timeout(remaining, self.receiver.recv()).await {
-                Ok(Some(cmd)) => commands.push(cmd),
-                Ok(None) => break, // Channel closed
-                Err(_) => break,   // Timeout
-            }
-        }
-
-        commands
     }
 
     /// Collect all commands received within timeout

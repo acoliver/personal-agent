@@ -3,7 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P02
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, FocusHandle, Focusable, IntoElement, Styled, Window, Context};
+use gpui::{div, prelude::*, px, FocusHandle, Focusable, Styled, Window, Context};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -26,7 +26,7 @@ impl TextField {
         }
     }
 
-    pub fn with_text(mut self, text: impl Into<String>) -> Self {
+    pub fn with_text(self, text: impl Into<String>) -> Self {
         *self.text.borrow_mut() = text.into();
         self
     }

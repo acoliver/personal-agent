@@ -1,3 +1,5 @@
+#![allow(unsafe_code)]
+
 //! GPUI popup window for the menu bar interface
 //!
 //! @plan PLAN-20250128-GPUI.P13

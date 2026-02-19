@@ -3,7 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P02
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, IntoElement, Styled, Window};
+use gpui::{div, prelude::*, px, IntoElement, Styled};
 
 pub struct IconButton {
     icon: String,

@@ -28,7 +28,7 @@ pub struct SettingsPresenter {
     profile_service: Arc<dyn ProfileService>,
 
     /// Reference to app settings service
-    app_settings_service: Arc<dyn AppSettingsService>,
+    _app_settings_service: Arc<dyn AppSettingsService>,
 
     /// View command sender
     view_tx: broadcast::Sender<ViewCommand>,
@@ -52,7 +52,7 @@ impl SettingsPresenter {
         Self {
             rx,
             profile_service,
-            app_settings_service,
+            _app_settings_service: app_settings_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -193,13 +193,13 @@ impl SettingsPresenter {
         event: McpEvent,
     ) {
         match event {
-            McpEvent::Starting { id, name } => {
+            McpEvent::Starting { id, name: _ } => {
                 let _ = view_tx.send(ViewCommand::McpStatusChanged {
                     id,
                     status: super::view_command::McpStatus::Starting,
                 });
             }
-            McpEvent::Started { id, name, tools, tool_count } => {
+            McpEvent::Started { id, name: _, tools: _, tool_count } => {
                 let _ = view_tx.send(ViewCommand::McpServerStarted {
                     id,
                     tool_count,
@@ -209,7 +209,7 @@ impl SettingsPresenter {
                     status: super::view_command::McpStatus::Running,
                 });
             }
-            McpEvent::StartFailed { id, name, error } => {
+            McpEvent::StartFailed { id, name: _, error } => {
                 let _ = view_tx.send(ViewCommand::McpServerFailed {
                     id,
                     error,
@@ -219,7 +219,7 @@ impl SettingsPresenter {
                     status: super::view_command::McpStatus::Failed,
                 });
             }
-            McpEvent::Stopped { id, name } => {
+            McpEvent::Stopped { id, name: _ } => {
                 let _ = view_tx.send(ViewCommand::McpStatusChanged {
                     id,
                     status: super::view_command::McpStatus::Stopped,
@@ -324,7 +324,7 @@ impl SettingsPresenter {
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-025.4
     async fn on_toggle_mcp(
-        profile_service: &Arc<dyn ProfileService>,
+        _profile_service: &Arc<dyn ProfileService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         id: Uuid,
         enabled: bool,
