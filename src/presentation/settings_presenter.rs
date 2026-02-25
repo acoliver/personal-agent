@@ -6,14 +6,17 @@
 //! @plan PLAN-20250125-REFACTOR.P10
 //! @requirement REQ-025.4
 //! @pseudocode presenters.md lines 380-444
+//! @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
+//! @requirement REQ-WIRE-006
 
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::events::{AppEvent, types::{ProfileEvent, UserEvent, McpEvent, SystemEvent}};
+use crate::events::{AppEvent, EventBus, types::{ProfileEvent, UserEvent, McpEvent, SystemEvent}};
 use crate::services::{AppSettingsService, ProfileService};
 use super::{Presenter, PresenterError, ViewCommand};
+use super::view_command::ProfileSummary;
 
 /// SettingsPresenter - handles settings and profile management UI
 ///
@@ -28,7 +31,7 @@ pub struct SettingsPresenter {
     profile_service: Arc<dyn ProfileService>,
 
     /// Reference to app settings service
-    _app_settings_service: Arc<dyn AppSettingsService>,
+    app_settings_service: Arc<dyn AppSettingsService>,
 
     /// View command sender
     view_tx: broadcast::Sender<ViewCommand>,
@@ -52,7 +55,34 @@ impl SettingsPresenter {
         Self {
             rx,
             profile_service,
-            _app_settings_service: app_settings_service,
+            app_settings_service,
+            view_tx,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    ///
+    /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
+    /// bus rather than a caller-supplied broadcast::Sender. This resolves the split
+    /// intake channel problem identified in the remediation plan. Full wiring of all
+    /// callers deferred to later implementation phases.
+    ///
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
+    /// @requirement REQ-WIRE-006
+    /// @pseudocode component-001-event-pipeline.md lines 090-136
+    #[allow(dead_code)]
+    pub fn new_with_event_bus(
+        profile_service: Arc<dyn ProfileService>,
+        app_settings_service: Arc<dyn AppSettingsService>,
+        event_bus: Arc<EventBus>,
+        view_tx: broadcast::Sender<ViewCommand>,
+    ) -> Self {
+        let rx = event_bus.sender().subscribe();
+        Self {
+            rx,
+            profile_service,
+            app_settings_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -69,16 +99,19 @@ impl SettingsPresenter {
 
         self.running.store(true, std::sync::atomic::Ordering::Relaxed);
 
+        Self::emit_profiles_snapshot(&self.profile_service, &self.app_settings_service, &self.view_tx).await;
+
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
         let profile_service = self.profile_service.clone();
+        let app_settings_service = self.app_settings_service.clone();
         let view_tx = self.view_tx.clone();
 
         tokio::spawn(async move {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 match rx.recv().await {
                     Ok(event) => {
-                        Self::handle_event(&profile_service, &view_tx, event).await;
+                        Self::handle_event(&profile_service, &app_settings_service, &view_tx, event).await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("SettingsPresenter lagged: {} events missed", n);
@@ -119,15 +152,16 @@ impl SettingsPresenter {
     /// @requirement REQ-025.4
     async fn handle_event(
         profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
     ) {
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(profile_service, view_tx, user_evt).await;
+                Self::handle_user_event(profile_service, app_settings_service, view_tx, user_evt).await;
             }
             AppEvent::Profile(profile_evt) => {
-                Self::handle_profile_event(view_tx, profile_evt).await;
+                Self::handle_profile_event(profile_service, app_settings_service, view_tx, profile_evt).await;
             }
             AppEvent::Mcp(mcp_evt) => {
                 Self::handle_mcp_event(view_tx, mcp_evt).await;
@@ -145,12 +179,13 @@ impl SettingsPresenter {
     /// @requirement REQ-025.4
     async fn handle_user_event(
         profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
     ) {
         match event {
-            UserEvent::SelectProfile { id } => {
-                Self::on_select_profile(profile_service, view_tx, id).await;
+            UserEvent::SelectProfile { id } | UserEvent::SelectChatProfile { id } => {
+                Self::on_select_profile(profile_service, app_settings_service, view_tx, id).await;
             }
             UserEvent::ToggleMcp { id, enabled } => {
                 Self::on_toggle_mcp(profile_service, view_tx, id, enabled).await;
@@ -164,21 +199,30 @@ impl SettingsPresenter {
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-025.4
     async fn handle_profile_event(
+        profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: ProfileEvent,
     ) {
         match event {
             ProfileEvent::Created { id, name } => {
                 let _ = view_tx.send(ViewCommand::ProfileCreated { id, name });
+                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
             }
             ProfileEvent::Updated { id, name } => {
                 let _ = view_tx.send(ViewCommand::ProfileUpdated { id, name });
+                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
             }
             ProfileEvent::Deleted { id, .. } => {
                 let _ = view_tx.send(ViewCommand::ProfileDeleted { id });
+                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
             }
             ProfileEvent::DefaultChanged { profile_id } => {
+                if let Some(id) = profile_id {
+                    let _ = app_settings_service.set_default_profile_id(id).await;
+                }
                 let _ = view_tx.send(ViewCommand::DefaultProfileChanged { profile_id });
+                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
             }
             _ => {} // Ignore other profile events
         }
@@ -246,7 +290,7 @@ impl SettingsPresenter {
                 });
             }
             McpEvent::ConfigSaved { id } => {
-                let _ = view_tx.send(ViewCommand::McpConfigSaved { id });
+                let _ = view_tx.send(ViewCommand::McpConfigSaved { id, name: None });
             }
             McpEvent::Deleted { id, .. } => {
                 let _ = view_tx.send(ViewCommand::McpDeleted { id });
@@ -301,12 +345,17 @@ impl SettingsPresenter {
     /// @requirement REQ-025.4
     async fn on_select_profile(
         profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         id: Uuid,
     ) {
         match profile_service.set_default(id).await {
             Ok(_) => {
+                if let Err(e) = app_settings_service.set_default_profile_id(id).await {
+                    tracing::warn!("Failed to persist default profile in app settings: {}", e);
+                }
                 let _ = view_tx.send(ViewCommand::DefaultProfileChanged { profile_id: Some(id) });
+                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
             }
             Err(e) => {
                 tracing::error!("Failed to select profile: {}", e);
@@ -319,6 +368,7 @@ impl SettingsPresenter {
         }
     }
 
+
     /// Handle ToggleMcp user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
@@ -329,7 +379,6 @@ impl SettingsPresenter {
         id: Uuid,
         enabled: bool,
     ) {
-        // Placeholder - set_mcp_enabled not yet implemented in ProfileService
         tracing::info!("Toggling MCP: {} for profile {}", enabled, id);
         // Emit status change event
         let status = if enabled {
@@ -339,6 +388,52 @@ impl SettingsPresenter {
         };
         let _ = view_tx.send(ViewCommand::McpStatusChanged { id, status });
     }
+
+    async fn emit_profiles_snapshot(
+        profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
+        let profiles = match profile_service.list().await {
+            Ok(profiles) => profiles,
+            Err(e) => {
+                tracing::warn!("Failed to list profiles for settings snapshot: {}", e);
+                return;
+            }
+        };
+
+        let selected_profile_id = if let Ok(Some(id)) = app_settings_service.get_default_profile_id().await {
+            Some(id)
+        } else {
+            profile_service
+                .get_default()
+                .await
+                .ok()
+                .flatten()
+                .map(|p| p.id)
+        };
+
+        let summaries = profiles
+            .into_iter()
+            .map(|profile| ProfileSummary {
+                id: profile.id,
+                name: profile.name,
+                provider_id: profile.provider_id,
+                model_id: profile.model_id,
+                is_default: Some(profile.id) == selected_profile_id,
+            })
+            .collect::<Vec<_>>();
+
+        let _ = view_tx.send(ViewCommand::ShowSettings {
+            profiles: summaries.clone(),
+            selected_profile_id,
+        });
+        let _ = view_tx.send(ViewCommand::ChatProfilesUpdated {
+            profiles: summaries,
+            selected_profile_id,
+        });
+    }
+
 }
 // Implement Presenter trait
 //

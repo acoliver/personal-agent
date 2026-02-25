@@ -163,14 +163,13 @@ pub enum UserEvent {
     /// @plan PLAN-20250130-GPUIREDUX.P09
     McpAddNext,
 
-    // ===== MCP Configure Actions =====
-    /// User clicked Save in MCP Configure view
-    /// @plan PLAN-20250130-GPUIREDUX.P10
-    SaveMcp,
 
     // ===== Navigation =====
     /// User clicked to navigate to a view
     Navigate { to: ViewId },
+
+    /// User selected profile from chat title bar
+    SelectChatProfile { id: Uuid },
 
     /// User clicked back
     NavigateBack,
@@ -457,6 +456,28 @@ pub enum SystemEvent {
 // Placeholder types for event variants
 // These will be replaced with actual types in later phases
 
+/// Lightweight profile auth payload for GPUI save flow
+///
+/// @plan PLAN-20250125-REFACTOR.P04
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum ModelProfileAuth {
+    None,
+    ApiKey { value: String },
+    Keyfile { path: String },
+}
+
+/// Lightweight profile parameters payload for GPUI save flow
+///
+/// @plan PLAN-20250125-REFACTOR.P04
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct ModelProfileParameters {
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<u32>,
+    pub show_thinking: Option<bool>,
+    pub enable_thinking: Option<bool>,
+    pub thinking_budget: Option<u32>,
+}
+
 /// Placeholder for ModelProfile
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
@@ -464,15 +485,24 @@ pub enum SystemEvent {
 pub struct ModelProfile {
     pub id: Uuid,
     pub name: String,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub base_url: Option<String>,
+    pub auth: Option<ModelProfileAuth>,
+    pub parameters: Option<ModelProfileParameters>,
+    pub system_prompt: Option<String>,
 }
 
-/// Placeholder for McpConfig
+/// Lightweight MCP config payload for GPUI save flow
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct McpConfig {
     pub id: Uuid,
     pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Option<Vec<(String, String)>>,
 }
 
 /// Placeholder for McpRegistrySource

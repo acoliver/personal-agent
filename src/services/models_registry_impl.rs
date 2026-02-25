@@ -142,7 +142,16 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
 
         Ok(registry
             .get_models_for_provider(provider)
-            .map(|models| models.into_iter().map(|m| m.clone()).collect())
+            .map(|models| {
+                models
+                    .into_iter()
+                    .map(|m| {
+                        let mut model_with_provider = m.clone();
+                        model_with_provider.provider = Some(provider.to_string());
+                        model_with_provider
+                    })
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
@@ -356,6 +365,24 @@ mod tests {
         let models = service.get_provider("openai").await.unwrap();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "gpt-4");
+    }
+
+    #[tokio::test]
+    async fn test_get_provider_sets_provider_id_on_returned_models() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_path = temp_dir.path().join("test-cache.json");
+
+        let service = ModelsRegistryServiceImpl::with_cache_path(cache_path.clone());
+
+        // Create test registry and save to cache
+        let test_registry = create_test_registry();
+        service.cache.save(&test_registry).unwrap();
+
+        // Fetch by provider and ensure provider field is canonicalized to provider id
+        let models = service.get_provider("openai").await.unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-4");
+        assert_eq!(models[0].provider.as_deref(), Some("openai"));
     }
 
     #[tokio::test]

@@ -1,404 +1,505 @@
-//! UI automation tests using AppleScript
+//! GPUI keyboard-first automation scenarios (real UI, no backend bypass)
 //!
-//! These tests verify actual UI behavior by automating the running app.
-//! They are marked #[ignore] by default because they require:
-//! 1. The app to be running (`cargo run --bin personal_agent_menubar`)
-//! 2. Accessibility permissions granted to Terminal/test runner
+//! These tests drive `personal_agent_gpui` through macOS System Events and
+//! validate behavior using runtime logs and persisted artifacts.
 //!
-//! Run with: cargo test --test ui_automation_tests -- --ignored --test-threads=1
+//! Run with:
+//!   cargo test --test ui_automation_tests -- --ignored --test-threads=1
 //!
-//! IMPORTANT: This app uses a popover attached to a menu bar item, NOT a regular window.
-//! AppleScript's "windows" collection doesn't include popovers.
-//! We can verify:
-//! - The tray icon exists
-//! - Clicking it triggers the app
-//! - The app's debug log shows expected behavior
+//! Notes:
+//! - Requires Accessibility permissions for the test runner.
+//! - Requires app launch via test helper (binary path from current workspace).
+//! - Uses `PA_AUTO_OPEN_POPUP=1` to expose the GPUI popup deterministically.
 
 mod ui_tests;
 
-use ui_tests::applescript_helpers::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
-const APP_PROCESS: &str = "personal_agent_menubar";
+use ui_tests::applescript_helpers::{run_applescript_lines, AppleScriptResult};
 
-/// Get the app's debug log path
-fn get_debug_log_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join("Library/Application Support/PersonalAgent/debug.log")
+const APP_PROCESS: &str = "personal_agent_gpui";
+const LOG_PATH: &str = "/tmp/personal_agent_gpui.log";
+
+fn gpui_bin_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_personal_agent_gpui"))
 }
 
-/// Read the last N lines from the debug log
-fn read_debug_log_tail(lines: usize) -> String {
-    let log_path = get_debug_log_path();
-    if !log_path.exists() {
-        return String::new();
+fn profiles_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".llxprt/profiles")
+}
+
+fn default_profile_path() -> PathBuf {
+    profiles_dir().join("default.json")
+}
+
+fn conversations_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".llxprt/conversations")
+}
+
+fn clear_log() {
+    let _ = fs::write(LOG_PATH, "");
+}
+
+fn read_log() -> String {
+    fs::read_to_string(LOG_PATH).unwrap_or_default()
+}
+
+fn log_contains(needle: &str) -> bool {
+    read_log().contains(needle)
+}
+
+fn wait_for_log_substring(needle: &str, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if log_contains(needle) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(150));
     }
-    
-    let content = fs::read_to_string(&log_path).unwrap_or_default();
-    content
-        .lines()
-        .rev()
-        .take(lines)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n")
+    false
 }
 
-/// Clear the debug log (to get fresh entries)
-fn clear_debug_log() {
-    let log_path = get_debug_log_path();
-    let _ = fs::write(&log_path, "");
+fn run_osascript(lines: &[&str]) -> AppleScriptResult {
+    run_applescript_lines(lines)
 }
 
-/// Verify the app is running before UI tests
-fn ensure_app_running() -> bool {
-    if !is_app_running(APP_PROCESS) {
-        eprintln!("WARNING: {} is not running. Start it first with:", APP_PROCESS);
-        eprintln!("  cargo run --bin personal_agent_menubar &");
-        return false;
-    }
-    true
-}
-
-/// Click the tray icon
-fn click_tray_icon() -> bool {
-    let script = r#"
-        tell application "System Events"
-            tell process "personal_agent_menubar"
-                if (count of menu bar items of menu bar 2) > 0 then
-                    click menu bar item 1 of menu bar 2
-                    return true
-                end if
-            end tell
-        end tell
-        return false
-    "#;
-    let result = run_applescript(script);
-    result.success && result.stdout == "true"
-}
-
-// ============================================================================
-// Basic App Tests
-// ============================================================================
-
-/// The app should be running and have a tray icon
-#[test]
-#[ignore = "Requires app running with accessibility permissions"]
-fn app_has_tray_icon() {
-    if !ensure_app_running() {
-        panic!("App not running");
-    }
-
-    let script = r#"
-        tell application "System Events"
-            tell process "personal_agent_menubar"
-                return (count of menu bar items of menu bar 2)
-            end tell
-        end tell
-    "#;
-    let result = run_applescript(script);
-    
-    assert!(result.success, "Failed to query tray: {}", result.stderr);
-    let count: i32 = result.stdout.parse().unwrap_or(0);
-    assert!(count >= 1, "App should have at least one menu bar item (tray icon)");
-}
-
-/// Clicking the tray icon should trigger the app (we verify via log)
-#[test]
-#[ignore = "Requires app running with accessibility permissions"]
-fn clicking_tray_triggers_app() {
-    if !ensure_app_running() {
-        panic!("App not running");
-    }
-
-    // Clear log to get fresh entries
-    clear_debug_log();
-    
-    // Click the tray
-    let clicked = click_tray_icon();
-    assert!(clicked, "Should be able to click tray icon");
-    
-    // Wait for any log activity
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    
-    // The click should have been received (even if popover isn't visible to AppleScript)
-    // We just verify the app is still running
-    assert!(is_app_running(APP_PROCESS), "App should still be running after tray click");
-}
-
-// ============================================================================
-// Settings Panel Tests (via debug log verification)
-// ============================================================================
-
-/// When settings is opened, the log should show profile/MCP loading
-#[test]
-#[ignore = "Requires app running and manual settings navigation"]
-fn settings_panel_loads_data() {
-    if !ensure_app_running() {
-        panic!("App not running");
-    }
-
-    // This test requires manual interaction or additional automation
-    // For now, we check if the log contains evidence of settings loading
-    let log = read_debug_log_tail(100);
-    
-    // Look for evidence that settings view loaded data
-    let has_profile_log = log.contains("load_profiles") || log.contains("Config has");
-    let has_mcp_log = log.contains("load_mcps") || log.contains("MCPs");
-    
-    println!("=== Debug Log (last 100 lines) ===");
-    println!("{}", log);
-    println!("=== End Log ===");
-    
-    // This test is informational - it shows what the app logged
-    // A more complete test would require the popover to be accessible
-    if has_profile_log || has_mcp_log {
-        println!("Found settings load evidence in log");
+fn frontmost_and_type(message: &str, press_enter: bool) -> AppleScriptResult {
+    if press_enter {
+        run_osascript(&[
+            "tell application \"System Events\"",
+            "key up command",
+            "key up control",
+            "key up option",
+            "key up shift",
+            &format!("tell process \"{}\"", APP_PROCESS),
+            "set frontmost to true",
+            "delay 0.1",
+            &format!("keystroke \"{}\"", message.replace('"', "\\\"")),
+            "key code 36",
+            "end tell",
+            "end tell",
+        ])
     } else {
-        println!("No settings load evidence - navigate to settings manually and re-run");
+        run_osascript(&[
+            "tell application \"System Events\"",
+            "key up command",
+            "key up control",
+            "key up option",
+            "key up shift",
+            &format!("tell process \"{}\"", APP_PROCESS),
+            "set frontmost to true",
+            "delay 0.1",
+            &format!("keystroke \"{}\"", message.replace('"', "\\\"")),
+            "end tell",
+            "end tell",
+        ])
     }
 }
 
-// ============================================================================
-// Conversation Tests (via debug log verification)
-// ============================================================================
+fn count_occurrences(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
 
-/// The log should show conversation title operations
-#[test]
-#[ignore = "Requires app running"]
-fn conversation_operations_logged() {
-    if !ensure_app_running() {
-        panic!("App not running");
+fn wait_for_stream_progress(
+    stream_started_before: usize,
+    stream_busy_errors_before: usize,
+    timeout: Duration,
+) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let log = read_log();
+        let stream_started_now = count_occurrences(&log, "StreamStarted");
+        if stream_started_now > stream_started_before {
+            return true;
+        }
+
+        let stream_busy_errors_now = count_occurrences(
+            &log,
+            "Failed to send message: Internal error: Stream already in progress",
+        );
+        if stream_busy_errors_now > stream_busy_errors_before {
+            return false;
+        }
+
+        thread::sleep(Duration::from_millis(200));
     }
+    false
+}
 
-    let log = read_debug_log_tail(50);
-    
-    println!("=== Recent Debug Log ===");
-    println!("{}", log);
-    println!("=== End Log ===");
-    
-    // Check for conversation-related log entries
-    let has_conversation_log = log.contains("Conversation") || 
-                               log.contains("conversation") ||
-                               log.contains("title");
-    
-    if has_conversation_log {
-        println!("Found conversation-related log entries");
+fn wait_for_stream_to_finish_after(
+    started_count: usize,
+    completed_before: usize,
+    error_before: usize,
+    timeout: Duration,
+) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let log = read_log();
+        let completed_now = count_occurrences(&log, "StreamCompleted");
+        let errors_now = count_occurrences(&log, "StreamError");
+        let stream_started_now = count_occurrences(&log, "StreamStarted");
+
+        if stream_started_now >= started_count
+            && completed_now + errors_now > completed_before + error_before
+        {
+            return true;
+        }
+
+        thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
+fn cmd_p_down_enter() -> AppleScriptResult {
+    run_osascript(&[
+        "tell application \"System Events\"",
+        &format!("tell process \"{}\"", APP_PROCESS),
+        "set frontmost to true",
+        "key down command",
+        "keystroke \"p\"",
+        "key up command",
+        "delay 0.2",
+        "key code 125",
+        "delay 0.15",
+        "key code 36",
+        "end tell",
+        "end tell",
+    ])
+}
+
+fn launch_gpui() -> Child {
+    let _ = Command::new("pkill").arg("-f").arg(APP_PROCESS).status();
+
+    let bin = gpui_bin_path();
+    let log_file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(LOG_PATH)
+        .expect("failed to open GPUI log path");
+    let log_file_err = log_file
+        .try_clone()
+        .expect("failed to clone GPUI log file handle");
+
+    Command::new(bin)
+        .env("PA_AUTO_OPEN_POPUP", "1")
+        .stdout(log_file)
+        .stderr(log_file_err)
+        .spawn()
+        .expect("failed to launch personal_agent_gpui")
+}
+
+fn stop_gpui(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = Command::new("pkill").arg("-f").arg(APP_PROCESS).status();
+}
+
+fn read_default_profile_id() -> Option<String> {
+    let path = default_profile_path();
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<String>(&content).ok()
+}
+
+struct ProfileRestoreGuard {
+    path: PathBuf,
+    original_content: String,
+}
+
+impl Drop for ProfileRestoreGuard {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.path, &self.original_content);
     }
 }
 
-// ============================================================================
-// Menu Bar Item Tests
-// ============================================================================
+fn switch_default_profile_fields(
+    provider_id: &str,
+    base_url: &str,
+    model_id: &str,
+    name: &str,
+) -> Option<ProfileRestoreGuard> {
+    let default_id = read_default_profile_id()?;
+    let profile_path = profiles_dir().join(format!("{}.json", default_id));
+    let original_content = fs::read_to_string(&profile_path).ok()?;
+    let mut value: serde_json::Value = serde_json::from_str(&original_content).ok()?;
 
-/// The tray menu should have a Quit option
-#[test]
-#[ignore = "Requires app running with accessibility permissions"]
-fn tray_has_quit_menu() {
-    if !ensure_app_running() {
-        panic!("App not running");
-    }
+    value["provider_id"] = serde_json::Value::String(provider_id.to_string());
+    value["base_url"] = serde_json::Value::String(base_url.to_string());
+    value["model_id"] = serde_json::Value::String(model_id.to_string());
+    value["name"] = serde_json::Value::String(name.to_string());
 
-    // Right-click or Ctrl-click to get context menu
-    // Note: This might show the popover instead - depends on implementation
-    let script = r#"
-        tell application "System Events"
-            tell process "personal_agent_menubar"
-                -- Try to get menu of tray item
-                try
-                    set trayItem to menu bar item 1 of menu bar 2
-                    if exists menu 1 of trayItem then
-                        return name of every menu item of menu 1 of trayItem
-                    else
-                        return "no menu"
-                    end if
-                on error errMsg
-                    return "error: " & errMsg
-                end try
-            end tell
-        end tell
-    "#;
-    let result = run_applescript(script);
-    
-    println!("Tray menu result: {}", result.stdout);
-    if !result.success {
-        println!("Error: {}", result.stderr);
-    }
+    let serialized = serde_json::to_string_pretty(&value).ok()? + "
+";
+    fs::write(&profile_path, serialized).ok()?;
+
+    Some(ProfileRestoreGuard {
+        path: profile_path,
+        original_content,
+    })
 }
 
-// ============================================================================
-// Debug/Helper Tests
-// ============================================================================
 
-/// Dump the current state for debugging
+fn read_profile_json(profile_id: &str) -> Option<serde_json::Value> {
+    let path = profiles_dir().join(format!("{}.json", profile_id));
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<serde_json::Value>(&content).ok()
+}
+
+fn newest_conversation_file() -> Option<PathBuf> {
+    let dir = conversations_dir();
+    let mut entries: Vec<_> = fs::read_dir(dir).ok()?.flatten().collect();
+    entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+    entries.last().map(|e| e.path())
+}
+
+fn count_user_messages_in_conversation(path: &Path) -> usize {
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let value: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+    value
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .map(|msgs| {
+            msgs.iter()
+                .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+fn assistant_mentions_orbit_731(path: &Path) -> bool {
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let value: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+
+    value
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .map(|msgs| {
+            msgs.iter()
+                .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+                .any(|m| {
+                    m.get("content")
+                        .and_then(|c| c.as_str())
+                        .map(|text| text.to_ascii_lowercase().contains("orbit-731"))
+                        .unwrap_or(false)
+                })
+        })
+        .unwrap_or(false)
+}
+
+fn latest_conversation_by_updated_at() -> Option<PathBuf> {
+    let mut entries: Vec<_> = fs::read_dir(conversations_dir()).ok()?.flatten().collect();
+    entries.sort_by_key(|e| {
+        let p = e.path();
+        let content = fs::read_to_string(&p).unwrap_or_default();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+        value
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    });
+    entries.last().map(|e| e.path())
+}
+
+fn newest_conversation_after(cutoff: SystemTime) -> Option<PathBuf> {
+    let mut entries: Vec<_> = fs::read_dir(conversations_dir())
+        .ok()?
+        .flatten()
+        .filter(|entry| {
+            entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|modified| modified >= cutoff)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+    entries.last().map(|e| e.path())
+}
+
 #[test]
-#[ignore = "Debug helper - run manually"]
-fn dump_app_state() {
-    if !ensure_app_running() {
-        println!("App not running");
-        return;
+#[ignore = "Requires local GPUI app launch + macOS accessibility permissions"]
+fn scn_002_keyboard_profile_switch_from_chat_emits_event_and_routes_model() {
+    clear_log();
+
+    let mut child = launch_gpui();
+    assert!(wait_for_log_substring("All 7 presenters started", Duration::from_secs(12)));
+
+    let script_result = cmd_p_down_enter();
+    assert!(script_result.success, "AppleScript failed: {}", script_result.stderr);
+
+    assert!(
+        wait_for_log_substring("SelectChatProfile", Duration::from_secs(5)),
+        "expected SelectChatProfile emission in log"
+    );
+
+    let send_result = frontmost_and_type("profile switch scenario test", true);
+    assert!(send_result.success, "typing/sending failed: {}", send_result.stderr);
+
+    assert!(
+        wait_for_log_substring("StreamStarted", Duration::from_secs(8)),
+        "expected stream start after message send"
+    );
+
+    stop_gpui(&mut child);
+
+    println!(
+        "SCENARIO: SCN-002\nSTATUS: PASS\nSTEPS_RUN: 3\nASSERTIONS_PASSED: 3\nASSERTIONS_FAILED: 0\nARTIFACTS:\n  - /tmp/personal_agent_gpui.log\nNOTES:\n  - keyboard chat profile switch emitted SelectChatProfile and send path reached StreamStarted"
+    );
+}
+
+#[test]
+#[ignore = "Requires valid provider key in ~/.keys/.synthetic_key and local GPUI app launch"]
+fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
+    clear_log();
+
+    let run_started_at = SystemTime::now();
+    let _profile_restore_guard = switch_default_profile_fields(
+        "synthetic",
+        "https://api.synthetic.new/v1",
+        "hf:moonshotai/Kimi-K2.5",
+        "hf:moonshotai/Kimi-K2.5",
+    )
+    .expect("failed to switch default profile to synthetic hf:moonshotai/Kimi-K2.5 mapping");
+
+    let mut child = launch_gpui();
+    assert!(wait_for_log_substring("All 7 presenters started", Duration::from_secs(12)));
+
+    // Keep all prompts lowercase/plaintext so System Events keystroke calls
+    // do not depend on sticky Shift state across test boundaries.
+    let prompts = [
+        "remember this codeword for later: orbit-731.",
+        "summarize the codeword format in one sentence.",
+        "now give me two bullet points that use that codeword naturally.",
+        "what was the exact codeword i asked you to remember?",
+        "answer again with only the codeword and nothing else.",
+    ];
+
+    let mut stream_starts_seen = 0usize;
+    let mut stream_completed_seen = 0usize;
+    let mut stream_error_seen = 0usize;
+    let mut stream_busy_errors_seen = 0usize;
+
+    for prompt in prompts {
+        if stream_starts_seen > 0 {
+            assert!(
+                wait_for_stream_to_finish_after(
+                    stream_starts_seen,
+                    stream_completed_seen,
+                    stream_error_seen,
+                    Duration::from_secs(90),
+                ),
+                "timed out waiting for prior stream to finish before prompt: {}",
+                prompt
+            );
+
+            let log_now = read_log();
+            stream_completed_seen = count_occurrences(&log_now, "StreamCompleted");
+            stream_error_seen = count_occurrences(&log_now, "StreamError");
+        }
+
+        let result = frontmost_and_type(prompt, true);
+        assert!(result.success, "AppleScript send failed: {}", result.stderr);
+
+        assert!(
+            wait_for_stream_progress(stream_starts_seen, stream_busy_errors_seen, Duration::from_secs(20)),
+            "expected stream start after prompt: {}",
+            prompt
+        );
+
+        let log_now = read_log();
+        stream_starts_seen = count_occurrences(&log_now, "StreamStarted");
+        stream_completed_seen = count_occurrences(&log_now, "StreamCompleted");
+        stream_error_seen = count_occurrences(&log_now, "StreamError");
+        stream_busy_errors_seen = count_occurrences(
+            &log_now,
+            "Failed to send message: Internal error: Stream already in progress",
+        );
     }
 
-    println!("=== App State ===");
-    
-    // Check tray
-    let script = r#"
-        tell application "System Events"
-            tell process "personal_agent_menubar"
-                set output to ""
-                set output to output & "Menu bars: " & (count of menu bars) & linefeed
-                set output to output & "Menu bar 2 items: " & (count of menu bar items of menu bar 2) & linefeed
-                set output to output & "Windows: " & (count of windows) & linefeed
-                set output to output & "Groups: " & (count of groups) & linefeed
-                return output
-            end tell
-        end tell
-    "#;
-    let result = run_applescript(script);
-    if result.success {
-        println!("{}", result.stdout);
-    } else {
-        println!("Error: {}", result.stderr);
+    assert!(
+        wait_for_stream_to_finish_after(
+            stream_starts_seen,
+            stream_completed_seen,
+            stream_error_seen,
+            Duration::from_secs(120),
+        ),
+        "timed out waiting for final stream completion"
+    );
+
+    thread::sleep(Duration::from_secs(1));
+
+    let log = read_log();
+    let stream_starts = count_occurrences(&log, "StreamStarted");
+    assert!(stream_starts >= 5, "expected >=5 stream starts, got {}", stream_starts);
+
+    let has_auth_error = log.contains("Authentication failed") || log.contains("Invalid Authentication");
+
+    let mut assertion_failures = 0usize;
+    let mut notes = String::new();
+
+    let conversation_file = newest_conversation_after(run_started_at)
+        .or_else(latest_conversation_by_updated_at)
+        .or_else(newest_conversation_file);
+    let user_message_count = conversation_file
+        .as_ref()
+        .map(|p| count_user_messages_in_conversation(p))
+        .unwrap_or(0);
+
+    if user_message_count < 5 {
+        assertion_failures += 1;
+        notes.push_str("- conversation artifact has fewer than 5 persisted user messages\n");
     }
-    
-    // Show recent log
-    println!("\n=== Recent Debug Log ===");
-    println!("{}", read_debug_log_tail(30));
-    
-    // Check config
-    let config_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join("Library/Application Support/PersonalAgent/config.json");
-    if config_path.exists() {
-        println!("\n=== Config exists at: {:?} ===", config_path);
-        if let Ok(content) = fs::read_to_string(&config_path) {
-            // Just show profile/MCP counts
-            let profiles = content.matches("\"provider_id\"").count();
-            let mcps = content.matches("\"transport\"").count();
-            println!("Profiles: {}, MCPs: {}", profiles, mcps);
+
+    let has_orbit_recall = conversation_file
+        .as_ref()
+        .map(|p| assistant_mentions_orbit_731(p))
+        .unwrap_or(false);
+    if !has_orbit_recall {
+        assertion_failures += 1;
+        notes.push_str("- assistant responses did not include ORBIT-731 recall evidence\n");
+    }
+
+    if has_auth_error {
+        assertion_failures += 1;
+        notes.push_str("- upstream auth failed before assistant completions\n");
+    }
+
+    if let Some(default_id) = read_default_profile_id() {
+        if let Some(profile) = read_profile_json(&default_id) {
+            let model_ok = profile.get("model_id").and_then(|v| v.as_str()) == Some("hf:moonshotai/Kimi-K2.5");
+            if !model_ok {
+                assertion_failures += 1;
+                notes.push_str("- default profile model_id is not hf:moonshotai/Kimi-K2.5\n");
+            }
+            let provider_ok = profile.get("provider_id").and_then(|v| v.as_str()) == Some("synthetic");
+            if !provider_ok {
+                assertion_failures += 1;
+                notes.push_str("- default profile provider_id is not synthetic during SCN-003 run\n");
+            }
         }
     }
-    
-    println!("=== End State ===");
-}
 
-/// Test that clicking tray and checking log shows activity
-#[test]
-#[ignore = "Debug helper - run manually"]
-fn click_tray_and_show_log() {
-    if !ensure_app_running() {
-        println!("App not running");
-        return;
-    }
+    stop_gpui(&mut child);
 
-    println!("Clicking tray icon...");
-    let clicked = click_tray_icon();
-    println!("Click result: {}", clicked);
-    
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    
-    println!("\n=== Debug Log After Click ===");
-    println!("{}", read_debug_log_tail(20));
-}
+    if assertion_failures == 0 {
+        println!(
+            "SCENARIO: SCN-003\nSTATUS: PASS\nSTEPS_RUN: 5\nASSERTIONS_PASSED: 4\nASSERTIONS_FAILED: 0\nARTIFACTS:\n  - /tmp/personal_agent_gpui.log\n  - {:?}\nNOTES:\n  - five-message conversation persisted with no auth errors",
+            conversation_file
+        );
+    } else {
+        println!(
+            "SCENARIO: SCN-003\nSTATUS: FAIL\nSTEPS_RUN: 5\nASSERTIONS_PASSED: {}\nASSERTIONS_FAILED: {}\nARTIFACTS:\n  - /tmp/personal_agent_gpui.log\n  - {:?}\nNOTES:\n{}",
+            4usize.saturating_sub(assertion_failures),
+            assertion_failures,
+            conversation_file,
+            notes
+        );
 
-// ============================================================================
-// Conversation Rename UI Tests
-// ============================================================================
-
-/// After renaming a conversation, the dropdown should show the new title
-#[test]
-#[ignore = "Requires app running - verifies via log"]
-fn rename_updates_dropdown() {
-    if !ensure_app_running() {
-        panic!("App not running");
-    }
-
-    clear_debug_log();
-    
-    // The user reported: renamed "Languages" to "Languages - test"
-    // The new name shows in history but not in the dropdown
-    //
-    // Expected behavior:
-    // 1. After rename, title_edit_done is called
-    // 2. update_title_and_model is called
-    // 3. populate_title_popup is called (now fixed to reload from storage)
-    // 4. Dropdown should show all titles including renamed one
-    
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    
-    let log = read_debug_log_tail(50);
-    
-    // Check if update_title_and_model was called (which triggers populate_title_popup)
-    if log.contains("update_title") || log.contains("Renamed") {
-        println!("Found title update activity in log");
-    }
-    
-    println!("=== Log for rename test ===");
-    println!("{}", log);
-}
-
-/// New conversation should trigger edit field for naming
-#[test]
-#[ignore = "Requires app running - verifies via log"]
-fn new_conversation_shows_edit_field() {
-    if !ensure_app_running() {
-        panic!("App not running");
-    }
-
-    clear_debug_log();
-    
-    // Click tray to show popover
-    click_tray_icon();
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    
-    let log = read_debug_log_tail(30);
-    
-    // The fix should now:
-    // 1. Create conversation with default title
-    // 2. Save immediately
-    // 3. Show edit field for naming
-    // 4. Hide dropdown
-    
-    println!("=== Log after opening app ===");
-    println!("{}", log);
-    
-    // Look for evidence of new conversation flow
-    if log.contains("New conversation") {
-        println!("Found new conversation activity");
-    }
-    if log.contains("edit field shown") {
-        println!("Edit field was shown for naming");
-    }
-}
-
-/// New conversation should appear in both history and dropdown
-#[test]
-#[ignore = "Requires app running - verifies via log"]  
-fn new_conversation_appears_everywhere() {
-    if !ensure_app_running() {
-        panic!("App not running");
-    }
-
-    let log = read_debug_log_tail(100);
-    
-    // Look for HistoryView loading conversations - should include new ones
-    let history_entries: Vec<&str> = log
-        .lines()
-        .filter(|l| l.contains("HistoryView:") && l.contains("title="))
-        .collect();
-    
-    println!("=== History entries in log ===");
-    for entry in &history_entries {
-        println!("{}", entry);
-    }
-    
-    // After fix, new conversations get saved immediately with a title
-    // so they should appear in history
-    if history_entries.iter().any(|e| e.contains("New ")) {
-        println!("Found new conversation in history!");
+        panic!("SCN-003 failed; see scenario output in test logs");
     }
 }

@@ -203,6 +203,7 @@ impl App {
                 Arc::clone(&_event_bus),
                 Arc::clone(&services.conversation),
                 Arc::clone(&services.chat),
+                Arc::clone(&services.profile),
                 chat_view_tx,
             ),
         };

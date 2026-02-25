@@ -139,6 +139,7 @@ pub enum ViewCommand {
     /// Show settings view
     ShowSettings {
         profiles: Vec<ProfileSummary>,
+        selected_profile_id: Option<Uuid>,
     },
 
     /// Show notification message
@@ -166,6 +167,12 @@ pub enum ViewCommand {
     /// Default profile was changed
     DefaultProfileChanged {
         profile_id: Option<Uuid>,
+    },
+
+    /// Chat profile list updated
+    ChatProfilesUpdated {
+        profiles: Vec<ProfileSummary>,
+        selected_profile_id: Option<Uuid>,
     },
 
     /// Connection test started
@@ -209,11 +216,28 @@ pub enum ViewCommand {
     /// MCP configuration was saved
     McpConfigSaved {
         id: Uuid,
+        name: Option<String>,
     },
 
     /// MCP was deleted
     McpDeleted {
         id: Uuid,
+    },
+
+    /// MCP registry search results were updated
+    McpRegistrySearchResults {
+        results: Vec<McpRegistryResult>,
+    },
+
+    /// MCP configure draft payload from MCP add flow
+    McpConfigureDraftLoaded {
+        id: String,
+        name: String,
+        package: String,
+        env_var_name: String,
+        command: String,
+        args: Vec<String>,
+        env: Option<Vec<(String, String)>>,
     },
 
     // ===== Model Selector Commands =====
@@ -227,6 +251,7 @@ pub enum ViewCommand {
     ModelSelected {
         provider_id: String,
         model_id: String,
+        context_length: Option<u32>,
     },
 
     // ===== Error Commands =====
@@ -290,6 +315,7 @@ pub struct ProfileSummary {
     pub id: Uuid,
     pub name: String,
     pub provider_id: String,
+    pub model_id: String,
     pub is_default: bool,
 }
 
@@ -301,6 +327,18 @@ pub struct ToolInfo {
     pub name: String,
     pub description: String,
     pub mcp_id: Uuid,
+}
+
+/// MCP registry search result information for MCP add flow
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpRegistryResult {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub source: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Option<Vec<(String, String)>>,
 }
 
 /// MCP server status

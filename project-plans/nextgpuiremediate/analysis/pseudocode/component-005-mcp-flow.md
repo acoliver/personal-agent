@@ -275,191 +275,187 @@ async fn on_save_config(...) {
 216:     UserEvent::SaveMcp { id, name, command, args, env_vars, enabled } =>
 217:       self.on_save_mcp(mcp_service, view_tx, id, name, command, args, env_vars, enabled).await
 218:     
-219:     UserEvent::SaveMcpConfig { id, config } =>
-220:       // Legacy event - convert to SaveMcp
-221:       self.on_save_config(mcp_service, view_tx, id, config).await
-222:     
-223:     UserEvent::StartMcpOAuth { id, provider } =>
-224:       self.on_start_oauth(mcp_service, view_tx, id, provider).await
-225:     
-226:     _ => ()
-227:   END MATCH
-228: END FUNCTION
-229:
-230: // @REQ-WIRE-004.3: Implement save
-231: FUNCTION McpConfigurePresenter::on_save_mcp(
-232:   mcp_service,
-233:   view_tx,
-234:   id: Option<Uuid>,
-235:   name: String,
-236:   command: String,
-237:   args: Vec<String>,
-238:   env_vars: HashMap<String, String>,
-239:   enabled: bool
-240: )
-241:   IF LET Some(existing_id) = id:
-242:     // UPDATE existing MCP config
-243:     LOG_INFO "Updating MCP config: {} ({})", name, existing_id
-244:     
-245:     MATCH mcp_service.update(existing_id, name.clone(), command, args, env_vars, enabled).await:
-246:       Ok(_) =>
-247:         view_tx.send(ViewCommand::McpConfigSaved { id: existing_id }).await
-248:         view_tx.send(ViewCommand::NavigateTo { view: ViewId::Settings }).await
-249:       
-250:       Err(e) =>
-251:         LOG_ERROR "Failed to update MCP config: {:?}", e
-252:         view_tx.send(ViewCommand::ShowError { ... }).await
-253:     END MATCH
-254:   
-255:   ELSE:
-256:     // CREATE new MCP config
-257:     LOG_INFO "Creating MCP config: {}", name
-258:     
-259:     MATCH mcp_service.create(name.clone(), command, args, env_vars, enabled).await:
-260:       Ok(mcp) =>
-261:         view_tx.send(ViewCommand::McpConfigSaved { id: mcp.id }).await
-262:         
-263:         // Also emit server started if enabled
-264:         IF enabled:
-265:           view_tx.send(ViewCommand::McpServerStarted {
-266:             id: mcp.id,
-267:             tool_count: 0,  // Will be updated when server actually starts
-268:           }).await
-269:         END IF
-270:         
-271:         view_tx.send(ViewCommand::NavigateTo { view: ViewId::Settings }).await
-272:       
-273:       Err(e) =>
-274:         LOG_ERROR "Failed to create MCP config: {:?}", e
-275:         view_tx.send(ViewCommand::ShowError { ... }).await
-276:     END MATCH
-277:   END IF
-278: END FUNCTION
+219:     UserEvent::StartMcpOAuth { id, provider } =>
+220:       self.on_start_oauth(mcp_service, view_tx, id, provider).await
+221:     
+222:     _ => ()
+223:   END MATCH
+224: END FUNCTION
+225:
+226: // @REQ-WIRE-004.3: Implement save
+227: FUNCTION McpConfigurePresenter::on_save_mcp(
+228:   mcp_service,
+229:   view_tx,
+230:   id: Option<Uuid>,
+231:   name: String,
+232:   command: String,
+233:   args: Vec<String>,
+234:   env_vars: HashMap<String, String>,
+235:   enabled: bool
+236: )
+237:   IF LET Some(existing_id) = id:
+238:     // UPDATE existing MCP config
+239:     LOG_INFO "Updating MCP config: {} ({})", name, existing_id
+240:     
+241:     MATCH mcp_service.update(existing_id, name.clone(), command, args, env_vars, enabled).await:
+242:       Ok(_) =>
+243:         view_tx.send(ViewCommand::McpConfigSaved { id: existing_id }).await
+244:         view_tx.send(ViewCommand::NavigateTo { view: ViewId::Settings }).await
+245:       
+246:       Err(e) =>
+247:         LOG_ERROR "Failed to update MCP config: {:?}", e
+248:         view_tx.send(ViewCommand::ShowError { ... }).await
+249:     END MATCH
+250:   
+251:   ELSE:
+252:     // CREATE new MCP config
+253:     LOG_INFO "Creating MCP config: {}", name
+254:     
+255:     MATCH mcp_service.create(name.clone(), command, args, env_vars, enabled).await:
+256:       Ok(mcp) =>
+257:         view_tx.send(ViewCommand::McpConfigSaved { id: mcp.id }).await
+258:         
+259:         // Also emit server started if enabled
+260:         IF enabled:
+261:           view_tx.send(ViewCommand::McpServerStarted {
+262:             id: mcp.id,
+263:             tool_count: 0,  // Will be updated when server actually starts
+264:           }).await
+265:         END IF
+266:         
+267:         view_tx.send(ViewCommand::NavigateTo { view: ViewId::Settings }).await
+268:       
+269:       Err(e) =>
+270:         LOG_ERROR "Failed to create MCP config: {:?}", e
+271:         view_tx.send(ViewCommand::ShowError { ... }).await
+272:     END MATCH
+273:   END IF
+274: END FUNCTION
 ```
 
 ## Pseudocode: McpConfigureView
 
 ```pseudocode
-279: // McpConfigureView state
-280: STRUCT McpConfigureState {
-281:   id: Option<Uuid>,
-282:   registry_entry_id: Option<String>,
-283:   name: String,
-284:   command: String,
-285:   args: Vec<String>,
-286:   env_vars: Vec<(String, String, bool)>,  // (name, value, required)
-287:   enabled: bool,
-288:   is_saving: bool,
-289:   validation_errors: Vec<String>,
-290: }
-291:
-292: FUNCTION McpConfigureView::handle_command(cmd: ViewCommand, cx: &mut Context<Self>)
-293:   MATCH cmd:
-294:     ViewCommand::McpConfigurePrefill { registry_entry_id, name, command, args, env_vars } =>
-295:       // Pre-fill from registry entry
-296:       self.state.id = None  // New MCP
-297:       self.state.registry_entry_id = Some(registry_entry_id)
-298:       self.state.name = name
-299:       self.state.command = command
-300:       self.state.args = args
-301:       self.state.env_vars = env_vars.into_iter()
-302:         .map(|e| (e.name, String::new(), e.required))
-303:         .collect()
-304:       self.state.enabled = false  // Default to disabled until configured
-305:       cx.notify()
-306:     
-307:     ViewCommand::McpConfigSaved { id } =>
-308:       // @REQ-WIRE-005.5: Handle save result
-309:       self.state.is_saving = false
-310:       self.state.id = Some(id)
-311:       LOG_INFO "MCP config saved: {}", id
-312:       // Navigation handled by presenter
-313:       cx.notify()
-314:     
-315:     ViewCommand::ShowError { title, message, .. } =>
-316:       self.state.is_saving = false
-317:       self.state.validation_errors = vec![format!("{}: {}", title, message)]
-318:       cx.notify()
-319:     
-320:     _ => ()
-321:   END MATCH
-322: END FUNCTION
-323:
-324: FUNCTION McpConfigureView::on_save_clicked(cx: &mut Context<Self>)
-325:   // Validate
-326:   LET errors = self.validate()
-327:   IF NOT errors.is_empty():
-328:     self.state.validation_errors = errors
-329:     cx.notify()
-330:     RETURN
-331:   END IF
-332:   
-333:   self.state.is_saving = true
-334:   cx.notify()
-335:   
-336:   // Build env vars map
-337:   LET env_map: HashMap<String, String> = self.state.env_vars
-338:     .iter()
-339:     .filter(|(_, v, _)| !v.is_empty())
-340:     .map(|(k, v, _)| (k.clone(), v.clone()))
-341:     .collect()
-342:   
-343:   self.emit(UserEvent::SaveMcp {
-344:     id: self.state.id,
-345:     name: self.state.name.clone(),
-346:     command: self.state.command.clone(),
-347:     args: self.state.args.clone(),
-348:     env_vars: env_map,
-349:     enabled: self.state.enabled,
-350:   })
-351: END FUNCTION
-352:
-353: FUNCTION McpConfigureView::validate() -> Vec<String>
-354:   LET errors = Vec::new()
+275: // McpConfigureView state
+276: STRUCT McpConfigureState {
+277:   id: Option<Uuid>,
+278:   registry_entry_id: Option<String>,
+279:   name: String,
+280:   command: String,
+281:   args: Vec<String>,
+282:   env_vars: Vec<(String, String, bool)>,  // (name, value, required)
+283:   enabled: bool,
+284:   is_saving: bool,
+285:   validation_errors: Vec<String>,
+286: }
+287:
+288: FUNCTION McpConfigureView::handle_command(cmd: ViewCommand, cx: &mut Context<Self>)
+289:   MATCH cmd:
+290:     ViewCommand::McpConfigurePrefill { registry_entry_id, name, command, args, env_vars } =>
+291:       // Pre-fill from registry entry
+292:       self.state.id = None  // New MCP
+293:       self.state.registry_entry_id = Some(registry_entry_id)
+294:       self.state.name = name
+295:       self.state.command = command
+296:       self.state.args = args
+297:       self.state.env_vars = env_vars.into_iter()
+298:         .map(|e| (e.name, String::new(), e.required))
+299:         .collect()
+300:       self.state.enabled = false  // Default to disabled until configured
+301:       cx.notify()
+302:     
+303:     ViewCommand::McpConfigSaved { id } =>
+304:       // @REQ-WIRE-005.5: Handle save result
+305:       self.state.is_saving = false
+306:       self.state.id = Some(id)
+307:       LOG_INFO "MCP config saved: {}", id
+308:       // Navigation handled by presenter
+309:       cx.notify()
+310:     
+311:     ViewCommand::ShowError { title, message, .. } =>
+312:       self.state.is_saving = false
+313:       self.state.validation_errors = vec![format!("{}: {}", title, message)]
+314:       cx.notify()
+315:     
+316:     _ => ()
+317:   END MATCH
+318: END FUNCTION
+319:
+320: FUNCTION McpConfigureView::on_save_clicked(cx: &mut Context<Self>)
+321:   // Validate
+322:   LET errors = self.validate()
+323:   IF NOT errors.is_empty():
+324:     self.state.validation_errors = errors
+325:     cx.notify()
+326:     RETURN
+327:   END IF
+328:   
+329:   self.state.is_saving = true
+330:   cx.notify()
+331:   
+332:   // Build env vars map
+333:   LET env_map: HashMap<String, String> = self.state.env_vars
+334:     .iter()
+335:     .filter(|(_, v, _)| !v.is_empty())
+336:     .map(|(k, v, _)| (k.clone(), v.clone()))
+337:     .collect()
+338:   
+339:   self.emit(UserEvent::SaveMcp {
+340:     id: self.state.id,
+341:     name: self.state.name.clone(),
+342:     command: self.state.command.clone(),
+343:     args: self.state.args.clone(),
+344:     env_vars: env_map,
+345:     enabled: self.state.enabled,
+346:   })
+347: END FUNCTION
+348:
+349: FUNCTION McpConfigureView::validate() -> Vec<String>
+350:   LET errors = Vec::new()
+351:   
+352:   IF self.state.name.trim().is_empty():
+353:     errors.push("Name is required")
+354:   END IF
 355:   
-356:   IF self.state.name.trim().is_empty():
-357:     errors.push("Name is required")
+356:   IF self.state.command.trim().is_empty():
+357:     errors.push("Command is required")
 358:   END IF
 359:   
-360:   IF self.state.command.trim().is_empty():
-361:     errors.push("Command is required")
-362:   END IF
-363:   
-364:   // Check required env vars have values
-365:   FOR (name, value, required) IN &self.state.env_vars:
-366:     IF *required AND value.is_empty():
-367:       errors.push(format!("Environment variable {} is required", name))
-368:     END IF
-369:   END FOR
-370:   
-371:   RETURN errors
-372: END FUNCTION
+360:   // Check required env vars have values
+361:   FOR (name, value, required) IN &self.state.env_vars:
+362:     IF *required AND value.is_empty():
+363:       errors.push(format!("Environment variable {} is required", name))
+364:     END IF
+365:   END FOR
+366:   
+367:   RETURN errors
+368: END FUNCTION
 ```
 
 ## McpService Interface Requirements
 
 ```pseudocode
-373: // Verify McpService has these methods
-374: TRAIT McpService {
-375:   async fn create(
-376:     name: String,
-377:     command: String,
-378:     args: Vec<String>,
-379:     env_vars: HashMap<String, String>,
-380:     enabled: bool
-381:   ) -> Result<McpConfig, ServiceError>
-382:   
-383:   async fn update(
-384:     id: Uuid,
-385:     name: String,
-386:     command: String,
-387:     args: Vec<String>,
-388:     env_vars: HashMap<String, String>,
-389:     enabled: bool
-390:   ) -> Result<(), ServiceError>
-391:   
-392:   // ... existing methods
-393: }
+369: // Verify McpService has these methods
+370: TRAIT McpService {
+371:   async fn create(
+372:     name: String,
+373:     command: String,
+374:     args: Vec<String>,
+375:     env_vars: HashMap<String, String>,
+376:     enabled: bool
+377:   ) -> Result<McpConfig, ServiceError>
+378:   
+379:   async fn update(
+380:     id: Uuid,
+381:     name: String,
+382:     command: String,
+383:     args: Vec<String>,
+384:     env_vars: HashMap<String, String>,
+385:     enabled: bool
+386:   ) -> Result<(), ServiceError>
+387:   
+388:   // ... existing methods
+389: }
 ```
 
 ## Files Modified
@@ -467,45 +463,45 @@ async fn on_save_config(...) {
 - `src/events/types.rs` - Update McpAddNext, SaveMcp variants (lines 001-013, 196-207)
 - `src/presentation/view_command.rs` - Add McpSearchResults, McpConfigurePrefill (lines 108-132)
 - `src/presentation/mcp_add_presenter.rs` - Implement handlers (lines 015-107)
-- `src/presentation/mcp_configure_presenter.rs` - Implement handlers (lines 209-278)
+- `src/presentation/mcp_configure_presenter.rs` - Implement handlers (lines 209-274)
 - `src/ui_gpui/views/mcp_add_view.rs` - Implement handle_command (lines 133-195)
-- `src/ui_gpui/views/mcp_configure_view.rs` - Implement handle_command (lines 279-372)
+- `src/ui_gpui/views/mcp_configure_view.rs` - Implement handle_command (lines 275-368)
 
 ## Verification Pseudocode
 
 ```pseudocode
-394: TEST verify_mcp_search_flow():
-395:   LET mcp_registry = MockMcpRegistryService::with_entries(vec![
-396:     McpEntry { id: "mcp-1", name: "File System", ... },
-397:     McpEntry { id: "mcp-2", name: "GitHub", ... },
-398:   ])
-399:   
-400:   // Search
-401:   event_bus.publish(AppEvent::User(UserEvent::SearchMcpRegistry {
-402:     query: "file".to_string(),
-403:     source: McpRegistrySource::default(),
-404:   }))
-405:   
-406:   // Verify results
-407:   LET cmd = view_rx.try_recv().unwrap()
-408:   ASSERT matches!(cmd, ViewCommand::McpSearchResults { results } if results.len() == 1)
-409: END TEST
-410:
-411: TEST verify_mcp_save_flow():
-412:   // Save new MCP
-413:   event_bus.publish(AppEvent::User(UserEvent::SaveMcp {
-414:     id: None,
-415:     name: "Test MCP".to_string(),
-416:     command: "npx".to_string(),
-417:     args: vec!["-y", "@test/mcp-server"],
-418:     env_vars: HashMap::from([("API_KEY".to_string(), "test".to_string())]),
-419:     enabled: true,
-420:   }))
-421:   
-422:   // Verify saved
-423:   LET cmd = view_rx.try_recv().unwrap()
-424:   ASSERT matches!(cmd, ViewCommand::McpConfigSaved { .. })
-425: END TEST
+390: TEST verify_mcp_search_flow():
+391:   LET mcp_registry = MockMcpRegistryService::with_entries(vec![
+392:     McpEntry { id: "mcp-1", name: "File System", ... },
+393:     McpEntry { id: "mcp-2", name: "GitHub", ... },
+394:   ])
+395:   
+396:   // Search
+397:   event_bus.publish(AppEvent::User(UserEvent::SearchMcpRegistry {
+398:     query: "file".to_string(),
+399:     source: McpRegistrySource::default(),
+400:   }))
+401:   
+402:   // Verify results
+403:   LET cmd = view_rx.try_recv().unwrap()
+404:   ASSERT matches!(cmd, ViewCommand::McpSearchResults { results } if results.len() == 1)
+405: END TEST
+406:
+407: TEST verify_mcp_save_flow():
+408:   // Save new MCP
+409:   event_bus.publish(AppEvent::User(UserEvent::SaveMcp {
+410:     id: None,
+411:     name: "Test MCP".to_string(),
+412:     command: "npx".to_string(),
+413:     args: vec!["-y", "@test/mcp-server"],
+414:     env_vars: HashMap::from([("API_KEY".to_string(), "test".to_string())]),
+415:     enabled: true,
+416:   }))
+417:   
+418:   // Verify saved
+419:   LET cmd = view_rx.try_recv().unwrap()
+420:   ASSERT matches!(cmd, ViewCommand::McpConfigSaved { .. })
+421: END TEST
 ```
 
 ## Edge Cases

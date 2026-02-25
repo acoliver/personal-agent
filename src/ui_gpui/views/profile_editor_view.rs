@@ -3,12 +3,13 @@
 //! @plan PLAN-20250130-GPUIREDUX.P08
 //! @requirement REQ-UI-PE
 
-use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight};
+use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight, Stateful};
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::bridge::GpuiBridge;
-use crate::events::types::UserEvent;
+use crate::events::types::{ModelProfileAuth, ModelProfileParameters, UserEvent};
 use crate::presentation::view_command::ViewCommand;
 
 /// Auth method enum for display
@@ -47,6 +48,18 @@ impl ApiType {
             ApiType::OpenAI => "OpenAI",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActiveField {
+    Name,
+    BaseUrl,
+    ApiKey,
+    KeyfilePath,
+    MaxTokens,
+    ContextLimit,
+    ThinkingBudget,
+    SystemPrompt,
 }
 
 /// Profile data for the editor
@@ -88,6 +101,9 @@ impl ProfileEditorData {
         if self.name.trim().is_empty() {
             return false;
         }
+        if self.model_id.trim().is_empty() {
+            return false;
+        }
         if self.base_url.trim().is_empty() {
             return false;
         }
@@ -106,6 +122,7 @@ pub struct ProfileEditorState {
     pub data: ProfileEditorData,
     pub is_new: bool,
     pub mask_api_key: bool,
+    active_field: Option<ActiveField>,
 }
 
 impl ProfileEditorState {
@@ -114,6 +131,7 @@ impl ProfileEditorState {
             data: ProfileEditorData::new(),
             is_new: true,
             mask_api_key: true,
+            active_field: None,
         }
     }
 
@@ -122,6 +140,7 @@ impl ProfileEditorState {
             data,
             is_new: false,
             mask_api_key: true,
+            active_field: None,
         }
     }
 }
@@ -153,6 +172,170 @@ impl ProfileEditorView {
     pub fn set_profile(&mut self, data: ProfileEditorData, is_new: bool) {
         self.state.data = data;
         self.state.is_new = is_new;
+        self.state.active_field = None;
+    }
+
+    fn append_to_active_field(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        match self.state.active_field {
+            Some(ActiveField::Name) => self.state.data.name.push_str(text),
+            Some(ActiveField::BaseUrl) => self.state.data.base_url.push_str(text),
+            Some(ActiveField::ApiKey) => self.state.data.api_key.push_str(text),
+            Some(ActiveField::KeyfilePath) => self.state.data.keyfile_path.push_str(text),
+            Some(ActiveField::MaxTokens) => {
+                if text.chars().all(|c| c.is_ascii_digit()) {
+                    let mut s = self.state.data.max_tokens.to_string();
+                    if s == "0" {
+                        s.clear();
+                    }
+                    s.push_str(text);
+                    if let Ok(parsed) = s.parse::<u32>() {
+                        self.state.data.max_tokens = parsed;
+                    }
+                }
+            }
+            Some(ActiveField::ContextLimit) => {
+                if text.chars().all(|c| c.is_ascii_digit()) {
+                    let mut s = self.state.data.context_limit.to_string();
+                    if s == "0" {
+                        s.clear();
+                    }
+                    s.push_str(text);
+                    if let Ok(parsed) = s.parse::<u32>() {
+                        self.state.data.context_limit = parsed;
+                    }
+                }
+            }
+            Some(ActiveField::ThinkingBudget) => {
+                if text.chars().all(|c| c.is_ascii_digit()) {
+                    let mut s = self.state.data.thinking_budget.to_string();
+                    if s == "0" {
+                        s.clear();
+                    }
+                    s.push_str(text);
+                    if let Ok(parsed) = s.parse::<u32>() {
+                        self.state.data.thinking_budget = parsed;
+                    }
+                }
+            }
+            Some(ActiveField::SystemPrompt) => {
+                self.state.data.system_prompt.push_str(text);
+            }
+            None => {}
+        }
+    }
+
+    fn backspace_active_field(&mut self) {
+        match self.state.active_field {
+            Some(ActiveField::Name) => {
+                self.state.data.name.pop();
+            }
+            Some(ActiveField::BaseUrl) => {
+                self.state.data.base_url.pop();
+            }
+            Some(ActiveField::ApiKey) => {
+                self.state.data.api_key.pop();
+            }
+            Some(ActiveField::KeyfilePath) => {
+                self.state.data.keyfile_path.pop();
+            }
+            Some(ActiveField::MaxTokens) => {
+                let mut s = self.state.data.max_tokens.to_string();
+                s.pop();
+                self.state.data.max_tokens = if s.is_empty() {
+                    0
+                } else {
+                    s.parse::<u32>().unwrap_or(self.state.data.max_tokens)
+                };
+            }
+            Some(ActiveField::ContextLimit) => {
+                let mut s = self.state.data.context_limit.to_string();
+                s.pop();
+                self.state.data.context_limit = if s.is_empty() {
+                    0
+                } else {
+                    s.parse::<u32>().unwrap_or(self.state.data.context_limit)
+                };
+            }
+            Some(ActiveField::ThinkingBudget) => {
+                let mut s = self.state.data.thinking_budget.to_string();
+                s.pop();
+                self.state.data.thinking_budget = if s.is_empty() {
+                    0
+                } else {
+                    s.parse::<u32>().unwrap_or(self.state.data.thinking_budget)
+                };
+            }
+            Some(ActiveField::SystemPrompt) => {
+                self.state.data.system_prompt.pop();
+            }
+            None => {}
+        }
+    }
+
+    pub fn handle_key_input(
+        &mut self,
+        key: &str,
+        modifiers: &gpui::Modifiers,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if key == "escape" || (modifiers.platform && key == "w") {
+            crate::ui_gpui::navigation_channel().request_navigate(
+                crate::presentation::view_command::ViewId::Settings,
+            );
+            return;
+        }
+
+        if modifiers.platform && key == "s" {
+            self.emit_save_profile();
+            return;
+        }
+
+        if modifiers.platform && key == "v" {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    if self.state.active_field == Some(ActiveField::ApiKey) {
+                        self.state.data.api_key = text;
+                    } else {
+                        self.append_to_active_field(&text);
+                    }
+                    cx.notify();
+                }
+            }
+            return;
+        }
+
+        if modifiers.platform || modifiers.control {
+            return;
+        }
+
+        if key == "backspace" {
+            self.backspace_active_field();
+            cx.notify();
+            return;
+        }
+
+        if key == "enter" {
+            if self.state.active_field == Some(ActiveField::SystemPrompt) {
+                self.append_to_active_field("\n");
+                cx.notify();
+            }
+            return;
+        }
+
+        if key == "space" {
+            self.append_to_active_field(" ");
+            cx.notify();
+            return;
+        }
+
+        if key.len() == 1 {
+            self.append_to_active_field(key);
+            cx.notify();
+        }
     }
 
     /// Emit a UserEvent through the bridge
@@ -167,12 +350,92 @@ impl ProfileEditorView {
         }
     }
 
+    fn emit_save_profile(&self) {
+        let id = self
+            .state
+            .data
+            .id
+            .as_deref()
+            .and_then(|raw| Uuid::parse_str(raw).ok())
+            .unwrap_or_else(Uuid::new_v4);
+
+        let provider_id = match self.state.data.api_type {
+            ApiType::Anthropic => Some("anthropic".to_string()),
+            ApiType::OpenAI => Some("openai".to_string()),
+        };
+
+        let auth = match self.state.data.auth_method {
+            AuthMethod::None => Some(ModelProfileAuth::None),
+            AuthMethod::ApiKey => Some(ModelProfileAuth::ApiKey {
+                value: self.state.data.api_key.clone(),
+            }),
+            AuthMethod::Keyfile => Some(ModelProfileAuth::Keyfile {
+                path: self.state.data.keyfile_path.clone(),
+            }),
+        };
+
+        let parameters = Some(ModelProfileParameters {
+            temperature: Some(self.state.data.temperature as f64),
+            max_tokens: Some(self.state.data.max_tokens),
+            show_thinking: Some(self.state.data.show_thinking),
+            enable_thinking: Some(self.state.data.enable_extended_thinking),
+            thinking_budget: if self.state.data.enable_extended_thinking {
+                Some(self.state.data.thinking_budget)
+            } else {
+                None
+            },
+        });
+
+        self.emit(UserEvent::SaveProfile {
+            profile: crate::events::types::ModelProfile {
+                id,
+                name: self.state.data.name.clone(),
+                provider_id,
+                model_id: Some(self.state.data.model_id.clone()),
+                base_url: Some(self.state.data.base_url.clone()),
+                auth,
+                parameters,
+                system_prompt: Some(self.state.data.system_prompt.clone()),
+            },
+        });
+    }
+
     /// Handle ViewCommand from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P08
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
+    /// @requirement REQ-WIRE-002
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
             ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
                 // Navigation handled by MainPanel
+            }
+            ViewCommand::ModelSelected {
+                provider_id,
+                model_id,
+                context_length,
+            } => {
+                // Prefill profile editor from model selection flow.
+                self.state.is_new = true;
+                self.state.data.model_id = model_id.clone();
+                self.state.data.api_type = if provider_id == "anthropic" {
+                    ApiType::Anthropic
+                } else {
+                    ApiType::OpenAI
+                };
+                if self.state.data.name.trim().is_empty() {
+                    self.state.data.name = model_id;
+                }
+                if self.state.data.base_url.trim().is_empty() {
+                    self.state.data.base_url = match provider_id.as_str() {
+                        "anthropic" => "https://api.anthropic.com/v1".to_string(),
+                        "openai" => "https://api.openai.com/v1".to_string(),
+                        _ => "https://api.openai.com/v1".to_string(),
+                    };
+                }
+                if let Some(limit) = context_length {
+                    self.state.data.context_limit = limit;
+                }
+                self.state.active_field = None;
             }
             _ => {}
         }
@@ -245,11 +508,8 @@ impl ProfileEditorView {
                             .hover(|s| s.bg(Theme::accent_hover()))
                             .text_color(gpui::white())
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                tracing::info!("Save clicked - navigating to Settings");
-                                this.emit(UserEvent::SaveProfileEditor);
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::Settings
-                                );
+                                tracing::info!("Save clicked - emitting SaveProfile payload");
+                                this.emit_save_profile();
                             }))
                     })
                     .when(!can_save, |d| {
@@ -272,7 +532,13 @@ impl ProfileEditorView {
 
     /// Render a text input field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_text_field(&self, id: &str, value: &str, placeholder: &str) -> impl IntoElement {
+    fn render_text_field(
+        &self,
+        id: &str,
+        value: &str,
+        placeholder: &str,
+        active: bool,
+    ) -> Stateful<gpui::Div> {
         div()
             .id(SharedString::from(id.to_string()))
             .w(px(360.0))
@@ -280,7 +546,7 @@ impl ProfileEditorView {
             .px(px(8.0))
             .bg(Theme::bg_dark())
             .border_1()
-            .border_color(Theme::border())
+            .border_color(if active { Theme::accent() } else { Theme::border() })
             .rounded(px(4.0))
             .flex()
             .items_center()
@@ -296,7 +562,7 @@ impl ProfileEditorView {
 
     /// Render a secure (masked) text field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_secure_field(&self, id: &str, value: &str, masked: bool) -> impl IntoElement {
+    fn render_secure_field(&self, id: &str, value: &str, masked: bool, active: bool) -> Stateful<gpui::Div> {
         let display = if masked && !value.is_empty() {
             "•".repeat(value.len().min(40))
         } else {
@@ -310,7 +576,7 @@ impl ProfileEditorView {
             .px(px(8.0))
             .bg(Theme::bg_dark())
             .border_1()
-            .border_color(Theme::border())
+            .border_color(if active { Theme::accent() } else { Theme::border() })
             .rounded(px(4.0))
             .flex()
             .items_center()
@@ -326,12 +592,20 @@ impl ProfileEditorView {
 
     /// Render the name field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_name_section(&self) -> impl IntoElement {
+    fn render_name_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let active = self.state.active_field == Some(ActiveField::Name);
+
         div()
             .flex()
             .flex_col()
             .child(self.render_label("NAME"))
-            .child(self.render_text_field("field-name", &self.state.data.name, "Profile name"))
+            .child(
+                self.render_text_field("field-name", &self.state.data.name, "Profile name", active)
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                        this.state.active_field = Some(ActiveField::Name);
+                        cx.notify();
+                    })),
+            )
     }
 
     /// Render the model display with change button
@@ -397,7 +671,7 @@ impl ProfileEditorView {
 
     /// Render API type dropdown
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_api_type_section(&self) -> impl IntoElement {
+    fn render_api_type_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let api_type = self.state.data.api_type.display();
 
         div()
@@ -420,6 +694,21 @@ impl ProfileEditorView {
                     .cursor_pointer()
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                        this.state.data.api_type = match this.state.data.api_type {
+                            ApiType::Anthropic => ApiType::OpenAI,
+                            ApiType::OpenAI => ApiType::Anthropic,
+                        };
+
+                        if this.state.data.base_url.trim().is_empty() {
+                            this.state.data.base_url = match this.state.data.api_type {
+                                ApiType::Anthropic => "https://api.anthropic.com/v1".to_string(),
+                                ApiType::OpenAI => "https://api.openai.com/v1".to_string(),
+                            };
+                        }
+
+                        cx.notify();
+                    }))
                     .child(api_type)
                     .child(div().text_color(Theme::text_muted()).child("v"))
             )
@@ -427,17 +716,30 @@ impl ProfileEditorView {
 
     /// Render base URL field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_base_url_section(&self) -> impl IntoElement {
+    fn render_base_url_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let active = self.state.active_field == Some(ActiveField::BaseUrl);
+
         div()
             .flex()
             .flex_col()
             .child(self.render_label("BASE URL"))
-            .child(self.render_text_field("field-base-url", &self.state.data.base_url, "https://api.example.com/v1"))
+            .child(
+                self.render_text_field(
+                    "field-base-url",
+                    &self.state.data.base_url,
+                    "https://api.example.com/v1",
+                    active,
+                )
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                    this.state.active_field = Some(ActiveField::BaseUrl);
+                    cx.notify();
+                })),
+            )
     }
 
     /// Render auth method dropdown
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_auth_method_section(&self) -> impl IntoElement {
+    fn render_auth_method_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let auth_method = self.state.data.auth_method.display();
 
         div()
@@ -460,6 +762,15 @@ impl ProfileEditorView {
                     .cursor_pointer()
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                        this.state.data.auth_method = match this.state.data.auth_method {
+                            AuthMethod::None => AuthMethod::ApiKey,
+                            AuthMethod::ApiKey => AuthMethod::Keyfile,
+                            AuthMethod::Keyfile => AuthMethod::None,
+                        };
+                        this.state.active_field = None;
+                        cx.notify();
+                    }))
                     .child(auth_method)
                     .child(div().text_color(Theme::text_muted()).child("v"))
             )
@@ -469,6 +780,7 @@ impl ProfileEditorView {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_api_key_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let masked = self.state.mask_api_key;
+        let active = self.state.active_field == Some(ActiveField::ApiKey);
 
         div()
             .flex()
@@ -487,46 +799,83 @@ impl ProfileEditorView {
                     )
                     .child(
                         div()
-                            .id("checkbox-mask")
                             .flex()
                             .items_center()
-                            .gap(px(4.0))
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                this.state.mask_api_key = !this.state.mask_api_key;
-                                cx.notify();
-                            }))
+                            .gap(px(8.0))
                             .child(
                                 div()
-                                    .size(px(12.0))
+                                    .id("btn-paste-api-key")
+                                    .px(px(6.0))
+                                    .py(px(2.0))
+                                    .rounded(px(3.0))
                                     .border_1()
                                     .border_color(Theme::border())
-                                    .rounded(px(2.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .when(masked, |d| d.bg(Theme::accent()).child(
-                                        div().text_size(px(8.0)).text_color(gpui::white()).child("v")
-                                    ))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(Theme::bg_dark()))
+                                    .text_size(px(10.0))
+                                    .text_color(Theme::text_secondary())
+                                    .child("Paste")
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                                        if let Some(item) = cx.read_from_clipboard() {
+                                            if let Some(text) = item.text() {
+                                                this.state.active_field = Some(ActiveField::ApiKey);
+                                                this.state.data.api_key = text;
+                                                cx.notify();
+                                            }
+                                        }
+                                    }))
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
-                                    .text_color(Theme::text_muted())
-                                    .child("Mask")
+                                    .id("checkbox-mask")
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.0))
+                                    .cursor_pointer()
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                                        this.state.mask_api_key = !this.state.mask_api_key;
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        div()
+                                            .size(px(12.0))
+                                            .border_1()
+                                            .border_color(Theme::border())
+                                            .rounded(px(2.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .when(masked, |d| d.bg(Theme::accent()).child(
+                                                div().text_size(px(8.0)).text_color(gpui::white()).child("v")
+                                            ))
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(Theme::text_muted())
+                                            .child("Mask")
+                                    )
                             )
                     )
             )
             .child(
                 div()
                     .mt(px(4.0))
-                    .child(self.render_secure_field("field-api-key", &self.state.data.api_key, masked))
+                    .child(
+                        self.render_secure_field("field-api-key", &self.state.data.api_key, masked, active)
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                                this.state.active_field = Some(ActiveField::ApiKey);
+                                cx.notify();
+                            })),
+                    )
             )
     }
 
     /// Render keyfile field with browse button
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_keyfile_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let active = self.state.active_field == Some(ActiveField::KeyfilePath);
+
         div()
             .flex()
             .flex_col()
@@ -546,12 +895,16 @@ impl ProfileEditorView {
                             .px(px(8.0))
                             .bg(Theme::bg_dark())
                             .border_1()
-                            .border_color(Theme::border())
+                            .border_color(if active { Theme::accent() } else { Theme::border() })
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
                             .text_size(px(12.0))
                             .overflow_hidden()
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                                this.state.active_field = Some(ActiveField::KeyfilePath);
+                                cx.notify();
+                            }))
                             .child(
                                 if self.state.data.keyfile_path.is_empty() {
                                     div().text_color(Theme::text_muted()).child("/path/to/api_key")
@@ -695,22 +1048,48 @@ impl ProfileEditorView {
 
     /// Render max tokens field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_max_tokens_section(&self) -> impl IntoElement {
+    fn render_max_tokens_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let active = self.state.active_field == Some(ActiveField::MaxTokens);
+
         div()
             .flex()
             .flex_col()
             .child(self.render_label("MAX TOKENS"))
-            .child(self.render_text_field("field-max-tokens", &self.state.data.max_tokens.to_string(), "4096"))
+            .child(
+                self.render_text_field(
+                    "field-max-tokens",
+                    &self.state.data.max_tokens.to_string(),
+                    "4096",
+                    active,
+                )
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                    this.state.active_field = Some(ActiveField::MaxTokens);
+                    cx.notify();
+                })),
+            )
     }
 
     /// Render context limit field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_context_limit_section(&self) -> impl IntoElement {
+    fn render_context_limit_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let active = self.state.active_field == Some(ActiveField::ContextLimit);
+
         div()
             .flex()
             .flex_col()
             .child(self.render_label("CONTEXT LIMIT"))
-            .child(self.render_text_field("field-context-limit", &self.state.data.context_limit.to_string(), "128000"))
+            .child(
+                self.render_text_field(
+                    "field-context-limit",
+                    &self.state.data.context_limit.to_string(),
+                    "128000",
+                    active,
+                )
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                    this.state.active_field = Some(ActiveField::ContextLimit);
+                    cx.notify();
+                })),
+            )
     }
 
     /// Render show thinking checkbox
@@ -753,6 +1132,7 @@ impl ProfileEditorView {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_extended_thinking_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let checked = self.state.data.enable_extended_thinking;
+        let budget_active = self.state.active_field == Some(ActiveField::ThinkingBudget);
 
         div()
             .flex()
@@ -795,20 +1175,34 @@ impl ProfileEditorView {
                         .flex()
                         .flex_col()
                         .child(self.render_label("THINKING BUDGET"))
-                        .child(self.render_text_field("field-thinking-budget", &self.state.data.thinking_budget.to_string(), "10000"))
+                        .child(
+                            self.render_text_field(
+                                "field-thinking-budget",
+                                &self.state.data.thinking_budget.to_string(),
+                                "10000",
+                                budget_active,
+                            )
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                                this.state.active_field = Some(ActiveField::ThinkingBudget);
+                                cx.notify();
+                            })),
+                        )
                 )
             })
     }
 
     /// Render system prompt section
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_system_prompt_section(&self) -> impl IntoElement {
+    fn render_system_prompt_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let active = self.state.active_field == Some(ActiveField::SystemPrompt);
+
         div()
             .flex()
             .flex_col()
             .child(self.render_section_divider("SYSTEM PROMPT"))
             .child(
                 div()
+                    .id("field-system-prompt")
                     .mt(px(8.0))
                     .w(px(360.0))
                     .h(px(100.0))
@@ -816,11 +1210,15 @@ impl ProfileEditorView {
                     .py(px(8.0))
                     .bg(Theme::bg_dark())
                     .border_1()
-                    .border_color(Theme::border())
+                    .border_color(if active { Theme::accent() } else { Theme::border() })
                     .rounded(px(4.0))
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
                     .overflow_hidden()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                        this.state.active_field = Some(ActiveField::SystemPrompt);
+                        cx.notify();
+                    }))
                     .child(
                         if self.state.data.system_prompt.is_empty() {
                             div().text_color(Theme::text_muted()).child("You are a helpful assistant.")
@@ -847,15 +1245,15 @@ impl ProfileEditorView {
             .flex_col()
             .gap(px(12.0))
             // Name
-            .child(self.render_name_section())
+            .child(self.render_name_section(cx))
             // Model
             .child(self.render_model_section(cx))
             // API Type
-            .child(self.render_api_type_section())
+            .child(self.render_api_type_section(cx))
             // Base URL
-            .child(self.render_base_url_section())
+            .child(self.render_base_url_section(cx))
             // Auth Method
-            .child(self.render_auth_method_section())
+            .child(self.render_auth_method_section(cx))
             // Conditional auth fields
             .when(*auth_method == AuthMethod::ApiKey, |d| d.child(self.render_api_key_section(cx)))
             .when(*auth_method == AuthMethod::Keyfile, |d| d.child(self.render_keyfile_section(cx)))
@@ -868,13 +1266,13 @@ impl ProfileEditorView {
                     .flex_col()
                     .gap(px(12.0))
                     .child(self.render_temperature_section(cx))
-                    .child(self.render_max_tokens_section())
-                    .child(self.render_context_limit_section())
+                    .child(self.render_max_tokens_section(cx))
+                    .child(self.render_context_limit_section(cx))
                     .child(self.render_show_thinking_section(cx))
                     .child(self.render_extended_thinking_section(cx))
             )
             // System Prompt
-            .child(self.render_system_prompt_section())
+            .child(self.render_system_prompt_section(cx))
     }
 }
 
@@ -893,26 +1291,6 @@ impl gpui::Render for ProfileEditorView {
             .size_full()
             .bg(Theme::bg_base())
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
-                let key = &event.keystroke.key;
-                let modifiers = &event.keystroke.modifiers;
-                
-                // Escape or Cmd+W: Go back to Settings
-                if key == "escape" || (modifiers.platform && key == "w") {
-                    println!(">>> Escape/Cmd+W pressed - navigating to Settings <<<");
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Settings
-                    );
-                }
-                // Cmd+S: Save profile
-                if modifiers.platform && key == "s" {
-                    println!(">>> Cmd+S pressed - saving profile <<<");
-                    this.emit(crate::events::types::UserEvent::SaveProfileEditor);
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Settings
-                    );
-                }
-            }))
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Content (scrollable)

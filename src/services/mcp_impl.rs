@@ -322,22 +322,16 @@ impl McpService for McpServiceImpl {
         if let Some(new_name) = name {
             stored.name = new_name;
         }
-        if let Some(command) = command {
-            if let TransportData::Stdio { args: existing_args, .. } = &mut stored.transport {
-                *existing_args = args.clone().unwrap_or_default();
-                // Update command by recreating the transport
-                stored.transport = TransportData::Stdio {
-                    command,
-                    args: existing_args.clone(),
-                };
+        if let TransportData::Stdio {
+            command: existing_command,
+            args: existing_args,
+        } = &mut stored.transport
+        {
+            if let Some(new_command) = command {
+                *existing_command = new_command;
             }
-        }
-        if let Some(args) = args {
-            if let TransportData::Stdio { command, .. } = &stored.transport {
-                stored.transport = TransportData::Stdio {
-                    command: command.clone(),
-                    args,
-                };
+            if let Some(new_args) = args {
+                *existing_args = new_args;
             }
         }
 
@@ -353,6 +347,26 @@ impl McpService for McpServiceImpl {
         let configs = self.configs.read().await;
         let updated_stored = configs.iter().find(|c| c.server_uuid == server_uuid).unwrap();
         Ok(McpServerConfig::from(&*updated_stored))
+    }
+
+    /// Resolve an MCP server UUID by display name.
+    async fn resolve_id_by_name(&self, name: &str) -> ServiceResult<Option<Uuid>> {
+        let configs = self.configs.read().await;
+
+        if let Some(found) = configs
+            .iter()
+            .rev()
+            .find(|c| c.name == name)
+            .map(|c| c.server_uuid)
+        {
+            return Ok(Some(found));
+        }
+
+        Ok(configs
+            .iter()
+            .rev()
+            .find(|c| c.name.eq_ignore_ascii_case(name))
+            .map(|c| c.server_uuid))
     }
 
     /// Delete a config
@@ -627,4 +641,182 @@ mod tests {
         let tools = service.get_available_tools(server_uuid).await.unwrap();
         assert_eq!(tools.len(), 0); // Returns empty vec for now
     }
+
+    #[tokio::test]
+    async fn test_resolve_id_by_name_prefers_latest_matching_config() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        service.initialize().await.unwrap();
+
+        service
+            .add(
+                "Duplicate MCP".to_string(),
+                "npx".to_string(),
+                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Capture first id
+        let first_id = {
+            let configs = service.configs.read().await;
+            configs
+                .iter()
+                .find(|c| c.name == "Duplicate MCP")
+                .map(|c| c.server_uuid)
+                .expect("first config must exist")
+        };
+
+        service
+            .add(
+                "Duplicate MCP".to_string(),
+                "npx".to_string(),
+                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let resolved = service
+            .resolve_id_by_name("Duplicate MCP")
+            .await
+            .expect("resolve should succeed")
+            .expect("resolved id should exist");
+
+        assert_ne!(
+            resolved,
+            first_id,
+            "resolve_id_by_name should prefer the latest matching config id"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_id_by_name_falls_back_to_case_insensitive_match() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        service.initialize().await.unwrap();
+
+        service
+            .add(
+                "Mixed Case MCP".to_string(),
+                "npx".to_string(),
+                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let expected = service
+            .resolve_id_by_name("Mixed Case MCP")
+            .await
+            .expect("resolve should succeed")
+            .expect("resolved id should exist");
+
+        let resolved_lower = service
+            .resolve_id_by_name("mixed case mcp")
+            .await
+            .expect("resolve should succeed")
+            .expect("case-insensitive resolved id should exist");
+
+        assert_eq!(
+            resolved_lower,
+            expected,
+            "resolve_id_by_name should support case-insensitive fallback"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_preserves_args_when_only_command_changes() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        service.initialize().await.unwrap();
+
+        service
+            .add(
+                "Cmd Update MCP".to_string(),
+                "node".to_string(),
+                vec!["server.js".to_string(), "--port".to_string(), "9000".to_string()],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let server_uuid = {
+            let stored_configs = service.configs.read().await;
+            stored_configs[0].server_uuid
+        };
+
+        let updated = service
+            .update(
+                server_uuid,
+                None,
+                Some("deno".to_string()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        match updated.transport {
+            McpTransportConfig::Stdio { command, args } => {
+                assert_eq!(command, "deno");
+                assert_eq!(
+                    args,
+                    vec!["server.js".to_string(), "--port".to_string(), "9000".to_string()],
+                    "updating command only must preserve existing args"
+                );
+            }
+            _ => panic!("expected stdio transport"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_preserves_command_when_only_args_change() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let service = McpServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        service.initialize().await.unwrap();
+
+        service
+            .add(
+                "Args Update MCP".to_string(),
+                "npx".to_string(),
+                vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let server_uuid = {
+            let stored_configs = service.configs.read().await;
+            stored_configs[0].server_uuid
+        };
+
+        let updated = service
+            .update(
+                server_uuid,
+                None,
+                None,
+                Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        match updated.transport {
+            McpTransportConfig::Stdio { command, args } => {
+                assert_eq!(command, "npx", "updating args only must preserve existing command");
+                assert_eq!(
+                    args,
+                    vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]
+                );
+            }
+            _ => panic!("expected stdio transport"),
+        }
+    }
+
 }

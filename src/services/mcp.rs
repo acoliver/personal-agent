@@ -73,6 +73,14 @@ pub trait McpService: Send + Sync {
         env: Option<Vec<(String, String)>>,
     ) -> ServiceResult<McpServerConfig>;
 
+    /// Resolve an MCP server ID by its display name.
+    ///
+    /// Default implementation returns `Ok(None)` for services that do not
+    /// provide identity lookup.
+    async fn resolve_id_by_name(&self, _name: &str) -> ServiceResult<Option<Uuid>> {
+        Ok(None)
+    }
+
     /// Delete an MCP server configuration
     async fn delete(&self, id: Uuid) -> ServiceResult<()>;
 

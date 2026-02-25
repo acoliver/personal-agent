@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ViewCommand, ProfileSummary};
 
 /// Represents a profile in the settings list
 /// @plan PLAN-20250130-GPUIREDUX.P06
@@ -144,6 +144,25 @@ impl SettingsView {
         self.state.profiles = profiles;
     }
 
+    fn apply_profile_summaries(
+        &mut self,
+        profiles: Vec<ProfileSummary>,
+        selected_profile_id: Option<Uuid>,
+    ) {
+        self.state.profiles = profiles
+            .into_iter()
+            .map(|profile| {
+                ProfileItem::new(profile.id, profile.name)
+                    .with_model(profile.provider_id, profile.model_id)
+                    .with_default(profile.is_default)
+            })
+            .collect();
+
+        if selected_profile_id.is_some() {
+            self.state.selected_profile_id = selected_profile_id;
+        }
+    }
+
     /// Set MCPs from presenter
     pub fn set_mcps(&mut self, mcps: Vec<McpItem>) {
         self.state.mcps = mcps;
@@ -167,6 +186,105 @@ impl SettingsView {
         match command {
             ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
                 // Navigation handled by MainPanel
+            }
+            ViewCommand::ShowSettings {
+                profiles,
+                selected_profile_id,
+            }
+            | ViewCommand::ChatProfilesUpdated {
+                profiles,
+                selected_profile_id,
+            } => {
+                self.apply_profile_summaries(profiles, selected_profile_id);
+            }
+            ViewCommand::ProfileCreated { id, name } => {
+                self.state.selected_profile_id = Some(id);
+                if self.state.profiles.iter().all(|p| p.id != id) {
+                    self.state
+                        .profiles
+                        .push(ProfileItem::new(id, name).with_model("", ""));
+                }
+            }
+            ViewCommand::ProfileUpdated { id, name } => {
+                if let Some(profile) = self.state.profiles.iter_mut().find(|p| p.id == id) {
+                    profile.name = name;
+                }
+            }
+            ViewCommand::ProfileDeleted { id } => {
+                self.state.profiles.retain(|p| p.id != id);
+                if self.state.selected_profile_id == Some(id) {
+                    self.state.selected_profile_id = self.state.profiles.first().map(|p| p.id);
+                }
+            }
+            ViewCommand::DefaultProfileChanged { profile_id } => {
+                self.state.selected_profile_id = profile_id;
+                for profile in &mut self.state.profiles {
+                    profile.is_default = Some(profile.id) == profile_id;
+                }
+            }
+            ViewCommand::McpStatusChanged { id, status } => {
+                let mapped = match status {
+                    crate::presentation::view_command::McpStatus::Running => McpStatus::Running,
+                    crate::presentation::view_command::McpStatus::Failed
+                    | crate::presentation::view_command::McpStatus::Unhealthy => McpStatus::Error,
+                    _ => McpStatus::Stopped,
+                };
+                if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
+                    existing.status = mapped;
+                    existing.enabled = matches!(mapped, McpStatus::Running);
+                } else {
+                    self.state
+                        .mcps
+                        .push(McpItem::new(id, format!("MCP {}", id)).with_status(mapped));
+                }
+            }
+            ViewCommand::McpServerStarted { id, .. } => {
+                if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
+                    existing.status = McpStatus::Running;
+                    existing.enabled = true;
+                } else {
+                    self.state
+                        .mcps
+                        .push(McpItem::new(id, format!("MCP {}", id)).with_enabled(true));
+                }
+            }
+            ViewCommand::McpServerFailed { id, .. } => {
+                if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
+                    existing.status = McpStatus::Error;
+                    existing.enabled = false;
+                } else {
+                    self.state
+                        .mcps
+                        .push(McpItem::new(id, format!("MCP {}", id)).with_status(McpStatus::Error));
+                }
+            }
+            ViewCommand::McpConfigSaved { id, name } => {
+                self.state.selected_mcp_id = Some(id);
+                if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
+                    if let Some(name) = name {
+                        existing.name = name;
+                    }
+                    existing.enabled = true;
+                    existing.status = McpStatus::Running;
+                } else {
+                    self.state.mcps.push(
+                        McpItem::new(
+                            id,
+                            name.unwrap_or_else(|| format!("MCP {}", id)),
+                        )
+                        .with_status(McpStatus::Running)
+                        .with_enabled(true),
+                    );
+                }
+            }
+            ViewCommand::McpDeleted { id } => {
+                self.state.mcps.retain(|m| m.id != id);
+                if self.state.selected_mcp_id == Some(id) {
+                    self.state.selected_mcp_id = None;
+                }
+            }
+            ViewCommand::ShowNotification { .. } => {
+                // Notification rendering is currently out-of-band in GPUI wiring.
             }
             _ => {
                 // Other commands may be added as needed

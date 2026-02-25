@@ -6,12 +6,14 @@
 //! @plan PLAN-20250125-REFACTOR.P10
 //! @requirement REQ-025.1
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::events::{AppEvent, types::{ProfileEvent, UserEvent}};
-use crate::services::ProfileService;
+use crate::events::{AppEvent, EventBus, types::{ProfileEvent, UserEvent, ModelProfileAuth}};
+use crate::events::global::emit;
+use crate::models::{AuthConfig, ModelParameters};
+use crate::services::{ProfileService, ServiceError};
 use super::{Presenter, PresenterError, ViewCommand};
 
 /// ProfileEditorPresenter - handles profile creation/editing UI
@@ -27,6 +29,10 @@ pub struct ProfileEditorPresenter {
 
     /// View command sender
     view_tx: broadcast::Sender<ViewCommand>,
+
+    /// Last model selected via ModelSelector (provider_id, model_id)
+    /// used for lightweight SaveProfileEditor flow.
+    pending_selected_model: Arc<Mutex<Option<(String, String)>>>,
 
     /// Running flag for event loop
     running: Arc<std::sync::atomic::AtomicBool>,
@@ -46,6 +52,32 @@ impl ProfileEditorPresenter {
             rx,
             profile_service,
             view_tx,
+            pending_selected_model: Arc::new(Mutex::new(None)),
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    ///
+    /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
+    /// bus rather than a caller-supplied broadcast::Sender. Full wiring deferred to
+    /// later implementation phases.
+    ///
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
+    /// @requirement REQ-WIRE-006
+    /// @pseudocode component-001-event-pipeline.md lines 090-136
+    #[allow(dead_code)]
+    pub fn new_with_event_bus(
+        profile_service: Arc<dyn ProfileService>,
+        event_bus: Arc<EventBus>,
+        view_tx: broadcast::Sender<ViewCommand>,
+    ) -> Self {
+        let rx = event_bus.sender().subscribe();
+        Self {
+            rx,
+            profile_service,
+            view_tx,
+            pending_selected_model: Arc::new(Mutex::new(None)),
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -64,12 +96,13 @@ impl ProfileEditorPresenter {
         let running = self.running.clone();
         let profile_service = self.profile_service.clone();
         let view_tx = self.view_tx.clone();
+        let pending_selected_model = Arc::clone(&self.pending_selected_model);
 
         tokio::spawn(async move {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 match rx.recv().await {
                     Ok(event) => {
-                        Self::handle_event(&profile_service, &view_tx, event).await;
+                        Self::handle_event(&profile_service, &view_tx, &pending_selected_model, event).await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ProfileEditorPresenter lagged: {} events missed", n);
@@ -108,11 +141,12 @@ impl ProfileEditorPresenter {
     async fn handle_event(
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &broadcast::Sender<ViewCommand>,
+        pending_selected_model: &Arc<Mutex<Option<(String, String)>>>,
         event: AppEvent,
     ) {
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(profile_service, view_tx, user_evt).await;
+                Self::handle_user_event(profile_service, view_tx, pending_selected_model, user_evt).await;
             }
             AppEvent::Profile(profile_evt) => {
                 Self::handle_profile_event(view_tx, profile_evt).await;
@@ -124,14 +158,23 @@ impl ProfileEditorPresenter {
     /// Handle user events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
+    /// @requirement REQ-WIRE-001
     async fn handle_user_event(
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &broadcast::Sender<ViewCommand>,
+        pending_selected_model: &Arc<Mutex<Option<(String, String)>>>,
         event: UserEvent,
     ) {
         match event {
             UserEvent::SaveProfile { profile } => {
                 Self::on_save_profile(profile_service, view_tx, profile).await;
+            }
+            UserEvent::SaveProfileEditor => {
+                Self::on_save_profile_editor(profile_service, view_tx, pending_selected_model).await;
+            }
+            UserEvent::SelectModel { provider_id, model_id } => {
+                Self::on_select_model(pending_selected_model, provider_id, model_id);
             }
             UserEvent::TestProfileConnection { id } => {
                 Self::on_test_connection(profile_service, view_tx, id).await;
@@ -144,31 +187,225 @@ impl ProfileEditorPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     async fn on_save_profile(
-        _profile_service: &Arc<dyn ProfileService>,
-        _view_tx: &broadcast::Sender<ViewCommand>,
+        profile_service: &Arc<dyn ProfileService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
         profile: crate::events::types::ModelProfile,
     ) {
-        // Placeholder - profile creation/update requires individual fields
         tracing::info!("Saving profile: {}", profile.name);
+
+        let auth = match profile.auth.clone().unwrap_or(ModelProfileAuth::ApiKey {
+            value: String::new(),
+        }) {
+            ModelProfileAuth::None => AuthConfig::Key {
+                value: String::new(),
+            },
+            ModelProfileAuth::ApiKey { value } => AuthConfig::Key { value },
+            ModelProfileAuth::Keyfile { path } => AuthConfig::Keyfile { path },
+        };
+
+        let mut parameters = ModelParameters::default();
+        if let Some(payload_parameters) = profile.parameters.clone() {
+            if let Some(temperature) = payload_parameters.temperature {
+                parameters.temperature = temperature;
+            }
+            if let Some(max_tokens) = payload_parameters.max_tokens {
+                parameters.max_tokens = max_tokens;
+            }
+            if let Some(show_thinking) = payload_parameters.show_thinking {
+                parameters.show_thinking = show_thinking;
+            }
+            if let Some(enable_thinking) = payload_parameters.enable_thinking {
+                parameters.enable_thinking = enable_thinking;
+            }
+            if let Some(thinking_budget) = payload_parameters.thinking_budget {
+                parameters.thinking_budget = Some(thinking_budget);
+            }
+        }
+
+        let update_name = Some(profile.name.clone());
+        let update_model = profile.model_id.clone();
+
+        let updated = profile_service
+            .update(
+                profile.id,
+                update_name,
+                update_model.clone(),
+                Some(auth.clone()),
+                Some(parameters.clone()),
+            )
+            .await;
+
+        let fallback_provider = profile.provider_id.unwrap_or_else(|| "openai".to_string());
+        let fallback_model = profile
+            .model_id
+            .clone()
+            .unwrap_or_else(|| "gpt-4o".to_string());
+
+        let persisted = match updated {
+            Ok(mut saved) => {
+                if let Some(base_url) = profile.base_url.clone() {
+                    saved.base_url = base_url;
+                }
+                if let Some(system_prompt) = profile.system_prompt.clone() {
+                    saved.system_prompt = system_prompt;
+                }
+                Ok(saved)
+            }
+            Err(ServiceError::NotFound(_)) => {
+                let create_result = profile_service
+                    .create(
+                        profile.name.clone(),
+                        fallback_provider,
+                        fallback_model,
+                        auth,
+                        parameters,
+                    )
+                    .await;
+
+                create_result.map(|mut saved| {
+                    if let Some(base_url) = profile.base_url.clone() {
+                        saved.base_url = base_url;
+                    }
+                    if let Some(system_prompt) = profile.system_prompt.clone() {
+                        saved.system_prompt = system_prompt;
+                    }
+                    saved
+                })
+            }
+            Err(e) => Err(e),
+        };
+
+        match persisted {
+            Ok(saved) => {
+                let _ = emit(AppEvent::Profile(ProfileEvent::Updated {
+                    id: saved.id,
+                    name: saved.name.clone(),
+                }));
+                let _ = view_tx.send(ViewCommand::ProfileUpdated {
+                    id: saved.id,
+                    name: saved.name,
+                });
+                let _ = view_tx.send(ViewCommand::NavigateBack);
+            }
+            Err(e) => {
+                tracing::error!("Failed to persist SaveProfile payload: {}", e);
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Save Failed".to_string(),
+                    message: e.to_string(),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
+            }
+        }
+    }
+
+    /// Handle SaveProfileEditor event (lightweight save without full profile payload)
+    ///
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
+    /// @requirement REQ-WIRE-001
+    /// @pseudocode component-003-profile-flow.md lines 140-173
+    async fn on_save_profile_editor(
+        profile_service: &Arc<dyn ProfileService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        pending_selected_model: &Arc<Mutex<Option<(String, String)>>>,
+    ) {
+        tracing::info!("ProfileEditorPresenter: handling SaveProfileEditor");
+
+        // Lightweight persistence path until full editable-field event payload lands.
+        // We persist a minimal profile using the last selected model context.
+        let (provider_id, model_id) = {
+            let guard = pending_selected_model.lock().expect("pending_selected_model lock poisoned");
+            guard
+                .clone()
+                .unwrap_or_else(|| ("openai".to_string(), "gpt-4o".to_string()))
+        };
+
+        let auth = AuthConfig::Key {
+            value: "".to_string(),
+        };
+        let mut parameters = ModelParameters::default();
+        parameters.show_thinking = true;
+
+        let created = profile_service
+            .create(
+                model_id.clone(),
+                provider_id,
+                model_id,
+                auth,
+                parameters,
+            )
+            .await;
+
+        match created {
+            Ok(profile) => {
+                let _ = emit(AppEvent::Profile(ProfileEvent::Created {
+                    id: profile.id,
+                    name: profile.name.clone(),
+                }));
+                let _ = view_tx.send(ViewCommand::ProfileCreated {
+                    id: profile.id,
+                    name: profile.name,
+                });
+                let _ = view_tx.send(ViewCommand::NavigateBack);
+            }
+            Err(e) => {
+                tracing::error!("Failed to persist profile from SaveProfileEditor: {}", e);
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Save Failed".to_string(),
+                    message: e.to_string(),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
+            }
+        }
+
+    }
+
+    /// Track latest model selection from ModelSelector flow.
+    fn on_select_model(
+        pending_selected_model: &Arc<Mutex<Option<(String, String)>>>,
+        provider_id: String,
+        model_id: String,
+    ) {
+        let mut guard = pending_selected_model
+            .lock()
+            .expect("pending_selected_model lock poisoned");
+        *guard = Some((provider_id, model_id));
     }
 
     /// Handle test connection event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     async fn on_test_connection(
-        _profile_service: &Arc<dyn ProfileService>,
-        _view_tx: &broadcast::Sender<ViewCommand>,
+        profile_service: &Arc<dyn ProfileService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
         profile_id: Uuid,
     ) {
-        // Placeholder service call - test_connection not fully implemented
         tracing::info!("Testing connection for profile: {}", profile_id);
+        let _ = view_tx.send(ViewCommand::ProfileTestStarted { id: profile_id });
+        match profile_service.test_connection(profile_id).await {
+            Ok(()) => {
+                let _ = view_tx.send(ViewCommand::ProfileTestCompleted {
+                    id: profile_id,
+                    success: true,
+                    response_time_ms: None,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                let _ = view_tx.send(ViewCommand::ProfileTestCompleted {
+                    id: profile_id,
+                    success: false,
+                    response_time_ms: None,
+                    error: Some(e.to_string()),
+                });
+            }
+        }
     }
 
     /// Handle profile domain events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     async fn handle_profile_event(
-        _view_tx: &broadcast::Sender<ViewCommand>,
+        view_tx: &broadcast::Sender<ViewCommand>,
         event: ProfileEvent,
     ) {
         match event {
@@ -179,7 +416,7 @@ impl ProfileEditorPresenter {
                 if success {
                     tracing::info!("Profile connection test successful ({}ms)", response_time_ms.unwrap_or(0));
                 } else {
-                    let _ = _view_tx.send(ViewCommand::ShowError {
+                    let _ = view_tx.send(ViewCommand::ShowError {
                         title: "Connection Failed".to_string(),
                         message: error.unwrap_or_else(|| "Unknown error".to_string()),
                         severity: super::view_command::ErrorSeverity::Error,

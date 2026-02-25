@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::events::{AppEvent, types::{McpEvent, UserEvent}};
+use crate::events::{AppEvent, EventBus, types::{McpEvent, UserEvent}};
 use crate::services::McpService;
 use super::{Presenter, PresenterError, ViewCommand};
 
@@ -42,6 +42,30 @@ impl McpConfigurePresenter {
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
         let rx = event_bus.subscribe();
+        Self {
+            rx,
+            mcp_service,
+            view_tx,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    ///
+    /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
+    /// bus rather than a caller-supplied broadcast::Sender. Full wiring deferred to
+    /// later implementation phases.
+    ///
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
+    /// @requirement REQ-WIRE-006
+    /// @pseudocode component-001-event-pipeline.md lines 090-136
+    #[allow(dead_code)]
+    pub fn new_with_event_bus(
+        mcp_service: Arc<dyn McpService>,
+        event_bus: Arc<EventBus>,
+        view_tx: broadcast::Sender<ViewCommand>,
+    ) -> Self {
+        let rx = event_bus.sender().subscribe();
         Self {
             rx,
             mcp_service,
@@ -124,12 +148,17 @@ impl McpConfigurePresenter {
     /// Handle user events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
+    /// @requirement REQ-WIRE-001
     async fn handle_user_event(
         mcp_service: &Arc<dyn McpService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
     ) {
         match event {
+            UserEvent::ConfigureMcp { id } => {
+                Self::on_configure_mcp(mcp_service, view_tx, id).await;
+            }
             UserEvent::SaveMcpConfig { id, config } => {
                 Self::on_save_config(mcp_service, view_tx, id, config).await;
             }
@@ -140,42 +169,156 @@ impl McpConfigurePresenter {
         }
     }
 
-    /// Handle save MCP config event
+    /// Handle save MCP config event (full config payload)
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
-    async fn on_save_config(
-        _mcp_service: &Arc<dyn McpService>,
-        _view_tx: &broadcast::Sender<ViewCommand>,
-        _id: Uuid,
-        _config: crate::events::types::McpConfig,
+
+    /// Handle configure MCP event
+    ///
+    /// Loads persisted MCP data and projects it into MCP configure draft payload.
+    async fn on_configure_mcp(
+        mcp_service: &Arc<dyn McpService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        id: Uuid,
     ) {
-        // Placeholder service call - config save not fully implemented
-        tracing::info!("Saving MCP config");
+        tracing::info!("Loading MCP config for id: {}", id);
+
+        match mcp_service.get(id).await {
+            Ok(cfg) => {
+                let (command, args) = match cfg.transport {
+                    serdes_ai_mcp::McpTransportConfig::Stdio { command, args } => (command, args),
+                    serdes_ai_mcp::McpTransportConfig::Http { url }
+                    | serdes_ai_mcp::McpTransportConfig::Sse { url } => (url, vec![]),
+                };
+
+                let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
+                    id: id.to_string(),
+                    name: cfg.name,
+                    package: String::new(),
+                    env_var_name: "API_KEY".to_string(),
+                    command,
+                    args,
+                    env: None,
+                });
+
+                let _ = view_tx.send(ViewCommand::NavigateTo {
+                    view: super::view_command::ViewId::McpConfigure,
+                });
+            }
+            Err(e) => {
+                tracing::error!("Failed to load MCP config {}: {}", id, e);
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Load Failed".to_string(),
+                    message: e.to_string(),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
+            }
+        }
     }
+
+    async fn on_save_config(
+        mcp_service: &Arc<dyn McpService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        id: Uuid,
+        config: crate::events::types::McpConfig,
+    ) {
+        tracing::info!("Saving MCP config for id: {}", id);
+
+        let crate::events::types::McpConfig {
+            id: _,
+            name,
+            command,
+            args,
+            env,
+        } = config;
+
+        let fallback_name = name.clone();
+        let result = if id.is_nil() {
+            mcp_service
+                .add(name, command, args, env)
+                .await
+                .map(|cfg| cfg.name)
+        } else {
+            mcp_service
+                .update(id, Some(name), Some(command), Some(args), env)
+                .await
+                .map(|cfg| cfg.name)
+        };
+
+        match result {
+            Ok(saved_name_from_service) => {
+                let resolved_name = if saved_name_from_service.is_empty() {
+                    fallback_name
+                } else {
+                    saved_name_from_service
+                };
+
+                let saved_id = if id.is_nil() {
+                    match mcp_service.resolve_id_by_name(&resolved_name).await {
+                        Ok(Some(found)) => found,
+                        Ok(None) => {
+                            tracing::warn!(
+                                "MCP save created '{}', but service could not resolve id by name; using nil id fallback",
+                                resolved_name
+                            );
+                            uuid::Uuid::nil()
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "MCP save created '{}', but id resolution failed: {}; using nil id fallback",
+                                resolved_name,
+                                e
+                            );
+                            uuid::Uuid::nil()
+                        }
+                    }
+                } else {
+                    id
+                };
+
+                let _ = view_tx.send(ViewCommand::McpConfigSaved {
+                    id: saved_id,
+                    name: Some(resolved_name),
+                });
+                let _ = view_tx.send(ViewCommand::NavigateBack);
+            }
+            Err(e) => {
+                tracing::error!("MCP config save failed: {}", e);
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Save Failed".to_string(),
+                    message: e.to_string(),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
+            }
+        }
+    }
+
 
     /// Handle start OAuth event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     async fn on_start_oauth(
         _mcp_service: &Arc<dyn McpService>,
-        _view_tx: &broadcast::Sender<ViewCommand>,
+        view_tx: &broadcast::Sender<ViewCommand>,
         _id: Uuid,
         provider: String,
     ) {
-        // Placeholder service call - OAuth not fully implemented
         tracing::info!("Starting OAuth flow for provider: {}", provider);
+        let _ = view_tx.send(ViewCommand::ShowNotification {
+            message: format!("Starting OAuth for {}", provider),
+        });
     }
 
     /// Handle MCP domain events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     async fn handle_mcp_event(
-        _view_tx: &broadcast::Sender<ViewCommand>,
+        view_tx: &broadcast::Sender<ViewCommand>,
         event: McpEvent,
     ) {
         match event {
-            McpEvent::ConfigSaved { id: _id } => {
-                // Config saved - emit ViewCommand if needed
+            McpEvent::ConfigSaved { id } => {
+                let _ = view_tx.send(ViewCommand::McpConfigSaved { id, name: None });
             }
             _ => {} // Ignore other MCP events
         }

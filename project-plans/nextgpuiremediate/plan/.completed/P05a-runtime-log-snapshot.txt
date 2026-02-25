@@ -1,0 +1,155 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running `target/debug/personal_agent_gpui`
+[2m2026-02-19T20:40:41.475911Z[0m [32m INFO[0m PersonalAgent GPUI starting...
+[2m2026-02-19T20:40:41.550061Z[0m [32m INFO[0m Set activation policy to Regular
+[2m2026-02-19T20:40:41.550353Z[0m [32m INFO[0m Application activated
+[2m2026-02-19T20:40:41.582367Z[0m [32m INFO[0m Status item created
+[2m2026-02-19T20:40:41.582388Z[0m [32m INFO[0m Event monitoring via polling (local monitor not applicable for Accessory apps)
+[2m2026-02-19T20:40:41.582511Z[0m [32m INFO[0m Click polling started
+[2m2026-02-19T20:40:41.582523Z[0m [32m INFO[0m GPUI initialized in tray mode; click the status icon to open popup
+[2m2026-02-19T20:40:41.582590Z[0m [32m INFO[0m PersonalAgent GPUI initialized - click tray icon to open
+[2m2026-02-19T20:40:41.583553Z[0m [32m INFO[0m UserEvent forwarder started
+[2m2026-02-19T20:40:41.583680Z[0m [32m INFO[0m load_profiles_from_disk: looking in "/Users/acoliver/.llxprt/profiles"
+[2m2026-02-19T20:40:41.584044Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/gpt53codexXHigh.json: missing field `id` at line 22 column 1
+[2m2026-02-19T20:40:41.584108Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetic.json: missing field `id` at line 19 column 1
+[2m2026-02-19T20:40:41.584137Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/deepseekchat.json: missing field `id` at line 10 column 1
+[2m2026-02-19T20:40:41.584170Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/gptthinker.json: missing field `id` at line 17 column 1
+[2m2026-02-19T20:40:41.584199Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticglm47k1.json: missing field `id` at line 20 column 1
+[2m2026-02-19T20:40:41.584227Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chuteskeyminimax.json: missing field `id` at line 16 column 1
+[2m2026-02-19T20:40:41.584256Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutes.json: missing field `id` at line 20 column 1
+[2m2026-02-19T20:40:41.584284Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/sonnetinclude.json: missing field `id` at line 15 column 1
+[2m2026-02-19T20:40:41.584313Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutesminimax.json: missing field `id` at line 22 column 1
+[2m2026-02-19T20:40:41.584343Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/kimithinker.json: missing field `id` at line 20 column 1
+[2m2026-02-19T20:40:41.584370Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetick25.json: missing field `id` at line 16 column 1
+[2m2026-02-19T20:40:41.584402Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/opusthinking.json: missing field `id` at line 28 column 1
+[2m2026-02-19T20:40:41.584430Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/zai.json: missing field `id` at line 18 column 1
+[2m2026-02-19T20:40:41.584454Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/flash3.json: missing field `id` at line 7 column 1
+[2m2026-02-19T20:40:41.584481Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/deepseekreasoner.json: missing field `id` at line 14 column 1
+[2m2026-02-19T20:40:41.584507Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/sonnetthinking.json: missing field `id` at line 15 column 1
+[2m2026-02-19T20:40:41.584535Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutesk2streaming.json: missing field `id` at line 17 column 1
+[2m2026-02-19T20:40:41.584707Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/opusthinkingbucketed.json: unknown variant `oauth`, expected `key` or `keyfile` at line 24 column 19
+[2m2026-02-19T20:40:41.584747Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticglm47.json: missing field `id` at line 19 column 1
+[2m2026-02-19T20:40:41.584775Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetick2streaming.json: missing field `id` at line 19 column 1
+[2m2026-02-19T20:40:41.584805Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticm2max.json: missing field `id` at line 19 column 1
+[2m2026-02-19T20:40:41.584813Z[0m [32m INFO[0m ProfileService: loaded 0 profiles from disk
+[2m2026-02-19T20:40:41.586022Z[0m [32m INFO[0m Starting presenters...
+[2m2026-02-19T20:40:41.586083Z[0m [32m INFO[0m All 7 presenters started
+>>> POLLING: Click on status item detected! <<<
+[2m2026-02-19T20:40:45.717991Z[0m [32m INFO[0m Opening popup...
+[2m2026-02-19T20:40:45.749872Z[0m [32m INFO[0m MainPanel::init - bridge is_some: true
+>>> MainPanel::init - setting up navigation notify callback <<<
+>>> MainPanel first render - focused <<<
+[2m2026-02-19T20:40:45.763140Z[0m [32m INFO[0m Popup opened [3mx[0m[2m=[0m3087.0 [3my[0m[2m=[0m32.0
+>>> SETTINGS BUTTON CLICKED - using navigation_channel <<<
+>>> NavigationChannel::request_navigate(Settings) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel::render - Processing navigation to Settings <<<
+[2m2026-02-19T20:40:47.148665Z[0m [32m INFO[0m MainPanel: Processing navigation request to Settings
+>>> Add profile button clicked <<<
+[2m2026-02-19T20:40:59.612406Z[0m [32m INFO[0m Add profile clicked - navigating to ModelSelector
+>>> NavigationChannel::request_navigate(ModelSelector) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel::render - Processing navigation to ModelSelector <<<
+[2m2026-02-19T20:40:59.615976Z[0m [32m INFO[0m MainPanel: Processing navigation request to ModelSelector
+[2m2026-02-19T20:40:59.615990Z[0m [32m INFO[0m ModelSelectorView requesting models
+[2m2026-02-19T20:40:59.616107Z[0m [32m INFO[0m Opening model selector - loading models from registry
+[2m2026-02-19T20:40:59.661439Z[0m [32m INFO[0m Cache empty or failed, refreshing from models.dev...
+[2m2026-02-19T20:40:59.853944Z[0m [32m INFO[0m Loaded 3023 models after refresh
+[2m2026-02-19T20:40:59.854729Z[0m [32m INFO[0m Sending 3023 models to view
+>>> ModelSelectorView::handle_command received 3023 models <<<
+[2m2026-02-19T20:40:59.866259Z[0m [32m INFO[0m ModelSelectorView received 3023 models
+>>> Providers extracted: 96 <<<
+>>> Setting 3023 models on view <<<
+>>> Models set, state.models.len() = 3023 <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> Model selected: qwen3-coder-flash from alibaba <<<
+>>> NavigationChannel::request_navigate(ProfileEditor) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+[2m2026-02-19T20:41:29.230966Z[0m [32m INFO[0m Model selected
+>>> MainPanel::render - Processing navigation to ProfileEditor <<<
+[2m2026-02-19T20:41:29.231077Z[0m [32m INFO[0m MainPanel: Processing navigation request to ProfileEditor
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel key_down: key=n platform=false shift=false current=ProfileEditor <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+[2m2026-02-19T20:41:39.058641Z[0m [32m INFO[0m Change model clicked - navigating to ModelSelector
+>>> NavigationChannel::request_navigate(ModelSelector) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel::render - Processing navigation to ModelSelector <<<
+[2m2026-02-19T20:41:39.067297Z[0m [32m INFO[0m MainPanel: Processing navigation request to ModelSelector
+[2m2026-02-19T20:41:39.067334Z[0m [32m INFO[0m ModelSelectorView requesting models
+[2m2026-02-19T20:41:39.067439Z[0m [32m INFO[0m Opening model selector - loading models from registry
+[2m2026-02-19T20:41:39.070602Z[0m [32m INFO[0m Loaded 3023 models from cache
+[2m2026-02-19T20:41:39.071448Z[0m [32m INFO[0m Sending 3023 models to view
+>>> ModelSelectorView::handle_command received 3023 models <<<
+[2m2026-02-19T20:41:39.084439Z[0m [32m INFO[0m ModelSelectorView received 3023 models
+>>> Providers extracted: 96 <<<
+>>> Setting 3023 models on view <<<
+>>> Models set, state.models.len() = 3023 <<<
+>>> Model selected: hf:zai-org/GLM-4.7 from synthetic <<<
+>>> NavigationChannel::request_navigate(ProfileEditor) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+[2m2026-02-19T20:41:48.847929Z[0m [32m INFO[0m Model selected
+>>> MainPanel::render - Processing navigation to ProfileEditor <<<
+[2m2026-02-19T20:41:48.852134Z[0m [32m INFO[0m MainPanel: Processing navigation request to ProfileEditor
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+[2m2026-02-19T20:42:24.475568Z[0m [32m INFO[0m Change model clicked - navigating to ModelSelector
+>>> NavigationChannel::request_navigate(ModelSelector) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> Navigation poll detected pending request <<<
+>>> MainPanel::render - Processing navigation to ModelSelector <<<
+[2m2026-02-19T20:42:24.487470Z[0m [32m INFO[0m MainPanel: Processing navigation request to ModelSelector
+[2m2026-02-19T20:42:24.487487Z[0m [32m INFO[0m ModelSelectorView requesting models
+[2m2026-02-19T20:42:24.487551Z[0m [32m INFO[0m Opening model selector - loading models from registry
+[2m2026-02-19T20:42:24.490549Z[0m [32m INFO[0m Loaded 3023 models from cache
+[2m2026-02-19T20:42:24.491371Z[0m [32m INFO[0m Sending 3023 models to view
+>>> ModelSelectorView::handle_command received 3023 models <<<
+[2m2026-02-19T20:42:24.504385Z[0m [32m INFO[0m ModelSelectorView received 3023 models
+>>> Providers extracted: 96 <<<
+>>> Setting 3023 models on view <<<
+>>> Models set, state.models.len() = 3023 <<<
+>>> Model selected: hf:MiniMaxAI/MiniMax-M2.1 from synthetic <<<
+>>> NavigationChannel::request_navigate(ProfileEditor) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+[2m2026-02-19T20:42:27.051668Z[0m [32m INFO[0m Model selected
+>>> MainPanel::render - Processing navigation to ProfileEditor <<<
+[2m2026-02-19T20:42:27.054264Z[0m [32m INFO[0m MainPanel: Processing navigation request to ProfileEditor
+[2m2026-02-19T20:44:23.106450Z[0m [32m INFO[0m Cancel clicked - navigating to Settings
+>>> NavigationChannel::request_navigate(Settings) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel::render - Processing navigation to Settings <<<
+[2m2026-02-19T20:44:23.127543Z[0m [32m INFO[0m MainPanel: Processing navigation request to Settings
+[2m2026-02-19T20:44:35.817972Z[0m [32m INFO[0m Add MCP clicked - navigating to McpAdd
+>>> NavigationChannel::request_navigate(McpAdd) <<<
+>>> Navigation stored, has_request=true <<<
+>>> No notify callback set! <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel::render - Processing navigation to McpAdd <<<
+[2m2026-02-19T20:44:35.828075Z[0m [32m INFO[0m MainPanel: Processing navigation request to McpAdd
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<
+>>> MainPanel clicked - requesting focus <<<

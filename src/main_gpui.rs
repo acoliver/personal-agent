@@ -3,6 +3,10 @@
 //! A macOS menu bar app with chat interface using GPUI.
 //! 
 //! Uses NSEvent local monitor to capture button clicks within the app's run loop.
+//!
+//! @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
+//! @requirement REQ-WIRE-001
+//! @pseudocode component-001-event-pipeline.md lines 090-136
 
 #![allow(unexpected_cfgs)]
 #![allow(clippy::all)]
@@ -46,7 +50,7 @@ use objc2::{MainThreadMarker};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy,
-    NSStatusBar, NSStatusItem, NSVariableStatusItemLength, NSImage, NSEvent,
+    NSStatusBar, NSStatusItem, NSVariableStatusItemLength, NSImage, NSEvent, NSScreen,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSData, NSRect, NSSize, NSString};
@@ -74,10 +78,65 @@ pub struct AppState {
     /// GPUI bridge for UI events
     gpui_bridge: Arc<GpuiBridge>,
     /// View command sender (to send commands to UI)
-    view_cmd_tx: flume::Sender<personal_agent::presentation::view_command::ViewCommand>,
+    view_cmd_tx: flume::Sender<personal_agent::presentation::ViewCommand>,
 }
 
 impl Global for AppState {}
+
+
+fn spawn_mpsc_to_flume_view_command_bridge(
+    mut rx: tokio::sync::mpsc::Receiver<personal_agent::presentation::ViewCommand>,
+    tx: flume::Sender<personal_agent::presentation::ViewCommand>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Some(cmd) => {
+                    if tx.send(cmd).is_err() {
+                        tracing::warn!("Main view-command bridge: flume receiver dropped");
+                        break;
+                    }
+                }
+                None => {
+                    tracing::info!("Main view-command bridge: mpsc sender closed");
+                    break;
+                }
+            }
+        }
+    })
+}
+
+fn spawn_broadcast_to_mpsc_view_command_bridge(
+    mut rx: tokio::sync::broadcast::Receiver<personal_agent::presentation::ViewCommand>,
+    tx: tokio::sync::mpsc::Sender<personal_agent::presentation::ViewCommand>,
+    presenter_name: &'static str,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(cmd) => {
+                    if tx.send(cmd).await.is_err() {
+                        tracing::warn!("{} bridge: view command receiver dropped", presenter_name);
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("{} bridge lagged: {} commands dropped", presenter_name, n);
+                }
+
+
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+
+
+                    tracing::info!("{} bridge closed", presenter_name);
+                    break;
+                }
+            }
+        }
+    })
+}
+
+
 
 // Also set the simplified AppState that MainPanel expects
 use personal_agent::ui_gpui::views::main_panel::MainPanelAppState;
@@ -173,6 +232,8 @@ impl SystemTray {
                 if was_down && !is_down {
                     // Check if mouse is over our status item
                     let mouse_loc = NSEvent::mouseLocation();
+
+
 
                     let status_item = STATUS_ITEM.take();
                     let is_our_click = if let Some(ref item) = status_item {
@@ -286,6 +347,20 @@ impl SystemTray {
 
     /// Get position for popup window (below status item)
     fn get_popup_position(&self, menu_width: f32, menu_height: f32) -> (f32, f32) {
+        if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
+            // Keep automation popup visible near the top-right on the main screen.
+            // This avoids tray-coordinate edge cases during test startup.
+            if let Some(mtm) = MainThreadMarker::new() {
+                if let Some(main_screen) = NSScreen::mainScreen(mtm) {
+                    let frame = main_screen.frame();
+                    let x = (frame.size.width as f32 - menu_width - 24.0).max(0.0);
+                    return (x, 36.0);
+                }
+            }
+
+            return (100.0, 30.0);
+        }
+
         let status_item = STATUS_ITEM.take();
         let result = if let Some(ref item) = status_item {
             if let Some(mtm) = MainThreadMarker::new() {
@@ -312,7 +387,12 @@ impl SystemTray {
                             let y =
                                 (screen_frame.origin.y + screen_frame.size.height - popup_top)
                                     as f32;
-                            (x, y)
+
+                            let max_x = (screen_frame.size.width as f32 - menu_width).max(0.0);
+                            let max_y = (screen_frame.size.height as f32 - menu_height).max(0.0);
+                            let clamped_x = x.clamp(0.0, max_x);
+                            let clamped_y = y.clamp(0.0, max_y);
+                            (clamped_x, clamped_y)
                         } else {
                             let x = icon_center_x as f32 - (menu_width / 2.0);
                             let y = icon_bottom_y as f32 - menu_height - 6.0;
@@ -397,11 +477,15 @@ fn main() {
         cx.set_global(main_panel_state);
 
         // Initialize system tray
-        let tray = SystemTray::new(mtm);
+        let mut tray = SystemTray::new(mtm);
         tray.start_click_listener(cx);
+        if std::env::var("PA_AUTO_OPEN_POPUP").ok().as_deref() == Some("1") {
+            tray.toggle_popup(cx);
+            info!("GPUI initialized in tray mode; popup auto-opened for automation");
+        } else {
+            info!("GPUI initialized in tray mode; click the status icon to open popup");
+        }
         cx.set_global(tray);
-        
-        info!("GPUI initialized in tray mode; click the status icon to open popup");
 
         // Spawn tokio runtime for services and presenters
         let event_bus_for_tokio = Arc::clone(&event_bus);
@@ -460,29 +544,55 @@ fn main() {
                 ));
                 
                 // Create mpsc channel for ViewCommands (presenter -> view_cmd_tx -> flume)
-                let (view_tx, mut view_rx) = tokio::sync::mpsc::channel(256);
+                let (view_tx, view_rx) = tokio::sync::mpsc::channel(256);
                 
                 // Forward mpsc to flume
-                let view_cmd_tx_clone = view_cmd_tx_for_tokio.clone();
-                tokio::spawn(async move {
-                    while let Some(cmd) = view_rx.recv().await {
-                        let _ = view_cmd_tx_clone.send(cmd);
-                    }
-                });
+                let _main_view_cmd_bridge = spawn_mpsc_to_flume_view_command_bridge(
+                    view_rx,
+                    view_cmd_tx_for_tokio.clone(),
+                );
                 
-                // Create broadcast channels for presenters that need them
-                let (app_event_tx, _) = tokio::sync::broadcast::channel::<personal_agent::events::AppEvent>(100);
+                // Create broadcast channels for presenters that emit ViewCommands.
+                // Bridge all of them into the shared mpsc -> flume path so MainPanel
+                // receives a single unified command stream.
                 let (settings_view_tx, _) = tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(100);
                 let (model_selector_view_tx, _) = tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(100);
                 let (profile_editor_view_tx, _) = tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(100);
                 let (mcp_add_view_tx, _) = tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(100);
                 let (mcp_configure_view_tx, _) = tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(100);
-                
+
+                let _settings_bridge = spawn_broadcast_to_mpsc_view_command_bridge(
+                    settings_view_tx.subscribe(),
+                    view_tx.clone(),
+                    "SettingsPresenter",
+                );
+                let _model_selector_bridge = spawn_broadcast_to_mpsc_view_command_bridge(
+                    model_selector_view_tx.subscribe(),
+                    view_tx.clone(),
+                    "ModelSelectorPresenter",
+                );
+                let _profile_editor_bridge = spawn_broadcast_to_mpsc_view_command_bridge(
+                    profile_editor_view_tx.subscribe(),
+                    view_tx.clone(),
+                    "ProfileEditorPresenter",
+                );
+                let _mcp_add_bridge = spawn_broadcast_to_mpsc_view_command_bridge(
+                    mcp_add_view_tx.subscribe(),
+                    view_tx.clone(),
+                    "McpAddPresenter",
+                );
+                let _mcp_configure_bridge = spawn_broadcast_to_mpsc_view_command_bridge(
+                    mcp_configure_view_tx.subscribe(),
+                    view_tx.clone(),
+                    "McpConfigurePresenter",
+                );
+
                 // Create and start presenters
                 let mut chat_presenter = ChatPresenter::new(
                     Arc::clone(&event_bus_for_tokio),
                     conversation_service.clone(),
                     chat_service.clone(),
+                    profile_service.clone(),
                     view_tx.clone(),
                 );
                 let mut history_presenter = HistoryPresenter::new(
@@ -490,41 +600,31 @@ fn main() {
                     conversation_service.clone(),
                     view_tx.clone(),
                 );
-                let mut settings_presenter = SettingsPresenter::new(
+                let mut settings_presenter = SettingsPresenter::new_with_event_bus(
                     profile_service.clone(),
                     app_settings.clone(),
-                    &app_event_tx,
+                    Arc::clone(&event_bus_for_tokio),
                     settings_view_tx,
                 );
-                // For model_selector_presenter, we need to bridge its broadcast to the main view_tx
-                // Create a receiver and forward to view_tx mpsc
-                let model_selector_rx = model_selector_view_tx.subscribe();
-                let view_tx_for_model_selector = view_tx.clone();
-                tokio::spawn(async move {
-                    let mut rx = model_selector_rx;
-                    while let Ok(cmd) = rx.recv().await {
-                        let _ = view_tx_for_model_selector.send(cmd).await;
-                    }
-                });
-                
-                let mut model_selector_presenter = ModelSelectorPresenter::new(
+
+                let mut model_selector_presenter = ModelSelectorPresenter::new_with_event_bus(
                     models_registry_service.clone(),
-                    event_bus_for_tokio.sender(),  // Use main event bus sender
+                    Arc::clone(&event_bus_for_tokio),
                     model_selector_view_tx,
                 );
-                let mut profile_editor_presenter = ProfileEditorPresenter::new(
+                let mut profile_editor_presenter = ProfileEditorPresenter::new_with_event_bus(
                     profile_service.clone(),
-                    &app_event_tx,
+                    Arc::clone(&event_bus_for_tokio),
                     profile_editor_view_tx,
                 );
-                let mut mcp_add_presenter = McpAddPresenter::new(
+                let mut mcp_add_presenter = McpAddPresenter::new_with_event_bus(
                     mcp_registry_service.clone(),
-                    &app_event_tx,
+                    Arc::clone(&event_bus_for_tokio),
                     mcp_add_view_tx,
                 );
-                let mut mcp_configure_presenter = McpConfigurePresenter::new(
+                let mut mcp_configure_presenter = McpConfigurePresenter::new_with_event_bus(
                     mcp_service.clone(),
-                    &app_event_tx,
+                    Arc::clone(&event_bus_for_tokio),
                     mcp_configure_view_tx,
                 );
                 
@@ -551,7 +651,7 @@ fn main() {
                     tracing::error!("Failed to start McpConfigurePresenter: {:?}", e);
                 }
                 info!("All 7 presenters started");
-                
+
                 // Keep runtime alive
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;

@@ -13,9 +13,9 @@ use uuid::Uuid;
 
 use crate::events::{AppEvent, types::{ChatEvent, UserEvent, ConversationEvent}};
 use crate::events::bus::EventBus;
-use crate::services::{ChatService, ConversationService};
+use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
 use super::{Presenter, PresenterError, ViewCommand};
-use super::view_command::{MessageRole, ErrorSeverity};
+use super::view_command::{ConversationSummary, ErrorSeverity, MessageRole};
 
 /// ChatPresenter - handles chat UI events and service coordination
 ///
@@ -31,6 +31,9 @@ pub struct ChatPresenter {
 
     /// Reference to chat service
     chat_service: Arc<dyn ChatService>,
+
+    /// Reference to profile service
+    profile_service: Arc<dyn ProfileService>,
 
     /// View command sender (mpsc for reliable delivery)
     view_tx: mpsc::Sender<ViewCommand>,
@@ -49,12 +52,14 @@ impl ChatPresenter {
         event_bus: Arc<EventBus>,
         conversation_service: Arc<dyn ConversationService>,
         chat_service: Arc<dyn ChatService>,
+        profile_service: Arc<dyn ProfileService>,
         view_tx: mpsc::Sender<ViewCommand>,
     ) -> Self {
         Self {
             event_bus,
             conversation_service,
             chat_service,
+            profile_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -77,13 +82,14 @@ impl ChatPresenter {
         let running = self.running.clone();
         let conversation_service = self.conversation_service.clone();
         let chat_service = self.chat_service.clone();
+        let profile_service = self.profile_service.clone();
         let mut view_tx = self.view_tx.clone();
 
         tokio::spawn(async move {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 match rx.recv().await {
                     Ok(event) => {
-                        Self::handle_event(&conversation_service, &chat_service, &mut view_tx, event).await;
+                        Self::handle_event(&conversation_service, &chat_service, &profile_service, &mut view_tx, event).await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ChatPresenter lagged: {} events missed", n);
@@ -125,13 +131,14 @@ impl ChatPresenter {
     async fn handle_event(
         conversation_service: &Arc<dyn ConversationService>,
         chat_service: &Arc<dyn ChatService>,
+        profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: AppEvent,
     ) {
         tracing::debug!("ChatPresenter::handle_event: {:?}", event);
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(conversation_service, chat_service, view_tx, user_evt).await;
+                Self::handle_user_event(conversation_service, chat_service, profile_service, view_tx, user_evt).await;
             }
             AppEvent::Chat(chat_evt) => {
                 tracing::info!("ChatPresenter handling ChatEvent: {:?}", chat_evt);
@@ -151,18 +158,19 @@ impl ChatPresenter {
     async fn handle_user_event(
         conversation_service: &Arc<dyn ConversationService>,
         chat_service: &Arc<dyn ChatService>,
+        profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: UserEvent,
     ) {
         match event {
             UserEvent::SendMessage { text } => {
-                Self::handle_send_message(conversation_service, chat_service, view_tx, text).await;
+                Self::handle_send_message(conversation_service, chat_service, profile_service, view_tx, text).await;
             }
             UserEvent::StopStreaming => {
                 Self::handle_stop_streaming(chat_service, view_tx).await;
             }
             UserEvent::NewConversation => {
-                Self::handle_new_conversation(conversation_service, view_tx).await;
+                Self::handle_new_conversation(conversation_service, profile_service, view_tx).await;
             }
             UserEvent::ToggleThinking => {
                 Self::handle_toggle_thinking(view_tx).await;
@@ -175,6 +183,33 @@ impl ChatPresenter {
             }
             _ => {} // Ignore other user events
         }
+    }
+
+    async fn emit_conversation_list(
+        conversation_service: &Arc<dyn ConversationService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+    ) -> Result<(), ServiceError> {
+        let conversations = conversation_service.list(None, None).await?;
+        let summaries = conversations
+            .into_iter()
+            .map(|conversation| ConversationSummary {
+                id: conversation.id,
+                title: conversation
+                    .title
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| "Untitled Conversation".to_string()),
+                updated_at: conversation.updated_at,
+                message_count: conversation.messages.len(),
+            })
+            .collect();
+
+        let _ = view_tx
+            .send(ViewCommand::ConversationListRefreshed {
+                conversations: summaries,
+            })
+            .await;
+
+        Ok(())
     }
 
     /// Handle chat events
@@ -259,6 +294,7 @@ impl ChatPresenter {
     async fn handle_send_message(
         conversation_service: &Arc<dyn ConversationService>,
         chat_service: &Arc<dyn ChatService>,
+        profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         content: String,
     ) {
@@ -269,7 +305,7 @@ impl ChatPresenter {
         }
 
         // Get or create conversation
-        let conversation_id = match Self::get_or_create_conversation(conversation_service, view_tx).await {
+        let conversation_id = match Self::get_or_create_conversation(conversation_service, profile_service, view_tx).await {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("Failed to get/create conversation: {}", e);
@@ -337,6 +373,7 @@ impl ChatPresenter {
                     id,
                     new_title: title,
                 }).await;
+                let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             Err(e) => {
                 let error_msg = format!("Failed to rename conversation: {}", e);
@@ -362,7 +399,7 @@ impl ChatPresenter {
             ConversationEvent::Created { id, title: _ } => {
                 let _ = view_tx.send(ViewCommand::ConversationCreated {
                     id,
-                    profile_id: Uuid::nil(),
+                    profile_id: id,
                 }).await;
             }
             ConversationEvent::TitleUpdated { id, title } => {
@@ -385,7 +422,9 @@ impl ChatPresenter {
                     count: Some(count),
                 }).await;
             }
-            _ => {}
+            ConversationEvent::Loaded { id } => {
+                let _ = view_tx.send(ViewCommand::ConversationActivated { id }).await;
+            }
         }
     }
 
@@ -407,29 +446,53 @@ impl ChatPresenter {
     /// @requirement REQ-027.1
     async fn handle_new_conversation(
         conversation_service: &Arc<dyn ConversationService>,
+        profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
     ) {
-        // For now, use a default profile UUID - in real implementation this would come from settings
-        let default_profile = Uuid::nil();
+        let default_profile = match Self::resolve_default_profile_id(profile_service).await {
+            Ok(id) => id,
+            Err(error_msg) => {
+                tracing::error!("{}", error_msg);
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Error".to_string(),
+                        message: error_msg,
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
+                return;
+            }
+        };
 
-        let result = conversation_service.create(Some("New Conversation".to_string()), default_profile).await;
+        let result = conversation_service
+            .create(Some("New Conversation".to_string()), default_profile)
+            .await;
         match result {
-            Ok(_conversation) => {
-                let conversation_id = _conversation.id;
-                let _ = view_tx.send(ViewCommand::ConversationCreated {
-                    id: conversation_id,
-                    profile_id: default_profile,
-                }).await;
-                let _ = view_tx.send(ViewCommand::ConversationActivated { id: conversation_id }).await;
+            Ok(conversation) => {
+                let conversation_id = conversation.id;
+                let _ = conversation_service.set_active(conversation_id).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationCreated {
+                        id: conversation_id,
+                        profile_id: default_profile,
+                    })
+                    .await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationActivated { id: conversation_id })
+                    .await;
+
+                let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             Err(e) => {
                 let error_msg = format!("Failed to create conversation: {}", e);
                 tracing::error!("{}", error_msg);
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Error".to_string(),
-                    message: error_msg,
-                    severity: ErrorSeverity::Error,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Error".to_string(),
+                        message: error_msg,
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
             }
         }
     }
@@ -447,6 +510,31 @@ impl ChatPresenter {
         match result {
             Ok(_) => {
                 let _ = view_tx.send(ViewCommand::ConversationActivated { id }).await;
+
+                match conversation_service.get_messages(id).await {
+                    Ok(messages) => {
+                        for message in messages {
+                            let role = match message.role {
+                                crate::models::MessageRole::User => MessageRole::User,
+                                crate::models::MessageRole::Assistant => MessageRole::Assistant,
+                                crate::models::MessageRole::System => MessageRole::System,
+                            };
+
+                            let _ = view_tx
+                                .send(ViewCommand::MessageAppended {
+                                    conversation_id: id,
+                                    role,
+                                    content: message.content,
+                                })
+                                .await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load messages for selected conversation {}: {}", id, e);
+                    }
+                }
+
+                let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             Err(e) => {
                 let error_msg = format!("Failed to select conversation: {}", e);
@@ -466,6 +554,7 @@ impl ChatPresenter {
     /// @requirement REQ-027.1
     async fn get_or_create_conversation(
         conversation_service: &Arc<dyn ConversationService>,
+        profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
     ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         // Try to get active conversation
@@ -474,18 +563,29 @@ impl ChatPresenter {
             return Ok(id);
         }
 
-        // Create new conversation with default profile
-        let default_profile = Uuid::nil();
-        let conversation_result = conversation_service.create(Some("New Conversation".to_string()), default_profile).await;
+        let default_profile = Self::resolve_default_profile_id(profile_service)
+            .await
+            .map_err(|msg| Box::<dyn std::error::Error + Send + Sync>::from(msg))?;
+
+        let conversation_result = conversation_service
+            .create(Some("New Conversation".to_string()), default_profile)
+            .await;
 
         match conversation_result {
             Ok(conversation) => {
                 let conversation_id = conversation.id;
 
-                let _ = view_tx.send(ViewCommand::ConversationCreated {
-                    id: conversation_id,
-                    profile_id: default_profile,
-                }).await;
+                let _ = conversation_service.set_active(conversation_id).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationCreated {
+                        id: conversation_id,
+                        profile_id: default_profile,
+                    })
+                    .await;
+
+                let _ = view_tx
+                    .send(ViewCommand::ConversationActivated { id: conversation_id })
+                    .await;
 
                 Ok(conversation_id)
             }
@@ -493,6 +593,18 @@ impl ChatPresenter {
                 Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
             }
         }
+    }
+
+    async fn resolve_default_profile_id(
+        profile_service: &Arc<dyn ProfileService>,
+    ) -> Result<Uuid, String> {
+        let default_profile = profile_service
+            .get_default()
+            .await
+            .map_err(|e| format!("Failed to load default profile: {}", e))?
+            .ok_or_else(|| "No default profile configured".to_string())?;
+
+        Ok(default_profile.id)
     }
 }
 
@@ -611,6 +723,68 @@ mod tests {
         }
     }
 
+    struct MockProfileService;
+
+    #[async_trait::async_trait]
+    impl ProfileService for MockProfileService {
+        async fn list(&self) -> Result<Vec<crate::models::ModelProfile>, crate::services::ServiceError> {
+            Ok(vec![])
+        }
+
+        async fn get(&self, id: Uuid) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
+            Err(crate::services::ServiceError::NotFound(format!("profile {} not found", id)))
+        }
+
+        async fn create(
+            &self,
+            _name: String,
+            _provider: String,
+            _model: String,
+            _auth: crate::models::AuthConfig,
+            _parameters: crate::models::ModelParameters,
+        ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
+            Err(crate::services::ServiceError::NotFound("not implemented".to_string()))
+        }
+
+        async fn update(
+            &self,
+            _id: Uuid,
+            _name: Option<String>,
+            _model: Option<String>,
+            _auth: Option<crate::models::AuthConfig>,
+            _parameters: Option<crate::models::ModelParameters>,
+        ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
+            Err(crate::services::ServiceError::NotFound("not implemented".to_string()))
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+            Ok(())
+        }
+
+        async fn test_connection(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+            Ok(())
+        }
+
+        async fn get_default(&self) -> Result<Option<crate::models::ModelProfile>, crate::services::ServiceError> {
+            Ok(Some(crate::models::ModelProfile {
+                id: Uuid::new_v4(),
+                name: "Default".to_string(),
+                provider_id: "openai".to_string(),
+                model_id: "gpt-4".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                auth: crate::models::AuthConfig::Key {
+                    value: "test-key".to_string(),
+                },
+                parameters: crate::models::ModelParameters::default(),
+                system_prompt: "test".to_string(),
+            }))
+        }
+
+        async fn set_default(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+            Ok(())
+        }
+    }
+
     /// Test presenter creation
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
@@ -621,15 +795,17 @@ mod tests {
 
         let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
         let chat_service = Arc::new(MockChatService) as Arc<dyn ChatService>;
+        let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
 
         // Simulate sending a message
         let content = "Hello, world!".to_string();
         let mut tx = view_tx.clone();
         let conv_service = conversation_service.clone();
         let chat_svc = chat_service.clone();
+        let profile_svc = profile_service.clone();
 
         tokio::spawn(async move {
-            ChatPresenter::handle_send_message(&conv_service, &chat_svc, &mut tx, content).await;
+            ChatPresenter::handle_send_message(&conv_service, &chat_svc, &profile_svc, &mut tx, content).await;
         });
 
         // Wait for async processing
@@ -741,9 +917,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_new_conversation() {
         let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
+        let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
         let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
 
-        ChatPresenter::handle_new_conversation(&conversation_service, &mut view_tx.clone()).await;
+        ChatPresenter::handle_new_conversation(&conversation_service, &profile_service, &mut view_tx.clone()).await;
 
         // Verify conversation created and activated
         let mut found_created = false;

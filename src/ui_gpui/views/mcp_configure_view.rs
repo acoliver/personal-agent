@@ -60,6 +60,9 @@ pub struct McpConfigureData {
     pub id: Option<String>,
     pub name: String,
     pub package: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Option<Vec<(String, String)>>,
     pub auth_method: McpAuthMethod,
     pub env_var_name: String,
     pub api_key: String,
@@ -73,6 +76,9 @@ impl McpConfigureData {
     pub fn new() -> Self {
         Self {
             env_var_name: "API_KEY".to_string(),
+            command: String::new(),
+            args: vec![],
+            env: None,
             ..Default::default()
         }
     }
@@ -82,6 +88,12 @@ impl McpConfigureData {
         if self.name.trim().is_empty() {
             return false;
         }
+
+        // Persistence path requires an executable command for MCP stdio/http config.
+        if self.command.trim().is_empty() {
+            return false;
+        }
+
         match self.auth_method {
             McpAuthMethod::None => true,
             McpAuthMethod::ApiKey => !self.api_key.trim().is_empty(),
@@ -147,6 +159,27 @@ impl McpConfigureView {
         self.state.is_new = is_new;
     }
 
+    fn emit_save_mcp_config(&self) {
+        let id = self
+            .state
+            .data
+            .id
+            .clone()
+            .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+            .unwrap_or_else(uuid::Uuid::nil);
+
+        self.emit(UserEvent::SaveMcpConfig {
+            id,
+            config: crate::events::types::McpConfig {
+                id,
+                name: self.state.data.name.clone(),
+                command: self.state.data.command.clone(),
+                args: self.state.data.args.clone(),
+                env: self.state.data.env.clone(),
+            },
+        });
+    }
+
     /// Emit a UserEvent through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn emit(&self, event: UserEvent) {
@@ -165,6 +198,46 @@ impl McpConfigureView {
         match command {
             ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
                 // Navigation handled by MainPanel
+            }
+            ViewCommand::McpConfigureDraftLoaded {
+                id,
+                name,
+                package,
+                env_var_name,
+                command,
+                args,
+                env,
+            } => {
+                self.state.data.id = Some(id);
+                self.state.data.name = name;
+                self.state.data.package = package;
+                self.state.data.env_var_name = env_var_name;
+                self.state.data.command = command;
+                self.state.data.args = args;
+                self.state.data.env = env;
+                self.state.is_new = self
+                    .state
+                    .data
+                    .id
+                    .as_ref()
+                    .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+                    .map_or(true, |parsed| parsed.is_nil());
+            }
+            ViewCommand::ShowNotification { message } => {
+                self.state.data.oauth_status = OAuthStatus::Connected { username: message };
+            }
+            ViewCommand::ShowError { message, .. } => {
+                self.state.data.oauth_status = OAuthStatus::Error(message);
+            }
+            ViewCommand::McpConfigSaved { id, name } => {
+                self.state.data.id = Some(id.to_string());
+                if let Some(saved_name) = name {
+                    self.state.data.name = saved_name;
+                }
+                self.state.is_new = id.is_nil();
+                self.state.data.oauth_status = OAuthStatus::Connected {
+                    username: "Saved".to_string(),
+                };
             }
             _ => {}
         }
@@ -237,11 +310,8 @@ impl McpConfigureView {
                             .hover(|s| s.bg(Theme::accent_hover()))
                             .text_color(gpui::white())
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                tracing::info!("Save clicked - navigating to Settings");
-                                this.emit(UserEvent::SaveMcp);
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::Settings
-                                );
+                                tracing::info!("Save clicked - emitting SaveMcpConfig");
+                                this.emit_save_mcp_config();
                             }))
                     })
                     .when(!can_save, |d| {
@@ -559,8 +629,15 @@ impl McpConfigureView {
                     .child(format!("Authorize with {}", provider))
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
                         tracing::info!("OAuth authorize clicked");
-                        this.emit(UserEvent::StartMcpOAuth { 
-                            id: this.state.data.id.clone().unwrap_or_default().parse().unwrap_or_default(),
+                        let parsed_id = this
+                            .state
+                            .data
+                            .id
+                            .as_ref()
+                            .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+                            .unwrap_or_else(uuid::Uuid::nil);
+                        this.emit(UserEvent::StartMcpOAuth {
+                            id: parsed_id,
                             provider: this.state.data.oauth_provider.clone(),
                         });
                     }))
@@ -812,10 +889,7 @@ impl gpui::Render for McpConfigureView {
                 // Cmd+S: Save MCP config
                 if modifiers.platform && key == "s" {
                     println!(">>> Cmd+S pressed - saving MCP config <<<");
-                    this.emit(crate::events::types::UserEvent::SaveMcp);
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Settings
-                    );
+                    this.emit_save_mcp_config();
                 }
             }))
             // Top bar (44px)

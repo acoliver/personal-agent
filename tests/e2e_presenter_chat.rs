@@ -165,6 +165,7 @@ async fn test_chat_presenter_receives_stream_events() {
         event_bus.clone(),
         conversation_service.clone(),
         chat_service.clone(),
+        profile_service.clone(),
         view_tx,
     );
 
@@ -327,6 +328,7 @@ async fn test_chat_presenter_error_handling() {
         event_bus.clone(),
         conversation_service,
         chat_service,
+        profile_service.clone(),
         view_tx,
     );
 
@@ -393,6 +395,7 @@ async fn test_chat_presenter_manual_events() {
         event_bus.clone(),
         conversation_service,
         chat_service,
+        profile_service,
         view_tx,
     );
 

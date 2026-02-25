@@ -40,6 +40,9 @@ pub struct McpSearchResult {
     pub description: String,
     pub registry: McpRegistry,
     pub command: String,
+    pub args: Vec<String>,
+    pub env: Option<Vec<(String, String)>>,
+    pub source: String,
 }
 
 impl McpSearchResult {
@@ -50,6 +53,9 @@ impl McpSearchResult {
             description: description.into(),
             registry: McpRegistry::Official,
             command: String::new(),
+            args: vec![],
+            env: None,
+            source: "official".to_string(),
         }
     }
 
@@ -62,7 +68,23 @@ impl McpSearchResult {
         self.command = command.into();
         self
     }
+
+    pub fn with_args(mut self, args: Vec<String>) -> Self {
+        self.args = args;
+        self
+    }
+
+    pub fn with_env(mut self, env: Option<Vec<(String, String)>>) -> Self {
+        self.env = env;
+        self
+    }
+
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
+        self
+    }
 }
+
 
 /// Loading state for search
 /// @plan PLAN-20250130-GPUIREDUX.P09
@@ -125,6 +147,12 @@ impl McpAddView {
     /// Set search results from presenter
     pub fn set_results(&mut self, results: Vec<McpSearchResult>) {
         self.state.results = results;
+        if let Some(selected_id) = self.state.selected_result_id.clone() {
+            let still_present = self.state.results.iter().any(|r| r.id == selected_id);
+            if !still_present {
+                self.state.selected_result_id = None;
+            }
+        }
         self.state.search_state = if self.state.results.is_empty() {
             SearchState::Empty
         } else {
@@ -141,6 +169,39 @@ impl McpAddView {
         } else {
             SearchState::Results
         };
+    }
+
+    /// Set search query programmatically (for keyboard forwarding/tests)
+    pub fn set_search_query(&mut self, query: String) {
+        self.state.search_query = query;
+    }
+
+    /// Get current state for testing/forwarded key handling
+    pub fn get_state(&self) -> &McpAddState {
+        &self.state
+    }
+
+    /// Emit SearchMcpRegistry for current search query and selected registry.
+    pub fn emit_search_registry(&mut self) {
+        let query = self.state.search_query.trim().to_string();
+        if query.is_empty() {
+            self.state.search_state = SearchState::Idle;
+            return;
+        }
+
+        self.state.search_state = SearchState::Loading;
+
+        let source_name = match self.state.registry {
+            McpRegistry::Official => "official",
+            McpRegistry::Smithery => "smithery",
+            McpRegistry::Both => "both",
+        }
+        .to_string();
+
+        self.emit(UserEvent::SearchMcpRegistry {
+            query,
+            source: crate::events::types::McpRegistrySource { name: source_name },
+        });
     }
 
     /// Emit a UserEvent through the bridge
@@ -161,6 +222,72 @@ impl McpAddView {
         match command {
             ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
                 // Navigation handled by MainPanel
+            }
+            ViewCommand::McpConfigureDraftLoaded {
+                id,
+                name,
+                package,
+                env_var_name,
+                command,
+                args,
+                env,
+            } => {
+                tracing::info!("MCP draft loaded for configure: {}", name);
+                self.state.manual_entry = format!("{} {}", command, args.join(" ")).trim().to_string();
+
+                let (source_hint, normalized_id) = id
+                    .split_once("::")
+                    .map_or((None, id.clone()), |(source, raw_id)| {
+                        (Some(source.to_string()), raw_id.to_string())
+                    });
+                self.state.selected_result_id = Some(normalized_id.clone());
+
+                let registry = match source_hint.as_deref() {
+                    Some("smithery") => McpRegistry::Smithery,
+                    Some("official") => McpRegistry::Official,
+                    Some("both") => McpRegistry::Both,
+                    _ => self.state.registry.clone(),
+                };
+                let inferred_source = source_hint.unwrap_or_else(|| match registry {
+                    McpRegistry::Official => "official".to_string(),
+                    McpRegistry::Smithery => "smithery".to_string(),
+                    McpRegistry::Both => "both".to_string(),
+                });
+
+                self.state.results = vec![
+                    McpSearchResult::new(normalized_id, name, "Selected MCP")
+                        .with_registry(registry)
+                        .with_command(package)
+                        .with_args(args)
+                        .with_env(env)
+                        .with_source(inferred_source),
+                ];
+                let _ = env_var_name;
+                crate::ui_gpui::navigation_channel().request_navigate(
+                    crate::presentation::view_command::ViewId::McpConfigure,
+                );
+            }
+            ViewCommand::McpRegistrySearchResults { results } => {
+                let mapped = results
+                    .into_iter()
+                    .map(|r| {
+                        let registry = match r.source.as_str() {
+                            "smithery" => McpRegistry::Smithery,
+                            "both" => McpRegistry::Both,
+                            _ => McpRegistry::Official,
+                        };
+                        McpSearchResult::new(r.id, r.name, r.description)
+                            .with_registry(registry)
+                            .with_command(r.command)
+                            .with_args(r.args)
+                            .with_env(r.env)
+                            .with_source(r.source)
+                    })
+                    .collect();
+                self.set_results(mapped);
+            }
+            ViewCommand::ShowError { message, .. } => {
+                self.state.search_state = SearchState::Error(message);
             }
             _ => {}
         }
@@ -232,11 +359,17 @@ impl McpAddView {
                             .hover(|s| s.bg(Theme::accent_hover()))
                             .text_color(gpui::white())
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                tracing::info!("Next clicked - navigating to McpConfigure");
-                                this.emit(UserEvent::McpAddNext);
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::McpConfigure
-                                );
+                                if let Some(selected_id) = this.state.selected_result_id.clone() {
+                                    tracing::info!("Next clicked - selected MCP {}", selected_id);
+                                    this.emit(UserEvent::SelectMcpFromRegistry {
+                                        source: crate::events::types::McpRegistrySource {
+                                            name: selected_id,
+                                        },
+                                    });
+                                } else {
+                                    tracing::info!("Next clicked - proceeding via McpAddNext");
+                                    this.emit(UserEvent::McpAddNext);
+                                }
                             }))
                     })
                     .when(!can_proceed, |d| {
@@ -383,6 +516,7 @@ impl McpAddView {
         let name = result.name.clone();
         let description = result.description.clone();
         let badge = result.registry.display();
+        let source = result.source.clone();
 
         div()
             .id(SharedString::from(format!("result-{}", id)))
@@ -433,6 +567,15 @@ impl McpAddView {
                     .overflow_hidden()
                     .text_ellipsis()
                     .child(description)
+            )
+            // Third row: source + command preview
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(if is_selected { Theme::text_secondary() } else { Theme::text_muted() })
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(format!("{} · {}", source, result.command))
             )
             .into_any_element()
     }
@@ -510,6 +653,22 @@ impl McpAddView {
                             .map(|r| self.render_result_row(r, cx))
                             .collect();
                         d.children(results)
+                    })
+                    // Error state
+                    .when(matches!(self.state.search_state, SearchState::Error(_)), |d| {
+                        let message = match &self.state.search_state {
+                            SearchState::Error(msg) => msg.clone(),
+                            _ => String::new(),
+                        };
+                        d.items_center()
+                            .justify_center()
+                            .p(px(16.0))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(Theme::danger())
+                                    .child(message)
+                            )
                     })
             )
     }

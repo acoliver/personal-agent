@@ -5,11 +5,14 @@
 //!
 //! @plan PLAN-20250125-REFACTOR.P10
 //! @requirement REQ-025.1
+//! @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
+//! @requirement REQ-WIRE-006
 
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use crate::events::{AppEvent, types::UserEvent};
+use crate::events::{types::UserEvent, AppEvent, EventBus};
+use crate::registry::ModelInfo as RegistryModelInfo;
 use crate::services::ModelsRegistryService;
 use super::{Presenter, PresenterError, ViewCommand};
 
@@ -41,6 +44,30 @@ impl ModelSelectorPresenter {
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
         let rx = event_bus.subscribe();
+        Self {
+            rx,
+            models_registry_service,
+            view_tx,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    ///
+    /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
+    /// bus rather than a caller-supplied broadcast::Sender. Full wiring deferred to
+    /// later implementation phases.
+    ///
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
+    /// @requirement REQ-WIRE-006
+    /// @pseudocode component-001-event-pipeline.md lines 090-136
+    #[allow(dead_code)]
+    pub fn new_with_event_bus(
+        models_registry_service: Arc<dyn ModelsRegistryService>,
+        event_bus: Arc<EventBus>,
+        view_tx: broadcast::Sender<ViewCommand>,
+    ) -> Self {
+        let rx = event_bus.sender().subscribe();
         Self {
             rx,
             models_registry_service,
@@ -135,11 +162,26 @@ impl ModelSelectorPresenter {
             UserEvent::FilterModelsByProvider { provider_id } => {
                 Self::on_filter_by_provider(models_registry_service, view_tx, provider_id).await;
             }
-            UserEvent::SelectModel { provider_id, model_id } => {
+            UserEvent::SelectModel {
+                provider_id,
+                model_id,
+            } => {
                 Self::on_select_model(models_registry_service, view_tx, provider_id, model_id).await;
             }
             _ => {} // Ignore other user events
         }
+    }
+
+    fn map_models_to_view(models: Vec<RegistryModelInfo>) -> Vec<super::view_command::ModelInfo> {
+        models
+            .into_iter()
+            .map(|m| super::view_command::ModelInfo {
+                model_id: m.id.clone(),
+                name: m.name.clone(),
+                provider_id: m.provider.as_deref().unwrap_or("unknown").to_string(),
+                context_length: m.limit.as_ref().map(|l| l.context as u32),
+            })
+            .collect()
     }
 
     /// Handle open model selector event - load models from registry
@@ -150,7 +192,7 @@ impl ModelSelectorPresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
     ) {
         tracing::info!("Opening model selector - loading models from registry");
-        
+
         // First try to get cached models, then refresh if needed
         let models = match models_registry_service.list_all().await {
             Ok(models) if !models.is_empty() => {
@@ -182,60 +224,98 @@ impl ModelSelectorPresenter {
                 }
             }
         };
-        
-        // Convert to ViewCommand format
-        // ModelInfo from registry has: id, name, provider (Option<String>), reasoning (bool), 
-        // modalities (Option with input/output Vec<String>), cost (Option with input/output f64),
-        // limit (Option with context/output u64)
-        let model_infos: Vec<super::view_command::ModelInfo> = models
-            .into_iter()
-            .map(|m| super::view_command::ModelInfo {
-                model_id: m.id.clone(),
-                name: m.name.clone(),
-                provider_id: m.provider.as_deref().unwrap_or("unknown").to_string(),
-                context_length: m.limit.as_ref().map(|l| l.context as u32),
-            })
-            .collect();
-        
+
+        let model_infos = Self::map_models_to_view(models);
+
         tracing::info!("Sending {} models to view", model_infos.len());
         let _ = view_tx.send(ViewCommand::ModelSearchResults { models: model_infos });
     }
 
-    /// Handle search models event
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
+    /// Search models by query and emit ModelSearchResults.
     async fn on_search_models(
-        _models_registry_service: &Arc<dyn ModelsRegistryService>,
-        _view_tx: &broadcast::Sender<ViewCommand>,
+        models_registry_service: &Arc<dyn ModelsRegistryService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
         query: String,
     ) {
-        // Placeholder service call
         tracing::info!("Searching models for: {}", query);
+
+        match models_registry_service.search(&query).await {
+            Ok(models) => {
+                let mapped = Self::map_models_to_view(models);
+                let _ = view_tx.send(ViewCommand::ModelSearchResults { models: mapped });
+            }
+            Err(e) => {
+                tracing::error!("Model search failed: {:?}", e);
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Model Search Failed".to_string(),
+                    message: e.to_string(),
+                    severity: super::view_command::ErrorSeverity::Warning,
+                });
+            }
+        }
     }
 
-    /// Handle filter by provider event
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
+    /// Filter models by provider and emit ModelSearchResults.
     async fn on_filter_by_provider(
-        _models_registry_service: &Arc<dyn ModelsRegistryService>,
-        _view_tx: &broadcast::Sender<ViewCommand>,
+        models_registry_service: &Arc<dyn ModelsRegistryService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
         provider_id: Option<String>,
     ) {
-        // Placeholder service call
         tracing::info!("Filtering models by provider: {:?}", provider_id);
+
+        let result = match provider_id {
+            Some(provider) => models_registry_service.get_provider(&provider).await,
+            None => models_registry_service.list_all().await,
+        };
+
+        match result {
+            Ok(models) => {
+                let mapped = Self::map_models_to_view(models);
+                let _ = view_tx.send(ViewCommand::ModelSearchResults { models: mapped });
+            }
+            Err(e) => {
+                tracing::error!("Model provider filter failed: {:?}", e);
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Model Filter Failed".to_string(),
+                    message: e.to_string(),
+                    severity: super::view_command::ErrorSeverity::Warning,
+                });
+            }
+        }
     }
 
     /// Handle select model event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
+    /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
+    /// @requirement REQ-WIRE-001
     async fn on_select_model(
-        _models_registry_service: &Arc<dyn ModelsRegistryService>,
-        _view_tx: &broadcast::Sender<ViewCommand>,
-        _provider_id: String,
-        _model_id: String,
+        models_registry_service: &Arc<dyn ModelsRegistryService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        provider_id: String,
+        model_id: String,
     ) {
-        // Placeholder service call
-        tracing::info!("Model selected");
+        tracing::info!("Model selected: provider={} model={}", provider_id, model_id);
+
+        let context_length = models_registry_service
+            .list_all()
+            .await
+            .ok()
+            .and_then(|models| {
+                models
+                    .into_iter()
+                    .find(|m| m.id == model_id)
+                    .and_then(|m| m.limit.map(|l| l.context as u32))
+            });
+
+        let _ = view_tx.send(ViewCommand::ModelSelected {
+            provider_id,
+            model_id,
+            context_length,
+        });
+        let _ = view_tx.send(ViewCommand::NavigateTo {
+            view: super::view_command::ViewId::ProfileEditor,
+        });
     }
 }
 

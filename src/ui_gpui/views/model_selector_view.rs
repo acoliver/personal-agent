@@ -3,7 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P07
 //! @requirement REQ-UI-MS
 
-use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight};
+use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight, ScrollWheelEvent};
 use std::sync::Arc;
 
 use crate::ui_gpui::theme::Theme;
@@ -105,6 +105,11 @@ pub struct ModelSelectorState {
     pub filter_reasoning: bool,
     pub filter_vision: bool,
     pub show_provider_dropdown: bool,
+
+    /// Last search query emitted to presenter, used to avoid redundant events.
+    pub last_emitted_search_query: String,
+    /// Last provider filter emitted to presenter, used to avoid redundant events.
+    pub last_emitted_provider: Option<String>,
 }
 
 impl ModelSelectorState {
@@ -126,8 +131,9 @@ impl ModelSelectorState {
                 // Search filter
                 if !self.search_query.is_empty() {
                     let query = self.search_query.to_lowercase();
-                    if !m.id.to_lowercase().contains(&query) 
-                        && !m.provider_id.to_lowercase().contains(&query) {
+                    if !m.id.to_lowercase().contains(&query)
+                        && !m.provider_id.to_lowercase().contains(&query)
+                    {
                         return false;
                     }
                 }
@@ -184,17 +190,25 @@ impl ModelSelectorView {
         self.state.providers = providers;
         self.state.models = models;
     }
-    
+
     /// Set search query programmatically (for testing)
     pub fn set_search_query(&mut self, query: String) {
         self.state.search_query = query;
     }
-    
+
     /// Set selected provider programmatically (for testing)
     pub fn set_selected_provider(&mut self, provider: Option<String>) {
         self.state.selected_provider = provider;
     }
-    
+
+
+    /// Emit SearchModels event for current query.
+    pub fn emit_search_models(&self) {
+        self.emit(UserEvent::SearchModels {
+            query: self.state.search_query.clone(),
+        });
+    }
+
     /// Get current state for testing
     pub fn get_state(&self) -> &ModelSelectorState {
         &self.state
@@ -222,7 +236,7 @@ impl ModelSelectorView {
             ViewCommand::ModelSearchResults { models } => {
                 println!(">>> ModelSelectorView::handle_command received {} models <<<", models.len());
                 tracing::info!("ModelSelectorView received {} models", models.len());
-                
+
                 // Extract unique providers from the models
                 let mut provider_set = std::collections::HashSet::new();
                 for m in &models {
@@ -232,9 +246,9 @@ impl ModelSelectorView {
                     .into_iter()
                     .map(|id| ProviderInfo { id: id.clone(), name: id })
                     .collect();
-                    
+
                 println!(">>> Providers extracted: {} <<<", providers.len());
-                    
+
                 let local_models: Vec<ModelInfo> = models
                     .into_iter()
                     .map(|m| ModelInfo {
@@ -247,7 +261,7 @@ impl ModelSelectorView {
                         cost_output: 0.0,
                     })
                     .collect();
-                
+
                 println!(">>> Setting {} models on view <<<", local_models.len());
                 self.set_models(providers, local_models);
                 println!(">>> Models set, state.models.len() = {} <<<", self.state.models.len());
@@ -256,11 +270,29 @@ impl ModelSelectorView {
         }
         cx.notify();
     }
-    
+
     /// Request models from presenter on view open
     pub fn request_models(&self) {
         tracing::info!("ModelSelectorView requesting models");
         self.emit(UserEvent::OpenModelSelector);
+    }
+
+
+    /// Emit search/filter events when local filter state changes.
+    fn emit_filter_events_if_changed(&mut self) {
+        if self.state.search_query != self.state.last_emitted_search_query {
+            self.emit(UserEvent::SearchModels {
+                query: self.state.search_query.clone(),
+            });
+            self.state.last_emitted_search_query = self.state.search_query.clone();
+        }
+
+        if self.state.selected_provider != self.state.last_emitted_provider {
+            self.emit(UserEvent::FilterModelsByProvider {
+                provider_id: self.state.selected_provider.clone(),
+            });
+            self.state.last_emitted_provider = self.state.selected_provider.clone();
+        }
     }
 
     /// Render the top bar with cancel button and title
@@ -291,7 +323,7 @@ impl ModelSelectorView {
                     .child("Cancel")
                     .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
                         crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::Settings
+                            crate::presentation::view_command::ViewId::Settings,
                         );
                     }))
             )
@@ -317,7 +349,11 @@ impl ModelSelectorView {
     /// @plan PLAN-20250130-GPUIREDUX.P07
     fn render_filter_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let search_query = self.state.search_query.clone();
-        let provider_display = self.state.selected_provider.clone().unwrap_or_else(|| "All".to_string());
+        let provider_display = self
+            .state
+            .selected_provider
+            .clone()
+            .unwrap_or_else(|| "All".to_string());
         let show_dropdown = self.state.show_provider_dropdown;
 
         div()
@@ -343,19 +379,17 @@ impl ModelSelectorView {
                     .flex()
                     .items_center()
                     .cursor_text()
-                    .child(
-                        if search_query.is_empty() {
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(Theme::text_muted())
-                                .child("Search models...")
-                        } else {
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(Theme::text_primary())
-                                .child(search_query)
-                        }
-                    )
+                    .child(if search_query.is_empty() {
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(Theme::text_muted())
+                            .child("Search models...")
+                    } else {
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(Theme::text_primary())
+                            .child(search_query)
+                    })
             )
             // Provider dropdown button
             .child(
@@ -435,9 +469,14 @@ impl ModelSelectorView {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .when(filter_reasoning, |d| d.bg(Theme::accent()).child(
-                                div().text_size(px(10.0)).text_color(gpui::white()).child("[OK]")
-                            ))
+                            .when(filter_reasoning, |d| {
+                                d.bg(Theme::accent()).child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(gpui::white())
+                                        .child("[OK]")
+                                )
+                            })
                     )
                     .child(
                         div()
@@ -467,9 +506,14 @@ impl ModelSelectorView {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .when(filter_vision, |d| d.bg(Theme::accent()).child(
-                                div().text_size(px(10.0)).text_color(gpui::white()).child("[OK]")
-                            ))
+                            .when(filter_vision, |d| {
+                                d.bg(Theme::accent()).child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(gpui::white())
+                                        .child("[OK]")
+                                )
+                            })
                     )
                     .child(
                         div()
@@ -493,41 +537,13 @@ impl ModelSelectorView {
             .px(px(12.0))
             .flex()
             .items_center()
-                    .text_size(px(10.0))
-                    .text_color(Theme::text_primary())
-            .child(
-                div()
-                    .flex_1()
-                    .child("Model")
-            )
-            .child(
-                div()
-                    .w(px(50.0))
-                    .flex()
-                    .justify_end()
-                    .child("Context")
-            )
-            .child(
-                div()
-                    .w(px(40.0))
-                    .flex()
-                    .justify_center()
-                    .child("Caps")
-            )
-            .child(
-                div()
-                    .w(px(50.0))
-                    .flex()
-                    .justify_end()
-                    .child("In $")
-            )
-            .child(
-                div()
-                    .w(px(50.0))
-                    .flex()
-                    .justify_end()
-                    .child("Out $")
-            )
+            .text_size(px(10.0))
+            .text_color(Theme::text_primary())
+            .child(div().flex_1().child("Model"))
+            .child(div().w(px(50.0)).flex().justify_end().child("Context"))
+            .child(div().w(px(40.0)).flex().justify_center().child("Caps"))
+            .child(div().w(px(50.0)).flex().justify_end().child("In $"))
+            .child(div().w(px(50.0)).flex().justify_end().child("Out $"))
     }
 
     /// Render a single model row
@@ -536,7 +552,8 @@ impl ModelSelectorView {
         let model_id = model.id.clone();
         let provider_id = model.provider_id.clone();
         let context = model.context_display();
-        let caps = format!("{}{}",
+        let caps = format!(
+            "{}{}",
             if model.reasoning { "R" } else { "" },
             if model.vision { "V" } else { "" }
         );
@@ -560,17 +577,9 @@ impl ModelSelectorView {
                     provider_id: provider_id.clone(),
                     model_id: model_id.clone(),
                 });
-                // Navigate to profile editor
-                crate::ui_gpui::navigation_channel().request_navigate(
-                    crate::presentation::view_command::ViewId::ProfileEditor
-                );
+                this.state.show_provider_dropdown = false;
             }))
-            .child(
-                div()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(model.id.clone())
-            )
+            .child(div().flex_1().overflow_hidden().child(model.id.clone()))
             .child(
                 div()
                     .w(px(50.0))
@@ -639,29 +648,33 @@ impl ModelSelectorView {
                     .flex()
                     .flex_col()
                     .children(
-                        providers.iter().filter_map(|provider| {
-                            let provider_models: Vec<_> = filtered
-                                .iter()
-                                .filter(|m| &m.provider_id == *provider)
-                                .collect();
-                            
-                            if provider_models.is_empty() {
-                                return None;
-                            }
-                            
-                            let provider_id = provider.to_string();
-                            Some(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(self.render_provider_header(&provider_id))
-                                    .children(
-                                        provider_models.into_iter().map(|model| {
-                                            self.render_model_row(model, cx)
-                                        }).collect::<Vec<_>>()
-                                    )
-                            )
-                        }).collect::<Vec<_>>()
+                        providers
+                            .iter()
+                            .filter_map(|provider| {
+                                let provider_models: Vec<_> = filtered
+                                    .iter()
+                                    .filter(|m| &m.provider_id == *provider)
+                                    .collect();
+
+                                if provider_models.is_empty() {
+                                    return None;
+                                }
+
+                                let provider_id = provider.to_string();
+                                Some(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .child(self.render_provider_header(&provider_id))
+                                        .children(
+                                            provider_models
+                                                .into_iter()
+                                                .map(|model| self.render_model_row(model, cx))
+                                                .collect::<Vec<_>>()
+                                        )
+                                )
+                            })
+                            .collect::<Vec<_>>()
                     )
             )
     }
@@ -688,11 +701,11 @@ impl ModelSelectorView {
             .text_color(Theme::text_primary())
             .child(format!("{} models from {} providers", model_count, provider_count))
     }
-    
+
     /// Render the provider dropdown overlay
     fn render_provider_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let providers = self.state.all_providers();
-        
+
         div()
             .id("provider-menu-overlay")
             .absolute()
@@ -719,30 +732,35 @@ impl ModelSelectorView {
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
                         this.state.selected_provider = None;
                         this.state.show_provider_dropdown = false;
+                        this.emit_filter_events_if_changed();
                         cx.notify();
                     }))
                     .child("All")
             )
             // Provider options
             .children(
-                providers.into_iter().map(|p| {
-                    let provider_id = p.to_string();
-                    let provider_name = p.to_string();
-                    div()
-                        .id(SharedString::from(format!("provider-{}", provider_id)))
-                        .px(px(8.0))
-                        .py(px(6.0))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(Theme::bg_darker()))
-                        .text_size(px(11.0))
-                        .text_color(Theme::text_primary())
-                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                            this.state.selected_provider = Some(provider_id.clone());
-                            this.state.show_provider_dropdown = false;
-                            cx.notify();
-                        }))
-                        .child(provider_name)
-                }).collect::<Vec<_>>()
+                providers
+                    .into_iter()
+                    .map(|p| {
+                        let provider_id = p.to_string();
+                        let provider_name = p.to_string();
+                        div()
+                            .id(SharedString::from(format!("provider-{}", provider_id)))
+                            .px(px(8.0))
+                            .py(px(6.0))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::bg_darker()))
+                            .text_size(px(11.0))
+                            .text_color(Theme::text_primary())
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
+                                this.state.selected_provider = Some(provider_id.clone());
+                                this.state.show_provider_dropdown = false;
+                                this.emit_filter_events_if_changed();
+                                cx.notify();
+                            }))
+                            .child(provider_name)
+                    })
+                    .collect::<Vec<_>>()
             )
     }
 }
@@ -756,8 +774,8 @@ impl gpui::Focusable for ModelSelectorView {
 impl gpui::Render for ModelSelectorView {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_dropdown = self.state.show_provider_dropdown;
-        
-        div()
+
+        let root = div()
             .id("model-selector-view")
             .relative()
             .flex()
@@ -768,7 +786,7 @@ impl gpui::Render for ModelSelectorView {
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
                 let key = &event.keystroke.key;
                 let modifiers = &event.keystroke.modifiers;
-                
+
                 // Escape: close dropdown or go back
                 if key == "escape" {
                     if this.state.show_provider_dropdown {
@@ -776,27 +794,29 @@ impl gpui::Render for ModelSelectorView {
                         cx.notify();
                     } else {
                         crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::Settings
+                            crate::presentation::view_command::ViewId::Settings,
                         );
                     }
                     return;
                 }
-                
+
                 // Cmd+W: Go back to Settings
                 if modifiers.platform && key == "w" {
                     crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Settings
+                        crate::presentation::view_command::ViewId::Settings,
                     );
                     return;
                 }
-                
+
                 // Handle typing for search - any alphanumeric key updates search
                 if !modifiers.platform && !modifiers.control {
                     if key == "backspace" {
                         this.state.search_query.pop();
+                        this.emit_filter_events_if_changed();
                         cx.notify();
                     } else if key.len() == 1 {
                         this.state.search_query.push_str(key);
+                        this.emit_filter_events_if_changed();
                         cx.notify();
                     }
                 }
@@ -812,10 +832,30 @@ impl gpui::Render for ModelSelectorView {
             // Model list (flex, scrollable)
             .child(self.render_model_list(cx))
             // Status bar (24px)
-            .child(self.render_status_bar())
-            // Provider dropdown overlay - rendered last so it's on top
-            .when(show_dropdown, |d| {
-                d.child(self.render_provider_dropdown(cx))
-            })
+            .child(self.render_status_bar());
+
+        // Dropdown overlay isolation: when open, capture background clicks and close only.
+        if show_dropdown {
+            root.child(
+                div()
+                    .id("provider-menu-backdrop")
+                    .absolute()
+                    .top(px(0.0))
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .bottom(px(0.0))
+                    .block_mouse_except_scroll()
+                    .on_scroll_wheel(cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
+                        cx.stop_propagation();
+                    }))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                        this.state.show_provider_dropdown = false;
+                        cx.notify();
+                    }))
+                    .child(self.render_provider_dropdown(cx)),
+            )
+        } else {
+            root
+        }
     }
 }
