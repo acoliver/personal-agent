@@ -16,11 +16,13 @@ use tokio::sync::broadcast;
 use personal_agent::events::types::UserEvent;
 use personal_agent::events::{AppEvent, EventBus};
 use personal_agent::models::{AuthConfig, ModelParameters, ModelProfile};
-use personal_agent::presentation::ViewCommand;
-use personal_agent::services::{McpRegistryEntry, McpServerStatus, McpTool, ServiceError, ServiceResult};
 use personal_agent::presentation::view_command::McpRegistryResult;
+use personal_agent::presentation::ViewCommand;
+use personal_agent::services::{
+    McpRegistryEntry, McpServerStatus, McpTool, ServiceError, ServiceResult,
+};
 
-use personal_agent::ui_gpui::bridge::{GpuiBridge, spawn_user_event_forwarder};
+use personal_agent::ui_gpui::bridge::{spawn_user_event_forwarder, GpuiBridge};
 
 // ============================================================
 // No-op service stubs for presenter construction
@@ -41,8 +43,10 @@ impl personal_agent::services::ProfileService for NoopProfileService {
         _name: String,
         _provider: String,
         _model: String,
+        _base_url: Option<String>,
         _auth: AuthConfig,
         _parameters: ModelParameters,
+        _system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile> {
         Err(ServiceError::NotFound("noop".into()))
     }
@@ -50,9 +54,12 @@ impl personal_agent::services::ProfileService for NoopProfileService {
         &self,
         _id: uuid::Uuid,
         _name: Option<String>,
+        _provider: Option<String>,
         _model: Option<String>,
+        _base_url: Option<String>,
         _auth: Option<AuthConfig>,
         _parameters: Option<ModelParameters>,
+        _system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile> {
         Err(ServiceError::NotFound("noop".into()))
     }
@@ -69,7 +76,6 @@ impl personal_agent::services::ProfileService for NoopProfileService {
         Ok(())
     }
 }
-
 
 struct NoopModelsRegistryService;
 
@@ -102,7 +108,10 @@ impl personal_agent::services::ModelsRegistryService for NoopModelsRegistryServi
         Ok(vec![])
     }
 
-    async fn search(&self, _query: &str) -> ServiceResult<Vec<personal_agent::registry::ModelInfo>> {
+    async fn search(
+        &self,
+        _query: &str,
+    ) -> ServiceResult<Vec<personal_agent::registry::ModelInfo>> {
         Ok(vec![])
     }
 
@@ -154,13 +163,16 @@ impl personal_agent::services::ProfileService for RecordingProfileService {
         name: String,
         provider: String,
         model: String,
+        _base_url: Option<String>,
         _auth: AuthConfig,
         _parameters: ModelParameters,
+        _system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile> {
-        self.created
-            .lock()
-            .expect("recording lock poisoned")
-            .push((name.clone(), provider.clone(), model.clone()));
+        self.created.lock().expect("recording lock poisoned").push((
+            name.clone(),
+            provider.clone(),
+            model.clone(),
+        ));
 
         Ok(ModelProfile {
             id: uuid::Uuid::new_v4(),
@@ -168,9 +180,13 @@ impl personal_agent::services::ProfileService for RecordingProfileService {
             provider_id: provider,
             model_id: model,
             base_url: "https://api.openai.com/v1".to_string(),
-            auth: AuthConfig::Key { value: String::new() },
+            auth: AuthConfig::Key {
+                value: String::new(),
+            },
             parameters: ModelParameters::default(),
-            system_prompt: "You are a helpful assistant, be direct and to the point. Respond in English.".to_string(),
+            system_prompt:
+                "You are a helpful assistant, be direct and to the point. Respond in English."
+                    .to_string(),
         })
     }
 
@@ -178,9 +194,12 @@ impl personal_agent::services::ProfileService for RecordingProfileService {
         &self,
         id: uuid::Uuid,
         name: Option<String>,
+        _provider: Option<String>,
         model: Option<String>,
+        _base_url: Option<String>,
         _auth: Option<AuthConfig>,
         _parameters: Option<ModelParameters>,
+        _system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile> {
         self.updated
             .lock()
@@ -206,7 +225,6 @@ impl personal_agent::services::ProfileService for RecordingProfileService {
         Ok(())
     }
 }
-
 
 #[async_trait::async_trait]
 impl personal_agent::services::McpRegistryService for NoopMcpRegistryService {
@@ -316,11 +334,7 @@ impl RecordingMcpRegistryService {
 #[async_trait::async_trait]
 impl personal_agent::services::McpRegistryService for RecordingMcpRegistryService {
     async fn search(&self, _query: &str) -> ServiceResult<Vec<McpRegistryEntry>> {
-        Ok(self
-            .entries
-            .lock()
-            .expect("registry lock poisoned")
-            .clone())
+        Ok(self.entries.lock().expect("registry lock poisoned").clone())
     }
 
     async fn get_details(&self, _name: &str) -> ServiceResult<Option<McpRegistryEntry>> {
@@ -328,11 +342,7 @@ impl personal_agent::services::McpRegistryService for RecordingMcpRegistryServic
     }
 
     async fn list_all(&self) -> ServiceResult<Vec<McpRegistryEntry>> {
-        Ok(self
-            .entries
-            .lock()
-            .expect("registry lock poisoned")
-            .clone())
+        Ok(self.entries.lock().expect("registry lock poisoned").clone())
     }
 
     async fn list_by_tag(&self, _tag: &str) -> ServiceResult<Vec<McpRegistryEntry>> {
@@ -419,7 +429,10 @@ async fn test_profile_editor_presenter_handles_save_profile_editor() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
 
     // Give the event loop a moment to start
     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -472,7 +485,10 @@ async fn test_mcp_add_presenter_handles_mcp_add_next() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -578,7 +594,10 @@ async fn test_profile_editor_save_uses_selected_model_context() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -592,16 +611,28 @@ async fn test_profile_editor_save_uses_selected_model_context() {
         .send(AppEvent::User(UserEvent::SaveProfileEditor))
         .ok();
 
-
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let calls = recording.created_calls();
-    assert_eq!(calls.len(), 1, "SaveProfileEditor should persist exactly one profile");
+    assert_eq!(
+        calls.len(),
+        1,
+        "SaveProfileEditor should persist exactly one profile"
+    );
 
     let (name, provider, model) = &calls[0];
-    assert_eq!(provider, "anthropic", "provider should come from SelectModel");
-    assert_eq!(model, "claude-3-5-sonnet", "model should come from SelectModel");
-    assert_eq!(name, model, "lightweight save currently uses model id as profile name");
+    assert_eq!(
+        provider, "anthropic",
+        "provider should come from SelectModel"
+    );
+    assert_eq!(
+        model, "claude-3-5-sonnet",
+        "model should come from SelectModel"
+    );
+    assert_eq!(
+        name, model,
+        "lightweight save currently uses model id as profile name"
+    );
 }
 
 /// REQ-WIRE-001: SaveProfile payload attempts update first, then falls back to create
@@ -627,7 +658,10 @@ async fn test_profile_editor_save_profile_attempts_update_then_falls_back_to_cre
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let profile_id = uuid::Uuid::new_v4();
@@ -649,18 +683,38 @@ async fn test_profile_editor_save_profile_attempts_update_then_falls_back_to_cre
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let updates = recording.updated_calls();
-    assert_eq!(updates.len(), 1, "SaveProfile should attempt one update first");
+    assert_eq!(
+        updates.len(),
+        1,
+        "SaveProfile should attempt one update first"
+    );
     assert_eq!(updates[0].0, profile_id, "update should target payload id");
-    assert_eq!(updates[0].1.as_deref(), Some("Edited Profile"), "update should carry payload name");
+    assert_eq!(
+        updates[0].1.as_deref(),
+        Some("Edited Profile"),
+        "update should carry payload name"
+    );
 
     let creates = recording.created_calls();
-    assert_eq!(creates.len(), 1, "SaveProfile should fallback to one create on NotFound");
+    assert_eq!(
+        creates.len(),
+        1,
+        "SaveProfile should fallback to one create on NotFound"
+    );
     let (created_name, created_provider, created_model) = &creates[0];
-    assert_eq!(created_name, "Edited Profile", "fallback create should preserve payload name");
-    assert_eq!(created_provider, "openai", "fallback create uses current default provider");
-    assert_eq!(created_model, "gpt-4o", "fallback create uses current default model");
+    assert_eq!(
+        created_name, "Edited Profile",
+        "fallback create should preserve payload name"
+    );
+    assert_eq!(
+        created_provider, "openai",
+        "fallback create uses current default provider"
+    );
+    assert_eq!(
+        created_model, "gpt-4o",
+        "fallback create uses current default model"
+    );
 }
-
 
 /// REQ-WIRE-001: ModelSelectorPresenter emits ModelSelected and NavigateTo(ProfileEditor)
 ///
@@ -684,7 +738,10 @@ async fn test_model_selector_presenter_emits_prefill_and_navigation_on_select_mo
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -750,7 +807,10 @@ async fn test_model_selector_presenter_handles_search_models() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -793,7 +853,10 @@ async fn test_model_selector_presenter_handles_filter_models_by_provider() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -813,10 +876,6 @@ async fn test_model_selector_presenter_handles_filter_models_by_provider() {
         cmd
     );
 }
-
-
-
-
 
 #[derive(Clone, Default)]
 struct RecordingMcpService;
@@ -910,7 +969,6 @@ impl personal_agent::services::McpService for RecordingMcpService {
     }
 }
 
-
 #[derive(Clone, Default)]
 struct FailingMcpService;
 
@@ -978,7 +1036,6 @@ impl personal_agent::services::McpService for FailingMcpService {
     }
 }
 
-
 /// REQ-WIRE-001: McpAddPresenter search emits McpRegistrySearchResults payload
 ///
 /// GIVEN: McpAddPresenter with registry service returning one entry
@@ -1015,7 +1072,10 @@ async fn test_mcp_add_presenter_search_emits_registry_results() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -1085,7 +1145,10 @@ async fn test_mcp_add_presenter_search_preserves_requested_source_in_results() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -1113,8 +1176,6 @@ async fn test_mcp_add_presenter_search_preserves_requested_source_in_results() {
     );
 }
 
-
-
 /// REQ-WIRE-001: SelectMcpFromRegistry emits configure draft + navigation
 ///
 /// GIVEN: McpAddPresenter with registry containing the selected MCP entry
@@ -1137,7 +1198,10 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
         license: "MIT".to_string(),
         repository: "https://github.com/modelcontextprotocol/servers".to_string(),
         command: "npx".to_string(),
-        args: vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-fetch".to_string(),
+        ],
         env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
         tags: vec![],
     }];
@@ -1151,7 +1215,10 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -1204,7 +1271,6 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
     );
 }
 
-
 /// REQ-WIRE-001: SelectMcpFromRegistry preserves explicit source hint in configure draft id
 ///
 /// GIVEN: McpAddPresenter with registry containing selected MCP entry
@@ -1244,7 +1310,10 @@ async fn test_mcp_add_presenter_select_preserves_source_hint_in_configure_draft_
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -1296,7 +1365,10 @@ async fn test_mcp_add_presenter_select_missing_entry_emits_show_error_with_sourc
         license: "MIT".to_string(),
         repository: "https://github.com/modelcontextprotocol/servers".to_string(),
         command: "npx".to_string(),
-        args: vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-fetch".to_string(),
+        ],
         env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
         tags: vec![],
     }];
@@ -1310,7 +1382,10 @@ async fn test_mcp_add_presenter_select_missing_entry_emits_show_error_with_sourc
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -1337,7 +1412,6 @@ async fn test_mcp_add_presenter_select_missing_entry_emits_show_error_with_sourc
     );
 }
 
-
 /// REQ-WIRE-001: ConfigureMcp loads persisted MCP and emits configure draft + navigation
 ///
 /// GIVEN: McpConfigurePresenter with MCP service returning a stored config
@@ -1360,7 +1434,10 @@ async fn test_mcp_configure_presenter_configure_mcp_loads_draft_and_navigates() 
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let configured_id = uuid::Uuid::new_v4();
@@ -1424,7 +1501,10 @@ async fn test_mcp_configure_presenter_configure_mcp_failure_emits_error_only() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -1451,7 +1531,6 @@ async fn test_mcp_configure_presenter_configure_mcp_failure_emits_error_only() {
     );
 }
 
-
 /// REQ-WIRE-001: SaveMcpConfig persists MCP fields and emits McpConfigSaved + NavigateBack
 ///
 /// GIVEN: McpConfigurePresenter with MCP service update path available
@@ -1474,7 +1553,10 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let id = uuid::Uuid::new_v4();
@@ -1485,7 +1567,10 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
                 id,
                 name: "Fetch".to_string(),
                 command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+                args: vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-fetch".to_string(),
+                ],
                 env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
             },
         }))
@@ -1540,7 +1625,10 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let id = uuid::Uuid::nil();
@@ -1551,7 +1639,10 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
                 id,
                 name: "Registry Fetch".to_string(),
                 command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+                args: vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-fetch".to_string(),
+                ],
                 env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
             },
         }))
@@ -1584,7 +1675,6 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
     );
 }
 
-
 /// REQ-WIRE-001: SaveMcpConfig failure emits ShowError and does not navigate back
 ///
 /// GIVEN: McpConfigurePresenter with update path failing
@@ -1606,7 +1696,10 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let id = uuid::Uuid::new_v4();
@@ -1617,7 +1710,10 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
                 id,
                 name: "Broken MCP".to_string(),
                 command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@modelcontextprotocol/server-broken".to_string()],
+                args: vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-broken".to_string(),
+                ],
                 env: None,
             },
         }))
@@ -1663,7 +1759,10 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payloa
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let id = uuid::Uuid::nil();
@@ -1674,7 +1773,10 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payloa
                 id,
                 name: "Filesystem".to_string(),
                 command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()],
+                args: vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-filesystem".to_string(),
+                ],
                 env: Some(vec![("FILESYSTEM_ROOT".to_string(), "/tmp".to_string())]),
             },
         }))
@@ -1795,7 +1897,10 @@ async fn test_mcp_configure_presenter_configure_mcp_maps_sse_transport_to_comman
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let configured_id = uuid::Uuid::new_v4();
@@ -1841,4 +1946,3 @@ async fn test_mcp_configure_presenter_configure_mcp_maps_sse_transport_to_comman
         second
     );
 }
-

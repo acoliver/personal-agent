@@ -60,7 +60,7 @@ impl IntoElement for TopBar {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
+
         let mut top_bar = div()
             .flex()
             .items_center()
@@ -87,7 +87,7 @@ impl IntoElement for TopBar {
                 .text_color(Theme::text_primary())
                 .text_lg()
                 .font_weight(gpui::FontWeight::BOLD)
-                .child(self.title)
+                .child(self.title),
         );
 
         // Right buttons

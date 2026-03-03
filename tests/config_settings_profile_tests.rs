@@ -74,7 +74,11 @@ fn config_keyfile_profile_requires_valid_key() {
         "gpt-4o".to_string(),
         String::new(),
         AuthConfig::Keyfile {
-            path: temp_dir.path().join("missing.key").to_string_lossy().to_string(),
+            path: temp_dir
+                .path()
+                .join("missing.key")
+                .to_string_lossy()
+                .to_string(),
         },
     );
 

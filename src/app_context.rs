@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use crate::services::{AppSettingsService, ChatService, ConversationService, McpService, ProfileService};
+use crate::services::{
+    AppSettingsService, ChatService, ConversationService, McpService, ProfileService,
+};
 
 /// Application context - shared state accessible throughout the app
 ///
@@ -78,10 +80,16 @@ mod tests {
         let app_settings_svc = context.app_settings_service();
 
         // Then: services should be accessible
-        assert!(Arc::ptr_eq(&conversation_svc, &context.services.conversation));
+        assert!(Arc::ptr_eq(
+            &conversation_svc,
+            &context.services.conversation
+        ));
         assert!(Arc::ptr_eq(&profile_svc, &context.services.profile));
         assert!(Arc::ptr_eq(&chat_svc, &context.services.chat));
         assert!(Arc::ptr_eq(&mcp_svc, &context.services.mcp));
-        assert!(Arc::ptr_eq(&app_settings_svc, &context.services.app_settings));
+        assert!(Arc::ptr_eq(
+            &app_settings_svc,
+            &context.services.app_settings
+        ));
     }
 }

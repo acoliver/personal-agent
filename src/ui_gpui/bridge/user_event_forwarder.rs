@@ -3,11 +3,11 @@
 //! @plan PLAN-20250128-GPUI.P05
 //! @requirement REQ-GPUI-006.1
 
-use std::sync::Arc;
-use flume::Receiver;
-use tokio::task::JoinHandle;
-use crate::events::{AppEvent, EventBus};
 use crate::events::types::UserEvent;
+use crate::events::{AppEvent, EventBus};
+use flume::Receiver;
+use std::sync::Arc;
+use tokio::task::JoinHandle;
 
 /// Spawn a tokio task that forwards UserEvents from flume to EventBus
 ///
@@ -26,16 +26,16 @@ pub fn spawn_user_event_forwarder(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         tracing::info!("UserEvent forwarder started");
-        
+
         while let Ok(event) = user_rx.recv_async().await {
             tracing::debug!("Forwarding UserEvent: {:?}", event);
-            
+
             // Publish to EventBus (may fail if no subscribers, that's OK)
             if let Err(e) = event_bus.publish(AppEvent::User(event)) {
                 tracing::debug!("EventBus publish failed (no subscribers?): {:?}", e);
             }
         }
-        
+
         tracing::info!("UserEvent forwarder shutting down (sender dropped)");
     })
 }

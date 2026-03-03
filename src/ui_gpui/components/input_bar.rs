@@ -3,7 +3,7 @@
 //! @plan PLAN-20250128-GPUI.P06
 //! @requirement REQ-GPUI-003.4
 
-use gpui::{div, px, prelude::*, IntoElement};
+use gpui::{div, prelude::*, px, IntoElement};
 
 pub struct InputBar {
     text: String,
@@ -48,7 +48,7 @@ impl IntoElement for InputBar {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
+
         let is_streaming = self.is_streaming;
 
         let mut input_div = div()
@@ -79,8 +79,7 @@ impl IntoElement for InputBar {
 
         // Button: Send or Stop
         let button_label = if is_streaming { "Stop" } else { "Send" };
-        let button = crate::ui_gpui::components::Button::new(button_label)
-            .active(is_streaming);
+        let button = crate::ui_gpui::components::Button::new(button_label).active(is_streaming);
 
         input_div = input_div.child(button);
 

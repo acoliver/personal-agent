@@ -12,8 +12,8 @@
 //! - An MCP server configured with search capability (e.g., Exa)
 //!   OR the test will gracefully skip tool verification if no MCPs configured
 
-use personal_agent::{AuthConfig, LlmClient, ModelProfile, StreamEvent};
 use personal_agent::llm::AgentClientExt;
+use personal_agent::{AuthConfig, LlmClient, ModelProfile, StreamEvent};
 
 /// Load synthetic profile from ~/.llxprt/profiles/synthetic.json
 fn load_synthetic_profile() -> ModelProfile {
@@ -66,7 +66,9 @@ async fn test_agent_mode_basic() {
 
     // Create client and agent
     let client = LlmClient::from_profile(&profile).expect("Failed to create LlmClient");
-    let agent = client.create_agent(vec![], "You are a helpful assistant.").await
+    let agent = client
+        .create_agent(vec![], "You are a helpful assistant.")
+        .await
         .expect("Failed to create agent");
 
     println!("Agent created successfully");
@@ -81,19 +83,17 @@ async fn test_agent_mode_basic() {
     let mut response = String::new();
 
     let result = client
-        .run_agent_stream(&agent, &messages, |event| {
-            match &event {
-                StreamEvent::TextDelta(text) => {
-                    print!("{}", text);
-                    std::io::Write::flush(&mut std::io::stdout()).ok();
-                    response.push_str(text);
-                    saw_text = true;
-                }
-                StreamEvent::Complete => {
-                    saw_done = true;
-                }
-                _ => {}
+        .run_agent_stream(&agent, &messages, |event| match &event {
+            StreamEvent::TextDelta(text) => {
+                print!("{}", text);
+                std::io::Write::flush(&mut std::io::stdout()).ok();
+                response.push_str(text);
+                saw_text = true;
             }
+            StreamEvent::Complete => {
+                saw_done = true;
+            }
+            _ => {}
         })
         .await;
 
@@ -155,7 +155,9 @@ async fn test_agent_tool_events() {
     let llm_tools = mcp.get_llm_tools();
     drop(mcp);
 
-    let agent = client.create_agent(llm_tools, "You are a helpful assistant with tools.").await
+    let agent = client
+        .create_agent(llm_tools, "You are a helpful assistant with tools.")
+        .await
         .expect("Failed to create agent with tools");
 
     println!("\nSending message that should trigger tool use...");
@@ -170,26 +172,35 @@ async fn test_agent_tool_events() {
     let mut tool_name = String::new();
 
     let result = client
-        .run_agent_stream(&agent, &messages, |event| {
-            match &event {
-                StreamEvent::TextDelta(text) => {
-                    print!("{}", text);
-                    std::io::Write::flush(&mut std::io::stdout()).ok();
-                }
-                StreamEvent::ToolCallStarted { tool_name: name, call_id } => {
-                    println!("\n[TOOL STARTED] {} ({})", name, call_id);
-                    saw_tool_start = true;
-                    tool_name = name.clone();
-                }
-                StreamEvent::ToolCallCompleted { tool_name: name, success, call_id, .. } => {
-                    println!("[TOOL COMPLETED] {} success={} ({})", name, success, call_id);
-                    saw_tool_complete = true;
-                }
-                StreamEvent::Complete => {
-                    println!("\n[DONE]");
-                }
-                _ => {}
+        .run_agent_stream(&agent, &messages, |event| match &event {
+            StreamEvent::TextDelta(text) => {
+                print!("{}", text);
+                std::io::Write::flush(&mut std::io::stdout()).ok();
             }
+            StreamEvent::ToolCallStarted {
+                tool_name: name,
+                call_id,
+            } => {
+                println!("\n[TOOL STARTED] {} ({})", name, call_id);
+                saw_tool_start = true;
+                tool_name = name.clone();
+            }
+            StreamEvent::ToolCallCompleted {
+                tool_name: name,
+                success,
+                call_id,
+                ..
+            } => {
+                println!(
+                    "[TOOL COMPLETED] {} success={} ({})",
+                    name, success, call_id
+                );
+                saw_tool_complete = true;
+            }
+            StreamEvent::Complete => {
+                println!("\n[DONE]");
+            }
+            _ => {}
         })
         .await;
 
@@ -217,8 +228,8 @@ async fn test_agent_tool_events() {
 async fn test_mcp_catalog_real() {
     println!("=== E2E Test: MCP Catalog Fetch ===\n");
 
-    let registry = personal_agent::services::McpRegistryServiceImpl::new()
-        .expect("Failed to create registry");
+    let registry =
+        personal_agent::services::McpRegistryServiceImpl::new().expect("Failed to create registry");
 
     println!("Fetching MCP catalog from Smithery...");
 
@@ -231,10 +242,7 @@ async fn test_mcp_catalog_real() {
         }
     }
 
-    let results = registry
-        .search("search")
-        .await
-        .expect("Search should work");
+    let results = registry.search("search").await.expect("Search should work");
 
     println!("Found {} MCP servers matching 'search'", results.len());
     for (i, entry) in results.iter().take(5).enumerate() {

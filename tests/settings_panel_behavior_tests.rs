@@ -118,8 +118,16 @@ fn settings_reflects_mcp_enabled_state() {
     // Reload and verify enabled states
     let loaded = Config::load(&config_path).unwrap();
 
-    let enabled = loaded.mcps.iter().find(|m| m.name == "Enabled MCP").unwrap();
-    let disabled = loaded.mcps.iter().find(|m| m.name == "Disabled MCP").unwrap();
+    let enabled = loaded
+        .mcps
+        .iter()
+        .find(|m| m.name == "Enabled MCP")
+        .unwrap();
+    let disabled = loaded
+        .mcps
+        .iter()
+        .find(|m| m.name == "Disabled MCP")
+        .unwrap();
 
     assert!(enabled.enabled, "Enabled MCP should be enabled");
     assert!(!disabled.enabled, "Disabled MCP should be disabled");
@@ -168,9 +176,15 @@ fn settings_handles_empty_config() {
 
     let config = Config::load(&config_path).unwrap();
 
-    assert!(config.profiles.is_empty(), "New config should have no profiles");
+    assert!(
+        config.profiles.is_empty(),
+        "New config should have no profiles"
+    );
     assert!(config.mcps.is_empty(), "New config should have no MCPs");
-    assert!(config.default_profile.is_none(), "New config should have no default profile");
+    assert!(
+        config.default_profile.is_none(),
+        "New config should have no default profile"
+    );
 }
 
 /// Config with profiles but no MCPs should load correctly

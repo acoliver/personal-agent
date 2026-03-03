@@ -59,12 +59,18 @@ async fn test_install_exa_and_search() {
     // Step 1: Install Exa from registry
     println!("Step 1: Installing Exa MCP from registry...");
     let registry = McpRegistryServiceImpl::new().expect("Failed to create registry");
-    
+
     // Refresh to get latest catalog
-    registry.refresh().await.expect("Failed to refresh registry");
-    
+    registry
+        .refresh()
+        .await
+        .expect("Failed to refresh registry");
+
     // Try to install Exa
-    match registry.install("exa", Some("Exa Search".to_string())).await {
+    match registry
+        .install("exa", Some("Exa Search".to_string()))
+        .await
+    {
         Ok(()) => println!("[OK] Exa installed successfully!"),
         Err(e) => {
             let err_str = format!("{:?}", e);
@@ -98,7 +104,7 @@ async fn test_install_exa_and_search() {
     if tools.is_empty() {
         println!("\n[FAIL] No tools available after install!");
         println!("[INFO] The MCP may need to be started manually or needs API key");
-        
+
         // Check config to see if Exa is there
         let config_path = personal_agent::config::Config::default_path().unwrap();
         let config = personal_agent::config::Config::load(&config_path).unwrap();
@@ -106,7 +112,7 @@ async fn test_install_exa_and_search() {
         for mcp_config in &config.mcps {
             println!("  - {} (enabled: {})", mcp_config.name, mcp_config.enabled);
         }
-        
+
         drop(mcp);
         return;
     }
@@ -134,7 +140,7 @@ async fn test_install_exa_and_search() {
 
     // Step 4: Search!
     println!("\nStep 4: Asking agent to search for 'Rust programming'...\n");
-    
+
     let messages = vec![personal_agent::LlmMessage::user(
         "Use the search tool to find information about 'Rust programming language'. Tell me one interesting fact from the results.",
     )];
@@ -160,7 +166,10 @@ async fn test_install_exa_and_search() {
                 call_id,
                 ..
             } => {
-                println!(">>> [TOOL COMPLETED] {} success={} ({})", tool_name, success, call_id);
+                println!(
+                    ">>> [TOOL COMPLETED] {} success={} ({})",
+                    tool_name, success, call_id
+                );
                 if let Some(r) = result {
                     tool_result_preview = if r.len() > 500 {
                         format!("{}...", &r[..500])

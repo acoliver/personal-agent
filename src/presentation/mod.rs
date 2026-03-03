@@ -38,13 +38,13 @@
 
 // Presenter modules
 pub mod chat_presenter;
+pub mod error_presenter;
 pub mod history_presenter;
-pub mod settings_presenter;
-pub mod profile_editor_presenter;
 pub mod mcp_add_presenter;
 pub mod mcp_configure_presenter;
 pub mod model_selector_presenter;
-pub mod error_presenter;
+pub mod profile_editor_presenter;
+pub mod settings_presenter;
 pub mod view_command;
 
 /// Presenter error type
@@ -79,13 +79,13 @@ pub trait Presenter: Send + Sync {
     fn is_running(&self) -> bool;
 }
 
-/// Re-exports
-pub use view_command::ViewCommand;
 pub use chat_presenter::ChatPresenter;
+pub use error_presenter::ErrorPresenter;
 pub use history_presenter::HistoryPresenter;
-pub use settings_presenter::SettingsPresenter;
-pub use profile_editor_presenter::ProfileEditorPresenter;
 pub use mcp_add_presenter::McpAddPresenter;
 pub use mcp_configure_presenter::McpConfigurePresenter;
 pub use model_selector_presenter::ModelSelectorPresenter;
-pub use error_presenter::ErrorPresenter;
+pub use profile_editor_presenter::ProfileEditorPresenter;
+pub use settings_presenter::SettingsPresenter;
+/// Re-exports
+pub use view_command::ViewCommand;

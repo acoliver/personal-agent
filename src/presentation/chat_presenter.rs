@@ -11,11 +11,14 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
-use crate::events::{AppEvent, types::{ChatEvent, UserEvent, ConversationEvent}};
-use crate::events::bus::EventBus;
-use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
-use super::{Presenter, PresenterError, ViewCommand};
 use super::view_command::{ConversationSummary, ErrorSeverity, MessageRole};
+use super::{Presenter, PresenterError, ViewCommand};
+use crate::events::bus::EventBus;
+use crate::events::{
+    types::{ChatEvent, ConversationEvent, UserEvent},
+    AppEvent,
+};
+use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
 
 /// ChatPresenter - handles chat UI events and service coordination
 ///
@@ -75,7 +78,25 @@ impl ChatPresenter {
             return Ok(());
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        // Emit initial conversation list so the dropdown is populated on startup
+        tracing::info!("ChatPresenter: emitting initial conversation list");
+        match Self::emit_conversation_list(&self.conversation_service, &mut self.view_tx.clone()).await {
+            Ok(_) => tracing::info!("ChatPresenter: initial conversation list emitted successfully"),
+            Err(e) => tracing::error!("ChatPresenter: failed to emit initial conversation list: {}", e),
+        }
+
+        // If there's an active conversation, activate it so the chat view shows it
+        match self.conversation_service.get_active().await {
+            Ok(Some(active_id)) => {
+                tracing::info!("ChatPresenter: activating conversation {}", active_id);
+                let _ = self.view_tx.send(ViewCommand::ConversationActivated { id: active_id }).await;
+            }
+            Ok(None) => tracing::info!("ChatPresenter: no active conversation at startup"),
+            Err(e) => tracing::warn!("ChatPresenter: failed to get active conversation: {}", e),
+        }
 
         // Subscribe to events from EventBus
         let mut rx = self.event_bus.subscribe();
@@ -89,7 +110,14 @@ impl ChatPresenter {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 match rx.recv().await {
                     Ok(event) => {
-                        Self::handle_event(&conversation_service, &chat_service, &profile_service, &mut view_tx, event).await;
+                        Self::handle_event(
+                            &conversation_service,
+                            &chat_service,
+                            &profile_service,
+                            &mut view_tx,
+                            event,
+                        )
+                        .await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ChatPresenter lagged: {} events missed", n);
@@ -113,7 +141,8 @@ impl ChatPresenter {
     /// @requirement REQ-027.1
     /// @pseudocode presenters.md lines 250-253
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -138,7 +167,14 @@ impl ChatPresenter {
         tracing::debug!("ChatPresenter::handle_event: {:?}", event);
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(conversation_service, chat_service, profile_service, view_tx, user_evt).await;
+                Self::handle_user_event(
+                    conversation_service,
+                    chat_service,
+                    profile_service,
+                    view_tx,
+                    user_evt,
+                )
+                .await;
             }
             AppEvent::Chat(chat_evt) => {
                 tracing::info!("ChatPresenter handling ChatEvent: {:?}", chat_evt);
@@ -164,7 +200,14 @@ impl ChatPresenter {
     ) {
         match event {
             UserEvent::SendMessage { text } => {
-                Self::handle_send_message(conversation_service, chat_service, profile_service, view_tx, text).await;
+                Self::handle_send_message(
+                    conversation_service,
+                    chat_service,
+                    profile_service,
+                    view_tx,
+                    text,
+                )
+                .await;
             }
             UserEvent::StopStreaming => {
                 Self::handle_stop_streaming(chat_service, view_tx).await;
@@ -216,73 +259,128 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
-    async fn handle_chat_event(
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-        event: ChatEvent,
-    ) {
+    async fn handle_chat_event(view_tx: &mut mpsc::Sender<ViewCommand>, event: ChatEvent) {
         match event {
-            ChatEvent::StreamStarted { conversation_id, message_id: _, model_id: _ } => {
-                let _ = view_tx.send(ViewCommand::ShowThinking { conversation_id }).await;
+            ChatEvent::StreamStarted {
+                conversation_id,
+                message_id: _,
+                model_id: _,
+            } => {
+                let _ = view_tx
+                    .send(ViewCommand::ShowThinking { conversation_id })
+                    .await;
             }
             ChatEvent::TextDelta { text } => {
-                let _ = view_tx.send(ViewCommand::AppendStream {
-                    conversation_id: Uuid::nil(),
-                    chunk: text,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::AppendStream {
+                        conversation_id: Uuid::nil(),
+                        chunk: text,
+                    })
+                    .await;
             }
             ChatEvent::ThinkingDelta { text } => {
-                let _ = view_tx.send(ViewCommand::AppendThinking {
-                    conversation_id: Uuid::nil(),
-                    content: text,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::AppendThinking {
+                        conversation_id: Uuid::nil(),
+                        content: text,
+                    })
+                    .await;
             }
-            ChatEvent::ToolCallStarted { tool_call_id: _, tool_name } => {
-                let _ = view_tx.send(ViewCommand::ShowToolCall {
-                    conversation_id: Uuid::nil(),
-                    tool_name,
-                    status: "running".to_string(),
-                }).await;
+            ChatEvent::ToolCallStarted {
+                tool_call_id: _,
+                tool_name,
+            } => {
+                let _ = view_tx
+                    .send(ViewCommand::ShowToolCall {
+                        conversation_id: Uuid::nil(),
+                        tool_name,
+                        status: "running".to_string(),
+                    })
+                    .await;
             }
-            ChatEvent::ToolCallCompleted { tool_call_id: _, tool_name, success, result, duration_ms } => {
-                let status = if success { "completed".to_string() } else { "failed".to_string() };
-                let _ = view_tx.send(ViewCommand::UpdateToolCall {
-                    conversation_id: Uuid::nil(),
-                    tool_name,
-                    status,
-                    result: Some(result),
-                    duration: Some(duration_ms),
-                }).await;
+            ChatEvent::ToolCallCompleted {
+                tool_call_id: _,
+                tool_name,
+                success,
+                result,
+                duration_ms,
+            } => {
+                let status = if success {
+                    "completed".to_string()
+                } else {
+                    "failed".to_string()
+                };
+                let _ = view_tx
+                    .send(ViewCommand::UpdateToolCall {
+                        conversation_id: Uuid::nil(),
+                        tool_name,
+                        status,
+                        result: Some(result),
+                        duration: Some(duration_ms),
+                    })
+                    .await;
             }
-            ChatEvent::StreamCompleted { conversation_id, message_id: _, total_tokens } => {
-                let _ = view_tx.send(ViewCommand::FinalizeStream {
-                    conversation_id,
-                    tokens: total_tokens.unwrap_or(0) as u64,
-                }).await;
-                let _ = view_tx.send(ViewCommand::HideThinking { conversation_id }).await;
+            ChatEvent::StreamCompleted {
+                conversation_id,
+                message_id: _,
+                total_tokens,
+            } => {
+                let _ = view_tx
+                    .send(ViewCommand::FinalizeStream {
+                        conversation_id,
+                        tokens: total_tokens.unwrap_or(0) as u64,
+                    })
+                    .await;
+                let _ = view_tx
+                    .send(ViewCommand::HideThinking { conversation_id })
+                    .await;
             }
-            ChatEvent::StreamCancelled { conversation_id, message_id: _, partial_content } => {
-                let _ = view_tx.send(ViewCommand::StreamCancelled {
-                    conversation_id,
-                    partial_content,
-                }).await;
-                let _ = view_tx.send(ViewCommand::HideThinking { conversation_id }).await;
+            ChatEvent::StreamCancelled {
+                conversation_id,
+                message_id: _,
+                partial_content,
+            } => {
+                let _ = view_tx
+                    .send(ViewCommand::StreamCancelled {
+                        conversation_id,
+                        partial_content,
+                    })
+                    .await;
+                let _ = view_tx
+                    .send(ViewCommand::HideThinking { conversation_id })
+                    .await;
             }
-            ChatEvent::StreamError { conversation_id, error, recoverable } => {
-                let _ = view_tx.send(ViewCommand::StreamError {
-                    conversation_id,
-                    error: error.clone(),
-                    recoverable,
-                }).await;
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Stream Error".to_string(),
-                    message: error,
-                    severity: if recoverable { ErrorSeverity::Warning } else { ErrorSeverity::Error },
-                }).await;
+            ChatEvent::StreamError {
+                conversation_id,
+                error,
+                recoverable,
+            } => {
+                let _ = view_tx
+                    .send(ViewCommand::StreamError {
+                        conversation_id,
+                        error: error.clone(),
+                        recoverable,
+                    })
+                    .await;
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Stream Error".to_string(),
+                        message: error,
+                        severity: if recoverable {
+                            ErrorSeverity::Warning
+                        } else {
+                            ErrorSeverity::Error
+                        },
+                    })
+                    .await;
             }
-            ChatEvent::MessageSaved { conversation_id, message_id: _ } => {
-                let _ = view_tx.send(ViewCommand::MessageSaved {
-                    conversation_id,
-                }).await;
+            ChatEvent::MessageSaved {
+                conversation_id,
+                message_id: _,
+            } => {
+                let _ = view_tx
+                    .send(ViewCommand::MessageSaved { conversation_id })
+                    .await;
             }
         }
     }
@@ -305,44 +403,60 @@ impl ChatPresenter {
         }
 
         // Get or create conversation
-        let conversation_id = match Self::get_or_create_conversation(conversation_service, profile_service, view_tx).await {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::error!("Failed to get/create conversation: {}", e);
-                let error_msg = format!("Failed to create conversation: {}", e);
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Conversation Error".to_string(),
-                    message: error_msg.clone(),
-                    severity: ErrorSeverity::Error,
-                }).await;
-                return;
-            }
-        };
+        let conversation_id =
+            match Self::get_or_create_conversation(conversation_service, profile_service, view_tx)
+                .await
+            {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::error!("Failed to get/create conversation: {}", e);
+                    let error_msg = format!("Failed to create conversation: {}", e);
+                    let _ = view_tx
+                        .send(ViewCommand::ShowError {
+                            title: "Conversation Error".to_string(),
+                            message: error_msg.clone(),
+                            severity: ErrorSeverity::Error,
+                        })
+                        .await;
+                    return;
+                }
+            };
 
         // Emit view commands for user message
-        let _ = view_tx.send(ViewCommand::MessageAppended {
-            conversation_id,
-            role: MessageRole::User,
-            content: trimmed.to_string(),
-        }).await;
+        let _ = view_tx
+            .send(ViewCommand::MessageAppended {
+                conversation_id,
+                role: MessageRole::User,
+                content: trimmed.to_string(),
+            })
+            .await;
 
         // Show loading state
-        let _ = view_tx.send(ViewCommand::ShowThinking { conversation_id }).await;
+        let _ = view_tx
+            .send(ViewCommand::ShowThinking { conversation_id })
+            .await;
 
         // Send message via service
-        match chat_service.send_message(conversation_id, trimmed.to_string()).await {
+        match chat_service
+            .send_message(conversation_id, trimmed.to_string())
+            .await
+        {
             Ok(_stream) => {
                 // Stream events will be handled via ChatEvent
             }
             Err(e) => {
                 let error_msg = e.to_string();
                 tracing::error!("Failed to send message: {}", error_msg);
-                let _ = view_tx.send(ViewCommand::StreamError {
-                    conversation_id,
-                    error: error_msg.clone(),
-                    recoverable: false,
-                }).await;
-                let _ = view_tx.send(ViewCommand::HideThinking { conversation_id }).await;
+                let _ = view_tx
+                    .send(ViewCommand::StreamError {
+                        conversation_id,
+                        error: error_msg.clone(),
+                        recoverable: false,
+                    })
+                    .await;
+                let _ = view_tx
+                    .send(ViewCommand::HideThinking { conversation_id })
+                    .await;
             }
         }
     }
@@ -351,9 +465,7 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P01
     /// @requirement REQ-027.1
-    async fn handle_toggle_thinking(
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-    ) {
+    async fn handle_toggle_thinking(view_tx: &mut mpsc::Sender<ViewCommand>) {
         let _ = view_tx.send(ViewCommand::ToggleThinkingVisibility).await;
     }
 
@@ -369,20 +481,24 @@ impl ChatPresenter {
     ) {
         match conversation_service.rename(id, title.clone()).await {
             Ok(_) => {
-                let _ = view_tx.send(ViewCommand::ConversationRenamed {
-                    id,
-                    new_title: title,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationRenamed {
+                        id,
+                        new_title: title,
+                    })
+                    .await;
                 let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             Err(e) => {
                 let error_msg = format!("Failed to rename conversation: {}", e);
                 tracing::error!("{}", error_msg);
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Error".to_string(),
-                    message: error_msg,
-                    severity: ErrorSeverity::Error,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Error".to_string(),
+                        message: error_msg,
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
             }
         }
     }
@@ -397,33 +513,38 @@ impl ChatPresenter {
     ) {
         match event {
             ConversationEvent::Created { id, title: _ } => {
-                let _ = view_tx.send(ViewCommand::ConversationCreated {
-                    id,
-                    profile_id: id,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationCreated { id, profile_id: id })
+                    .await;
             }
             ConversationEvent::TitleUpdated { id, title } => {
-                let _ = view_tx.send(ViewCommand::ConversationRenamed {
-                    id,
-                    new_title: title,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationRenamed {
+                        id,
+                        new_title: title,
+                    })
+                    .await;
             }
             ConversationEvent::Deleted { id } => {
                 let _ = view_tx.send(ViewCommand::ConversationDeleted { id }).await;
             }
             ConversationEvent::Activated { id } => {
-                let _ = view_tx.send(ViewCommand::ConversationActivated { id }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationActivated { id })
+                    .await;
             }
             ConversationEvent::Deactivated => {
                 let _ = view_tx.send(ViewCommand::ConversationCleared).await;
             }
             ConversationEvent::ListRefreshed { count } => {
-                let _ = view_tx.send(ViewCommand::HistoryUpdated {
-                    count: Some(count),
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::HistoryUpdated { count: Some(count) })
+                    .await;
             }
             ConversationEvent::Loaded { id } => {
-                let _ = view_tx.send(ViewCommand::ConversationActivated { id }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationActivated { id })
+                    .await;
             }
         }
     }
@@ -478,7 +599,9 @@ impl ChatPresenter {
                     })
                     .await;
                 let _ = view_tx
-                    .send(ViewCommand::ConversationActivated { id: conversation_id })
+                    .send(ViewCommand::ConversationActivated {
+                        id: conversation_id,
+                    })
                     .await;
 
                 let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
@@ -509,10 +632,18 @@ impl ChatPresenter {
         let result = conversation_service.set_active(id).await;
         match result {
             Ok(_) => {
-                let _ = view_tx.send(ViewCommand::ConversationActivated { id }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationActivated { id })
+                    .await;
 
                 match conversation_service.get_messages(id).await {
                     Ok(messages) => {
+                        let message_count = messages.len();
+                        tracing::info!(
+                            conversation_id = %id,
+                            count = message_count,
+                            "ChatPresenter: replaying selected conversation messages"
+                        );
                         for message in messages {
                             let role = match message.role {
                                 crate::models::MessageRole::User => MessageRole::User,
@@ -530,7 +661,11 @@ impl ChatPresenter {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to load messages for selected conversation {}: {}", id, e);
+                        tracing::warn!(
+                            "Failed to load messages for selected conversation {}: {}",
+                            id,
+                            e
+                        );
                     }
                 }
 
@@ -539,11 +674,13 @@ impl ChatPresenter {
             Err(e) => {
                 let error_msg = format!("Failed to select conversation: {}", e);
                 tracing::error!("{}", error_msg);
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Error".to_string(),
-                    message: error_msg,
-                    severity: ErrorSeverity::Error,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Error".to_string(),
+                        message: error_msg,
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
             }
         }
     }
@@ -584,27 +721,54 @@ impl ChatPresenter {
                     .await;
 
                 let _ = view_tx
-                    .send(ViewCommand::ConversationActivated { id: conversation_id })
+                    .send(ViewCommand::ConversationActivated {
+                        id: conversation_id,
+                    })
                     .await;
 
                 Ok(conversation_id)
             }
-            Err(e) => {
-                Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-            }
+            Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
         }
     }
 
     async fn resolve_default_profile_id(
         profile_service: &Arc<dyn ProfileService>,
     ) -> Result<Uuid, String> {
-        let default_profile = profile_service
+        if let Some(default_profile) = profile_service
             .get_default()
             .await
             .map_err(|e| format!("Failed to load default profile: {}", e))?
-            .ok_or_else(|| "No default profile configured".to_string())?;
+        {
+            tracing::info!(
+                profile_id = %default_profile.id,
+                profile_name = %default_profile.name,
+                "resolve_default_profile_id: using configured default profile"
+            );
+            return Ok(default_profile.id);
+        }
 
-        Ok(default_profile.id)
+        // Fallback: if default.json is stale but profiles exist, use first available profile.
+        let profiles = profile_service
+            .list()
+            .await
+            .map_err(|e| format!("Failed to list profiles: {}", e))?;
+
+        tracing::info!(
+            count = profiles.len(),
+            "resolve_default_profile_id: default missing; considering fallback profiles"
+        );
+
+        if let Some(profile) = profiles.first() {
+            tracing::warn!(
+                profile_id = %profile.id,
+                profile_name = %profile.name,
+                "resolve_default_profile_id: default profile missing; falling back to first profile"
+            );
+            return Ok(profile.id);
+        }
+
+        Err("No default profile configured".to_string())
     }
 }
 
@@ -620,7 +784,8 @@ impl Presenter for ChatPresenter {
     }
 
     fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -657,23 +822,48 @@ mod tests {
             })
         }
 
-        async fn load(&self, _id: Uuid) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound("Not implemented".to_string()))
+        async fn load(
+            &self,
+            _id: Uuid,
+        ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+            Err(crate::services::ServiceError::NotFound(
+                "Not implemented".to_string(),
+            ))
         }
 
-        async fn list(&self, _limit: Option<usize>, _offset: Option<usize>) -> Result<Vec<crate::models::Conversation>, crate::services::ServiceError> {
+        async fn list(
+            &self,
+            _limit: Option<usize>,
+            _offset: Option<usize>,
+        ) -> Result<Vec<crate::models::Conversation>, crate::services::ServiceError> {
             Ok(vec![])
         }
 
-        async fn add_user_message(&self, _conversation_id: Uuid, _content: String) -> Result<crate::models::Message, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound("Not implemented".to_string()))
+        async fn add_user_message(
+            &self,
+            _conversation_id: Uuid,
+            _content: String,
+        ) -> Result<crate::models::Message, crate::services::ServiceError> {
+            Err(crate::services::ServiceError::NotFound(
+                "Not implemented".to_string(),
+            ))
         }
 
-        async fn add_assistant_message(&self, _conversation_id: Uuid, _content: String) -> Result<crate::models::Message, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound("Not implemented".to_string()))
+        async fn add_assistant_message(
+            &self,
+            _conversation_id: Uuid,
+            _content: String,
+        ) -> Result<crate::models::Message, crate::services::ServiceError> {
+            Err(crate::services::ServiceError::NotFound(
+                "Not implemented".to_string(),
+            ))
         }
 
-        async fn rename(&self, _id: Uuid, _new_title: String) -> Result<(), crate::services::ServiceError> {
+        async fn rename(
+            &self,
+            _id: Uuid,
+            _new_title: String,
+        ) -> Result<(), crate::services::ServiceError> {
             Ok(())
         }
 
@@ -689,12 +879,22 @@ mod tests {
             Ok(None)
         }
 
-        async fn get_messages(&self, _conversation_id: Uuid) -> Result<Vec<crate::models::Message>, crate::services::ServiceError> {
+        async fn get_messages(
+            &self,
+            _conversation_id: Uuid,
+        ) -> Result<Vec<crate::models::Message>, crate::services::ServiceError> {
             Ok(vec![])
         }
 
-        async fn update(&self, _id: Uuid, _title: Option<String>, _model_profile_id: Option<Uuid>) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound("Not implemented".to_string()))
+        async fn update(
+            &self,
+            _id: Uuid,
+            _title: Option<String>,
+            _model_profile_id: Option<Uuid>,
+        ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+            Err(crate::services::ServiceError::NotFound(
+                "Not implemented".to_string(),
+            ))
         }
     }
 
@@ -704,12 +904,15 @@ mod tests {
     #[async_trait::async_trait]
     impl ChatService for MockChatService {
         async fn send_message(
-        &self,
-        _conversation_id: Uuid,
-        _content: String,
-    ) -> Result<Box<dyn futures::Stream<Item = crate::services::ChatStreamEvent> + Send + Unpin>, crate::services::ServiceError> {
+            &self,
+            _conversation_id: Uuid,
+            _content: String,
+        ) -> Result<
+            Box<dyn futures::Stream<Item = crate::services::ChatStreamEvent> + Send + Unpin>,
+            crate::services::ServiceError,
+        > {
             // Return empty stream
-            
+
             let stream = futures::stream::empty::<crate::services::ChatStreamEvent>();
             Ok(Box::new(stream))
         }
@@ -727,12 +930,20 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ProfileService for MockProfileService {
-        async fn list(&self) -> Result<Vec<crate::models::ModelProfile>, crate::services::ServiceError> {
+        async fn list(
+            &self,
+        ) -> Result<Vec<crate::models::ModelProfile>, crate::services::ServiceError> {
             Ok(vec![])
         }
 
-        async fn get(&self, id: Uuid) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound(format!("profile {} not found", id)))
+        async fn get(
+            &self,
+            id: Uuid,
+        ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
+            Err(crate::services::ServiceError::NotFound(format!(
+                "profile {} not found",
+                id
+            )))
         }
 
         async fn create(
@@ -740,21 +951,30 @@ mod tests {
             _name: String,
             _provider: String,
             _model: String,
+            _base_url: Option<String>,
             _auth: crate::models::AuthConfig,
             _parameters: crate::models::ModelParameters,
+            _system_prompt: Option<String>,
         ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound("not implemented".to_string()))
+            Err(crate::services::ServiceError::NotFound(
+                "not implemented".to_string(),
+            ))
         }
 
         async fn update(
             &self,
             _id: Uuid,
             _name: Option<String>,
+            _provider: Option<String>,
             _model: Option<String>,
+            _base_url: Option<String>,
             _auth: Option<crate::models::AuthConfig>,
             _parameters: Option<crate::models::ModelParameters>,
+            _system_prompt: Option<String>,
         ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound("not implemented".to_string()))
+            Err(crate::services::ServiceError::NotFound(
+                "not implemented".to_string(),
+            ))
         }
 
         async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
@@ -765,7 +985,9 @@ mod tests {
             Ok(())
         }
 
-        async fn get_default(&self) -> Result<Option<crate::models::ModelProfile>, crate::services::ServiceError> {
+        async fn get_default(
+            &self,
+        ) -> Result<Option<crate::models::ModelProfile>, crate::services::ServiceError> {
             Ok(Some(crate::models::ModelProfile {
                 id: Uuid::new_v4(),
                 name: "Default".to_string(),
@@ -793,7 +1015,8 @@ mod tests {
         let (_event_tx, _) = broadcast::channel::<AppEvent>(100);
         let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
 
-        let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
+        let conversation_service =
+            Arc::new(MockConversationService) as Arc<dyn ConversationService>;
         let chat_service = Arc::new(MockChatService) as Arc<dyn ChatService>;
         let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
 
@@ -805,7 +1028,14 @@ mod tests {
         let profile_svc = profile_service.clone();
 
         tokio::spawn(async move {
-            ChatPresenter::handle_send_message(&conv_service, &chat_svc, &profile_svc, &mut tx, content).await;
+            ChatPresenter::handle_send_message(
+                &conv_service,
+                &chat_svc,
+                &profile_svc,
+                &mut tx,
+                content,
+            )
+            .await;
         });
 
         // Wait for async processing
@@ -916,11 +1146,17 @@ mod tests {
     /// @requirement REQ-027.1
     #[tokio::test]
     async fn test_handle_new_conversation() {
-        let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
+        let conversation_service =
+            Arc::new(MockConversationService) as Arc<dyn ConversationService>;
         let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
         let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
 
-        ChatPresenter::handle_new_conversation(&conversation_service, &profile_service, &mut view_tx.clone()).await;
+        ChatPresenter::handle_new_conversation(
+            &conversation_service,
+            &profile_service,
+            &mut view_tx.clone(),
+        )
+        .await;
 
         // Verify conversation created and activated
         let mut found_created = false;

@@ -2,19 +2,18 @@
 
 /// @plan PLAN-20250127-REMEDIATE.P02, PLAN-20250127-REMEDIATE.P03
 /// @requirement REM-001, REM-002, REM-003, REM-004, REM-005, REM-006, REM-007
-
 use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
-use crate::events::{emit, AppEvent};
 use crate::events::types::ChatEvent;
-use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
+use crate::events::{emit, AppEvent};
 use crate::llm::AgentClientExt;
+use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::mcp::McpService;
 use crate::models::MessageRole;
 use crate::services::ConversationService;
 use futures::{stream, Stream};
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -56,25 +55,30 @@ impl ChatService for ChatServiceImpl {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
             .is_err()
         {
-            return Err(ServiceError::Internal("Stream already in progress".to_string()));
+            return Err(ServiceError::Internal(
+                "Stream already in progress".to_string(),
+            ));
         }
 
         // Store conversation ID
         *self.current_conversation_id.write().await = Some(conversation_id);
 
         // Get or create conversation
-        let _conversation = match self
-            .conversation_service
-            .load(conversation_id)
-            .await
-        {
+        let _conversation = match self.conversation_service.load(conversation_id).await {
             Ok(conv) => conv,
             Err(_) => {
                 // Create new conversation if it doesn't exist
                 // Use default profile for now
-                let default_profile = self.profile_service.get_default().await
-                    .map_err(|_| ServiceError::Internal("No default profile available".to_string()))?
-                    .ok_or_else(|| ServiceError::Internal("No default profile available".to_string()))?;
+                let default_profile = self
+                    .profile_service
+                    .get_default()
+                    .await
+                    .map_err(|_| {
+                        ServiceError::Internal("No default profile available".to_string())
+                    })?
+                    .ok_or_else(|| {
+                        ServiceError::Internal("No default profile available".to_string())
+                    })?;
 
                 self.conversation_service
                     .create(None, default_profile.id)
@@ -106,8 +110,10 @@ impl ChatService for ChatServiceImpl {
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {}", e)))?;
 
-        // Convert conversation messages to LlmClient Message format
-        let mut messages: Vec<LlmMessage> = conversation
+        // Convert conversation messages to LlmClient Message format.
+        // The new user message is already persisted above via add_user_message()
+        // and included in the loaded conversation, so do not push it again.
+        let messages: Vec<LlmMessage> = conversation
             .messages
             .iter()
             .map(|msg| match msg.role {
@@ -116,9 +122,6 @@ impl ChatService for ChatServiceImpl {
                 MessageRole::Assistant => LlmMessage::assistant(msg.content.clone()),
             })
             .collect();
-
-        // Add the new user message (already added to conversation above)
-        messages.push(LlmMessage::user(content.clone()));
 
         // Generate message ID for this response
         let message_id = Uuid::new_v4();
@@ -138,7 +141,7 @@ impl ChatService for ChatServiceImpl {
             let mcp_guard = mcp_service.lock().await;
             mcp_guard.get_llm_tools()
         };
-        
+
         // Track the assistant response as it streams
         let is_streaming = self.is_streaming.clone();
         let conversation_service = self.conversation_service.clone();
@@ -153,7 +156,9 @@ impl ChatService for ChatServiceImpl {
             let mut thinking_text = String::new();
 
             // Get system prompt from conversation
-            let system_prompt = conversation.messages.iter()
+            let system_prompt = conversation
+                .messages
+                .iter()
                 .find(|m| m.role == MessageRole::System)
                 .map(|m| m.content.as_str())
                 .unwrap_or("");
@@ -177,36 +182,42 @@ impl ChatService for ChatServiceImpl {
 
             // Run Agent stream (Agent executes tools internally)
             // @requirement AGENT-005, AGENT-006
-            if let Err(e) = client.run_agent_stream(&agent, &messages, |event| {
-                match event {
-                    LlmStreamEvent::TextDelta(text) => {
-                        // Emit ChatEvent via EventBus for real-time UI updates
-                        tracing::info!("ChatService emitting TextDelta: '{}'", text);
-                        let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
-                        // Also send to stream for caller
-                        let _ = tx.send(ChatStreamEvent::Token(text.clone()));
-                        response_text.push_str(&text);
+            if let Err(e) = client
+                .run_agent_stream(&agent, &messages, |event| {
+                    match event {
+                        LlmStreamEvent::TextDelta(text) => {
+                            // Emit ChatEvent via EventBus for real-time UI updates
+                            tracing::info!("ChatService emitting TextDelta: '{}'", text);
+                            let _ =
+                                emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+                            // Also send to stream for caller
+                            let _ = tx.send(ChatStreamEvent::Token(text.clone()));
+                            response_text.push_str(&text);
+                        }
+                        LlmStreamEvent::ThinkingDelta(text) => {
+                            let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
+                                text: text.clone(),
+                            }));
+                            thinking_text.push_str(&text);
+                        }
+                        LlmStreamEvent::Complete => {
+                            let _ = tx.send(ChatStreamEvent::Complete);
+                        }
+                        LlmStreamEvent::Error(err) => {
+                            let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+                                conversation_id: event_conversation_id,
+                                error: err.clone(),
+                                recoverable: false,
+                            }));
+                            let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err)));
+                        }
+                        // Tool events are handled INSIDE run_agent_stream
+                        // Agent automatically executes tools and continues
+                        _ => {}
                     }
-                    LlmStreamEvent::ThinkingDelta(text) => {
-                        let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta { text: text.clone() }));
-                        thinking_text.push_str(&text);
-                    }
-                    LlmStreamEvent::Complete => {
-                        let _ = tx.send(ChatStreamEvent::Complete);
-                    }
-                    LlmStreamEvent::Error(err) => {
-                        let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
-                            conversation_id: event_conversation_id,
-                            error: err.clone(),
-                            recoverable: false,
-                        }));
-                        let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err)));
-                    }
-                    // Tool events are handled INSIDE run_agent_stream
-                    // Agent automatically executes tools and continues
-                    _ => {}
-                }
-            }).await {
+                })
+                .await
+            {
                 let err_msg = e.to_string();
                 let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
                     conversation_id: event_conversation_id,
@@ -225,7 +236,9 @@ impl ChatService for ChatServiceImpl {
                     response_text.clone()
                 };
 
-                let _ = conversation_service.add_assistant_message(event_conversation_id, content).await;
+                let _ = conversation_service
+                    .add_assistant_message(event_conversation_id, content)
+                    .await;
             }
 
             // Emit StreamCompleted event
@@ -240,12 +253,13 @@ impl ChatService for ChatServiceImpl {
         });
 
         // Convert the channel receiver to a stream
-        let message_stream: Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>> = Box::pin(stream::unfold(rx, move |mut rx| async move {
-            match rx.recv().await {
-                Some(event) => Some((event, rx)),
-                None => None,
-            }
-        }));
+        let message_stream: Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>> =
+            Box::pin(stream::unfold(rx, move |mut rx| async move {
+                match rx.recv().await {
+                    Some(event) => Some((event, rx)),
+                    None => None,
+                }
+            }));
 
         Ok(Box::new(message_stream))
     }
@@ -265,7 +279,7 @@ impl ChatService for ChatServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AuthConfig, ModelParameters, Message};
+    use crate::models::{AuthConfig, Message, ModelParameters};
     use std::sync::Arc;
 
     struct MockConversationService {
@@ -280,28 +294,51 @@ mod tests {
 
     #[async_trait::async_trait]
     impl super::super::ConversationService for MockConversationService {
-        async fn create(&self, _title: Option<String>, model_profile_id: Uuid) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        async fn create(
+            &self,
+            _title: Option<String>,
+            model_profile_id: Uuid,
+        ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
             Ok(crate::models::Conversation::new(model_profile_id))
         }
 
-        async fn load(&self, _id: Uuid) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        async fn load(
+            &self,
+            _id: Uuid,
+        ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
             // Return a valid conversation so the test can proceed
             Ok(crate::models::Conversation::new(self.profile_id))
         }
 
-        async fn list(&self, _limit: Option<usize>, _offset: Option<usize>) -> Result<Vec<crate::models::Conversation>, crate::services::ServiceError> {
+        async fn list(
+            &self,
+            _limit: Option<usize>,
+            _offset: Option<usize>,
+        ) -> Result<Vec<crate::models::Conversation>, crate::services::ServiceError> {
             Ok(vec![])
         }
 
-        async fn add_user_message(&self, _conversation_id: Uuid, content: String) -> Result<Message, crate::services::ServiceError> {
+        async fn add_user_message(
+            &self,
+            _conversation_id: Uuid,
+            content: String,
+        ) -> Result<Message, crate::services::ServiceError> {
             Ok(Message::user(content))
         }
 
-        async fn add_assistant_message(&self, _conversation_id: Uuid, content: String) -> Result<Message, crate::services::ServiceError> {
+        async fn add_assistant_message(
+            &self,
+            _conversation_id: Uuid,
+            content: String,
+        ) -> Result<Message, crate::services::ServiceError> {
             Ok(Message::assistant(content))
         }
 
-        async fn rename(&self, _id: Uuid, _new_title: String) -> Result<(), crate::services::ServiceError> {
+        async fn rename(
+            &self,
+            _id: Uuid,
+            _new_title: String,
+        ) -> Result<(), crate::services::ServiceError> {
             Ok(())
         }
 
@@ -317,11 +354,19 @@ mod tests {
             Ok(None)
         }
 
-        async fn get_messages(&self, _conversation_id: Uuid) -> Result<Vec<Message>, crate::services::ServiceError> {
+        async fn get_messages(
+            &self,
+            _conversation_id: Uuid,
+        ) -> Result<Vec<Message>, crate::services::ServiceError> {
             Ok(vec![])
         }
 
-        async fn update(&self, _id: Uuid, _title: Option<String>, _model_profile_id: Option<Uuid>) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        async fn update(
+            &self,
+            _id: Uuid,
+            _title: Option<String>,
+            _model_profile_id: Option<Uuid>,
+        ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
             Err(crate::services::ServiceError::NotFound("test".to_string()))
         }
     }
@@ -344,11 +389,16 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::services::ProfileService for MockProfileService {
-        async fn list(&self) -> Result<Vec<crate::models::ModelProfile>, crate::services::ServiceError> {
+        async fn list(
+            &self,
+        ) -> Result<Vec<crate::models::ModelProfile>, crate::services::ServiceError> {
             Ok(vec![])
         }
 
-        async fn get(&self, _id: Uuid) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
+        async fn get(
+            &self,
+            _id: Uuid,
+        ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
             Err(crate::services::ServiceError::NotFound("test".to_string()))
         }
 
@@ -357,15 +407,17 @@ mod tests {
             _name: String,
             _provider: String,
             _model: String,
+            _base_url: Option<String>,
             _auth: AuthConfig,
             _parameters: ModelParameters,
+            _system_prompt: Option<String>,
         ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
             // Return a dummy profile for testing
             Ok(crate::models::ModelProfile::new(
                 _name,
                 _provider,
                 _model,
-                "https://api.test.com/v1".to_string(),
+                _base_url.unwrap_or_else(|| "https://api.test.com/v1".to_string()),
                 _auth,
             ))
         }
@@ -374,9 +426,12 @@ mod tests {
             &self,
             _id: Uuid,
             _name: Option<String>,
+            _provider: Option<String>,
             _model: Option<String>,
+            _base_url: Option<String>,
             _auth: Option<AuthConfig>,
             _parameters: Option<ModelParameters>,
+            _system_prompt: Option<String>,
         ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
             Err(crate::services::ServiceError::NotFound("test".to_string()))
         }
@@ -389,7 +444,9 @@ mod tests {
             Ok(())
         }
 
-        async fn get_default(&self) -> Result<Option<crate::models::ModelProfile>, crate::services::ServiceError> {
+        async fn get_default(
+            &self,
+        ) -> Result<Option<crate::models::ModelProfile>, crate::services::ServiceError> {
             Ok(self.profile.read().await.clone())
         }
 
@@ -406,27 +463,36 @@ mod tests {
             "openai".to_string(),
             "gpt-4".to_string(),
             "https://api.openai.com/v1".to_string(),
-            AuthConfig::Key { value: "test-key".to_string() },
+            AuthConfig::Key {
+                value: "test-key".to_string(),
+            },
         );
         let profile_id = profile.id;
 
-        let conversation_service = Arc::new(MockConversationService::new(profile_id)) as Arc<dyn super::super::ConversationService>;
+        let conversation_service = Arc::new(MockConversationService::new(profile_id))
+            as Arc<dyn super::super::ConversationService>;
         let mock_profile_service = Arc::new(MockProfileService::new());
 
         // Set the default profile directly on the mock
         mock_profile_service.set_default_profile(profile).await;
-        
+
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
         let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
 
         let conversation_id = Uuid::new_v4();
-        let result = chat_service.send_message(conversation_id, "Hello, world!".to_string()).await;
+        let result = chat_service
+            .send_message(conversation_id, "Hello, world!".to_string())
+            .await;
 
         // The send_message call should succeed in creating the stream
         // The actual LLM call happens asynchronously and will fail with invalid API key
         // but the important thing is we got a stream back (not a placeholder)
-        assert!(result.is_ok(), "send_message should return Ok with a stream, got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "send_message should return Ok with a stream, got: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
@@ -436,16 +502,19 @@ mod tests {
             "openai".to_string(),
             "gpt-4".to_string(),
             "https://api.openai.com/v1".to_string(),
-            AuthConfig::Key { value: "test-key".to_string() },
+            AuthConfig::Key {
+                value: "test-key".to_string(),
+            },
         );
         let profile_id = profile.id;
 
-        let conversation_service = Arc::new(MockConversationService::new(profile_id)) as Arc<dyn super::super::ConversationService>;
+        let conversation_service = Arc::new(MockConversationService::new(profile_id))
+            as Arc<dyn super::super::ConversationService>;
         let mock_profile_service = Arc::new(MockProfileService::new());
 
         // Set the default profile directly on the mock
         mock_profile_service.set_default_profile(profile).await;
-        
+
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
         let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
@@ -462,16 +531,19 @@ mod tests {
             "openai".to_string(),
             "gpt-4".to_string(),
             "https://api.openai.com/v1".to_string(),
-            AuthConfig::Key { value: "test-key".to_string() },
+            AuthConfig::Key {
+                value: "test-key".to_string(),
+            },
         );
         let profile_id = profile.id;
 
-        let conversation_service = Arc::new(MockConversationService::new(profile_id)) as Arc<dyn super::super::ConversationService>;
+        let conversation_service = Arc::new(MockConversationService::new(profile_id))
+            as Arc<dyn super::super::ConversationService>;
         let mock_profile_service = Arc::new(MockProfileService::new());
 
         // Set the default profile directly on the mock
         mock_profile_service.set_default_profile(profile).await;
-        
+
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
         let chat_service = ChatServiceImpl::new(conversation_service, profile_service);

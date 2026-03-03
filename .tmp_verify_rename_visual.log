@@ -1,0 +1,4 @@
+PID=35454
+PASS: Rename confirm event emitted with expected title suffix
+PASS: No NewConversation emission observed in rename scenario
+PASS: Latest conversation title persisted with renamed suffix

@@ -98,18 +98,25 @@ impl LlmClient {
     fn resolve_api_key(profile: &ModelProfile) -> StdResult<String, LlmError> {
         let key = match &profile.auth {
             AuthConfig::Key { value } => {
-                if value.is_empty() {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
                     return Err(LlmError::NoApiKey);
                 }
-                value.clone()
+                trimmed.to_string()
             }
-            AuthConfig::Keyfile { path } => fs::read_to_string(path)
-                .map_err(|e| LlmError::KeyfileRead {
-                    path: path.clone(),
-                    source: e,
-                })?
-                .trim()
-                .to_string(),
+            AuthConfig::Keyfile { path } => {
+                let trimmed_path = path.trim();
+                if trimmed_path.is_empty() {
+                    return Err(LlmError::NoApiKey);
+                }
+                fs::read_to_string(trimmed_path)
+                    .map_err(|e| LlmError::KeyfileRead {
+                        path: trimmed_path.to_string(),
+                        source: e,
+                    })?
+                    .trim()
+                    .to_string()
+            }
         };
 
         if key.is_empty() {

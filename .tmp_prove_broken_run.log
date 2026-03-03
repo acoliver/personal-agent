@@ -1,0 +1,96 @@
+\n=== Restart app in NORMAL mode (no auto-open flags) ===
+PID=7764
+\n=== Check startup contract ===
+PASS: No auto-open in normal mode
+PASS: Startup reports tray-click mode
+\n=== Attempt tray click (best effort) and check placement logs ===
+FAIL: No popup positioning logs captured (cannot yet verify tray-anchor placement)
+--- placement lines ---
+\n=== Check profile inventory on disk ===
+default_exists= True
+default_profile_file_exists= True
+profile_json_count= 25
+\n=== Check runtime profile-load warnings ===
+11:[2m2026-02-25T15:09:12.925234Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/gpt53codexXHigh.json: missing field `id` at line 21 column 1
+12:[2m2026-02-25T15:09:12.925269Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetic.json: missing field `id` at line 19 column 1
+13:[2m2026-02-25T15:09:12.925300Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/deepseekchat.json: missing field `id` at line 10 column 1
+14:[2m2026-02-25T15:09:12.925328Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/gptthinker.json: missing field `id` at line 17 column 1
+15:[2m2026-02-25T15:09:12.925357Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticglm47k1.json: missing field `id` at line 20 column 1
+16:[2m2026-02-25T15:09:12.925385Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chuteskeyminimax.json: missing field `id` at line 16 column 1
+17:[2m2026-02-25T15:09:12.925414Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutes.json: missing field `id` at line 20 column 1
+18:[2m2026-02-25T15:09:12.925441Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticq35.json: missing field `id` at line 16 column 1
+19:[2m2026-02-25T15:09:12.925547Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/sonnetinclude.json: missing field `id` at line 15 column 1
+20:[2m2026-02-25T15:09:12.925575Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutesminimax.json: missing field `id` at line 21 column 1
+21:[2m2026-02-25T15:09:12.925603Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/kimithinker.json: missing field `id` at line 20 column 1
+22:[2m2026-02-25T15:09:12.925629Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetick25.json: missing field `id` at line 16 column 1
+23:[2m2026-02-25T15:09:12.925659Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/opusthinking.json: missing field `id` at line 28 column 1
+24:[2m2026-02-25T15:09:12.925686Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/zai.json: missing field `id` at line 21 column 1
+25:[2m2026-02-25T15:09:12.925711Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/flash3.json: missing field `id` at line 7 column 1
+26:[2m2026-02-25T15:09:12.925736Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/deepseekreasoner.json: missing field `id` at line 14 column 1
+27:[2m2026-02-25T15:09:12.925761Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/sonnetthinking.json: missing field `id` at line 15 column 1
+28:[2m2026-02-25T15:09:12.925787Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutesk2streaming.json: missing field `id` at line 17 column 1
+29:[2m2026-02-25T15:09:12.925824Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/opusthinkingbucketed.json: unknown variant `oauth`, expected `key` or `keyfile` at line 24 column 19
+30:[2m2026-02-25T15:09:12.925865Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticglm47.json: missing field `id` at line 19 column 1
+31:[2m2026-02-25T15:09:12.925927Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetick2streaming.json: missing field `id` at line 19 column 1
+32:[2m2026-02-25T15:09:12.925957Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticm2max.json: missing field `id` at line 19 column 1
+33:[2m2026-02-25T15:09:12.925979Z[0m [32m INFO[0m ProfileService: loaded 2 profiles from disk
+FAIL: Profile loading includes invalid-profile skips (can explain missing profiles in UI)
+\n=== Code-level regression test suite ===
+PASS: seven_bugs_regression_tests passes on current code
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+\n=== UI automation proof (SCN-002) ===
+scripts/prove_broken_now.sh: line 82:  7764 Terminated: 15          nohup env RUST_LOG=info ./target/debug/personal_agent_gpui > "$LOG" 2>&1
+PASS: SCN-002 passes
+test scn_002_keyboard_profile_switch_from_chat_emits_event_and_routes_model ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.27s
+\n=== SCN-003 status (non-blocking observation) ===
+FAIL: SCN-003 has no completed success artifact in /tmp/scn003.log
+\n=== Brokenness verdict ===
+\n=== Restart app in NORMAL mode (no auto-open flags) ===
+PID=7764
+\n=== Check startup contract ===
+PASS: No auto-open in normal mode
+PASS: Startup reports tray-click mode
+\n=== Attempt tray click (best effort) and check placement logs ===
+FAIL: No popup positioning logs captured (cannot yet verify tray-anchor placement)
+--- placement lines ---
+\n=== Check profile inventory on disk ===
+default_exists= True
+default_profile_file_exists= True
+profile_json_count= 25
+\n=== Check runtime profile-load warnings ===
+11:[2m2026-02-25T15:09:12.925234Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/gpt53codexXHigh.json: missing field `id` at line 21 column 1
+12:[2m2026-02-25T15:09:12.925269Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetic.json: missing field `id` at line 19 column 1
+13:[2m2026-02-25T15:09:12.925300Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/deepseekchat.json: missing field `id` at line 10 column 1
+14:[2m2026-02-25T15:09:12.925328Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/gptthinker.json: missing field `id` at line 17 column 1
+15:[2m2026-02-25T15:09:12.925357Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticglm47k1.json: missing field `id` at line 20 column 1
+16:[2m2026-02-25T15:09:12.925385Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chuteskeyminimax.json: missing field `id` at line 16 column 1
+17:[2m2026-02-25T15:09:12.925414Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutes.json: missing field `id` at line 20 column 1
+18:[2m2026-02-25T15:09:12.925441Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticq35.json: missing field `id` at line 16 column 1
+19:[2m2026-02-25T15:09:12.925547Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/sonnetinclude.json: missing field `id` at line 15 column 1
+20:[2m2026-02-25T15:09:12.925575Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutesminimax.json: missing field `id` at line 21 column 1
+21:[2m2026-02-25T15:09:12.925603Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/kimithinker.json: missing field `id` at line 20 column 1
+22:[2m2026-02-25T15:09:12.925629Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetick25.json: missing field `id` at line 16 column 1
+23:[2m2026-02-25T15:09:12.925659Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/opusthinking.json: missing field `id` at line 28 column 1
+24:[2m2026-02-25T15:09:12.925686Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/zai.json: missing field `id` at line 21 column 1
+25:[2m2026-02-25T15:09:12.925711Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/flash3.json: missing field `id` at line 7 column 1
+26:[2m2026-02-25T15:09:12.925736Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/deepseekreasoner.json: missing field `id` at line 14 column 1
+27:[2m2026-02-25T15:09:12.925761Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/sonnetthinking.json: missing field `id` at line 15 column 1
+28:[2m2026-02-25T15:09:12.925787Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/chutesk2streaming.json: missing field `id` at line 17 column 1
+29:[2m2026-02-25T15:09:12.925824Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/opusthinkingbucketed.json: unknown variant `oauth`, expected `key` or `keyfile` at line 24 column 19
+30:[2m2026-02-25T15:09:12.925865Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticglm47.json: missing field `id` at line 19 column 1
+31:[2m2026-02-25T15:09:12.925927Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/synthetick2streaming.json: missing field `id` at line 19 column 1
+32:[2m2026-02-25T15:09:12.925957Z[0m [33m WARN[0m Skipping invalid profile /Users/acoliver/.llxprt/profiles/syntheticm2max.json: missing field `id` at line 19 column 1
+33:[2m2026-02-25T15:09:12.925979Z[0m [32m INFO[0m ProfileService: loaded 2 profiles from disk
+FAIL: Profile loading includes invalid-profile skips (can explain missing profiles in UI)
+\n=== Code-level regression test suite ===
+PASS: seven_bugs_regression_tests passes on current code
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+\n=== UI automation proof (SCN-002) ===
+PASS: SCN-002 passes
+test scn_002_keyboard_profile_switch_from_chat_emits_event_and_routes_model ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.27s
+\n=== SCN-003 status (non-blocking observation) ===
+FAIL: SCN-003 has no completed success artifact in /tmp/scn003.log
+\n=== Brokenness verdict ===
+\nBROKEN: one or more checks failed. See /Users/acoliver/projects/personal-agent/gpuui/.tmp_prove_broken.log

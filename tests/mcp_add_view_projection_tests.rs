@@ -98,6 +98,9 @@ fn test_draft_loaded_projection_uses_source_prefixed_id_to_set_registry_and_sour
     assert_eq!(projected.command, "fetch");
     assert_eq!(
         projected.args,
-        vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]
+        vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-fetch".to_string()
+        ]
     );
 }

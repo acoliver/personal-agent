@@ -5,7 +5,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use personal_agent::events::types::{ModelProfile as EventModelProfile, ModelProfileAuth, ModelProfileParameters};
+use personal_agent::events::types::{
+    ModelProfile as EventModelProfile, ModelProfileAuth, ModelProfileParameters,
+};
 use personal_agent::models::{AuthConfig, ModelParameters, ModelProfile};
 use personal_agent::services::{ProfileService, ServiceError, ServiceResult};
 
@@ -72,8 +74,10 @@ impl ProfileService for RecordingProfileService {
         name: String,
         provider: String,
         model: String,
+        _base_url: Option<String>,
         auth: AuthConfig,
         parameters: ModelParameters,
+        _system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile> {
         self.create_calls
             .lock()
@@ -94,7 +98,9 @@ impl ProfileService for RecordingProfileService {
             base_url: "https://api.openai.com/v1".to_string(),
             auth,
             parameters,
-            system_prompt: "You are a helpful assistant, be direct and to the point. Respond in English.".to_string(),
+            system_prompt:
+                "You are a helpful assistant, be direct and to the point. Respond in English."
+                    .to_string(),
         })
     }
 
@@ -102,9 +108,12 @@ impl ProfileService for RecordingProfileService {
         &self,
         id: uuid::Uuid,
         name: Option<String>,
+        _provider: Option<String>,
         model: Option<String>,
+        _base_url: Option<String>,
         auth: Option<AuthConfig>,
         parameters: Option<ModelParameters>,
+        _system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile> {
         self.update_calls
             .lock()
@@ -136,7 +145,9 @@ impl ProfileService for RecordingProfileService {
                 value: "".to_string(),
             }),
             parameters: parameters.unwrap_or_default(),
-            system_prompt: "You are a helpful assistant, be direct and to the point. Respond in English.".to_string(),
+            system_prompt:
+                "You are a helpful assistant, be direct and to the point. Respond in English."
+                    .to_string(),
         })
     }
 
@@ -194,7 +205,10 @@ async fn test_save_profile_payload_maps_fields_to_update_call() {
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
     let save_payload = payload();
@@ -212,24 +226,31 @@ async fn test_save_profile_payload_maps_fields_to_update_call() {
         .expect("view channel closed");
 
     assert!(
-        matches!(cmd, personal_agent::presentation::ViewCommand::ProfileUpdated { .. }),
+        matches!(
+            cmd,
+            personal_agent::presentation::ViewCommand::ProfileUpdated { .. }
+        ),
         "first command should be ProfileUpdated, got {:?}",
         cmd
     );
 
     let update_calls = recording.update_calls();
-    assert_eq!(update_calls.len(), 1, "SaveProfile should issue one update call");
+    assert_eq!(
+        update_calls.len(),
+        1,
+        "SaveProfile should issue one update call"
+    );
 
     let call = &update_calls[0];
     assert_eq!(call.id, save_payload.id);
     assert_eq!(call.name.as_deref(), Some("Editor Name"));
     assert_eq!(call.model.as_deref(), Some("claude-3-5-sonnet"));
-    assert!(matches!(
-        call.auth,
-        Some(AuthConfig::Keyfile { .. })
-    ));
+    assert!(matches!(call.auth, Some(AuthConfig::Keyfile { .. })));
 
-    let params = call.parameters.clone().expect("parameters should be passed to update");
+    let params = call
+        .parameters
+        .clone()
+        .expect("parameters should be passed to update");
     assert!((params.temperature - 0.2).abs() < f64::EPSILON);
     assert_eq!(params.max_tokens, 2048);
     assert!(params.show_thinking);
@@ -255,7 +276,10 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
         view_tx,
     );
 
-    presenter.start().await.expect("presenter start must succeed");
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
     event_bus_sender
@@ -273,13 +297,21 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
         .expect("timed out waiting for second command")
         .expect("view channel closed");
 
-    assert!(
-        matches!(first, personal_agent::presentation::ViewCommand::ProfileUpdated { .. })
-    );
-    assert!(matches!(second, personal_agent::presentation::ViewCommand::NavigateBack));
+    assert!(matches!(
+        first,
+        personal_agent::presentation::ViewCommand::ProfileUpdated { .. }
+    ));
+    assert!(matches!(
+        second,
+        personal_agent::presentation::ViewCommand::NavigateBack
+    ));
 
     let create_calls = recording.create_calls();
-    assert_eq!(create_calls.len(), 1, "NotFound fallback should create exactly one profile");
+    assert_eq!(
+        create_calls.len(),
+        1,
+        "NotFound fallback should create exactly one profile"
+    );
     let create = &create_calls[0];
     assert_eq!(create.provider, "anthropic");
     assert_eq!(create.model, "claude-3-5-sonnet");
@@ -291,4 +323,3 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
     assert!(create.parameters.enable_thinking);
     assert_eq!(create.parameters.thinking_budget, Some(12000));
 }
-

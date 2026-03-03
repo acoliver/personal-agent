@@ -65,11 +65,14 @@ async fn test_real_exa_search() {
     // Step 1: Ensure Exa MCP is available
     println!("Step 1: Checking MCP registry for Exa...");
     let registry = McpRegistryServiceImpl::new().expect("Failed to create registry");
-    registry.refresh().await.expect("Failed to refresh registry");
+    registry
+        .refresh()
+        .await
+        .expect("Failed to refresh registry");
 
     let results = registry.search("exa").await.expect("Search failed");
     let exa = results.iter().find(|r| r.name.contains("exa"));
-    
+
     if exa.is_none() {
         println!("[SKIP] Exa not found in registry");
         return;
@@ -89,15 +92,15 @@ async fn test_real_exa_search() {
 
     let tools = mcp.get_llm_tools();
     println!("Available tools: {}", tools.len());
-    
+
     if tools.is_empty() {
         println!("\n[INFO] No MCP tools configured yet.");
         println!("[INFO] To test with Exa, configure it in the app first.");
         println!("[INFO] The install() function works - use the UI to add Exa MCP.");
-        
+
         // Still test agent mode works
         drop(mcp);
-        
+
         println!("\nStep 3: Testing agent without tools (basic mode)...");
         let profile = load_synthetic_profile();
         let client = LlmClient::from_profile(&profile).expect("Failed to create client");

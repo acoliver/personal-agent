@@ -1,5 +1,5 @@
 //! Minimal GPUI button test - directly from GPUI window.rs example pattern
-//! 
+//!
 
 use gpui::*;
 
@@ -7,7 +7,7 @@ struct MinimalDemo;
 
 fn button(text: &'static str) -> impl IntoElement {
     div()
-        .id(text)  // Critical: ID is required for on_click
+        .id(text) // Critical: ID is required for on_click
         .flex_none()
         .px_2()
         .py_1()
@@ -41,7 +41,7 @@ impl Render for MinimalDemo {
                 div()
                     .text_xl()
                     .text_color(rgb(0xffffff))
-                    .child("GPUI Click Test")
+                    .child("GPUI Click Test"),
             )
             .child(
                 div()
@@ -50,13 +50,13 @@ impl Render for MinimalDemo {
                     .child(button("Button A"))
                     .child(button("Button B"))
                     .child(button("History"))
-                    .child(button("Settings"))
+                    .child(button("Settings")),
             )
             .child(
                 div()
                     .text_sm()
                     .text_color(rgb(0x888888))
-                    .child("Click buttons - watch terminal for output")
+                    .child("Click buttons - watch terminal for output"),
             )
     }
 }
@@ -64,10 +64,10 @@ impl Render for MinimalDemo {
 fn main() {
     println!("Starting GPUI button test...");
     println!("This uses the exact same pattern as GPUI examples");
-    
+
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(400.0), px(200.0)), cx);
-        
+
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -75,15 +75,13 @@ fn main() {
                 show: true,
                 ..Default::default()
             },
-            |_window, cx| {
-                cx.new(|_| MinimalDemo)
-            },
+            |_window, cx| cx.new(|_| MinimalDemo),
         )
         .unwrap();
-        
+
         // This is critical - activate the app
         cx.activate(true);
-        
+
         println!("Window opened - try clicking buttons now!");
     });
 }

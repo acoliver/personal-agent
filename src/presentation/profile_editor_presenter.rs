@@ -10,11 +10,14 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::events::{AppEvent, EventBus, types::{ProfileEvent, UserEvent, ModelProfileAuth}};
+use super::{Presenter, PresenterError, ViewCommand};
 use crate::events::global::emit;
+use crate::events::{
+    types::{ModelProfileAuth, ProfileEvent, UserEvent},
+    AppEvent, EventBus,
+};
 use crate::models::{AuthConfig, ModelParameters};
 use crate::services::{ProfileService, ServiceError};
-use super::{Presenter, PresenterError, ViewCommand};
 
 /// ProfileEditorPresenter - handles profile creation/editing UI
 ///
@@ -90,7 +93,8 @@ impl ProfileEditorPresenter {
             return Ok(());
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -102,7 +106,13 @@ impl ProfileEditorPresenter {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 match rx.recv().await {
                     Ok(event) => {
-                        Self::handle_event(&profile_service, &view_tx, &pending_selected_model, event).await;
+                        Self::handle_event(
+                            &profile_service,
+                            &view_tx,
+                            &pending_selected_model,
+                            event,
+                        )
+                        .await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ProfileEditorPresenter lagged: {} events missed", n);
@@ -124,7 +134,8 @@ impl ProfileEditorPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -146,7 +157,8 @@ impl ProfileEditorPresenter {
     ) {
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(profile_service, view_tx, pending_selected_model, user_evt).await;
+                Self::handle_user_event(profile_service, view_tx, pending_selected_model, user_evt)
+                    .await;
             }
             AppEvent::Profile(profile_evt) => {
                 Self::handle_profile_event(view_tx, profile_evt).await;
@@ -171,9 +183,13 @@ impl ProfileEditorPresenter {
                 Self::on_save_profile(profile_service, view_tx, profile).await;
             }
             UserEvent::SaveProfileEditor => {
-                Self::on_save_profile_editor(profile_service, view_tx, pending_selected_model).await;
+                Self::on_save_profile_editor(profile_service, view_tx, pending_selected_model)
+                    .await;
             }
-            UserEvent::SelectModel { provider_id, model_id } => {
+            UserEvent::SelectModel {
+                provider_id,
+                model_id,
+            } => {
                 Self::on_select_model(pending_selected_model, provider_id, model_id);
             }
             UserEvent::TestProfileConnection { id } => {
@@ -223,15 +239,21 @@ impl ProfileEditorPresenter {
         }
 
         let update_name = Some(profile.name.clone());
+        let update_provider = profile.provider_id.clone();
         let update_model = profile.model_id.clone();
+        let update_base_url = profile.base_url.clone();
+        let update_system_prompt = profile.system_prompt.clone();
 
         let updated = profile_service
             .update(
                 profile.id,
                 update_name,
+                update_provider,
                 update_model.clone(),
+                update_base_url.clone(),
                 Some(auth.clone()),
                 Some(parameters.clone()),
+                update_system_prompt.clone(),
             )
             .await;
 
@@ -242,35 +264,19 @@ impl ProfileEditorPresenter {
             .unwrap_or_else(|| "gpt-4o".to_string());
 
         let persisted = match updated {
-            Ok(mut saved) => {
-                if let Some(base_url) = profile.base_url.clone() {
-                    saved.base_url = base_url;
-                }
-                if let Some(system_prompt) = profile.system_prompt.clone() {
-                    saved.system_prompt = system_prompt;
-                }
-                Ok(saved)
-            }
+            Ok(saved) => Ok(saved),
             Err(ServiceError::NotFound(_)) => {
-                let create_result = profile_service
+                profile_service
                     .create(
                         profile.name.clone(),
                         fallback_provider,
                         fallback_model,
+                        update_base_url,
                         auth,
                         parameters,
+                        update_system_prompt,
                     )
-                    .await;
-
-                create_result.map(|mut saved| {
-                    if let Some(base_url) = profile.base_url.clone() {
-                        saved.base_url = base_url;
-                    }
-                    if let Some(system_prompt) = profile.system_prompt.clone() {
-                        saved.system_prompt = system_prompt;
-                    }
-                    saved
-                })
+                    .await
             }
             Err(e) => Err(e),
         };
@@ -285,7 +291,9 @@ impl ProfileEditorPresenter {
                     id: saved.id,
                     name: saved.name,
                 });
-                let _ = view_tx.send(ViewCommand::NavigateBack);
+                let _ = view_tx.send(ViewCommand::NavigateTo {
+                    view: super::view_command::ViewId::Settings,
+                });
             }
             Err(e) => {
                 tracing::error!("Failed to persist SaveProfile payload: {}", e);
@@ -313,25 +321,34 @@ impl ProfileEditorPresenter {
         // Lightweight persistence path until full editable-field event payload lands.
         // We persist a minimal profile using the last selected model context.
         let (provider_id, model_id) = {
-            let guard = pending_selected_model.lock().expect("pending_selected_model lock poisoned");
+            let guard = pending_selected_model
+                .lock()
+                .expect("pending_selected_model lock poisoned");
             guard
                 .clone()
                 .unwrap_or_else(|| ("openai".to_string(), "gpt-4o".to_string()))
         };
 
-        let auth = AuthConfig::Key {
-            value: "".to_string(),
-        };
         let mut parameters = ModelParameters::default();
         parameters.show_thinking = true;
+
+        let auth = AuthConfig::Key {
+            value: std::env::var("OPENAI_API_KEY")
+                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+        };
 
         let created = profile_service
             .create(
                 model_id.clone(),
                 provider_id,
                 model_id,
+                None,
                 auth,
                 parameters,
+                None,
             )
             .await;
 
@@ -356,7 +373,6 @@ impl ProfileEditorPresenter {
                 });
             }
         }
-
     }
 
     /// Track latest model selection from ModelSelector flow.
@@ -404,17 +420,22 @@ impl ProfileEditorPresenter {
     /// Handle profile domain events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
-    async fn handle_profile_event(
-        view_tx: &broadcast::Sender<ViewCommand>,
-        event: ProfileEvent,
-    ) {
+    async fn handle_profile_event(view_tx: &broadcast::Sender<ViewCommand>, event: ProfileEvent) {
         match event {
             ProfileEvent::TestStarted { id: _id } => {
                 tracing::info!("Profile connection test started");
             }
-            ProfileEvent::TestCompleted { id: _id, success, response_time_ms, error } => {
+            ProfileEvent::TestCompleted {
+                id: _id,
+                success,
+                response_time_ms,
+                error,
+            } => {
                 if success {
-                    tracing::info!("Profile connection test successful ({}ms)", response_time_ms.unwrap_or(0));
+                    tracing::info!(
+                        "Profile connection test successful ({}ms)",
+                        response_time_ms.unwrap_or(0)
+                    );
                 } else {
                     let _ = view_tx.send(ViewCommand::ShowError {
                         title: "Connection Failed".to_string(),
@@ -438,7 +459,8 @@ impl Presenter for ProfileEditorPresenter {
     }
 
     fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 

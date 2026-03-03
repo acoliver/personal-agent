@@ -23,9 +23,11 @@ use flume;
 use uuid::Uuid;
 
 use personal_agent::events::types::UserEvent;
+use personal_agent::presentation::view_command::{
+    McpRegistryResult, McpStatus, MessageRole, ModelInfo,
+};
 use personal_agent::presentation::ViewCommand;
-use personal_agent::presentation::view_command::{McpRegistryResult, McpStatus, MessageRole, ModelInfo};
-use personal_agent::ui_gpui::bridge::{GpuiBridge, ViewCommandSink, GpuiNotifier};
+use personal_agent::ui_gpui::bridge::{GpuiBridge, GpuiNotifier, ViewCommandSink};
 
 // Import the routing function that MUST exist post-implementation.
 // This import intentionally fails to compile pre-implementation:
@@ -108,8 +110,7 @@ fn test_chat_view_message_appended_is_routed() {
     }
 
     assert_eq!(
-        targets.chat_messages_received,
-        1,
+        targets.chat_messages_received, 1,
         "route_view_command must forward MessageAppended to ChatView; \
          currently MainPanel drops it in the _ => {{}} catch-all"
     );
@@ -143,8 +144,7 @@ fn test_chat_view_stream_commands_are_routed() {
     }
 
     assert_eq!(
-        targets.chat_stream_chunks_received,
-        2,
+        targets.chat_stream_chunks_received, 2,
         "route_view_command must forward AppendStream chunks to ChatView"
     );
     assert!(
@@ -167,12 +167,14 @@ fn test_history_view_conversation_list_refreshed_is_routed() {
     let conv_id = Uuid::new_v4();
 
     sink.send(ViewCommand::ConversationListRefreshed {
-        conversations: vec![personal_agent::presentation::view_command::ConversationSummary {
-            id: conv_id,
-            title: "Conversation A".to_string(),
-            updated_at: chrono::Utc::now(),
-            message_count: 2,
-        }],
+        conversations: vec![
+            personal_agent::presentation::view_command::ConversationSummary {
+                id: conv_id,
+                title: "Conversation A".to_string(),
+                updated_at: chrono::Utc::now(),
+                message_count: 2,
+            },
+        ],
     });
 
     let mut targets = CommandTargets::default();
@@ -181,8 +183,7 @@ fn test_history_view_conversation_list_refreshed_is_routed() {
     }
 
     assert_eq!(
-        targets.history_conversations_received,
-        1,
+        targets.history_conversations_received, 1,
         "route_view_command must forward ConversationListRefreshed to HistoryView; \
          currently MainPanel drops it"
     );
@@ -236,8 +237,7 @@ fn test_settings_view_profile_created_is_routed() {
     }
 
     assert_eq!(
-        targets.settings_profile_commands,
-        1,
+        targets.settings_profile_commands, 1,
         "route_view_command must forward ProfileCreated to SettingsView; \
          currently MainPanel drops it"
     );
@@ -263,8 +263,7 @@ fn test_settings_view_mcp_status_changed_is_routed() {
     }
 
     assert_eq!(
-        targets.settings_mcp_status_updates,
-        1,
+        targets.settings_mcp_status_updates, 1,
         "route_view_command must forward McpStatusChanged to SettingsView; \
          currently MainPanel drops it"
     );
@@ -294,13 +293,11 @@ fn test_settings_view_mcp_server_lifecycle_is_routed() {
     }
 
     assert_eq!(
-        targets.settings_mcp_status_updates,
-        2,
+        targets.settings_mcp_status_updates, 2,
         "route_view_command must forward McpServerStarted and McpServerFailed; \
          currently MainPanel drops both"
     );
 }
-
 
 /// REQ-WIRE-002: McpConfigSaved and McpDeleted reach settings/configure routing targets
 ///
@@ -323,13 +320,11 @@ fn test_mcp_config_saved_and_deleted_are_routed() {
     }
 
     assert_eq!(
-        targets.mcp_config_saved_count,
-        1,
+        targets.mcp_config_saved_count, 1,
         "route_view_command must route McpConfigSaved for MCP configure/settings state"
     );
     assert_eq!(
-        targets.mcp_deleted_count,
-        1,
+        targets.mcp_deleted_count, 1,
         "route_view_command must route McpDeleted for settings state"
     );
 }
@@ -352,8 +347,7 @@ fn test_show_notification_is_routed_to_settings_target() {
     }
 
     assert_eq!(
-        targets.settings_notifications_count,
-        1,
+        targets.settings_notifications_count, 1,
         "route_view_command must route ShowNotification for settings UI feedback"
     );
 }
@@ -395,11 +389,9 @@ fn test_mcp_registry_search_results_are_routed() {
     }
 
     assert_eq!(
-        targets.mcp_registry_results_count,
-        2,
+        targets.mcp_registry_results_count, 2,
         "route_view_command must route McpRegistrySearchResults to MCP add state"
     );
-
 }
 
 /// REQ-WIRE-002: McpConfigureDraftLoaded reaches MCP configure routing target
@@ -416,7 +408,10 @@ fn test_mcp_configure_draft_loaded_is_routed() {
         package: "fetch".to_string(),
         env_var_name: "FETCH_API_KEY".to_string(),
         command: "npx".to_string(),
-        args: vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-fetch".to_string(),
+        ],
         env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
     });
 
@@ -426,8 +421,7 @@ fn test_mcp_configure_draft_loaded_is_routed() {
     }
 
     assert_eq!(
-        targets.mcp_configure_draft_loaded_count,
-        1,
+        targets.mcp_configure_draft_loaded_count, 1,
         "route_view_command must route McpConfigureDraftLoaded to MCP configure flow"
     );
 }
@@ -452,8 +446,7 @@ fn test_show_error_is_routed_to_mcp_error_target() {
     }
 
     assert_eq!(
-        targets.mcp_error_commands_count,
-        1,
+        targets.mcp_error_commands_count, 1,
         "route_view_command must route ShowError commands for MCP views"
     );
 }
@@ -472,7 +465,10 @@ fn test_mcp_configure_draft_loaded_does_not_count_as_mcp_config_saved() {
         package: "filesystem".to_string(),
         env_var_name: "".to_string(),
         command: "npx".to_string(),
-        args: vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()],
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-filesystem".to_string(),
+        ],
         env: None,
     });
 
@@ -482,18 +478,14 @@ fn test_mcp_configure_draft_loaded_does_not_count_as_mcp_config_saved() {
     }
 
     assert_eq!(
-        targets.mcp_config_saved_count,
-        0,
+        targets.mcp_config_saved_count, 0,
         "McpConfigureDraftLoaded should not be counted as an MCP config save"
     );
     assert_eq!(
-        targets.mcp_configure_draft_loaded_count,
-        1,
+        targets.mcp_configure_draft_loaded_count, 1,
         "McpConfigureDraftLoaded should only increment draft-loaded counter"
     );
 }
-
-
 
 // ============================================================
 // REQ-WIRE-002: Model selector routing
@@ -533,8 +525,7 @@ fn test_model_selector_search_results_are_routed() {
     }
 
     assert_eq!(
-        targets.model_selector_results_count,
-        2,
+        targets.model_selector_results_count, 2,
         "route_view_command must forward ModelSearchResults to ModelSelectorView"
     );
 }
@@ -559,17 +550,56 @@ fn test_model_selected_is_routed_to_profile_prefill_target() {
     }
 
     assert_eq!(
-        targets.model_selector_results_count,
-        0,
+        targets.model_selector_results_count, 0,
         "ModelSelected should not be counted as search results"
     );
     assert_eq!(
-        targets.profile_prefill_selected_count,
-        1,
+        targets.profile_prefill_selected_count, 1,
         "ModelSelected must be routed as a profile prefill signal"
     );
 }
 
+
+/// REQ-WIRE-002: ProfileEditorLoad reaches ProfileEditor routing target
+///
+/// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
+/// @requirement REQ-WIRE-002
+#[test]
+fn test_profile_editor_load_is_routed_to_profile_prefill_target() {
+    let (bridge, sink) = make_bridge_and_sink();
+    let profile_id = Uuid::new_v4();
+
+    sink.send(ViewCommand::ProfileEditorLoad {
+        id: profile_id,
+        name: "Existing Profile".to_string(),
+        provider_id: "anthropic".to_string(),
+        model_id: "claude-sonnet-4-20250514".to_string(),
+        base_url: "https://api.anthropic.com/v1".to_string(),
+        auth_kind: "key".to_string(),
+        auth_value: Some("sk-test".to_string()),
+        temperature: 0.7,
+        max_tokens: 4096,
+        context_limit: Some(200_000),
+        show_thinking: false,
+        enable_thinking: false,
+        thinking_budget: None,
+        system_prompt: "You are helpful".to_string(),
+    });
+
+    let mut targets = CommandTargets::default();
+    for cmd in bridge.drain_commands() {
+        route_view_command(cmd, &mut targets);
+    }
+
+    assert_eq!(
+        targets.model_selector_results_count, 0,
+        "ProfileEditorLoad should not be counted as model search results"
+    );
+    assert_eq!(
+        targets.profile_prefill_selected_count, 1,
+        "ProfileEditorLoad must be routed as a profile prefill signal"
+    );
+}
 
 // ============================================================
 // REQ-WIRE-002: Mixed-command drain cycle
@@ -618,8 +648,7 @@ fn test_mixed_drain_routes_to_all_target_views() {
     }
 
     assert_eq!(
-        targets.chat_messages_received,
-        1,
+        targets.chat_messages_received, 1,
         "ChatView must receive MessageAppended in mixed drain; currently dropped"
     );
     assert_eq!(
@@ -628,22 +657,18 @@ fn test_mixed_drain_routes_to_all_target_views() {
         "HistoryView must receive ConversationActivated in mixed drain; currently dropped"
     );
     assert_eq!(
-        targets.settings_profile_commands,
-        1,
+        targets.settings_profile_commands, 1,
         "SettingsView must receive ProfileCreated in mixed drain; currently dropped"
     );
     assert_eq!(
-        targets.settings_mcp_status_updates,
-        1,
+        targets.settings_mcp_status_updates, 1,
         "SettingsView must receive McpStatusChanged in mixed drain; currently dropped"
     );
     assert_eq!(
-        targets.model_selector_results_count,
-        1,
+        targets.model_selector_results_count, 1,
         "ModelSelectorView must receive ModelSearchResults in mixed drain"
     );
 }
-
 
 /// REQ-WIRE-002: Ancillary ViewCommand variants do not mutate routing counters
 ///
@@ -727,7 +752,10 @@ fn test_route_view_command_ignores_ancillary_variants_without_side_effects() {
     assert!(!targets.chat_stream_finalized);
     assert_eq!(targets.history_conversations_received, 0);
     assert_eq!(targets.history_activated_id, None);
-    assert_eq!(targets.settings_profile_commands, 0, "No profile routing commands were sent in this ancillary command set");
+    assert_eq!(
+        targets.settings_profile_commands, 0,
+        "No profile routing commands were sent in this ancillary command set"
+    );
     assert_eq!(targets.settings_mcp_status_updates, 0);
     assert_eq!(targets.model_selector_results_count, 0);
     assert_eq!(targets.mcp_config_saved_count, 0);

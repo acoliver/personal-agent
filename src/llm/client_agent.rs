@@ -4,6 +4,10 @@
 
 use crate::llm::{LlmError, Message, Role, StreamEvent};
 use futures::StreamExt;
+use serdes_ai::core::messages::{
+    ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart, TextPart, ThinkingPart,
+    ToolCallArgs, ToolCallPart, ToolReturnPart,
+};
 use serdes_ai::UserContent;
 use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
@@ -106,6 +110,110 @@ impl crate::llm::LlmClient {
         }
         builder
     }
+
+    fn split_prompt_and_history<'a>(messages: &'a [Message]) -> (String, &'a [Message]) {
+        if let Some(last_user_idx) = messages
+            .iter()
+            .rposition(|message| matches!(message.role, Role::User))
+        {
+            let fallback_prompt = messages
+                .last()
+                .map(|message| message.content.clone())
+                .unwrap_or_default();
+            let prompt = messages[last_user_idx].content.clone();
+            let prompt = if prompt.is_empty() {
+                fallback_prompt
+            } else {
+                prompt
+            };
+            (prompt, &messages[..last_user_idx])
+        } else {
+            let prompt = messages
+                .last()
+                .map(|message| message.content.clone())
+                .unwrap_or_default();
+            (prompt, messages)
+        }
+    }
+
+    fn message_to_agent_history_request(message: &Message) -> Option<ModelRequest> {
+        match message.role {
+            Role::System => None,
+            Role::User => {
+                let mut request = ModelRequest::new();
+
+                if !message.content.is_empty() {
+                    request.add_user_prompt(message.content.clone());
+                }
+
+                for tool_result in &message.tool_results {
+                    let mut tool_return = if tool_result.is_error {
+                        ToolReturnPart::error("tool", tool_result.content.clone())
+                    } else {
+                        ToolReturnPart::success("tool", tool_result.content.clone())
+                    };
+
+                    if !tool_result.tool_use_id.is_empty() {
+                        tool_return =
+                            tool_return.with_tool_call_id(tool_result.tool_use_id.clone());
+                    }
+
+                    request.add_part(ModelRequestPart::ToolReturn(tool_return));
+                }
+
+                if request.parts.is_empty() {
+                    None
+                } else {
+                    Some(request)
+                }
+            }
+            Role::Assistant => {
+                let mut response = ModelResponse::new();
+
+                if !message.content.is_empty() {
+                    response.add_part(ModelResponsePart::Text(TextPart::new(
+                        message.content.clone(),
+                    )));
+                }
+
+                if let Some(thinking) = &message.thinking_content {
+                    if !thinking.is_empty() {
+                        response.add_part(ModelResponsePart::Thinking(ThinkingPart::new(
+                            thinking.clone(),
+                        )));
+                    }
+                }
+
+                for tool_use in &message.tool_uses {
+                    let mut tool_call = ToolCallPart::new(
+                        tool_use.name.clone(),
+                        ToolCallArgs::json(tool_use.input.clone()),
+                    );
+
+                    if !tool_use.id.is_empty() {
+                        tool_call = tool_call.with_tool_call_id(tool_use.id.clone());
+                    }
+
+                    response.add_part(ModelResponsePart::ToolCall(tool_call));
+                }
+
+                if response.parts.is_empty() {
+                    None
+                } else {
+                    let mut request = ModelRequest::new();
+                    request.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
+                    Some(request)
+                }
+            }
+        }
+    }
+
+    fn build_agent_message_history(messages: &[Message]) -> Vec<ModelRequest> {
+        messages
+            .iter()
+            .filter_map(Self::message_to_agent_history_request)
+            .collect()
+    }
 }
 
 impl AgentClientExt for crate::llm::LlmClient {
@@ -114,7 +222,11 @@ impl AgentClientExt for crate::llm::LlmClient {
         mcp_tools: Vec<crate::llm::tools::Tool>,
         system_prompt: &str,
     ) -> StdResult<Agent<McpToolContext>, LlmError> {
-        tracing::info!("create_agent: model={}, base_url={}", self.profile.model_id, self.profile.base_url);
+        tracing::info!(
+            "create_agent: model={}, base_url={}",
+            self.profile.model_id,
+            self.profile.base_url
+        );
         self.set_api_key_env();
 
         let model = self.build_agent_model()?;
@@ -133,33 +245,32 @@ impl AgentClientExt for crate::llm::LlmClient {
     where
         F: FnMut(StreamEvent) + Send,
     {
-        // Convert messages to a prompt (for now, just use the last user message)
-        // TODO: Support full conversation history in Agent
-        let prompt = messages
-            .iter()
-            .rev()
-            .find(|m| matches!(m.role, Role::User))
-            .map(|m| m.content.clone())
-            .unwrap_or_default();
-        
-        tracing::info!("run_agent_stream: prompt='{}'", prompt);
+        let (prompt, history_messages) = Self::split_prompt_and_history(messages);
+        let message_history = Self::build_agent_message_history(history_messages);
+
+        tracing::info!(
+            "run_agent_stream: prompt='{}' history_messages={} history_requests={}",
+            prompt,
+            history_messages.len(),
+            message_history.len()
+        );
 
         // Create the McpToolContext
         let context = McpToolContext;
+        let options = if message_history.is_empty() {
+            RunOptions::default()
+        } else {
+            RunOptions::default().message_history(message_history)
+        };
 
         // Create the agent stream
         tracing::info!("run_agent_stream: creating AgentStream...");
-        let mut stream = AgentStream::new(
-            agent,
-            UserContent::text(prompt),
-            context,
-            RunOptions::default(),
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!("run_agent_stream: AgentStream creation failed: {}", e);
-            LlmError::SerdesAi(e.to_string())
-        })?;
+        let mut stream = AgentStream::new(agent, UserContent::text(prompt), context, options)
+            .await
+            .map_err(|e| {
+                tracing::error!("run_agent_stream: AgentStream creation failed: {}", e);
+                LlmError::SerdesAi(e.to_string())
+            })?;
         tracing::info!("run_agent_stream: AgentStream created, processing events...");
 
         // Process stream events
@@ -173,7 +284,11 @@ impl AgentClientExt for crate::llm::LlmClient {
                     AgentStreamEvent::ThinkingDelta { text } => {
                         on_event(StreamEvent::ThinkingDelta(text));
                     }
-                    AgentStreamEvent::ToolCallStart { tool_name, tool_call_id, .. } => {
+                    AgentStreamEvent::ToolCallStart {
+                        tool_name,
+                        tool_call_id,
+                        ..
+                    } => {
                         // Emit tool call started event
                         on_event(StreamEvent::ToolCallStarted {
                             tool_name: tool_name.clone(),
@@ -216,5 +331,80 @@ impl AgentClientExt for crate::llm::LlmClient {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_prompt_and_history_uses_last_user_message() {
+        let messages = vec![
+            Message::user("first question"),
+            Message::assistant("first answer"),
+            Message::user("second question"),
+        ];
+
+        let (prompt, history) = crate::llm::LlmClient::split_prompt_and_history(&messages);
+
+        assert_eq!(prompt, "second question");
+        assert_eq!(history.len(), 2);
+        assert!(matches!(history[0].role, Role::User));
+        assert!(matches!(history[1].role, Role::Assistant));
+    }
+
+    #[test]
+    fn build_agent_message_history_preserves_assistant_responses() {
+        let assistant_message = Message::assistant("tool result summary").with_tool_uses(vec![
+            crate::llm::tools::ToolUse::new(
+                "tool-call-1",
+                "web_search",
+                serde_json::json!({"query": "weather"}),
+            ),
+        ]);
+
+        let history = crate::llm::LlmClient::build_agent_message_history(&[
+            Message::user("what's the weather"),
+            assistant_message,
+        ]);
+
+        assert_eq!(history.len(), 2);
+
+        assert!(matches!(
+            history[0].parts.first(),
+            Some(ModelRequestPart::UserPrompt(_))
+        ));
+
+        match history[1].parts.first() {
+            Some(ModelRequestPart::ModelResponse(response)) => {
+                assert!(response
+                    .parts
+                    .iter()
+                    .any(|part| matches!(part, ModelResponsePart::Text(_))));
+                assert!(response
+                    .parts
+                    .iter()
+                    .any(|part| matches!(part, ModelResponsePart::ToolCall(_))));
+            }
+            other => panic!("expected ModelResponse history part, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_agent_message_history_preserves_user_tool_results() {
+        let tool_result_message =
+            Message::user("").with_tool_results(vec![crate::llm::tools::ToolResult::success(
+                "tool-call-1",
+                "{\"ok\":true}",
+            )]);
+
+        let history = crate::llm::LlmClient::build_agent_message_history(&[tool_result_message]);
+
+        assert_eq!(history.len(), 1);
+        assert!(history[0]
+            .parts
+            .iter()
+            .any(|part| matches!(part, ModelRequestPart::ToolReturn(_))));
     }
 }

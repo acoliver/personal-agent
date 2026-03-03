@@ -28,15 +28,19 @@ pub trait ProfileService: Send + Sync {
     /// * `name` - Profile name
     /// * `provider` - Model provider (e.g., "openai", "anthropic")
     /// * `model` - Model identifier (e.g., "gpt-4", "claude-3-opus")
+    /// * `base_url` - Optional base URL override (uses provider default when None/empty)
     /// * `auth` - Authentication configuration
     /// * `parameters` - Model parameters (temperature, max_tokens, etc.)
+    /// * `system_prompt` - Optional system prompt override
     async fn create(
         &self,
         name: String,
         provider: String,
         model: String,
+        base_url: Option<String>,
         auth: AuthConfig,
         parameters: ModelParameters,
+        system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile>;
 
     /// Update an existing profile
@@ -44,9 +48,12 @@ pub trait ProfileService: Send + Sync {
         &self,
         id: Uuid,
         name: Option<String>,
+        provider: Option<String>,
         model: Option<String>,
+        base_url: Option<String>,
         auth: Option<AuthConfig>,
         parameters: Option<ModelParameters>,
+        system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile>;
 
     /// Delete a profile

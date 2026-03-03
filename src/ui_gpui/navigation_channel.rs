@@ -3,9 +3,9 @@
 //! This provides a simple way for child views to request navigation
 //! without going through the full EventBus→Presenter→ViewCommand path.
 
+use crate::presentation::view_command::ViewId;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use crate::presentation::view_command::ViewId;
 
 /// Callback to trigger GPUI notify
 type NotifyCallback = Box<dyn Fn() + Send + Sync>;
@@ -25,7 +25,7 @@ impl NavigationChannel {
             notify_callback: Mutex::new(None),
         }
     }
-    
+
     /// Set a callback to trigger GPUI redraw when navigation is requested
     pub fn set_notify_callback(&self, callback: impl Fn() + Send + Sync + 'static) {
         if let Ok(mut guard) = self.notify_callback.lock() {
@@ -84,7 +84,7 @@ impl Default for NavigationChannel {
 }
 
 /// Global navigation channel
-static NAVIGATION_CHANNEL: once_cell::sync::Lazy<NavigationChannel> = 
+static NAVIGATION_CHANNEL: once_cell::sync::Lazy<NavigationChannel> =
     once_cell::sync::Lazy::new(NavigationChannel::new);
 
 /// Get the global navigation channel

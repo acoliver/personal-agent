@@ -15,8 +15,8 @@ pub use oauth::{
     OAuthFlowState, OAuthManager, OAuthToken, SmitheryOAuthConfig,
 };
 pub use registry::{
-    McpRegistry, McpRegistryRemote, McpRegistryServer, McpRegistryServerWrapper,
-    McpRegistrySource, McpSearchResult,
+    McpRegistry, McpRegistryRemote, McpRegistryServer, McpRegistryServerWrapper, McpRegistrySource,
+    McpSearchResult,
 };
 pub use runtime::{McpConnection, McpRuntime, McpTool};
 pub use secrets::SecretsManager;

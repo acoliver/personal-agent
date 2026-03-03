@@ -18,9 +18,9 @@
 //! @requirement REQ-GPUI-006
 
 pub mod gpui_bridge;
-pub mod view_command_sink;
 pub mod user_event_forwarder;
+pub mod view_command_sink;
 
 pub use gpui_bridge::GpuiBridge;
-pub use view_command_sink::{GpuiNotifier, ViewCommandSink};
 pub use user_event_forwarder::spawn_user_event_forwarder;
+pub use view_command_sink::{GpuiNotifier, ViewCommandSink};

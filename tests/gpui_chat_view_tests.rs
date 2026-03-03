@@ -204,13 +204,19 @@ impl MainPanel {
 fn test_chat_state_default() {
     let state = ChatState::default();
 
-    assert!(state.messages.is_empty(), "Default state should have no messages");
+    assert!(
+        state.messages.is_empty(),
+        "Default state should have no messages"
+    );
     assert_eq!(
         state.streaming,
         StreamingState::Idle,
         "Default state should be Idle"
     );
-    assert!(!state.show_thinking, "Default state should not show thinking");
+    assert!(
+        !state.show_thinking,
+        "Default state should not show thinking"
+    );
     assert!(
         state.thinking_content.is_none(),
         "Default state should have no thinking content"
@@ -227,7 +233,10 @@ fn test_chat_state_with_messages() {
     let state = ChatState::new().with_messages(messages.clone());
 
     assert_eq!(state.messages.len(), 2, "Should have 2 messages");
-    assert_eq!(state.messages[0].role, "user", "First message should be from user");
+    assert_eq!(
+        state.messages[0].role, "user",
+        "First message should be from user"
+    );
     assert_eq!(
         state.messages[0].content, "Hello",
         "First message content should match"
@@ -265,7 +274,11 @@ fn test_chat_state_add_message() {
     assert!(state.messages.is_empty());
 
     state.add_message(ChatMessage::new("user", "Test message"));
-    assert_eq!(state.messages.len(), 1, "Should have 1 message after adding");
+    assert_eq!(
+        state.messages.len(),
+        1,
+        "Should have 1 message after adding"
+    );
     assert_eq!(state.messages[0].content, "Test message");
 
     state.add_message(ChatMessage::new("assistant", "Response"));
@@ -371,7 +384,10 @@ fn test_chat_view_thinking_toggle() {
 
     state.set_thinking(true, Some("Step 2: Responding".to_string()));
     assert!(state.show_thinking);
-    assert_eq!(state.thinking_content, Some("Step 2: Responding".to_string()));
+    assert_eq!(
+        state.thinking_content,
+        Some("Step 2: Responding".to_string())
+    );
 }
 
 // ============================================================================
@@ -430,7 +446,10 @@ fn test_main_panel_applies_view_command_add_message() {
     let mut panel = MainPanel::new();
     assert_eq!(panel.chat_state.messages.len(), 0);
 
-    panel.apply_command(ViewCommand::AddMessage(ChatMessage::new("user", "Test message")));
+    panel.apply_command(ViewCommand::AddMessage(ChatMessage::new(
+        "user",
+        "Test message",
+    )));
 
     assert_eq!(panel.chat_state.messages.len(), 1);
     assert_eq!(panel.chat_state.messages[0].content, "Test message");
@@ -443,7 +462,10 @@ fn test_main_panel_applies_view_command_start_streaming() {
 
     panel.apply_command(ViewCommand::StartStreaming);
 
-    assert!(matches!(panel.chat_state.streaming, StreamingState::Streaming { .. }));
+    assert!(matches!(
+        panel.chat_state.streaming,
+        StreamingState::Streaming { .. }
+    ));
 }
 
 #[test]
@@ -465,7 +487,10 @@ fn test_main_panel_applies_view_command_stop_streaming() {
     let mut panel = MainPanel::new();
 
     panel.apply_command(ViewCommand::StartStreaming);
-    assert!(matches!(panel.chat_state.streaming, StreamingState::Streaming { .. }));
+    assert!(matches!(
+        panel.chat_state.streaming,
+        StreamingState::Streaming { .. }
+    ));
 
     panel.apply_command(ViewCommand::StopStreaming);
     assert_eq!(panel.chat_state.streaming, StreamingState::Idle);
@@ -511,11 +536,17 @@ fn test_main_panel_tab_switch() {
 fn test_main_panel_multiple_commands() {
     let mut panel = MainPanel::new();
 
-    panel.apply_command(ViewCommand::AddMessage(ChatMessage::new("user", "What is 2+2?")));
+    panel.apply_command(ViewCommand::AddMessage(ChatMessage::new(
+        "user",
+        "What is 2+2?",
+    )));
     assert_eq!(panel.chat_state.messages.len(), 1);
 
     panel.apply_command(ViewCommand::StartStreaming);
-    assert!(matches!(panel.chat_state.streaming, StreamingState::Streaming { .. }));
+    assert!(matches!(
+        panel.chat_state.streaming,
+        StreamingState::Streaming { .. }
+    ));
 
     panel.apply_command(ViewCommand::UpdateStreaming("The answer".to_string()));
     if let StreamingState::Streaming { content, .. } = &panel.chat_state.streaming {

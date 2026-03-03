@@ -4,8 +4,8 @@
 //! @requirement REQ-GPUI-003
 
 use gpui::{div, prelude::*, px, IntoElement, Styled};
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct Dropdown {
     options: Vec<String>,
@@ -50,7 +50,7 @@ impl Dropdown {
     pub fn select_item(&self, index: usize) {
         *self.selected_index.borrow_mut() = index;
         *self.is_open.borrow_mut() = false;
-        
+
         if let Some(on_select) = &self.on_select {
             (on_select.borrow())(index);
         }
@@ -62,15 +62,13 @@ impl IntoElement for Dropdown {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
+
         let selected_idx = *self.selected_index.borrow();
         let is_open = *self.is_open.borrow();
         let options = self.options.clone();
         let selected_text = options.get(selected_idx).cloned().unwrap_or_default();
 
-        let mut dropdown = div()
-            .relative()
-            .w(px(200.0));
+        let mut dropdown = div().relative().w(px(200.0));
 
         // Main button showing current selection
         let button = div()
@@ -91,13 +89,13 @@ impl IntoElement for Dropdown {
                     .flex_1()
                     .text_color(Theme::text_primary())
                     .text_sm()
-                    .child(selected_text)
+                    .child(selected_text),
             )
             .child(
                 div()
                     .text_color(Theme::text_secondary())
                     .text_sm()
-                    .child(if is_open { "▲" } else { "▼" })
+                    .child(if is_open { "▲" } else { "▼" }),
             );
 
         dropdown = dropdown.child(button);
@@ -114,31 +112,25 @@ impl IntoElement for Dropdown {
                 .border_1()
                 .border_color(Theme::bg_dark())
                 .rounded(px(Theme::RADIUS_MD))
-                .children(
-                    options.iter().enumerate().map(|(idx, opt)| {
-                        let is_selected = idx == selected_idx;
-                        div()
-                            .flex()
-                            .items_center()
-                            .px(px(Theme::SPACING_MD))
-                            .py(px(Theme::SPACING_SM))
-                            .w_full()
-                            .cursor_pointer()
-                            .hover(|style| {
-                                style.bg(Theme::bg_dark())
-                            })
-                            .when(is_selected, |d| {
-                                d.bg(Theme::bg_dark())
-                            })
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_color(Theme::text_primary())
-                                    .text_sm()
-                                    .child(opt.clone())
-                            )
-                    })
-                );
+                .children(options.iter().enumerate().map(|(idx, opt)| {
+                    let is_selected = idx == selected_idx;
+                    div()
+                        .flex()
+                        .items_center()
+                        .px(px(Theme::SPACING_MD))
+                        .py(px(Theme::SPACING_SM))
+                        .w_full()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(Theme::bg_dark()))
+                        .when(is_selected, |d| d.bg(Theme::bg_dark()))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_color(Theme::text_primary())
+                                .text_sm()
+                                .child(opt.clone()),
+                        )
+                }));
 
             dropdown = dropdown.child(options_div);
         }

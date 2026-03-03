@@ -7,11 +7,13 @@
 //! 4. Hotkey field
 
 use personal_agent::config::Config;
+use personal_agent::mcp::{
+    McpAuthType, McpConfig, McpPackage, McpPackageType, McpSource, McpTransport,
+};
 use personal_agent::models::{AuthConfig, ModelProfile};
-use personal_agent::mcp::{McpConfig, McpPackage, McpPackageType, McpSource, McpTransport, McpAuthType};
+use std::fs;
 use tempfile::TempDir;
 use uuid::Uuid;
-use std::fs;
 
 fn create_test_config_dir() -> TempDir {
     TempDir::new().unwrap()
@@ -19,35 +21,39 @@ fn create_test_config_dir() -> TempDir {
 
 fn create_config_with_profiles(dir: &TempDir, num_profiles: usize) -> Config {
     let mut config = Config::default();
-    
+
     for i in 0..num_profiles {
         let profile = ModelProfile::new(
             format!("Profile {}", i + 1),
             "openai".to_string(),
             format!("gpt-4-{}", i),
             String::new(),
-            AuthConfig::Key { value: format!("key-{}", i) },
+            AuthConfig::Key {
+                value: format!("key-{}", i),
+            },
         );
         config.profiles.push(profile);
     }
-    
+
     // Save config
     let config_path = dir.path().join("config.json");
     let json = serde_json::to_string_pretty(&config).unwrap();
     fs::write(&config_path, json).unwrap();
-    
+
     config
 }
 
 fn create_config_with_mcps(dir: &TempDir, num_mcps: usize) -> Config {
     let mut config = Config::default();
-    
+
     for i in 0..num_mcps {
         let mcp = McpConfig {
             id: Uuid::new_v4(),
             name: format!("MCP Tool {}", i + 1),
             enabled: true,
-            source: McpSource::Manual { url: format!("https://example.com/mcp/{}", i) },
+            source: McpSource::Manual {
+                url: format!("https://example.com/mcp/{}", i),
+            },
             package: McpPackage {
                 package_type: McpPackageType::Http,
                 identifier: format!("https://example.com/mcp/{}", i),
@@ -63,11 +69,11 @@ fn create_config_with_mcps(dir: &TempDir, num_mcps: usize) -> Config {
         };
         config.mcps.push(mcp);
     }
-    
+
     let config_path = dir.path().join("config.json");
     let json = serde_json::to_string_pretty(&config).unwrap();
     fs::write(&config_path, json).unwrap();
-    
+
     config
 }
 
@@ -76,7 +82,7 @@ fn create_config_with_mcps(dir: &TempDir, num_mcps: usize) -> Config {
 fn config_profiles_create_rows() {
     let dir = create_test_config_dir();
     let config = create_config_with_profiles(&dir, 3);
-    
+
     // Verify config was created correctly
     assert_eq!(config.profiles.len(), 3);
     assert_eq!(config.profiles[0].name, "Profile 1");
@@ -89,7 +95,7 @@ fn config_profiles_create_rows() {
 fn config_mcps_create_rows() {
     let dir = create_test_config_dir();
     let config = create_config_with_mcps(&dir, 2);
-    
+
     assert_eq!(config.mcps.len(), 2);
     assert_eq!(config.mcps[0].name, "MCP Tool 1");
     assert_eq!(config.mcps[1].name, "MCP Tool 2");
@@ -99,7 +105,7 @@ fn config_mcps_create_rows() {
 #[test]
 fn empty_config_shows_placeholders() {
     let config = Config::default();
-    
+
     assert!(config.profiles.is_empty());
     assert!(config.mcps.is_empty());
     // UI should show "No profiles yet. Click + to add one."
@@ -120,15 +126,20 @@ fn load_real_config_if_exists() {
         if path.exists() {
             let config = Config::load(&path);
             assert!(config.is_ok(), "Should be able to load existing config");
-            
+
             let config = config.unwrap();
             // Log what we found for debugging
-            println!("Real config has {} profiles and {} MCPs", 
-                     config.profiles.len(), config.mcps.len());
-            
+            println!(
+                "Real config has {} profiles and {} MCPs",
+                config.profiles.len(),
+                config.mcps.len()
+            );
+
             for profile in &config.profiles {
-                println!("  Profile: {} ({}:{})", 
-                         profile.name, profile.provider_id, profile.model_id);
+                println!(
+                    "  Profile: {} ({}:{})",
+                    profile.name, profile.provider_id, profile.model_id
+                );
             }
         }
     }
@@ -142,16 +153,18 @@ fn profile_row_text_format() {
         "openai".to_string(),
         "gpt-4".to_string(),
         String::new(),
-        AuthConfig::Key { value: "test".to_string() },
+        AuthConfig::Key {
+            value: "test".to_string(),
+        },
     );
-    
+
     // The expected format from create_profile_row is:
     // "{name} ({provider_id}:{model_id})"
     let expected_text = format!(
         "{} ({}:{})",
         profile.name, profile.provider_id, profile.model_id
     );
-    
+
     assert_eq!(expected_text, "My Profile (openai:gpt-4)");
 }
 
@@ -162,7 +175,9 @@ fn mcp_row_text_format() {
         id: Uuid::new_v4(),
         name: "My MCP Tool".to_string(),
         enabled: true,
-        source: McpSource::Manual { url: "https://example.com".to_string() },
+        source: McpSource::Manual {
+            url: "https://example.com".to_string(),
+        },
         package: McpPackage {
             package_type: McpPackageType::Http,
             identifier: "https://example.com".to_string(),
@@ -176,7 +191,7 @@ fn mcp_row_text_format() {
         config: serde_json::json!({}),
         oauth_token: None,
     };
-    
+
     // The row should show the name and enabled status
     assert_eq!(mcp.name, "My MCP Tool");
     assert!(mcp.enabled);

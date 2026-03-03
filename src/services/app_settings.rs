@@ -145,12 +145,7 @@ mod tests {
         let _ = service.get_hotkey().await;
 
         // Test different hotkey formats
-        let hotkeys = vec![
-            "Cmd+Space",
-            "Ctrl+Alt+Delete",
-            "Cmd+Option+T",
-            "F5",
-        ];
+        let hotkeys = vec!["Cmd+Space", "Ctrl+Alt+Delete", "Cmd+Option+T", "F5"];
         for hotkey in hotkeys {
             let _ = service.set_hotkey(hotkey.to_string()).await;
         }

@@ -3,7 +3,7 @@
 //! @plan PLAN-20250128-GPUI.P06
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, px, prelude::*, IntoElement};
+use gpui::{div, prelude::*, px, IntoElement};
 
 pub struct Button {
     label: String,
@@ -43,7 +43,7 @@ impl IntoElement for Button {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
+
         let mut button = div()
             .flex()
             .items_center()

@@ -4,8 +4,8 @@
 //! @requirement REQ-GPUI-003
 
 use gpui::{div, prelude::*, px, IntoElement, Styled};
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct List<T: Clone> {
     items: Vec<T>,
@@ -45,7 +45,7 @@ impl<T: Clone + 'static> List<T> {
 
     pub fn select_row(&self, index: usize) {
         *self.selected_index.borrow_mut() = Some(index);
-        
+
         if let Some(on_select) = &self.on_select {
             (on_select.borrow())(index);
         }
@@ -57,7 +57,7 @@ impl<T: Clone + 'static> IntoElement for List<T> {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
+
         let selected_idx = *self.selected_index.borrow();
         let items = self.items.clone();
         let render_fn = self.render_item;
@@ -66,31 +66,27 @@ impl<T: Clone + 'static> IntoElement for List<T> {
             .flex()
             .flex_col()
             .w_full()
-            .children(
-                items.iter().enumerate().map(|(idx, item)| {
-                    let is_selected = selected_idx == Some(idx);
-                    
-                    if let Some(ref render_fn) = render_fn {
-                        render_fn(item, is_selected)
-                    } else {
-                        div()
-                            .flex()
-                            .items_center()
-                            .px(px(Theme::SPACING_MD))
-                            .py(px(Theme::SPACING_SM))
-                            .w_full()
-                            .cursor_pointer()
-                            .when(is_selected, |d| {
-                                d.bg(Theme::bg_dark())
-                            })
-                            .child(
-                                div()
-                                    .text_color(Theme::text_primary())
-                                    .text_sm()
-                                    .child(format!("Item {}", idx))
-                            )
-                    }
-                })
-            )
+            .children(items.iter().enumerate().map(|(idx, item)| {
+                let is_selected = selected_idx == Some(idx);
+
+                if let Some(ref render_fn) = render_fn {
+                    render_fn(item, is_selected)
+                } else {
+                    div()
+                        .flex()
+                        .items_center()
+                        .px(px(Theme::SPACING_MD))
+                        .py(px(Theme::SPACING_SM))
+                        .w_full()
+                        .cursor_pointer()
+                        .when(is_selected, |d| d.bg(Theme::bg_dark()))
+                        .child(
+                            div()
+                                .text_color(Theme::text_primary())
+                                .text_sm()
+                                .child(format!("Item {}", idx)),
+                        )
+                }
+            }))
     }
 }

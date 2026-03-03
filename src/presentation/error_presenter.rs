@@ -10,9 +10,12 @@
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::events::{AppEvent, types::{ChatEvent, McpEvent, SystemEvent}};
-use super::{Presenter, PresenterError, ViewCommand};
 use super::view_command::ErrorSeverity;
+use super::{Presenter, PresenterError, ViewCommand};
+use crate::events::{
+    types::{ChatEvent, McpEvent, SystemEvent},
+    AppEvent,
+};
 
 /// ErrorPresenter - handles error display and logging
 ///
@@ -56,7 +59,8 @@ impl ErrorPresenter {
             return Ok(());
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -89,7 +93,8 @@ impl ErrorPresenter {
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -104,10 +109,7 @@ impl ErrorPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
-    async fn handle_event(
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-        event: AppEvent,
-    ) {
+    async fn handle_event(view_tx: &mut mpsc::Sender<ViewCommand>, event: AppEvent) {
         match event {
             AppEvent::System(system_evt) => {
                 Self::handle_system_event(view_tx, system_evt).await;
@@ -126,25 +128,31 @@ impl ErrorPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
-    async fn handle_system_event(
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-        event: SystemEvent,
-    ) {
+    async fn handle_system_event(view_tx: &mut mpsc::Sender<ViewCommand>, event: SystemEvent) {
         match event {
-            SystemEvent::Error { source, error, context } => {
+            SystemEvent::Error {
+                source,
+                error,
+                context,
+            } => {
                 let message = if let Some(ctx) = context {
-                    format!("{}: {}
+                    format!(
+                        "{}: {}
 
-Context: {}", source, error, ctx)
+Context: {}",
+                        source, error, ctx
+                    )
                 } else {
                     format!("{}: {}", source, error)
                 };
 
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: format!("{} Error", source),
-                    message,
-                    severity: ErrorSeverity::Critical,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: format!("{} Error", source),
+                        message,
+                        severity: ErrorSeverity::Critical,
+                    })
+                    .await;
             }
             _ => {} // Ignore other system events
         }
@@ -154,17 +162,24 @@ Context: {}", source, error, ctx)
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
-    async fn handle_chat_error(
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-        event: ChatEvent,
-    ) {
+    async fn handle_chat_error(view_tx: &mut mpsc::Sender<ViewCommand>, event: ChatEvent) {
         match event {
-            ChatEvent::StreamError { conversation_id: _, error, recoverable } => {
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Chat Error".to_string(),
-                    message: error.clone(),
-                    severity: if recoverable { ErrorSeverity::Warning } else { ErrorSeverity::Error },
-                }).await;
+            ChatEvent::StreamError {
+                conversation_id: _,
+                error,
+                recoverable,
+            } => {
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Chat Error".to_string(),
+                        message: error.clone(),
+                        severity: if recoverable {
+                            ErrorSeverity::Warning
+                        } else {
+                            ErrorSeverity::Error
+                        },
+                    })
+                    .await;
             }
             _ => {} // Ignore other chat events
         }
@@ -174,24 +189,25 @@ Context: {}", source, error, ctx)
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
-    async fn handle_mcp_error(
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-        event: McpEvent,
-    ) {
+    async fn handle_mcp_error(view_tx: &mut mpsc::Sender<ViewCommand>, event: McpEvent) {
         match event {
             McpEvent::StartFailed { id: _, name, error } => {
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "MCP Server Error".to_string(),
-                    message: format!("Failed to start MCP server '{}': {}", name, error),
-                    severity: ErrorSeverity::Error,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "MCP Server Error".to_string(),
+                        message: format!("Failed to start MCP server '{}': {}", name, error),
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
             }
             McpEvent::Unhealthy { id: _, name, error } => {
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "MCP Server Unhealthy".to_string(),
-                    message: format!("MCP server '{}' is unhealthy: {}", name, error),
-                    severity: ErrorSeverity::Warning,
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "MCP Server Unhealthy".to_string(),
+                        message: format!("MCP server '{}' is unhealthy: {}", name, error),
+                        severity: ErrorSeverity::Warning,
+                    })
+                    .await;
             }
             _ => {} // Ignore other MCP events
         }
@@ -209,7 +225,8 @@ impl Presenter for ErrorPresenter {
     }
 
     fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -245,7 +262,11 @@ mod tests {
         // Verify ShowError command was sent
         if let Ok(cmd) = view_rx.try_recv() {
             match cmd {
-                ViewCommand::ShowError { title, message, severity } => {
+                ViewCommand::ShowError {
+                    title,
+                    message,
+                    severity,
+                } => {
                     assert!(title.contains("TestSource"));
                     assert!(message.contains("Test error message"));
                     assert!(message.contains("Test context"));
@@ -276,7 +297,11 @@ mod tests {
         // Verify ShowError command was sent
         if let Ok(cmd) = view_rx.try_recv() {
             match cmd {
-                ViewCommand::ShowError { title, message, severity } => {
+                ViewCommand::ShowError {
+                    title,
+                    message,
+                    severity,
+                } => {
                     assert!(title.contains("Chat"));
                     assert_eq!(message, "Stream failed");
                     assert_eq!(severity, ErrorSeverity::Warning);
@@ -306,7 +331,11 @@ mod tests {
         // Verify ShowError command was sent
         if let Ok(cmd) = view_rx.try_recv() {
             match cmd {
-                ViewCommand::ShowError { title, message, severity } => {
+                ViewCommand::ShowError {
+                    title,
+                    message,
+                    severity,
+                } => {
                     assert!(title.contains("MCP"));
                     assert!(message.contains("Test MCP"));
                     assert!(message.contains("Connection failed"));
@@ -337,7 +366,9 @@ mod tests {
         // Verify ShowError command was sent
         if let Ok(cmd) = view_rx.try_recv() {
             match cmd {
-                ViewCommand::ShowError { title, severity, .. } => {
+                ViewCommand::ShowError {
+                    title, severity, ..
+                } => {
                     assert!(title.contains("Unhealthy"));
                     assert_eq!(severity, ErrorSeverity::Warning);
                 }

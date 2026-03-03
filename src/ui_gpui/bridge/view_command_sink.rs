@@ -4,8 +4,8 @@
 //! @requirement REQ-GPUI-006.4
 //! @requirement REQ-GPUI-006.5
 
-use flume::{Sender, TrySendError};
 use crate::presentation::ViewCommand;
+use flume::{Sender, TrySendError};
 
 /// Notifier handle to wake GPUI from tokio
 ///
@@ -53,7 +53,10 @@ impl<N: GpuiNotifier> ViewCommandSink<N> {
                 self.notifier.notify();
             }
             Err(TrySendError::Disconnected(cmd)) => {
-                tracing::info!("ViewCommand channel disconnected (GPUI closed), dropping: {:?}", cmd);
+                tracing::info!(
+                    "ViewCommand channel disconnected (GPUI closed), dropping: {:?}",
+                    cmd
+                );
                 // No point notifying if disconnected
             }
         }

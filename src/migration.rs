@@ -13,10 +13,10 @@
 //! @plan PLAN-20250125-REFACTOR.P14
 //! @requirement REQ-028.1, REQ-028.2, REQ-028.3
 
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
-use anyhow::{Context, Result};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use crate::config::Config;
 use crate::models::Conversation;
@@ -58,8 +58,7 @@ impl MigrationRunner {
         info!("Starting data migration...");
 
         // Create backup directory
-        fs::create_dir_all(&self.backup_dir)
-            .context("Failed to create backup directory")?;
+        fs::create_dir_all(&self.backup_dir).context("Failed to create backup directory")?;
         info!("Backup directory created at: {:?}", self.backup_dir);
 
         let mut report = MigrationReport::default();
@@ -107,8 +106,7 @@ impl MigrationRunner {
         let config_path = self.data_dir.join("config.json");
         if config_path.exists() {
             let backup_path = self.backup_dir.join("config.json.bak");
-            fs::copy(&config_path, &backup_path)
-                .context("Failed to backup config.json")?;
+            fs::copy(&config_path, &backup_path).context("Failed to backup config.json")?;
             info!("Backed up config.json");
         }
 
@@ -125,11 +123,13 @@ impl MigrationRunner {
                 let entry = entry?;
                 let src_path = entry.path();
                 if src_path.is_file() {
-                    let filename = src_path.file_name()
+                    let filename = src_path
+                        .file_name()
                         .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
                     let dest_path = backup_dir.join(filename);
-                    fs::copy(&src_path, &dest_path)
-                        .with_context(|| format!("Failed to backup conversation file: {:?}", filename))?;
+                    fs::copy(&src_path, &dest_path).with_context(|| {
+                        format!("Failed to backup conversation file: {:?}", filename)
+                    })?;
                 }
             }
             info!("Backed up conversation files");
@@ -262,8 +262,7 @@ impl MigrationRunner {
         let config_backup = self.backup_dir.join("config.json.bak");
         if config_backup.exists() {
             let target = self.data_dir.join("config.json");
-            fs::copy(&config_backup, &target)
-                .context("Failed to restore config.json")?;
+            fs::copy(&config_backup, &target).context("Failed to restore config.json")?;
             info!("Restored config.json");
         }
 
@@ -280,11 +279,13 @@ impl MigrationRunner {
                 let entry = entry?;
                 let src_path = entry.path();
                 if src_path.is_file() {
-                    let filename = src_path.file_name()
+                    let filename = src_path
+                        .file_name()
                         .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
                     let dest_path = conversations_dir.join(filename);
-                    fs::copy(&src_path, &dest_path)
-                        .with_context(|| format!("Failed to restore conversation file: {:?}", filename))?;
+                    fs::copy(&src_path, &dest_path).with_context(|| {
+                        format!("Failed to restore conversation file: {:?}", filename)
+                    })?;
                 }
             }
             info!("Restored conversation files");
@@ -317,12 +318,10 @@ pub fn detect_config_version(config_path: &Path) -> Result<String> {
         return Ok("1.0".to_string()); // Default version for new installs
     }
 
-    let contents = fs::read_to_string(config_path)
-        .context("Failed to read config file")?;
+    let contents = fs::read_to_string(config_path).context("Failed to read config file")?;
 
     // Try to parse as Config to get version
-    let config: Config = serde_json::from_str(&contents)
-        .context("Failed to parse config file")?;
+    let config: Config = serde_json::from_str(&contents).context("Failed to parse config file")?;
 
     Ok(config.version)
 }
@@ -335,12 +334,12 @@ pub fn detect_config_version(config_path: &Path) -> Result<String> {
 /// # Errors
 /// Returns error if conversation cannot be loaded or converted
 pub fn convert_conversation_format(conversation_path: &Path) -> Result<Conversation> {
-    let contents = fs::read_to_string(conversation_path)
-        .context("Failed to read conversation file")?;
+    let contents =
+        fs::read_to_string(conversation_path).context("Failed to read conversation file")?;
 
     // Try to parse as new format
-    let conversation: Conversation = serde_json::from_str(&contents)
-        .context("Failed to parse conversation file")?;
+    let conversation: Conversation =
+        serde_json::from_str(&contents).context("Failed to parse conversation file")?;
 
     // The Conversation struct is backward compatible with the old format
     // No conversion needed

@@ -9,9 +9,12 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use crate::events::{AppEvent, EventBus, types::{McpEvent, UserEvent}};
-use crate::services::McpRegistryService;
 use super::{Presenter, PresenterError, ViewCommand};
+use crate::events::{
+    types::{McpEvent, UserEvent},
+    AppEvent, EventBus,
+};
+use crate::services::McpRegistryService;
 
 /// McpAddPresenter - handles MCP server addition UI
 ///
@@ -81,7 +84,8 @@ impl McpAddPresenter {
             return Ok(());
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -114,7 +118,8 @@ impl McpAddPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -177,7 +182,11 @@ impl McpAddPresenter {
         query: String,
         source: crate::events::types::McpRegistrySource,
     ) {
-        tracing::info!("Searching MCP registry source='{}' for: {}", source.name, query);
+        tracing::info!(
+            "Searching MCP registry source='{}' for: {}",
+            source.name,
+            query
+        );
 
         // Current registry service is source-agnostic; preserve caller source in projected payload
         // so the UI can keep source-specific context while backend support evolves.
@@ -223,14 +232,16 @@ impl McpAddPresenter {
         tracing::info!("Loading MCP from registry: {:?}", source);
         match mcp_registry_service.list_all().await {
             Ok(entries) => {
-                tracing::debug!("MCP registry entries loaded for selection: {}", entries.len());
+                tracing::debug!(
+                    "MCP registry entries loaded for selection: {}",
+                    entries.len()
+                );
 
                 let source_name = source.name;
-                let (source_hint, requested_name) = source_name
-                    .split_once("::")
-                    .map_or(("official".to_string(), source_name.clone()), |(source, name)| {
-                        (source.to_string(), name.to_string())
-                    });
+                let (source_hint, requested_name) = source_name.split_once("::").map_or(
+                    ("official".to_string(), source_name.clone()),
+                    |(source, name)| (source.to_string(), name.to_string()),
+                );
 
                 let selected = entries.into_iter().find(|e| e.name == requested_name);
                 if let Some(entry) = selected {
@@ -292,10 +303,7 @@ impl McpAddPresenter {
     /// Handle MCP domain events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
-    async fn handle_mcp_event(
-        _view_tx: &broadcast::Sender<ViewCommand>,
-        event: McpEvent,
-    ) {
+    async fn handle_mcp_event(_view_tx: &broadcast::Sender<ViewCommand>, event: McpEvent) {
         tracing::debug!("MCP event in McpAddPresenter: {:?}", event);
     }
 }
@@ -310,7 +318,8 @@ impl Presenter for McpAddPresenter {
     }
 
     fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 

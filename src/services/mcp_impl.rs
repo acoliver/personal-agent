@@ -1,15 +1,15 @@
 //! MCP service implementation
 
-use super::{McpService, McpServerStatus, McpTool, ServiceError, ServiceResult};
+use super::{McpServerStatus, McpService, McpTool, ServiceError, ServiceResult};
+use serde::{Deserialize, Serialize};
 use serdes_ai_mcp::{McpServerConfig, McpTransportConfig};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 
 /// File-based implementation of McpService
 pub struct McpServiceImpl {
@@ -45,12 +45,8 @@ impl From<&McpServerConfig> for TransportData {
                 command: command.clone(),
                 args: args.clone(),
             },
-            McpTransportConfig::Http { url } => TransportData::Http {
-                url: url.clone(),
-            },
-            McpTransportConfig::Sse { url } => TransportData::Http {
-                url: url.clone(),
-            },
+            McpTransportConfig::Http { url } => TransportData::Http { url: url.clone() },
+            McpTransportConfig::Sse { url } => TransportData::Http { url: url.clone() },
         }
     }
 }
@@ -62,9 +58,7 @@ impl From<&TransportData> for McpTransportConfig {
                 command: command.clone(),
                 args: args.clone(),
             },
-            TransportData::Http { url } => McpTransportConfig::Http {
-                url: url.clone(),
-            },
+            TransportData::Http { url } => McpTransportConfig::Http { url: url.clone() },
         }
     }
 }
@@ -126,7 +120,8 @@ impl McpServiceImpl {
             .map_err(|e| ServiceError::Io(format!("Failed to read MCP config directory: {e}")))?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| ServiceError::Io(format!("Failed to read directory entry: {e}")))?;
+            let entry = entry
+                .map_err(|e| ServiceError::Io(format!("Failed to read directory entry: {e}")))?;
 
             let path = entry.path();
 
@@ -136,11 +131,18 @@ impl McpServiceImpl {
             }
 
             // Read and parse config
-            let content = fs::read_to_string(&path)
-                .map_err(|e| ServiceError::Io(format!("Failed to read config file {}: {e}", path.display())))?;
+            let content = fs::read_to_string(&path).map_err(|e| {
+                ServiceError::Io(format!(
+                    "Failed to read config file {}: {e}",
+                    path.display()
+                ))
+            })?;
 
             let config: StoredMcpConfig = serde_json::from_str(&content).map_err(|e| {
-                ServiceError::Serialization(format!("Failed to parse config file {}: {e}", path.display()))
+                ServiceError::Serialization(format!(
+                    "Failed to parse config file {}: {e}",
+                    path.display()
+                ))
             })?;
 
             configs.push(config);
@@ -154,11 +156,19 @@ impl McpServiceImpl {
         let filename = format!("{}.json", config.server_uuid);
         let path = self.config_dir.join(filename);
 
-        let content = serde_json::to_string_pretty(config)
-            .map_err(|e| ServiceError::Serialization(format!("Failed to serialize config {}: {e}", config.server_uuid)))?;
+        let content = serde_json::to_string_pretty(config).map_err(|e| {
+            ServiceError::Serialization(format!(
+                "Failed to serialize config {}: {e}",
+                config.server_uuid
+            ))
+        })?;
 
-        fs::write(&path, content)
-            .map_err(|e| ServiceError::Io(format!("Failed to write config file {}: {e}", path.display())))?;
+        fs::write(&path, content).map_err(|e| {
+            ServiceError::Io(format!(
+                "Failed to write config file {}: {e}",
+                path.display()
+            ))
+        })?;
 
         Ok(())
     }
@@ -169,8 +179,12 @@ impl McpServiceImpl {
         let path = self.config_dir.join(filename);
 
         if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|e| ServiceError::Io(format!("Failed to delete config file {}: {e}", path.display())))?;
+            fs::remove_file(&path).map_err(|e| {
+                ServiceError::Io(format!(
+                    "Failed to delete config file {}: {e}",
+                    path.display()
+                ))
+            })?;
         }
 
         Ok(())
@@ -179,7 +193,9 @@ impl McpServiceImpl {
     /// Ensure status entry exists for a config
     async fn ensure_status(&self, id: Uuid) {
         let mut status_map = self.status_map.write().await;
-        status_map.entry(id).or_insert_with(|| McpServerStatus::Disconnected);
+        status_map
+            .entry(id)
+            .or_insert_with(|| McpServerStatus::Disconnected);
     }
 }
 
@@ -216,7 +232,10 @@ impl McpService for McpServiceImpl {
         self.ensure_status(id).await;
 
         let status_map = self.status_map.read().await;
-        Ok(status_map.get(&id).cloned().unwrap_or(McpServerStatus::Disconnected))
+        Ok(status_map
+            .get(&id)
+            .cloned()
+            .unwrap_or(McpServerStatus::Disconnected))
     }
 
     /// Enable or disable a config
@@ -345,7 +364,10 @@ impl McpService for McpServiceImpl {
 
         // Now get updated config
         let configs = self.configs.read().await;
-        let updated_stored = configs.iter().find(|c| c.server_uuid == server_uuid).unwrap();
+        let updated_stored = configs
+            .iter()
+            .find(|c| c.server_uuid == server_uuid)
+            .unwrap();
         Ok(McpServerConfig::from(&*updated_stored))
     }
 
@@ -423,7 +445,11 @@ impl McpService for McpServiceImpl {
     /// Get all enabled MCP servers
     async fn list_enabled(&self) -> ServiceResult<Vec<McpServerConfig>> {
         let configs = self.configs.read().await;
-        Ok(configs.iter().filter(|c| c.enabled).map(|c| McpServerConfig::from(c)).collect())
+        Ok(configs
+            .iter()
+            .filter(|c| c.enabled)
+            .map(|c| McpServerConfig::from(c))
+            .collect())
     }
 
     /// Get all available tools from all enabled servers
@@ -434,7 +460,10 @@ impl McpService for McpServiceImpl {
         for config in enabled {
             let configs = self.configs.read().await;
             if let Some(stored) = configs.iter().find(|c| c.name == config.name && c.enabled) {
-                let tools = self.get_available_tools(stored.server_uuid).await.unwrap_or_default();
+                let tools = self
+                    .get_available_tools(stored.server_uuid)
+                    .await
+                    .unwrap_or_default();
                 for tool in tools {
                     all_tools.push((stored.server_uuid, tool));
                 }
@@ -461,7 +490,10 @@ mod tests {
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -484,7 +516,10 @@ mod tests {
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -510,7 +545,10 @@ mod tests {
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -522,7 +560,13 @@ mod tests {
         drop(stored_configs);
 
         service
-            .update(server_uuid, Some("Updated MCP".to_string()), None, None, None)
+            .update(
+                server_uuid,
+                Some("Updated MCP".to_string()),
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -541,7 +585,10 @@ mod tests {
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -571,7 +618,10 @@ mod tests {
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -599,7 +649,10 @@ mod tests {
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -627,7 +680,10 @@ mod tests {
             .add(
                 "Test MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -653,7 +709,10 @@ mod tests {
             .add(
                 "Duplicate MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -673,7 +732,10 @@ mod tests {
             .add(
                 "Duplicate MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -686,8 +748,7 @@ mod tests {
             .expect("resolved id should exist");
 
         assert_ne!(
-            resolved,
-            first_id,
+            resolved, first_id,
             "resolve_id_by_name should prefer the latest matching config id"
         );
     }
@@ -703,7 +764,10 @@ mod tests {
             .add(
                 "Mixed Case MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-test".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-test".to_string(),
+                ],
                 None,
             )
             .await
@@ -722,8 +786,7 @@ mod tests {
             .expect("case-insensitive resolved id should exist");
 
         assert_eq!(
-            resolved_lower,
-            expected,
+            resolved_lower, expected,
             "resolve_id_by_name should support case-insensitive fallback"
         );
     }
@@ -739,7 +802,11 @@ mod tests {
             .add(
                 "Cmd Update MCP".to_string(),
                 "node".to_string(),
-                vec!["server.js".to_string(), "--port".to_string(), "9000".to_string()],
+                vec![
+                    "server.js".to_string(),
+                    "--port".to_string(),
+                    "9000".to_string(),
+                ],
                 None,
             )
             .await
@@ -751,13 +818,7 @@ mod tests {
         };
 
         let updated = service
-            .update(
-                server_uuid,
-                None,
-                Some("deno".to_string()),
-                None,
-                None,
-            )
+            .update(server_uuid, None, Some("deno".to_string()), None, None)
             .await
             .unwrap();
 
@@ -766,7 +827,11 @@ mod tests {
                 assert_eq!(command, "deno");
                 assert_eq!(
                     args,
-                    vec!["server.js".to_string(), "--port".to_string(), "9000".to_string()],
+                    vec![
+                        "server.js".to_string(),
+                        "--port".to_string(),
+                        "9000".to_string()
+                    ],
                     "updating command only must preserve existing args"
                 );
             }
@@ -785,7 +850,10 @@ mod tests {
             .add(
                 "Args Update MCP".to_string(),
                 "npx".to_string(),
-                vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-fetch".to_string(),
+                ],
                 None,
             )
             .await
@@ -801,7 +869,10 @@ mod tests {
                 server_uuid,
                 None,
                 None,
-                Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]),
+                Some(vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-filesystem".to_string(),
+                ]),
                 None,
             )
             .await
@@ -809,14 +880,19 @@ mod tests {
 
         match updated.transport {
             McpTransportConfig::Stdio { command, args } => {
-                assert_eq!(command, "npx", "updating args only must preserve existing command");
+                assert_eq!(
+                    command, "npx",
+                    "updating args only must preserve existing command"
+                );
                 assert_eq!(
                     args,
-                    vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]
+                    vec![
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-filesystem".to_string()
+                    ]
                 );
             }
             _ => panic!("expected stdio transport"),
         }
     }
-
 }

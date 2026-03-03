@@ -1,9 +1,9 @@
+use async_trait::async_trait;
 use std::fs;
 use std::path::PathBuf;
-use async_trait::async_trait;
 
-use crate::services::{ServiceError, ServiceResult};
 use crate::services::secrets::SecretsService;
+use crate::services::{ServiceError, ServiceResult};
 
 pub struct SecretsServiceImpl {
     secrets_dir: PathBuf,
@@ -11,12 +11,11 @@ pub struct SecretsServiceImpl {
 
 impl SecretsServiceImpl {
     pub fn new(secrets_dir: PathBuf) -> Result<Self, ServiceError> {
-        fs::create_dir_all(&secrets_dir)
-            .map_err(|e| ServiceError::Storage(format!("Failed to create secrets directory: {}", e)))?;
-        
-        Ok(Self {
-            secrets_dir,
-        })
+        fs::create_dir_all(&secrets_dir).map_err(|e| {
+            ServiceError::Storage(format!("Failed to create secrets directory: {}", e))
+        })?;
+
+        Ok(Self { secrets_dir })
     }
 
     fn get_secret_path(&self, key: &str) -> PathBuf {
@@ -33,11 +32,18 @@ impl SecretsServiceImpl {
         }
 
         if key.contains('/') || key.contains('\\') || key.contains("..") {
-            return Err(ServiceError::Validation("Key contains invalid characters".to_string()));
+            return Err(ServiceError::Validation(
+                "Key contains invalid characters".to_string(),
+            ));
         }
 
-        if key.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-' && c != '.') {
-            return Err(ServiceError::Validation("Key contains invalid characters".to_string()));
+        if key
+            .chars()
+            .any(|c| !c.is_alphanumeric() && c != '_' && c != '-' && c != '.')
+        {
+            return Err(ServiceError::Validation(
+                "Key contains invalid characters".to_string(),
+            ));
         }
 
         Ok(())
@@ -58,7 +64,7 @@ impl SecretsService for SecretsServiceImpl {
         self.validate_key(key)?;
 
         let path = self.get_secret_path(key);
-        
+
         if !path.exists() {
             return Ok(None);
         }
@@ -72,7 +78,7 @@ impl SecretsService for SecretsServiceImpl {
         self.validate_key(key)?;
 
         let path = self.get_secret_path(key);
-        
+
         if !path.exists() {
             return Err(ServiceError::NotFound(format!("Secret not found: {}", key)));
         }
@@ -84,11 +90,14 @@ impl SecretsService for SecretsServiceImpl {
     async fn list_keys(&self) -> ServiceResult<Vec<String>> {
         let mut keys = Vec::new();
 
-        let entries = fs::read_dir(&self.secrets_dir)
-            .map_err(|e| ServiceError::Storage(format!("Failed to read secrets directory: {}", e)))?;
+        let entries = fs::read_dir(&self.secrets_dir).map_err(|e| {
+            ServiceError::Storage(format!("Failed to read secrets directory: {}", e))
+        })?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| ServiceError::Storage(format!("Failed to read directory entry: {}", e)))?;
+            let entry = entry.map_err(|e| {
+                ServiceError::Storage(format!("Failed to read directory entry: {}", e))
+            })?;
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) != Some("txt") {
@@ -126,7 +135,7 @@ impl SecretsService for SecretsServiceImpl {
         self.validate_key(provider)?;
 
         let path = self.get_api_key_path(provider);
-        
+
         if !path.exists() {
             return Ok(None);
         }
@@ -140,9 +149,12 @@ impl SecretsService for SecretsServiceImpl {
         self.validate_key(provider)?;
 
         let path = self.get_api_key_path(provider);
-        
+
         if !path.exists() {
-            return Err(ServiceError::NotFound(format!("API key not found: {}", provider)));
+            return Err(ServiceError::NotFound(format!(
+                "API key not found: {}",
+                provider
+            )));
         }
 
         fs::remove_file(&path)

@@ -11,10 +11,10 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+use super::{Presenter, PresenterError, ViewCommand};
 use crate::events::{types::UserEvent, AppEvent, EventBus};
 use crate::registry::ModelInfo as RegistryModelInfo;
 use crate::services::ModelsRegistryService;
-use super::{Presenter, PresenterError, ViewCommand};
 
 /// ModelSelectorPresenter - handles model selection UI
 ///
@@ -84,7 +84,8 @@ impl ModelSelectorPresenter {
             return Ok(());
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -117,7 +118,8 @@ impl ModelSelectorPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -166,7 +168,8 @@ impl ModelSelectorPresenter {
                 provider_id,
                 model_id,
             } => {
-                Self::on_select_model(models_registry_service, view_tx, provider_id, model_id).await;
+                Self::on_select_model(models_registry_service, view_tx, provider_id, model_id)
+                    .await;
             }
             _ => {} // Ignore other user events
         }
@@ -228,7 +231,9 @@ impl ModelSelectorPresenter {
         let model_infos = Self::map_models_to_view(models);
 
         tracing::info!("Sending {} models to view", model_infos.len());
-        let _ = view_tx.send(ViewCommand::ModelSearchResults { models: model_infos });
+        let _ = view_tx.send(ViewCommand::ModelSearchResults {
+            models: model_infos,
+        });
     }
 
     /// Search models by query and emit ModelSearchResults.
@@ -295,7 +300,11 @@ impl ModelSelectorPresenter {
         provider_id: String,
         model_id: String,
     ) {
-        tracing::info!("Model selected: provider={} model={}", provider_id, model_id);
+        tracing::info!(
+            "Model selected: provider={} model={}",
+            provider_id,
+            model_id
+        );
 
         let context_length = models_registry_service
             .list_all()
@@ -329,7 +338,8 @@ impl Presenter for ModelSelectorPresenter {
     }
 
     fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 

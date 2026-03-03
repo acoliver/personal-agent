@@ -1,4 +1,3 @@
-
 //! Settings View - MCP saved state handling tests
 
 use uuid::Uuid;
@@ -30,18 +29,27 @@ fn test_mcp_config_saved_new_item_is_enabled_and_running() {
         );
     }
 
-    let saved = state.mcps.iter().find(|m| m.id == id).expect("saved MCP exists");
+    let saved = state
+        .mcps
+        .iter()
+        .find(|m| m.id == id)
+        .expect("saved MCP exists");
     assert!(saved.enabled, "newly saved MCP should be enabled");
-    assert_eq!(saved.status, McpStatus::Running, "newly saved MCP should be Running");
+    assert_eq!(
+        saved.status,
+        McpStatus::Running,
+        "newly saved MCP should be Running"
+    );
 }
 
 #[test]
 fn test_mcp_config_saved_existing_item_is_enabled_and_running() {
     let id = Uuid::new_v4();
     let mut state = SettingsState::new();
-    state
-        .mcps
-        .push(personal_agent::ui_gpui::views::settings_view::McpItem::new(id, "Old").with_status(McpStatus::Error));
+    state.mcps.push(
+        personal_agent::ui_gpui::views::settings_view::McpItem::new(id, "Old")
+            .with_status(McpStatus::Error),
+    );
 
     // Mirror SettingsView::handle_command MCP save branch for existing path.
     state.selected_mcp_id = Some(id);
@@ -51,8 +59,16 @@ fn test_mcp_config_saved_existing_item_is_enabled_and_running() {
         existing.status = McpStatus::Running;
     }
 
-    let saved = state.mcps.iter().find(|m| m.id == id).expect("saved MCP exists");
+    let saved = state
+        .mcps
+        .iter()
+        .find(|m| m.id == id)
+        .expect("saved MCP exists");
     assert!(saved.enabled, "existing MCP should be enabled after save");
-    assert_eq!(saved.status, McpStatus::Running, "existing MCP should be Running after save");
+    assert_eq!(
+        saved.status,
+        McpStatus::Running,
+        "existing MCP should be Running after save"
+    );
     assert_eq!(saved.name, "Updated");
 }

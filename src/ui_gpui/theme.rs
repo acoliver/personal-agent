@@ -32,7 +32,7 @@ fn rgb_to_hsla(r: f32, g: f32, b: f32, a: f32) -> Hsla {
 }
 
 /// Dark theme color constants for GPUI
-/// 
+///
 /// All color values are extracted from src/ui/theme.rs to ensure
 /// visual parity between AppKit and GPUI implementations.
 pub struct Theme;
@@ -56,11 +56,11 @@ impl Theme {
     pub const ASSISTANT_BUBBLE_BG: (f32, f32, f32) = (0.102, 0.102, 0.102); // #1a1a1a
     pub const ERROR: (f32, f32, f32) = (0.937, 0.263, 0.263); // #ef4343 - errors
     pub const WARNING: (f32, f32, f32) = (1.0, 0.769, 0.0); // #ffc400 - warnings
-    
+
     // Phase 03: Chat view specific colors
     pub const USER_BUBBLE: u32 = 0x141414; // Neutral dark user message bubble
-    pub const THINKING_BG: u32 = 0x101010;  // Subtle dark thinking background
-    pub const DANGER: u32 = 0x4a2a2a;       // Red tint for stop/danger
+    pub const THINKING_BG: u32 = 0x101010; // Subtle dark thinking background
+    pub const DANGER: u32 = 0x4a2a2a; // Red tint for stop/danger
 
     // Spacing constants (in pixels)
     pub const SPACING_XS: f32 = 4.0;
@@ -82,9 +82,14 @@ impl Theme {
     pub const FONT_SIZE_LG: f32 = 16.0;
 
     // === Background Colors ===
-    
+
     pub fn bg_darkest() -> Hsla {
-        rgb_to_hsla(Self::BG_DARKEST.0, Self::BG_DARKEST.1, Self::BG_DARKEST.2, 1.0)
+        rgb_to_hsla(
+            Self::BG_DARKEST.0,
+            Self::BG_DARKEST.1,
+            Self::BG_DARKEST.2,
+            1.0,
+        )
     }
 
     pub fn bg_darker() -> Hsla {
@@ -96,41 +101,71 @@ impl Theme {
     }
 
     // === Text Colors ===
-    
+
     pub fn text_primary() -> Hsla {
-        rgb_to_hsla(Self::TEXT_PRIMARY.0, Self::TEXT_PRIMARY.1, Self::TEXT_PRIMARY.2, 1.0)
+        rgb_to_hsla(
+            Self::TEXT_PRIMARY.0,
+            Self::TEXT_PRIMARY.1,
+            Self::TEXT_PRIMARY.2,
+            1.0,
+        )
     }
 
     pub fn text_secondary() -> Hsla {
-        rgb_to_hsla(Self::TEXT_SECONDARY.0, Self::TEXT_SECONDARY.1, Self::TEXT_SECONDARY.2, 1.0)
+        rgb_to_hsla(
+            Self::TEXT_SECONDARY.0,
+            Self::TEXT_SECONDARY.1,
+            Self::TEXT_SECONDARY.2,
+            1.0,
+        )
     }
 
     pub fn text_muted() -> Hsla {
-        rgb_to_hsla(Self::TEXT_MUTED.0, Self::TEXT_MUTED.1, Self::TEXT_MUTED.2, 1.0)
+        rgb_to_hsla(
+            Self::TEXT_MUTED.0,
+            Self::TEXT_MUTED.1,
+            Self::TEXT_MUTED.2,
+            1.0,
+        )
     }
 
     // === Accent Colors ===
-    
+
     pub fn accent() -> Hsla {
         rgb_to_hsla(Self::ACCENT.0, Self::ACCENT.1, Self::ACCENT.2, 1.0)
     }
 
     pub fn accent_hover() -> Hsla {
-        rgb_to_hsla(Self::ACCENT_HOVER.0, Self::ACCENT_HOVER.1, Self::ACCENT_HOVER.2, 1.0)
+        rgb_to_hsla(
+            Self::ACCENT_HOVER.0,
+            Self::ACCENT_HOVER.1,
+            Self::ACCENT_HOVER.2,
+            1.0,
+        )
     }
 
     // === UI Colors ===
-    
+
     pub fn border() -> Hsla {
         rgb_to_hsla(Self::BORDER.0, Self::BORDER.1, Self::BORDER.2, 1.0)
     }
 
     pub fn user_bubble_bg() -> Hsla {
-        rgb_to_hsla(Self::USER_BUBBLE_BG.0, Self::USER_BUBBLE_BG.1, Self::USER_BUBBLE_BG.2, 1.0)
+        rgb_to_hsla(
+            Self::USER_BUBBLE_BG.0,
+            Self::USER_BUBBLE_BG.1,
+            Self::USER_BUBBLE_BG.2,
+            1.0,
+        )
     }
 
     pub fn assistant_bubble_bg() -> Hsla {
-        rgb_to_hsla(Self::ASSISTANT_BUBBLE_BG.0, Self::ASSISTANT_BUBBLE_BG.1, Self::ASSISTANT_BUBBLE_BG.2, 1.0)
+        rgb_to_hsla(
+            Self::ASSISTANT_BUBBLE_BG.0,
+            Self::ASSISTANT_BUBBLE_BG.1,
+            Self::ASSISTANT_BUBBLE_BG.2,
+            1.0,
+        )
     }
 
     pub fn error() -> Hsla {
@@ -142,27 +177,27 @@ impl Theme {
     }
 
     // === Phase 03: Chat View Colors ===
-    
+
     /// Chat area background (#000000)
     pub fn bg_base() -> Hsla {
         rgb_to_hsla(Self::BG_BASE.0, Self::BG_BASE.1, Self::BG_BASE.2, 1.0)
     }
-    
+
     /// User message bubble - green tint (#2a4a2a)
     pub fn user_bubble() -> Rgba {
         rgb(Self::USER_BUBBLE)
     }
-    
+
     /// Assistant message bubble - same as bg_darker
     pub fn assistant_bubble() -> Hsla {
         Self::bg_darker()
     }
-    
+
     /// Thinking block background - blue tint (#1a1a2a)
     pub fn thinking_bg() -> Rgba {
         rgb(Self::THINKING_BG)
     }
-    
+
     /// Danger/stop button background - red tint (#4a2a2a)
     pub fn danger() -> Rgba {
         rgb(Self::DANGER)

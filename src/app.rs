@@ -17,18 +17,16 @@
 //! @plan PLAN-20250125-REFACTOR.P13
 //! @requirement REQ-025.1
 
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::events::EventBus;
-use crate::presentation::{
-    ChatPresenter, ErrorPresenter, HistoryPresenter, SettingsPresenter,
-};
+use crate::presentation::{ChatPresenter, ErrorPresenter, HistoryPresenter, SettingsPresenter};
 use crate::services::{
-    AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl,
-    ConversationService, ConversationServiceImpl, McpRegistryService, McpRegistryServiceImpl,
-    McpService, McpServiceImpl, ModelsRegistryService, ModelsRegistryServiceImpl,
-    ProfileService, ProfileServiceImpl, SecretsService, SecretsServiceImpl,
+    AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl, ConversationService,
+    ConversationServiceImpl, McpRegistryService, McpRegistryServiceImpl, McpService,
+    McpServiceImpl, ModelsRegistryService, ModelsRegistryServiceImpl, ProfileService,
+    ProfileServiceImpl, SecretsService, SecretsServiceImpl,
 };
 
 /// Application instance
@@ -99,7 +97,10 @@ impl App {
             base_dir,
         };
 
-        Ok(Self { context, presenters })
+        Ok(Self {
+            context,
+            presenters,
+        })
     }
 
     /// Initialize service layer
@@ -114,7 +115,12 @@ impl App {
         // Create directories if they don't exist
         tokio::fs::create_dir_all(&conversations_dir)
             .await
-            .map_err(|e| AppError::ServiceInitFailed(format!("Failed to create conversations directory: {}", e)))?;
+            .map_err(|e| {
+                AppError::ServiceInitFailed(format!(
+                    "Failed to create conversations directory: {}",
+                    e
+                ))
+            })?;
 
         // Initialize services
         let secrets_service: Arc<SecretsServiceImpl> = Arc::new(
@@ -128,7 +134,9 @@ impl App {
         );
 
         // Initialize profile service to load existing profiles
-        profile_service.initialize().await
+        profile_service
+            .initialize()
+            .await
             .map_err(|e| AppError::ServiceInitFailed(format!("ProfileService init: {}", e)))?;
 
         let conversation_service: Arc<ConversationServiceImpl> = Arc::new(
@@ -141,10 +149,10 @@ impl App {
                 .map_err(|e| AppError::ServiceInitFailed(format!("AppSettingsService: {}", e)))?,
         );
 
-        let models_registry_service: Arc<ModelsRegistryServiceImpl> = Arc::new(
-            ModelsRegistryServiceImpl::new()
-                .map_err(|e| AppError::ServiceInitFailed(format!("ModelsRegistryService: {}", e)))?,
-        );
+        let models_registry_service: Arc<ModelsRegistryServiceImpl> =
+            Arc::new(ModelsRegistryServiceImpl::new().map_err(|e| {
+                AppError::ServiceInitFailed(format!("ModelsRegistryService: {}", e))
+            })?);
 
         let mcp_registry_service: Arc<McpRegistryServiceImpl> = Arc::new(
             McpRegistryServiceImpl::new()
@@ -157,15 +165,15 @@ impl App {
         );
 
         // Initialize MCP service to load existing configs
-        mcp_service.initialize().await
+        mcp_service
+            .initialize()
+            .await
             .map_err(|e| AppError::ServiceInitFailed(format!("McpService init: {}", e)))?;
 
-        let chat_service: Arc<ChatServiceImpl> = Arc::new(
-            ChatServiceImpl::new(
-                Arc::clone(&conversation_service) as Arc<dyn ConversationService>,
-                Arc::clone(&profile_service) as Arc<dyn ProfileService>,
-            )
-        );
+        let chat_service: Arc<ChatServiceImpl> = Arc::new(ChatServiceImpl::new(
+            Arc::clone(&conversation_service) as Arc<dyn ConversationService>,
+            Arc::clone(&profile_service) as Arc<dyn ProfileService>,
+        ));
 
         Ok(ServiceRegistry {
             conversation: Arc::clone(&conversation_service) as Arc<dyn ConversationService>,

@@ -2,7 +2,9 @@
 //!
 //! Validates local can-save gating for MCP configure drafts.
 
-use personal_agent::ui_gpui::views::mcp_configure_view::{McpAuthMethod, McpConfigureData, OAuthStatus};
+use personal_agent::ui_gpui::views::mcp_configure_view::{
+    McpAuthMethod, McpConfigureData, OAuthStatus,
+};
 
 #[test]
 fn test_can_save_requires_name_and_command_for_none_auth() {

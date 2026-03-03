@@ -5,9 +5,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use objc2_app_kit::NSStatusBar;
-use objc2_foundation::{NSString, MainThreadMarker};
 use objc2::rc::Retained;
+use objc2_app_kit::NSStatusBar;
+use objc2_foundation::{MainThreadMarker, NSString};
 
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::popup_window::PopupWindow;
@@ -30,22 +30,21 @@ impl TrayBridge {
     /// Create a new tray bridge with status item and popup window
     pub fn new(gpui_bridge: Arc<GpuiBridge>) -> anyhow::Result<Self> {
         // Get main thread marker
-        let mtm = MainThreadMarker::new()
-            .ok_or_else(|| anyhow::anyhow!("Not on main thread"))?;
-        
+        let mtm = MainThreadMarker::new().ok_or_else(|| anyhow::anyhow!("Not on main thread"))?;
+
         // Get the system status bar
         let status_bar = NSStatusBar::systemStatusBar();
-        
+
         // Create a status item with square length (standard for icons)
         let status_item = status_bar.statusItemWithLength(24.0);
-        
+
         // Configure the status item button
         if let Some(button) = status_item.button(mtm) {
             // Set the button title
             let title = NSString::from_str("PA");
             button.setTitle(&title);
         }
-        
+
         let tray_bridge = Self {
             status_item,
             popup_window: Arc::new(Mutex::new(None)),
@@ -53,14 +52,14 @@ impl TrayBridge {
             is_visible: Arc::new(Mutex::new(false)),
             mtm,
         };
-        
+
         Ok(tray_bridge)
     }
-    
+
     /// Toggle the popup window visibility
     pub fn toggle_popup(&self) {
         let mut visible = self.is_visible.lock().unwrap();
-        
+
         if *visible {
             self.hide_popup();
             *visible = false;
@@ -69,7 +68,7 @@ impl TrayBridge {
             *visible = true;
         }
     }
-    
+
     /// Show the popup window
     pub fn show_popup(&self) {
         let mut popup_guard = self.popup_window.lock().unwrap();
@@ -82,7 +81,7 @@ impl TrayBridge {
             }
         }
     }
-    
+
     /// Hide the popup window
     pub fn hide_popup(&self) {
         if let Some(mut window) = self.popup_window.lock().unwrap().take() {
@@ -91,18 +90,18 @@ impl TrayBridge {
             *self.popup_window.lock().unwrap() = Some(window);
         }
     }
-    
+
     /// Set the popup window
     pub fn set_popup_window(&self, window: PopupWindow) {
         let mut popup = self.popup_window.lock().unwrap();
         *popup = Some(window);
     }
-    
+
     /// Check if popup is currently visible
     pub fn is_popup_visible(&self) -> bool {
         *self.is_visible.lock().unwrap()
     }
-    
+
     /// Handle click outside the popup window to dismiss it
     pub fn handle_click_outside(&self) {
         if self.is_popup_visible() {
@@ -110,7 +109,7 @@ impl TrayBridge {
             *self.is_visible.lock().unwrap() = false;
         }
     }
-    
+
     /// Get the GPUI bridge
     pub fn gpui_bridge(&self) -> Arc<GpuiBridge> {
         Arc::clone(&self.gpui_bridge)
@@ -120,14 +119,14 @@ impl TrayBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     #[ignore = "Requires macOS main thread GUI context"]
     fn test_tray_bridge_creation() {
         let (user_tx, _user_rx) = flume::unbounded();
         let (_view_cmd_tx, view_cmd_rx) = flume::unbounded();
         let gpui_bridge = Arc::new(GpuiBridge::new(user_tx, view_cmd_rx));
-        
+
         let tray = TrayBridge::new(gpui_bridge);
         assert!(tray.is_ok());
     }

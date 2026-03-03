@@ -3,15 +3,17 @@
 //! @plan PLAN-20250128-GPUI.P04
 //! @requirement REQ-GPUI-006
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use flume;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use personal_agent::events::types::UserEvent;
 use personal_agent::events::{AppEvent, EventBus};
 use personal_agent::presentation::ViewCommand;
-use personal_agent::ui_gpui::bridge::{GpuiBridge, ViewCommandSink, spawn_user_event_forwarder, GpuiNotifier};
+use personal_agent::ui_gpui::bridge::{
+    spawn_user_event_forwarder, GpuiBridge, GpuiNotifier, ViewCommandSink,
+};
 
 // === Mock Notifier ===
 
@@ -23,7 +25,9 @@ struct MockNotifier {
 
 impl MockNotifier {
     fn new() -> Self {
-        Self { count: Arc::new(AtomicUsize::new(0)) }
+        Self {
+            count: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     fn notify_count(&self) -> usize {
@@ -48,7 +52,7 @@ fn test_gpui_bridge_creation() {
     let (_view_tx, view_rx) = flume::bounded::<ViewCommand>(16);
 
     let bridge = GpuiBridge::new(user_tx, view_rx);
-    
+
     // Bridge should be created without panic
     assert!(!bridge.has_pending_commands());
 }
@@ -64,13 +68,15 @@ fn test_gpui_bridge_emit_user_event() {
     let bridge = GpuiBridge::new(user_tx, view_rx);
 
     // Emit a UserEvent
-    let result = bridge.emit(UserEvent::SendMessage { text: "Hello".to_string() });
+    let result = bridge.emit(UserEvent::SendMessage {
+        text: "Hello".to_string(),
+    });
     assert!(result, "emit should return true on success");
 
     // Verify it arrived in channel
     let received = user_rx.try_recv();
     assert!(received.is_ok(), "Should receive the event");
-    
+
     match received.unwrap() {
         UserEvent::SendMessage { text } => assert_eq!(text, "Hello"),
         _ => panic!("Wrong event type"),
@@ -110,8 +116,16 @@ fn test_gpui_bridge_drain_commands() {
     let bridge = GpuiBridge::new(user_tx, view_rx);
 
     // Send some ViewCommands
-    view_tx.send(ViewCommand::ShowThinking { conversation_id: Uuid::new_v4() }).unwrap();
-    view_tx.send(ViewCommand::HideThinking { conversation_id: Uuid::new_v4() }).unwrap();
+    view_tx
+        .send(ViewCommand::ShowThinking {
+            conversation_id: Uuid::new_v4(),
+        })
+        .unwrap();
+    view_tx
+        .send(ViewCommand::HideThinking {
+            conversation_id: Uuid::new_v4(),
+        })
+        .unwrap();
 
     // Drain should get both
     let commands = bridge.drain_commands();
@@ -263,9 +277,9 @@ async fn test_user_event_forwarder_publishes() {
     // Should arrive at EventBus
     let received = bus_rx.try_recv();
     assert!(received.is_ok());
-    
+
     match received.unwrap() {
-        AppEvent::User(UserEvent::NewConversation) => {},
+        AppEvent::User(UserEvent::NewConversation) => {}
         other => panic!("Expected NewConversation, got {:?}", other),
     }
 }
@@ -284,10 +298,7 @@ async fn test_user_event_forwarder_exits_on_disconnect() {
     drop(user_tx);
 
     // Forwarder should exit
-    let result = tokio::time::timeout(
-        tokio::time::Duration::from_millis(100),
-        handle
-    ).await;
+    let result = tokio::time::timeout(tokio::time::Duration::from_millis(100), handle).await;
 
     assert!(result.is_ok(), "Forwarder should exit when sender dropped");
 }
@@ -317,7 +328,9 @@ async fn test_full_bridge_round_trip() {
     let _handle = spawn_user_event_forwarder(event_bus.clone(), user_rx);
 
     // === Simulate GPUI -> tokio ===
-    bridge.emit(UserEvent::SendMessage { text: "Test".to_string() });
+    bridge.emit(UserEvent::SendMessage {
+        text: "Test".to_string(),
+    });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
@@ -326,7 +339,9 @@ async fn test_full_bridge_round_trip() {
     assert!(event.is_ok());
 
     // === Simulate tokio -> GPUI ===
-    sink.send(ViewCommand::ShowThinking { conversation_id: Uuid::new_v4() });
+    sink.send(ViewCommand::ShowThinking {
+        conversation_id: Uuid::new_v4(),
+    });
 
     // GPUI should be notified
     assert_eq!(notifier.notify_count(), 1);
@@ -351,7 +366,7 @@ async fn test_e2e_with_state_application() {
 
     // Create bridge (GPUI side)
     let bridge = GpuiBridge::new(user_tx.clone(), view_rx);
-    
+
     // Create sink (presenter side)
     let sink = ViewCommandSink::new(view_tx, notifier.clone());
 
@@ -362,7 +377,9 @@ async fn test_e2e_with_state_application() {
     let mut bus_rx = event_bus.subscribe();
 
     // 1. GPUI emits UserEvent
-    bridge.emit(UserEvent::SendMessage { text: "Hello".to_string() });
+    bridge.emit(UserEvent::SendMessage {
+        text: "Hello".to_string(),
+    });
 
     // 2. Verify EventBus received it
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -375,14 +392,16 @@ async fn test_e2e_with_state_application() {
 
     // 3. Simulate presenter sending ViewCommand
     let conv_id = Uuid::new_v4();
-    sink.send(ViewCommand::ShowThinking { conversation_id: conv_id });
-    sink.send(ViewCommand::AppendStream { 
-        conversation_id: conv_id, 
-        chunk: "Hi there!".to_string() 
+    sink.send(ViewCommand::ShowThinking {
+        conversation_id: conv_id,
     });
-    sink.send(ViewCommand::FinalizeStream { 
-        conversation_id: conv_id, 
-        tokens: 10 
+    sink.send(ViewCommand::AppendStream {
+        conversation_id: conv_id,
+        chunk: "Hi there!".to_string(),
+    });
+    sink.send(ViewCommand::FinalizeStream {
+        conversation_id: conv_id,
+        tokens: 10,
     });
 
     // 4. Verify notifier was called
@@ -433,7 +452,7 @@ async fn test_view_command_overflow_behavior() {
     // Fill channel
     sink.send(ViewCommand::ClearError);
     sink.send(ViewCommand::ClearError);
-    
+
     // Next send should overflow but not block
     let start = std::time::Instant::now();
     sink.send(ViewCommand::ClearError); // This one will be dropped
@@ -441,7 +460,7 @@ async fn test_view_command_overflow_behavior() {
 
     // Should not block
     assert!(elapsed.as_millis() < 10);
-    
+
     // Notifier should still be called (3 times)
     assert_eq!(notifier.notify_count(), 3);
 

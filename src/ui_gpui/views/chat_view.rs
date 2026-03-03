@@ -3,12 +3,12 @@
 //! @plan PLAN-20250130-GPUIREDUX.P04
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, SharedString, MouseButton, FocusHandle, FontWeight};
+use crate::events::types::UserEvent;
+use crate::presentation::view_command::{ConversationSummary, ProfileSummary, ViewCommand};
+use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::components::AssistantBubble;
 use crate::ui_gpui::theme::Theme;
-use crate::ui_gpui::bridge::GpuiBridge;
-use crate::presentation::view_command::{ConversationSummary, ProfileSummary, ViewCommand};
-use crate::events::types::UserEvent;
+use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -77,18 +77,20 @@ pub struct ChatState {
     pub show_thinking: bool,
     pub thinking_content: Option<String>,
     pub input_text: String,
+    pub cursor_position: usize,
     pub conversation_title: String,
+    pub current_model: String,
+    pub profiles: Vec<ProfileSummary>,
+    pub selected_profile_id: Option<Uuid>,
+    pub profile_dropdown_open: bool,
+    pub profile_dropdown_index: usize,
     pub conversations: Vec<ConversationSummary>,
     pub active_conversation_id: Option<Uuid>,
     pub conversation_dropdown_open: bool,
     pub conversation_dropdown_index: usize,
     pub conversation_title_editing: bool,
     pub conversation_title_input: String,
-    pub current_model: String,
-    pub profiles: Vec<ProfileSummary>,
-    pub selected_profile_id: Option<Uuid>,
-    pub profile_dropdown_open: bool,
-    pub profile_dropdown_index: usize,
+    pub rename_replace_on_next_char: bool,
 }
 
 impl Default for ChatState {
@@ -99,6 +101,7 @@ impl Default for ChatState {
             show_thinking: false,
             thinking_content: None,
             input_text: String::new(),
+            cursor_position: 0,
             conversation_title: "New Conversation".to_string(),
             conversations: Vec::new(),
             active_conversation_id: None,
@@ -106,6 +109,7 @@ impl Default for ChatState {
             conversation_dropdown_index: 0,
             conversation_title_editing: false,
             conversation_title_input: String::new(),
+            rename_replace_on_next_char: false,
             current_model: "No profile selected".to_string(),
             profiles: Vec::new(),
             selected_profile_id: None,
@@ -151,7 +155,11 @@ impl ChatState {
 
     fn selected_conversation(&self) -> Option<&ConversationSummary> {
         self.active_conversation_id
-            .and_then(|id| self.conversations.iter().find(|conversation| conversation.id == id))
+            .and_then(|id| {
+                self.conversations
+                    .iter()
+                    .find(|conversation| conversation.id == id)
+            })
             .or_else(|| self.conversations.first())
     }
 
@@ -171,7 +179,11 @@ impl ChatState {
     fn sync_conversation_dropdown_index(&mut self) {
         self.conversation_dropdown_index = self
             .active_conversation_id
-            .and_then(|id| self.conversations.iter().position(|conversation| conversation.id == id))
+            .and_then(|id| {
+                self.conversations
+                    .iter()
+                    .position(|conversation| conversation.id == id)
+            })
             .unwrap_or(0)
             .min(self.conversations.len().saturating_sub(1));
     }
@@ -198,9 +210,8 @@ impl ChatState {
     }
 }
 
-
 /// Chat view component with event handling
-/// 
+///
 /// @plan PLAN-20250130-GPUIREDUX.P04
 pub struct ChatView {
     pub state: ChatState,
@@ -211,7 +222,7 @@ pub struct ChatView {
 
 impl ChatView {
     pub fn new(state: ChatState, cx: &mut gpui::Context<Self>) -> Self {
-        Self { 
+        Self {
             state,
             focus_handle: cx.focus_handle(),
             bridge: None,
@@ -250,7 +261,12 @@ impl ChatView {
         self.state
             .active_conversation_id
             .or(self.conversation_id)
-            .or_else(|| self.state.conversations.first().map(|conversation| conversation.id))
+            .or_else(|| {
+                self.state
+                    .conversations
+                    .first()
+                    .map(|conversation| conversation.id)
+            })
     }
 
     fn select_conversation_at_index(&mut self, index: usize, cx: &mut gpui::Context<Self>) {
@@ -260,13 +276,21 @@ impl ChatView {
 
         let bounded = index.min(self.state.conversations.len() - 1);
         let conversation_id = self.state.conversations[bounded].id;
+        tracing::info!(
+            conversation_id = %conversation_id,
+            index = bounded,
+            total = self.state.conversations.len(),
+            "ChatView: selecting conversation from dropdown"
+        );
         self.state.conversation_dropdown_index = bounded;
         self.state.active_conversation_id = Some(conversation_id);
         self.conversation_id = Some(conversation_id);
         self.state.conversation_dropdown_open = false;
         self.state.conversation_title_editing = false;
         self.state.sync_conversation_title_from_active();
-        self.emit(UserEvent::SelectConversation { id: conversation_id });
+        self.emit(UserEvent::SelectConversation {
+            id: conversation_id,
+        });
         cx.notify();
     }
 
@@ -277,6 +301,12 @@ impl ChatView {
             self.state.conversation_title_editing = false;
             self.state.sync_conversation_dropdown_index();
         }
+        tracing::info!(
+            open = self.state.conversation_dropdown_open,
+            count = self.state.conversations.len(),
+            selected_index = self.state.conversation_dropdown_index,
+            "ChatView: toggled conversation dropdown"
+        );
         cx.notify();
     }
 
@@ -284,7 +314,11 @@ impl ChatView {
         self.state.conversation_dropdown_open
     }
 
-    pub fn move_conversation_dropdown_selection(&mut self, delta: isize, cx: &mut gpui::Context<Self>) {
+    pub fn move_conversation_dropdown_selection(
+        &mut self,
+        delta: isize,
+        cx: &mut gpui::Context<Self>,
+    ) {
         if !self.state.conversation_dropdown_open || self.state.conversations.is_empty() {
             return;
         }
@@ -310,9 +344,11 @@ impl ChatView {
             self.state.conversation_dropdown_open = false;
             self.state.conversation_title_editing = true;
             self.state.conversation_title_input = self.state.conversation_title.clone();
+            self.state.rename_replace_on_next_char = true;
             self.state.active_conversation_id = Some(id);
             self.conversation_id = Some(id);
-            self.emit(UserEvent::StartRenameConversation { id });
+            // Rename mode is local UI state; persistence happens on ConfirmRenameConversation.
+            // Emitting StartRenameConversation here causes presenter-driven re-activation cycles.
             cx.notify();
         }
     }
@@ -327,18 +363,25 @@ impl ChatView {
             if title.is_empty() {
                 self.state.conversation_title_editing = false;
                 self.state.conversation_title_input.clear();
+                self.state.rename_replace_on_next_char = false;
                 self.state.sync_conversation_title_from_active();
                 cx.notify();
                 return;
             }
 
             self.state.conversation_title = title.clone();
-            if let Some(conversation) = self.state.conversations.iter_mut().find(|conversation| conversation.id == id) {
+            if let Some(conversation) = self
+                .state
+                .conversations
+                .iter_mut()
+                .find(|conversation| conversation.id == id)
+            {
                 conversation.title = title.clone();
             }
 
             self.state.conversation_title_editing = false;
             self.state.conversation_title_input.clear();
+            self.state.rename_replace_on_next_char = false;
             self.emit(UserEvent::ConfirmRenameConversation { id, title });
             cx.notify();
         }
@@ -350,6 +393,7 @@ impl ChatView {
         }
         self.state.conversation_title_editing = false;
         self.state.conversation_title_input.clear();
+        self.state.rename_replace_on_next_char = false;
         self.state.sync_conversation_title_from_active();
         self.emit(UserEvent::CancelRenameConversation);
         cx.notify();
@@ -359,13 +403,22 @@ impl ChatView {
         if !self.state.conversation_title_editing {
             return;
         }
-        self.state.conversation_title_input.pop();
+        if self.state.rename_replace_on_next_char {
+            self.state.conversation_title_input.clear();
+            self.state.rename_replace_on_next_char = false;
+        } else {
+            self.state.conversation_title_input.pop();
+        }
         cx.notify();
     }
 
     pub fn handle_rename_space(&mut self, cx: &mut gpui::Context<Self>) {
         if !self.state.conversation_title_editing {
             return;
+        }
+        if self.state.rename_replace_on_next_char {
+            self.state.conversation_title_input.clear();
+            self.state.rename_replace_on_next_char = false;
         }
         self.state.conversation_title_input.push(' ');
         cx.notify();
@@ -377,6 +430,10 @@ impl ChatView {
         }
         if let Some(c) = key.chars().next() {
             if c.is_ascii_graphic() {
+                if self.state.rename_replace_on_next_char {
+                    self.state.conversation_title_input.clear();
+                    self.state.rename_replace_on_next_char = false;
+                }
                 self.state.conversation_title_input.push(c);
                 cx.notify();
             }
@@ -408,6 +465,12 @@ impl ChatView {
             self.state.conversation_dropdown_open = false;
             self.state.sync_profile_dropdown_index();
         }
+        tracing::info!(
+            open = self.state.profile_dropdown_open,
+            count = self.state.profiles.len(),
+            selected_index = self.state.profile_dropdown_index,
+            "ChatView: toggled profile dropdown"
+        );
         cx.notify();
     }
 
@@ -436,6 +499,60 @@ impl ChatView {
         self.select_profile_at_index(self.state.profile_dropdown_index, cx);
     }
 
+    /// Handle paste (Cmd+V) - insert clipboard text at cursor
+    pub fn handle_paste(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
+        if self.state.conversation_title_editing {
+            if self.state.rename_replace_on_next_char {
+                self.state.conversation_title_input.clear();
+                self.state.rename_replace_on_next_char = false;
+            }
+            self.state.conversation_title_input.push_str(text);
+            cx.notify();
+            return;
+        }
+        if self.state.conversation_dropdown_open || self.state.profile_dropdown_open {
+            return;
+        }
+        let pos = self.state.cursor_position.min(self.state.input_text.len());
+        self.state.input_text.insert_str(pos, text);
+        self.state.cursor_position = pos + text.len();
+        cx.notify();
+    }
+
+    /// Handle select-all (Cmd+A)
+    pub fn handle_select_all(&mut self, _cx: &mut gpui::Context<Self>) {
+        // No visual selection yet, but move cursor to end
+        self.state.cursor_position = self.state.input_text.len();
+    }
+
+    /// Move cursor left
+    pub fn move_cursor_left(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.state.cursor_position > 0 {
+            self.state.cursor_position -= 1;
+            cx.notify();
+        }
+    }
+
+    /// Move cursor right
+    pub fn move_cursor_right(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.state.cursor_position < self.state.input_text.len() {
+            self.state.cursor_position += 1;
+            cx.notify();
+        }
+    }
+
+    /// Move cursor to start of line
+    pub fn move_cursor_home(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.cursor_position = 0;
+        cx.notify();
+    }
+
+    /// Move cursor to end of line
+    pub fn move_cursor_end(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.cursor_position = self.state.input_text.len();
+        cx.notify();
+    }
+
     /// Handle backspace key (called from MainPanel)
     pub fn handle_backspace(&mut self, cx: &mut gpui::Context<Self>) {
         if self.state.conversation_title_editing {
@@ -450,7 +567,11 @@ impl ChatView {
         if self.state.profile_dropdown_open {
             return;
         }
-        self.state.input_text.pop();
+        if self.state.cursor_position > 0 && !self.state.input_text.is_empty() {
+            let pos = self.state.cursor_position.min(self.state.input_text.len());
+            self.state.input_text.remove(pos - 1);
+            self.state.cursor_position = pos - 1;
+        }
         cx.notify();
     }
 
@@ -476,11 +597,12 @@ impl ChatView {
             return;
         }
 
-        if !self.state.input_text.is_empty() {
+        if !self.state.input_text.trim().is_empty() {
             let text = self.state.input_text.clone();
             tracing::info!("ChatView::handle_enter - emitting SendMessage: {}", text);
             self.emit(UserEvent::SendMessage { text });
             self.state.input_text.clear();
+            self.state.cursor_position = 0;
             self.state.streaming = StreamingState::Streaming {
                 content: String::new(),
                 done: false,
@@ -504,7 +626,9 @@ impl ChatView {
             return;
         }
 
-        self.state.input_text.push(' ');
+        let pos = self.state.cursor_position.min(self.state.input_text.len());
+        self.state.input_text.insert(pos, ' ');
+        self.state.cursor_position = pos + 1;
         cx.notify();
     }
 
@@ -525,7 +649,9 @@ impl ChatView {
 
         if let Some(c) = key.chars().next() {
             if c.is_ascii_graphic() {
-                self.state.input_text.push(c);
+                let pos = self.state.cursor_position.min(self.state.input_text.len());
+                self.state.input_text.insert(pos, c);
+                self.state.cursor_position = pos + 1;
                 cx.notify();
             }
         }
@@ -538,7 +664,9 @@ impl ChatView {
             ViewCommand::MessageAppended { role, content, .. } => {
                 let current_model = self.state.current_model.clone();
                 let msg = match role {
-                    crate::presentation::view_command::MessageRole::User => ChatMessage::user(content),
+                    crate::presentation::view_command::MessageRole::User => {
+                        ChatMessage::user(content)
+                    }
                     crate::presentation::view_command::MessageRole::Assistant => {
                         ChatMessage::assistant(content, current_model)
                     }
@@ -578,15 +706,24 @@ impl ChatView {
             }
             ViewCommand::FinalizeStream { .. } => {
                 if let StreamingState::Streaming { content, .. } = &self.state.streaming {
-                    let msg = ChatMessage::assistant(content.clone(), self.state.current_model.clone());
+                    let mut msg =
+                        ChatMessage::assistant(content.clone(), self.state.current_model.clone());
+                    if let Some(thinking) = self.state.thinking_content.take() {
+                        if !thinking.is_empty() {
+                            msg = msg.with_thinking(thinking);
+                        }
+                    }
                     self.state.messages.push(msg);
                 }
                 self.state.streaming = StreamingState::Idle;
                 cx.notify();
             }
-            ViewCommand::StreamCancelled { partial_content, .. } => {
+            ViewCommand::StreamCancelled {
+                partial_content, ..
+            } => {
                 if !partial_content.is_empty() {
-                    let mut msg = ChatMessage::assistant(partial_content, self.state.current_model.clone());
+                    let mut msg =
+                        ChatMessage::assistant(partial_content, self.state.current_model.clone());
                     msg.content.push_str(" [cancelled]");
                     self.state.messages.push(msg);
                 }
@@ -598,9 +735,8 @@ impl ChatView {
                 cx.notify();
             }
             ViewCommand::AppendThinking { content, .. } => {
-                self.state.thinking_content = Some(
-                    self.state.thinking_content.clone().unwrap_or_default() + &content
-                );
+                self.state.thinking_content =
+                    Some(self.state.thinking_content.clone().unwrap_or_default() + &content);
                 cx.notify();
             }
             ViewCommand::ToggleThinkingVisibility => {
@@ -624,6 +760,11 @@ impl ChatView {
                 cx.notify();
             }
             ViewCommand::ConversationListRefreshed { conversations } => {
+                let conversation_count = conversations.len();
+                tracing::info!(
+                    count = conversation_count,
+                    "ChatView: received ConversationListRefreshed"
+                );
                 self.state.conversations = conversations;
 
                 if self.state.conversations.is_empty() {
@@ -638,7 +779,12 @@ impl ChatView {
                     let active_exists = self
                         .state
                         .active_conversation_id
-                        .map(|id| self.state.conversations.iter().any(|conversation| conversation.id == id))
+                        .map(|id| {
+                            self.state
+                                .conversations
+                                .iter()
+                                .any(|conversation| conversation.id == id)
+                        })
                         .unwrap_or(false);
 
                     if !active_exists {
@@ -658,19 +804,24 @@ impl ChatView {
             ViewCommand::ConversationActivated { id } => {
                 self.state.active_conversation_id = Some(id);
                 self.conversation_id = Some(id);
-                self.state.messages.clear();
                 self.state.streaming = StreamingState::Idle;
                 self.state.thinking_content = None;
                 self.state.conversation_dropdown_open = false;
-                self.state.conversation_title_editing = false;
-                self.state.conversation_title_input.clear();
 
-                if let Some(conversation) = self.state.conversations.iter().find(|conversation| conversation.id == id) {
-                    self.state.conversation_title = if conversation.title.trim().is_empty() {
-                        "Untitled Conversation".to_string()
-                    } else {
-                        conversation.title.clone()
-                    };
+                if !self.state.conversation_title_editing {
+                    self.state.conversation_title_input.clear();
+                    if let Some(conversation) = self
+                        .state
+                        .conversations
+                        .iter()
+                        .find(|conversation| conversation.id == id)
+                    {
+                        self.state.conversation_title = if conversation.title.trim().is_empty() {
+                            "Untitled Conversation".to_string()
+                        } else {
+                            conversation.title.clone()
+                        };
+                    }
                 }
 
                 self.state.sync_conversation_dropdown_index();
@@ -687,7 +838,12 @@ impl ChatView {
                 self.state.conversation_title_input.clear();
                 self.state.conversation_title = "New Conversation".to_string();
 
-                if !self.state.conversations.iter().any(|conversation| conversation.id == id) {
+                if !self
+                    .state
+                    .conversations
+                    .iter()
+                    .any(|conversation| conversation.id == id)
+                {
                     let now = chrono::Utc::now();
                     self.state.conversations.insert(
                         0,
@@ -721,9 +877,15 @@ impl ChatView {
                 cx.notify();
             }
             ViewCommand::ConversationDeleted { id } => {
-                self.state.conversations.retain(|conversation| conversation.id != id);
+                self.state
+                    .conversations
+                    .retain(|conversation| conversation.id != id);
                 if self.state.active_conversation_id == Some(id) {
-                    self.state.active_conversation_id = self.state.conversations.first().map(|conversation| conversation.id);
+                    self.state.active_conversation_id = self
+                        .state
+                        .conversations
+                        .first()
+                        .map(|conversation| conversation.id);
                     self.conversation_id = self.state.active_conversation_id;
                     self.state.messages.clear();
                     self.state.streaming = StreamingState::Idle;
@@ -751,6 +913,7 @@ impl ChatView {
                 profiles,
                 selected_profile_id,
             } => {
+                let profile_count = profiles.len();
                 self.state.profiles = profiles;
                 self.state.selected_profile_id = selected_profile_id.or_else(|| {
                     self.state
@@ -759,6 +922,11 @@ impl ChatView {
                         .find(|profile| profile.is_default)
                         .map(|profile| profile.id)
                 });
+                tracing::info!(
+                    count = profile_count,
+                    selected = ?self.state.selected_profile_id,
+                    "ChatView: received profile snapshot"
+                );
                 self.state.sync_current_model_from_profile();
                 self.state.sync_profile_dropdown_index();
                 cx.notify();
@@ -782,7 +950,7 @@ impl ChatView {
     /// @plan PLAN-20250130-GPUIREDUX.P04
     fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
-        
+
         div()
             .id("chat-top-bar")
             .h(px(44.0))
@@ -828,12 +996,10 @@ impl ChatView {
                             .text_size(px(14.0))
                             .text_color(Theme::text_primary())
                             .child("T")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
                                 tracing::info!("Toggle thinking clicked - emitting UserEvent");
                                 this.emit(UserEvent::ToggleThinking);
-                                // Also update local state immediately for responsiveness
-                                this.state.show_thinking = !this.state.show_thinking;
-                                cx.notify();
+                                // State update comes back via ToggleThinkingVisibility
                             }))
                     )
                     // [R] Rename conversation button
@@ -896,7 +1062,12 @@ impl ChatView {
                                 this.emit(UserEvent::NewConversation);
                                 // Clear local state immediately
                                 this.state.messages.clear();
+                                this.state.input_text.clear();
+                                this.state.cursor_position = 0;
                                 this.state.streaming = StreamingState::Idle;
+                                this.state.thinking_content = None;
+                                this.state.active_conversation_id = None;
+                                this.conversation_id = None;
                                 this.state.conversation_title = "New Conversation".to_string();
                                 this.state.conversation_dropdown_open = false;
                                 this.state.conversation_title_editing = false;
@@ -938,9 +1109,8 @@ impl ChatView {
         let conversation_title_input = self.state.conversation_title_input.clone();
         let conversation_dropdown_open = self.state.conversation_dropdown_open;
         let conversation_title_editing = self.state.conversation_title_editing;
-        let conversation_dropdown_index = self.state.conversation_dropdown_index;
-        let active_conversation_id = self.state.active_conversation_id;
-        let current_model = self.state.current_model.clone();
+        let _conversation_dropdown_index = self.state.conversation_dropdown_index;
+        let _active_conversation_id = self.state.active_conversation_id;
         let selected_profile = self
             .state
             .selected_profile()
@@ -956,174 +1126,323 @@ impl ChatView {
             .px(px(12.0))
             .flex()
             .items_center()
-            .justify_between()
             .gap(px(8.0))
             .child(
                 div()
                     .flex()
+                    .flex_1()
+                    .min_w(px(0.0))
                     .items_center()
                     .gap(px(8.0))
-                    .child(
-                        if conversation_title_editing {
-                            div()
-                                .id("conversation-title-input")
-                                .min_w(px(220.0))
-                                .px(px(8.0))
-                                .py(px(4.0))
-                                .rounded(px(4.0))
-                                .bg(Theme::bg_dark())
-                                .border_1()
-                                .border_color(Theme::accent())
-                                .child(
-                                    div()
-                                        .text_size(px(13.0))
-                                        .text_color(Theme::text_primary())
-                                        .child(if conversation_title_input.is_empty() {
-                                            "Enter conversation name".to_string()
-                                        } else {
-                                            conversation_title_input
-                                        })
-                                )
-                        } else {
-                            div()
-                                .id("conversation-dropdown")
-                                .min_w(px(220.0))
-                                .px(px(8.0))
-                                .py(px(4.0))
-                                .rounded(px(4.0))
-                                .bg(Theme::bg_dark())
-                                .border_1()
-                                .border_color(if conversation_dropdown_open { Theme::accent() } else { Theme::border() })
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .cursor_pointer()
-                                .child(
-                                    div()
-                                        .text_size(px(13.0))
-                                        .text_color(Theme::text_primary())
-                                        .child(conversation_title)
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(10.0))
-                                        .text_color(Theme::text_primary())
-                                        .child(if conversation_dropdown_open { "▲" } else { "▼" })
-                                )
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                    this.toggle_conversation_dropdown(cx);
-                                }))
-                        }
-                    )
-                    .child(
+                    .child(if conversation_title_editing {
                         div()
-                            .id("chat-profile-dropdown")
-                            .min_w(px(190.0))
+                            .id("conversation-title-input")
+                            .min_w(px(220.0))
                             .px(px(8.0))
                             .py(px(4.0))
                             .rounded(px(4.0))
                             .bg(Theme::bg_dark())
                             .border_1()
-                            .border_color(if profile_dropdown_open { Theme::accent() } else { Theme::border() })
+                            .border_color(Theme::accent())
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(Theme::text_primary())
+                                    .child(if conversation_title_input.is_empty() {
+                                        "Enter conversation name".to_string()
+                                    } else {
+                                        conversation_title_input
+                                    }),
+                            )
+                    } else {
+                        div()
+                            .id("conversation-dropdown")
+                            .min_w(px(220.0))
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(if conversation_dropdown_open {
+                                Theme::accent()
+                            } else {
+                                Theme::border()
+                            })
+                            .flex()
+                            .items_center()
+                            .justify_between()
                             .cursor_pointer()
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(Theme::text_primary())
+                                    .child(conversation_title),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(Theme::text_primary())
+                                    .child(if conversation_dropdown_open {
+                                        "▲"
+                                    } else {
+                                        "▼"
+                                    }),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.toggle_conversation_dropdown(cx);
+                                }),
+                            )
+                    })
+                    .child(
+                        div()
+                            .id("chat-profile-dropdown")
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(if profile_dropdown_open {
+                                Theme::accent()
+                            } else {
+                                Theme::border()
+                            })
+                            .cursor_pointer()
+                            .overflow_hidden()
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .justify_between()
+                                    .gap(px(6.0))
                                     .child(
                                         div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
                                             .text_size(px(11.0))
                                             .text_color(Theme::text_primary())
-                                            .child(selected_profile)
+                                            .child(selected_profile),
                                     )
                                     .child(
                                         div()
+                                            .flex_shrink_0()
                                             .text_size(px(9.0))
                                             .text_color(Theme::text_secondary())
-                                            .child(if profile_dropdown_open { "▲" } else { "▼" })
-                                    )
+                                            .child(if profile_dropdown_open {
+                                                "▲"
+                                            } else {
+                                                "▼"
+                                            }),
+                                    ),
                             )
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                this.toggle_profile_dropdown(cx);
-                            }))
-                    )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.toggle_profile_dropdown(cx);
+                                }),
+                            ),
+                    ),
+            )
+    }
+
+    /// Render conversation dropdown overlay at root level so it can float over chat area
+    fn render_conversation_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let active_conversation_id = self.state.active_conversation_id;
+        let conversation_dropdown_index = self.state.conversation_dropdown_index;
+
+        div()
+            .id("chat-conversation-dropdown-overlay")
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .right(px(0.0))
+            .bottom(px(0.0))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    if this.state.conversation_dropdown_open {
+                        this.state.conversation_dropdown_open = false;
+                        cx.notify();
+                    }
+                }),
             )
             .child(
                 div()
-                    .text_size(px(11.0))
-                    .text_color(Theme::text_secondary())
-                    .child(current_model)
-            )
-            .when(conversation_dropdown_open, |d| {
-                d.child(
-                    div()
-                        .id("chat-conversation-dropdown-menu")
-                        .absolute()
-                        .top(px(30.0))
-                        .left(px(12.0))
-                        .w(px(360.0))
-                        .max_h(px(220.0))
-                        .overflow_y_scroll()
-                        .bg(Theme::bg_dark())
-                        .border_1()
-                        .border_color(Theme::border())
-                        .rounded(px(4.0))
-                        .children(self.state.conversations.iter().enumerate().map(|(index, conversation)| {
-                            let conversation_id = conversation.id;
-                            let selected = active_conversation_id == Some(conversation_id);
-                            let highlighted = conversation_dropdown_index == index;
-                            let title = if conversation.title.trim().is_empty() {
-                                "Untitled Conversation".to_string()
-                            } else {
-                                conversation.title.clone()
-                            };
-                            let count_label = if conversation.message_count == 1 {
-                                "1 message".to_string()
-                            } else {
-                                format!("{} messages", conversation.message_count)
-                            };
+                    .id("chat-conversation-dropdown-menu")
+                    .absolute()
+                    .top(px(74.0))
+                    .left(px(12.0))
+                    .min_w(px(320.0))
+                    .max_w(px(520.0))
+                    .max_h(px(220.0))
+                    .overflow_y_scroll()
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {
+                        // Keep clicks inside menu from falling through to overlay close handler.
+                    }))
+                    .children(
+                        self.state
+                            .conversations
+                            .iter()
+                            .enumerate()
+                            .map(|(index, conversation)| {
+                                let conversation_id = conversation.id;
+                                let selected = active_conversation_id == Some(conversation_id);
+                                let highlighted = conversation_dropdown_index == index;
+                                let title = if conversation.title.trim().is_empty() {
+                                    "Untitled Conversation".to_string()
+                                } else {
+                                    conversation.title.clone()
+                                };
+                                let count_label = if conversation.message_count == 1 {
+                                    "1 message".to_string()
+                                } else {
+                                    format!("{} messages", conversation.message_count)
+                                };
 
-                            div()
-                                .id(SharedString::from(format!("chat-conversation-item-{}", conversation_id)))
-                                .w_full()
-                                .px(px(8.0))
-                                .py(px(6.0))
-                                .cursor_pointer()
-                                .when(selected, |row| {
-                                    row.bg(Theme::accent()).text_color(gpui::white())
-                                })
-                                .when(!selected && highlighted, |row| {
-                                    row.bg(Theme::accent_hover()).text_color(gpui::white())
-                                })
-                                .when(!selected && !highlighted, |row| {
-                                    row.hover(|s| s.bg(Theme::bg_darker())).text_color(Theme::text_primary())
-                                })
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .child(
-                                            div()
-                                                .text_size(px(11.0))
-                                                .child(title)
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(10.0))
-                                                .text_color(Theme::text_secondary())
-                                                .child(count_label)
-                                        )
-                                )
-                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                                    this.select_conversation_at_index(index, cx);
-                                }))
-                        }))
-                )
-            })
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "chat-conversation-item-{}",
+                                        conversation_id
+                                    )))
+                                    .w_full()
+                                    .px(px(8.0))
+                                    .py(px(6.0))
+                                    .cursor_pointer()
+                                    .when(selected, |row| {
+                                        row.bg(Theme::accent()).text_color(gpui::white())
+                                    })
+                                    .when(!selected && highlighted, |row| {
+                                        row.bg(Theme::accent_hover()).text_color(gpui::white())
+                                    })
+                                    .when(!selected && !highlighted, |row| {
+                                        row.hover(|s| s.bg(Theme::bg_darker()))
+                                            .text_color(Theme::text_primary())
+                                    })
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .child(div().text_size(px(11.0)).child(title))
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(Theme::text_secondary())
+                                                    .child(count_label),
+                                            ),
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _window, cx| {
+                                            this.select_conversation_at_index(index, cx);
+                                        }),
+                                    )
+                            }),
+                    ),
+            )
     }
 
+    /// Render profile dropdown overlay at root level so it is not clipped by chat scroll area
+    fn render_profile_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("chat-profile-dropdown-overlay")
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .right(px(0.0))
+            .bottom(px(0.0))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    if this.state.profile_dropdown_open {
+                        this.state.profile_dropdown_open = false;
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(
+                div()
+                    .id("chat-profile-dropdown-menu")
+                    .absolute()
+                    .top(px(74.0))
+                    .right(px(12.0))
+                    .w(px(260.0))
+                    .max_w(px(300.0))
+                    .max_h(px(220.0))
+                    .overflow_y_scroll()
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {
+                        // Keep clicks inside menu from falling through to overlay close handler.
+                    }))
+                    .children(
+                        self.state
+                            .profiles
+                            .iter()
+                            .enumerate()
+                            .map(|(index, profile)| {
+                                let is_selected = self.state.selected_profile_id == Some(profile.id);
+                                let is_highlighted = self.state.profile_dropdown_index == index;
+                                let label = if profile.is_default {
+                                    format!("{} (default)", profile.name)
+                                } else {
+                                    profile.name.clone()
+                                };
+
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "chat-profile-item-{}",
+                                        profile.id
+                                    )))
+                                    .w_full()
+                                    .px(px(8.0))
+                                    .py(px(6.0))
+                                    .cursor_pointer()
+                                    .when(is_selected, |row| {
+                                        row.bg(Theme::accent()).text_color(gpui::white())
+                                    })
+                                    .when(!is_selected && is_highlighted, |row| {
+                                        row.bg(Theme::accent_hover()).text_color(gpui::white())
+                                    })
+                                    .when(!is_selected && !is_highlighted, |row| {
+                                        row.hover(|s| s.bg(Theme::bg_darker()))
+                                            .text_color(Theme::text_primary())
+                                    })
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .child(div().text_size(px(11.0)).child(label))
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(Theme::text_secondary())
+                                                    .child(profile.model_id.clone()),
+                                            ),
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _window, cx| {
+                                            this.select_profile_at_index(index, cx);
+                                        }),
+                                    )
+                            }),
+                    ),
+            )
+    }
 
     /// Render the chat area with messages
     /// @plan PLAN-20250130-GPUIREDUX.P03
@@ -1142,29 +1461,23 @@ impl ChatView {
             .flex_col()
             .gap(px(8.0))
             // Empty state
-            .when(messages.is_empty() && !matches!(streaming, StreamingState::Streaming { .. }), |d| {
-                d.items_center()
-                    .justify_center()
-                    .child(
+            .when(
+                messages.is_empty() && !matches!(streaming, StreamingState::Streaming { .. }),
+                |d| {
+                    d.items_center().justify_center().child(
                         div()
                             .text_size(px(14.0))
                             .text_color(Theme::text_secondary())
-                            .child("No messages yet")
+                            .child("No messages yet"),
                     )
-            })
+                },
+            )
             // Messages
             .when(!messages.is_empty(), |d| {
-                d.children(
-                    messages
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, msg)| {
-                            let id = SharedString::from(format!("msg-{}", i));
-                            div()
-                                .id(id)
-                                .child(self.render_message(&msg, show_thinking))
-                        })
-                )
+                d.children(messages.into_iter().enumerate().map(|(i, msg)| {
+                    let id = SharedString::from(format!("msg-{}", i));
+                    div().id(id).child(self.render_message(&msg, show_thinking))
+                }))
             })
             // Streaming message
             .when(matches!(streaming, StreamingState::Streaming { .. }), |d| {
@@ -1173,14 +1486,12 @@ impl ChatView {
                     _ => (String::new(), false),
                 };
                 d.child(
-                    div()
-                        .id("streaming-msg")
-                        .child(
-                            AssistantBubble::new(content)
-                                .model_id("streaming")
-                                .show_thinking(show_thinking)
-                                .streaming(true)
-                        )
+                    div().id("streaming-msg").child(
+                        AssistantBubble::new(content)
+                            .model_id("streaming")
+                            .show_thinking(show_thinking)
+                            .streaming(true),
+                    ),
                 )
             })
     }
@@ -1209,15 +1520,18 @@ impl ChatView {
                     .bg(Theme::user_bubble())
                     .text_size(px(13.0))
                     .text_color(Theme::text_primary())
-                    .child(content.to_string())
+                    .child(content.to_string()),
             )
             .into_any_element()
     }
 
     /// Render assistant message - left aligned, dark bubble with model label
     fn render_assistant_message(&self, msg: &ChatMessage, show_thinking: bool) -> gpui::AnyElement {
-        let model_id = msg.model_id.clone().unwrap_or_else(|| "Assistant".to_string());
-        
+        let model_id = msg
+            .model_id
+            .clone()
+            .unwrap_or_else(|| "Assistant".to_string());
+
         div()
             .w_full()
             .flex()
@@ -1228,7 +1542,7 @@ impl ChatView {
                 div()
                     .text_size(px(10.0))
                     .text_color(Theme::text_muted())
-                    .child(model_id)
+                    .child(model_id),
             )
             // Thinking block (if present and visible)
             .when(msg.thinking.is_some() && show_thinking, |d| {
@@ -1246,7 +1560,7 @@ impl ChatView {
                     .border_color(Theme::border())
                     .text_size(px(13.0))
                     .text_color(Theme::text_primary())
-                    .child(msg.content.clone())
+                    .child(msg.content.clone()),
             )
             .into_any_element()
     }
@@ -1270,27 +1584,33 @@ impl ChatView {
                         div()
                             .text_size(px(9.0))
                             .text_color(Theme::text_muted())
-                            .child("Thinking")
+                            .child("Thinking"),
                     )
                     .child(
                         div()
                             .text_size(px(11.0))
                             .text_color(Theme::text_muted())
                             .italic()
-                            .child(content.to_string())
-                    )
+                            .child(content.to_string()),
+                    ),
             )
     }
 
     fn render_input_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let is_streaming = matches!(self.state.streaming, StreamingState::Streaming { .. });
         let input_text = self.state.input_text.clone();
-        let has_text = !input_text.is_empty();
+        let has_text = !input_text.trim().is_empty();
         let focus_handle = self.focus_handle.clone();
+        let cursor_pos = self.state.cursor_position.min(input_text.len());
+
+        let bar_min_height = 44.0;
+        // 25% of total window height (600px) = 150px max for the input bar
+        let max_input_height = 150.0;
 
         div()
+            .w_full()
             .flex()
-            .items_center()
+            .items_end()
             .gap(px(Theme::SPACING_SM))
             .p(px(Theme::SPACING_MD))
             .bg(Theme::bg_darker())
@@ -1301,9 +1621,14 @@ impl ChatView {
                 div()
                     .id("input-field")
                     .flex_1()
+                    .min_w(px(0.0))
+                    .min_h(px(bar_min_height))
+                    .max_h(px(max_input_height))
                     .p(px(Theme::SPACING_SM))
                     .bg(Theme::bg_darkest())
                     .rounded(px(Theme::RADIUS_MD))
+                    .overflow_hidden()
+                    .overflow_y_scroll()
                     .cursor_text()
                     .on_mouse_down(MouseButton::Left, {
                         let focus_handle = focus_handle.clone();
@@ -1312,23 +1637,42 @@ impl ChatView {
                             window.focus(&focus_handle, cx);
                         }
                     })
-                    .child(
-                        if input_text.is_empty() {
-                            div()
-                                .text_color(Theme::text_secondary())
-                                .child("Type a message...")
-                        } else {
-                            div()
-                                .text_color(Theme::text_primary())
-                                .child(input_text)
-                        }
-                    )
+                    .child(if input_text.is_empty() {
+                        div()
+                            .w_full()
+                            .text_size(px(13.0))
+                            .text_color(Theme::text_secondary())
+                            .flex()
+                            .child("Type a message...")
+                            .into_any_element()
+                    } else {
+                        let before = &input_text[..cursor_pos];
+                        let after = &input_text[cursor_pos..];
+                        div()
+                            .w_full()
+                            .text_size(px(13.0))
+                            .text_color(Theme::text_primary())
+                            .flex()
+                            .flex_wrap()
+                            .child(before.to_string())
+                            .child(
+                                div()
+                                    .w(px(1.0))
+                                    .h(px(15.0))
+                                    .bg(Theme::accent())
+                                    .flex_shrink_0(),
+                            )
+                            .child(after.to_string())
+                            .into_any_element()
+                    }),
             )
             // Send/Stop button with event emission
             // @plan PLAN-20250130-GPUIREDUX.P04
             .child(
                 div()
                     .id(if is_streaming { "stop-btn" } else { "send-btn" })
+                    .flex_shrink_0()
+                    .min_h(px(36.0))
                     .px(px(Theme::SPACING_MD))
                     .py(px(Theme::SPACING_SM))
                     .rounded(px(Theme::RADIUS_MD))
@@ -1337,42 +1681,57 @@ impl ChatView {
                         d.bg(Theme::error())
                             .text_color(gpui::white())
                             .child("Stop")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                tracing::info!("Stop button clicked - emitting StopStreaming");
-                                this.emit(UserEvent::StopStreaming);
-                                this.state.streaming = StreamingState::Idle;
-                                cx.notify();
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    tracing::info!("Stop button clicked - emitting StopStreaming");
+                                    this.emit(UserEvent::StopStreaming);
+                                    this.state.streaming = StreamingState::Idle;
+                                    cx.notify();
+                                }),
+                            )
                     })
                     .when(!is_streaming && has_text, |d| {
                         d.bg(Theme::bg_dark())
                             .text_color(Theme::text_primary())
                             .hover(|s| s.bg(Theme::bg_darker()))
                             .child("Send")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                if matches!(this.state.streaming, StreamingState::Streaming { .. }) {
-                                    tracing::info!("Send button ignored while stream is active");
-                                    return;
-                                }
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    if matches!(
+                                        this.state.streaming,
+                                        StreamingState::Streaming { .. }
+                                    ) {
+                                        tracing::info!(
+                                            "Send button ignored while stream is active"
+                                        );
+                                        return;
+                                    }
 
-                                let text = this.state.input_text.clone();
-                                if !text.is_empty() {
-                                    tracing::info!("Send button clicked - emitting SendMessage: {}", text);
-                                    this.emit(UserEvent::SendMessage { text });
-                                    this.state.input_text.clear();
-                                    this.state.streaming = StreamingState::Streaming {
-                                        content: String::new(),
-                                        done: false,
-                                    };
-                                    cx.notify();
-                                }
-                            }))
+                                    let text = this.state.input_text.clone();
+                                    if !text.trim().is_empty() {
+                                        tracing::info!(
+                                            "Send button clicked - emitting SendMessage: {}",
+                                            text
+                                        );
+                                        this.emit(UserEvent::SendMessage { text });
+                                        this.state.input_text.clear();
+                                        this.state.cursor_position = 0;
+                                        this.state.streaming = StreamingState::Streaming {
+                                            content: String::new(),
+                                            done: false,
+                                        };
+                                        cx.notify();
+                                    }
+                                }),
+                            )
                     })
                     .when(!is_streaming && !has_text, |d| {
                         d.bg(Theme::bg_dark())
                             .text_color(Theme::text_secondary())
                             .child("Send")
-                    })
+                    }),
             )
     }
 }
@@ -1391,136 +1750,142 @@ impl gpui::Render for ChatView {
             .flex_col()
             .size_full()
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                let key = &event.keystroke.key;
-                let modifiers = &event.keystroke.modifiers;
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                    let key = &event.keystroke.key;
+                    let modifiers = &event.keystroke.modifiers;
 
-                // === KEYBOARD SHORTCUTS (Cmd+key) ===
-                if modifiers.platform {
-                    match key.as_str() {
-                        "h" => {
-                            // Cmd+H: Navigate to History
-                            println!(">>> Cmd+H pressed - navigating to History <<<");
-                            crate::ui_gpui::navigation_channel().request_navigate(
-                                crate::presentation::view_command::ViewId::History
-                            );
-                            return;
+                    // === KEYBOARD SHORTCUTS (Cmd+key) ===
+                    if modifiers.platform {
+                        match key.as_str() {
+                            "h" => {
+                                // Cmd+H: Navigate to History
+                                println!(">>> Cmd+H pressed - navigating to History <<<");
+                                crate::ui_gpui::navigation_channel().request_navigate(
+                                    crate::presentation::view_command::ViewId::History,
+                                );
+                                return;
+                            }
+                            "," => {
+                                // Cmd+,: Navigate to Settings (standard macOS)
+                                println!(">>> Cmd+, pressed - navigating to Settings <<<");
+                                crate::ui_gpui::navigation_channel().request_navigate(
+                                    crate::presentation::view_command::ViewId::Settings,
+                                );
+                                return;
+                            }
+                            "n" => {
+                                // Cmd+N: New conversation
+                                println!(">>> Cmd+N pressed - new conversation <<<");
+                                this.emit(UserEvent::NewConversation);
+                                this.state.messages.clear();
+                                this.state.input_text.clear();
+                                this.state.cursor_position = 0;
+                                this.state.thinking_content = None;
+                                this.state.active_conversation_id = None;
+                                this.conversation_id = None;
+                                this.state.conversation_title = "New Conversation".to_string();
+                                this.state.conversation_dropdown_open = false;
+                                this.state.conversation_title_editing = false;
+                                this.state.conversation_title_input.clear();
+                                this.state.profile_dropdown_open = false;
+                                cx.notify();
+                                return;
+                            }
+                            "t" => {
+                                // Cmd+T: Toggle thinking
+                                println!(">>> Cmd+T pressed - toggle thinking <<<");
+                                this.emit(UserEvent::ToggleThinking);
+                                // State update comes back via ToggleThinkingVisibility
+                                return;
+                            }
+                            "p" => {
+                                // Cmd+P: Toggle chat profile dropdown
+                                this.toggle_profile_dropdown(cx);
+                                return;
+                            }
+                            "r" => {
+                                // Cmd+R: rename active conversation
+                                this.start_rename_conversation(cx);
+                                return;
+                            }
+                            _ => {}
                         }
-                        "," => {
-                            // Cmd+,: Navigate to Settings (standard macOS)
-                            println!(">>> Cmd+, pressed - navigating to Settings <<<");
-                            crate::ui_gpui::navigation_channel().request_navigate(
-                                crate::presentation::view_command::ViewId::Settings
-                            );
-                            return;
-                        }
-                        "n" => {
-                            // Cmd+N: New conversation
-                            println!(">>> Cmd+N pressed - new conversation <<<");
-                            this.emit(UserEvent::NewConversation);
-                            this.state.messages.clear();
-                            this.state.input_text.clear();
-                            this.state.conversation_title = "New Conversation".to_string();
-                            this.state.conversation_dropdown_open = false;
-                            this.state.conversation_title_editing = false;
-                            this.state.conversation_title_input.clear();
-                            this.state.profile_dropdown_open = false;
-                            cx.notify();
-                            return;
-                        }
-                        "t" => {
-                            // Cmd+T: Toggle thinking
-                            println!(">>> Cmd+T pressed - toggle thinking <<<");
-                            this.emit(UserEvent::ToggleThinking);
-                            this.state.show_thinking = !this.state.show_thinking;
-                            cx.notify();
-                            return;
-                        }
-                        "p" => {
-                            // Cmd+P: Toggle chat profile dropdown
-                            this.toggle_profile_dropdown(cx);
-                            return;
-                        }
-                        "r" => {
-                            // Cmd+R: rename active conversation
-                            this.start_rename_conversation(cx);
-                            return;
-                        }
-                        _ => {}
                     }
-                }
 
-                if this.state.conversation_title_editing {
-                    match key.as_str() {
-                        "escape" => this.cancel_rename_conversation(cx),
-                        "backspace" => this.handle_rename_backspace(cx),
-                        "space" => this.handle_rename_space(cx),
-                        "enter" => this.submit_rename_conversation(cx),
-                        _ => {
-                            if key.len() == 1 && !modifiers.platform && !modifiers.control {
-                                this.handle_rename_char(key, cx);
+                    if this.state.conversation_title_editing {
+                        match key.as_str() {
+                            "escape" => this.cancel_rename_conversation(cx),
+                            "backspace" => this.handle_rename_backspace(cx),
+                            "space" => this.handle_rename_space(cx),
+                            "enter" => this.submit_rename_conversation(cx),
+                            _ => {
+                                if key.len() == 1 && !modifiers.platform && !modifiers.control {
+                                    this.handle_rename_char(key, cx);
+                                }
                             }
                         }
+                        return;
                     }
-                    return;
-                }
 
-                if this.state.conversation_dropdown_open {
-                    match key.as_str() {
-                        "escape" => {
-                            this.state.conversation_dropdown_open = false;
+                    if this.state.conversation_dropdown_open {
+                        match key.as_str() {
+                            "escape" => {
+                                this.state.conversation_dropdown_open = false;
+                                cx.notify();
+                            }
+                            "up" => {
+                                this.move_conversation_dropdown_selection(-1, cx);
+                            }
+                            "down" => {
+                                this.move_conversation_dropdown_selection(1, cx);
+                            }
+                            "enter" => {
+                                this.confirm_conversation_dropdown_selection(cx);
+                            }
+                            _ => {}
+                        }
+                        return;
+                    }
+
+                    if this.state.profile_dropdown_open {
+                        match key.as_str() {
+                            "escape" => {
+                                this.state.profile_dropdown_open = false;
+                                cx.notify();
+                            }
+                            "up" => {
+                                this.move_profile_dropdown_selection(-1, cx);
+                            }
+                            "down" => {
+                                this.move_profile_dropdown_selection(1, cx);
+                            }
+                            "enter" => {
+                                this.confirm_profile_dropdown_selection(cx);
+                            }
+                            _ => {}
+                        }
+                        return;
+                    }
+
+                    // === ESCAPE KEY ===
+                    if key == "escape" {
+                        // Stop streaming if active
+                        if matches!(this.state.streaming, StreamingState::Streaming { .. }) {
+                            println!(">>> Escape pressed - stopping stream <<<");
+                            this.emit(UserEvent::StopStreaming);
+                            this.state.streaming = StreamingState::Idle;
                             cx.notify();
                         }
-                        "up" => {
-                            this.move_conversation_dropdown_selection(-1, cx);
-                        }
-                        "down" => {
-                            this.move_conversation_dropdown_selection(1, cx);
-                        }
-                        "enter" => {
-                            this.confirm_conversation_dropdown_selection(cx);
-                        }
-                        _ => {}
+                        return;
                     }
-                    return;
-                }
 
-                if this.state.profile_dropdown_open {
-                    match key.as_str() {
-                        "escape" => {
-                            this.state.profile_dropdown_open = false;
-                            cx.notify();
-                        }
-                        "up" => {
-                            this.move_profile_dropdown_selection(-1, cx);
-                        }
-                        "down" => {
-                            this.move_profile_dropdown_selection(1, cx);
-                        }
-                        "enter" => {
-                            this.confirm_profile_dropdown_selection(cx);
-                        }
-                        _ => {}
-                    }
-                    return;
-                }
-
-                // === ESCAPE KEY ===
-                if key == "escape" {
-                    // Stop streaming if active
-                    if matches!(this.state.streaming, StreamingState::Streaming { .. }) {
-                        println!(">>> Escape pressed - stopping stream <<<");
-                        this.emit(UserEvent::StopStreaming);
-                        this.state.streaming = StreamingState::Idle;
-                        cx.notify();
-                    }
-                    return;
-                }
-
-                // Text entry and send are handled by MainPanel's key forwarding.
-                // Keeping that as the single owner avoids duplicate SendMessage emissions
-                // when both MainPanel and ChatView receive the same key event.
-            }))
+                    // Text entry and send are handled by MainPanel's key forwarding.
+                    // Keeping that as the single owner avoids duplicate SendMessage emissions
+                    // when both MainPanel and ChatView receive the same key event.
+                }),
+            )
+            .relative()
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Title bar (32px)
@@ -1529,5 +1894,12 @@ impl gpui::Render for ChatView {
             .child(self.render_chat_area(cx))
             // Input bar (50px)
             .child(self.render_input_bar(cx))
+            // Overlay dropdowns (rendered at root level to avoid clipping)
+            .when(self.state.conversation_dropdown_open, |d| {
+                d.child(self.render_conversation_dropdown(cx))
+            })
+            .when(self.state.profile_dropdown_open, |d| {
+                d.child(self.render_profile_dropdown(cx))
+            })
     }
 }

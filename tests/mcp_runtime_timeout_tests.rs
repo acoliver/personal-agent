@@ -30,8 +30,6 @@ async fn call_tool_times_out_and_sets_error() {
     let transport = HangingTransport;
     let client = serdes_ai::mcp::McpClient::new(transport);
 
-    let result = client
-        .call_tool("hang", serde_json::json!({}))
-        .await;
+    let result = client.call_tool("hang", serde_json::json!({})).await;
     assert!(result.is_err());
 }

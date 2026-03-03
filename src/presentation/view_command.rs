@@ -18,12 +18,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ViewCommand {
     // ===== Chat Commands =====
-
     /// A new conversation was created
-    ConversationCreated {
-        id: Uuid,
-        profile_id: Uuid,
-    },
+    ConversationCreated { id: Uuid, profile_id: Uuid },
 
     /// A message was appended to the conversation
     MessageAppended {
@@ -33,14 +29,10 @@ pub enum ViewCommand {
     },
 
     /// Show thinking indicator
-    ShowThinking {
-        conversation_id: Uuid,
-    },
+    ShowThinking { conversation_id: Uuid },
 
     /// Hide thinking indicator
-    HideThinking {
-        conversation_id: Uuid,
-    },
+    HideThinking { conversation_id: Uuid },
 
     /// Append streaming text chunk
     AppendStream {
@@ -49,10 +41,7 @@ pub enum ViewCommand {
     },
 
     /// Finalize streaming response
-    FinalizeStream {
-        conversation_id: Uuid,
-        tokens: u64,
-    },
+    FinalizeStream { conversation_id: Uuid, tokens: u64 },
 
     /// Streaming was cancelled
     StreamCancelled {
@@ -90,52 +79,36 @@ pub enum ViewCommand {
     },
 
     /// Message was saved
-    MessageSaved {
-        conversation_id: Uuid,
-    },
+    MessageSaved { conversation_id: Uuid },
 
     /// Toggle thinking visibility
     ToggleThinkingVisibility,
 
     /// Conversation was renamed
-    ConversationRenamed {
-        id: Uuid,
-        new_title: String,
-    },
+    ConversationRenamed { id: Uuid, new_title: String },
 
     /// Conversation was cleared
     ConversationCleared,
 
     /// History was updated
-    HistoryUpdated {
-        count: Option<usize>,
-    },
+    HistoryUpdated { count: Option<usize> },
 
     // ===== History Commands =====
-
     /// Conversation list was refreshed
     ConversationListRefreshed {
         conversations: Vec<ConversationSummary>,
     },
 
     /// Conversation was activated
-    ConversationActivated {
-        id: Uuid,
-    },
+    ConversationActivated { id: Uuid },
 
     /// Conversation was deleted
-    ConversationDeleted {
-        id: Uuid,
-    },
+    ConversationDeleted { id: Uuid },
 
     /// Conversation title was updated
-    ConversationTitleUpdated {
-        id: Uuid,
-        title: String,
-    },
+    ConversationTitleUpdated { id: Uuid, title: String },
 
     // ===== Settings Commands =====
-
     /// Show settings view
     ShowSettings {
         profiles: Vec<ProfileSummary>,
@@ -143,31 +116,19 @@ pub enum ViewCommand {
     },
 
     /// Show notification message
-    ShowNotification {
-        message: String,
-    },
+    ShowNotification { message: String },
 
     /// Profile was created
-    ProfileCreated {
-        id: Uuid,
-        name: String,
-    },
+    ProfileCreated { id: Uuid, name: String },
 
     /// Profile was updated
-    ProfileUpdated {
-        id: Uuid,
-        name: String,
-    },
+    ProfileUpdated { id: Uuid, name: String },
 
     /// Profile was deleted
-    ProfileDeleted {
-        id: Uuid,
-    },
+    ProfileDeleted { id: Uuid },
 
     /// Default profile was changed
-    DefaultProfileChanged {
-        profile_id: Option<Uuid>,
-    },
+    DefaultProfileChanged { profile_id: Option<Uuid> },
 
     /// Chat profile list updated
     ChatProfilesUpdated {
@@ -176,9 +137,7 @@ pub enum ViewCommand {
     },
 
     /// Connection test started
-    ProfileTestStarted {
-        id: Uuid,
-    },
+    ProfileTestStarted { id: Uuid },
 
     /// Connection test completed
     ProfileTestCompleted {
@@ -189,45 +148,26 @@ pub enum ViewCommand {
     },
 
     // ===== MCP Commands =====
-
     /// MCP server started successfully
-    McpServerStarted {
-        id: Uuid,
-        tool_count: usize,
-    },
+    McpServerStarted { id: Uuid, tool_count: usize },
 
     /// MCP server failed to start
-    McpServerFailed {
-        id: Uuid,
-        error: String,
-    },
+    McpServerFailed { id: Uuid, error: String },
 
     /// MCP tools were updated
-    McpToolsUpdated {
-        tools: Vec<ToolInfo>,
-    },
+    McpToolsUpdated { tools: Vec<ToolInfo> },
 
     /// MCP server status changed
-    McpStatusChanged {
-        id: Uuid,
-        status: McpStatus,
-    },
+    McpStatusChanged { id: Uuid, status: McpStatus },
 
     /// MCP configuration was saved
-    McpConfigSaved {
-        id: Uuid,
-        name: Option<String>,
-    },
+    McpConfigSaved { id: Uuid, name: Option<String> },
 
     /// MCP was deleted
-    McpDeleted {
-        id: Uuid,
-    },
+    McpDeleted { id: Uuid },
 
     /// MCP registry search results were updated
-    McpRegistrySearchResults {
-        results: Vec<McpRegistryResult>,
-    },
+    McpRegistrySearchResults { results: Vec<McpRegistryResult> },
 
     /// MCP configure draft payload from MCP add flow
     McpConfigureDraftLoaded {
@@ -241,11 +181,8 @@ pub enum ViewCommand {
     },
 
     // ===== Model Selector Commands =====
-
     /// Model search results updated
-    ModelSearchResults {
-        models: Vec<ModelInfo>,
-    },
+    ModelSearchResults { models: Vec<ModelInfo> },
 
     /// Model selection changed
     ModelSelected {
@@ -254,8 +191,25 @@ pub enum ViewCommand {
         context_length: Option<u32>,
     },
 
-    // ===== Error Commands =====
+    /// Prefill profile editor with existing profile data for edit flow
+    ProfileEditorLoad {
+        id: Uuid,
+        name: String,
+        provider_id: String,
+        model_id: String,
+        base_url: String,
+        auth_kind: String,
+        auth_value: Option<String>,
+        temperature: f64,
+        max_tokens: u32,
+        context_limit: Option<u32>,
+        show_thinking: bool,
+        enable_thinking: bool,
+        thinking_budget: Option<u32>,
+        system_prompt: String,
+    },
 
+    // ===== Error Commands =====
     /// Show error to user
     ShowError {
         title: String,
@@ -267,19 +221,14 @@ pub enum ViewCommand {
     ClearError,
 
     // ===== Navigation Commands =====
-
     /// Navigate to view
-    NavigateTo {
-        view: ViewId,
-    },
+    NavigateTo { view: ViewId },
 
     /// Navigate back
     NavigateBack,
 
     /// Show modal
-    ShowModal {
-        modal: ModalId,
-    },
+    ShowModal { modal: ModalId },
 
     /// Dismiss modal
     DismissModal,

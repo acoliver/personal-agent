@@ -59,7 +59,10 @@ fn new_conversation_shows_edit_field() {
     // - Popup remains visible with the new conversation selected
     //
     // Current implementation should support either UX choice.
-    assert!(true, "New conversation should handle title editing appropriately");
+    assert!(
+        true,
+        "New conversation should handle title editing appropriately"
+    );
 }
 
 /// The popup and edit field should never both be visible at the same time

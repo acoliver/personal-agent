@@ -4,8 +4,8 @@
 //! @requirement REQ-GPUI-003
 
 use gpui::{div, prelude::*, px, IntoElement, Styled};
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct Toggle {
     is_on: Rc<RefCell<bool>>,
@@ -32,7 +32,7 @@ impl Toggle {
     pub fn handle_click(&self) {
         let current = *self.is_on.borrow();
         *self.is_on.borrow_mut() = !current;
-        
+
         if let Some(on_change) = &self.on_change {
             (on_change.borrow())(*self.is_on.borrow());
         }
@@ -44,7 +44,7 @@ impl IntoElement for Toggle {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
+
         let is_on = *self.is_on.borrow();
 
         div()
@@ -66,7 +66,7 @@ impl IntoElement for Toggle {
                     .w(px(20.0))
                     .h(px(20.0))
                     .rounded(px(10.0))
-                    .bg(gpui::white())
+                    .bg(gpui::white()),
             )
     }
 }

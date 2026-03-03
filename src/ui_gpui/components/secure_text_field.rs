@@ -3,9 +3,9 @@
 //! @plan PLAN-20250130-GPUIREDUX.P02
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, FocusHandle, Focusable, Styled, Window, Context};
-use std::rc::Rc;
+use gpui::{div, prelude::*, px, Context, FocusHandle, Focusable, Styled, Window};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct SecureTextField {
     focus_handle: FocusHandle,
@@ -97,7 +97,7 @@ impl Focusable for SecureTextField {
 impl Render for SecureTextField {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
         use crate::ui_gpui::theme::Theme;
-        
+
         let is_focused = self.focus_handle.is_focused(window);
         let display_text = self.display_text();
         let placeholder = self.placeholder.clone();
@@ -111,14 +111,14 @@ impl Render for SecureTextField {
                 div()
                     .text_color(Theme::text_primary())
                     .text_sm()
-                    .child(display_text)
+                    .child(display_text),
             );
         } else if !placeholder.is_empty() {
             content_div = content_div.child(
                 div()
                     .text_color(Theme::text_muted())
                     .text_sm()
-                    .child(placeholder)
+                    .child(placeholder),
             );
         }
 
@@ -147,7 +147,7 @@ impl Render for SecureTextField {
                     .text_xs()
                     .text_color(Theme::text_secondary())
                     .cursor_pointer()
-                    .child(icon)
+                    .child(icon),
             );
         }
 

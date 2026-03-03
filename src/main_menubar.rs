@@ -201,7 +201,7 @@ fn register_view_notifications(self_ref: &AppDelegate) {
             Some(&NSString::from_str("PersonalAgentShowConfigureMcp")),
             None,
         );
-        
+
         // Keyboard shortcut notifications
         center.addObserver_selector_name_object(
             self_ref,
@@ -233,7 +233,7 @@ fn register_view_notifications(self_ref: &AppDelegate) {
             Some(&NSString::from_str("PersonalAgentShowHistory")),
             None,
         );
-        
+
         // Settings view shortcuts - forward to settings view
         center.addObserver_selector_name_object(
             self_ref,
@@ -372,7 +372,7 @@ define_class!(
                 // Reload profiles when settings view becomes visible
                 eprintln!("showSettingsView: calling reload_profiles");
                 settings_view.reload_profiles();
-                
+
                 // Force view to update
                 let view = settings_view.view();
                 eprintln!("showSettingsView: got view, calling setNeedsDisplay");
@@ -520,7 +520,7 @@ define_class!(
             POPOVER.set(popover);
             MCP_CONFIGURE_VIEW_CONTROLLER.set(Some(new_mcp_configure_view));
         }
-        
+
         // Keyboard shortcut handlers
         #[unsafe(method(closePopover:))]
         fn close_popover(&self, _notification: &NSNotification) {
@@ -532,7 +532,7 @@ define_class!(
             }
             POPOVER.set(popover);
         }
-        
+
         #[unsafe(method(newConversation:))]
         fn new_conversation(&self, _notification: &NSNotification) {
             // Forward to chat view
@@ -543,7 +543,7 @@ define_class!(
                 CHAT_VIEW_CONTROLLER.set(Some(chat_view));
             }
         }
-        
+
         #[unsafe(method(renameConversation:))]
         fn rename_conversation(&self, _notification: &NSNotification) {
             // Forward to chat view
@@ -554,7 +554,7 @@ define_class!(
                 CHAT_VIEW_CONTROLLER.set(Some(chat_view));
             }
         }
-        
+
         #[unsafe(method(toggleThinking:))]
         fn toggle_thinking(&self, _notification: &NSNotification) {
             // Forward to chat view
@@ -565,7 +565,7 @@ define_class!(
                 CHAT_VIEW_CONTROLLER.set(Some(chat_view));
             }
         }
-        
+
         // Settings view shortcut handlers
         #[unsafe(method(focusProfiles:))]
         fn focus_profiles(&self, _notification: &NSNotification) {
@@ -576,7 +576,7 @@ define_class!(
                 SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
             }
         }
-        
+
         #[unsafe(method(focusMcps:))]
         fn focus_mcps(&self, _notification: &NSNotification) {
             if let Some(settings_view) = SETTINGS_VIEW_CONTROLLER.take() {
@@ -586,7 +586,7 @@ define_class!(
                 SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
             }
         }
-        
+
         #[unsafe(method(addItem:))]
         fn add_item(&self, _notification: &NSNotification) {
             if let Some(settings_view) = SETTINGS_VIEW_CONTROLLER.take() {
@@ -596,7 +596,7 @@ define_class!(
                 SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
             }
         }
-        
+
         #[unsafe(method(deleteItem:))]
         fn delete_item(&self, _notification: &NSNotification) {
             if let Some(settings_view) = SETTINGS_VIEW_CONTROLLER.take() {
@@ -606,7 +606,7 @@ define_class!(
                 SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
             }
         }
-        
+
         #[unsafe(method(editItem:))]
         fn edit_item(&self, _notification: &NSNotification) {
             if let Some(settings_view) = SETTINGS_VIEW_CONTROLLER.take() {
@@ -616,7 +616,7 @@ define_class!(
                 SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
             }
         }
-        
+
         #[unsafe(method(toggleMcp:))]
         fn toggle_mcp(&self, _notification: &NSNotification) {
             if let Some(settings_view) = SETTINGS_VIEW_CONTROLLER.take() {
@@ -626,7 +626,7 @@ define_class!(
                 SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
             }
         }
-        
+
         #[unsafe(method(moveUp:))]
         fn move_up(&self, _notification: &NSNotification) {
             if let Some(settings_view) = SETTINGS_VIEW_CONTROLLER.take() {
@@ -636,7 +636,7 @@ define_class!(
                 SETTINGS_VIEW_CONTROLLER.set(Some(settings_view));
             }
         }
-        
+
         #[unsafe(method(moveDown:))]
         fn move_down(&self, _notification: &NSNotification) {
             if let Some(settings_view) = SETTINGS_VIEW_CONTROLLER.take() {
@@ -716,13 +716,13 @@ fn setup_main_menu(mtm: MainThreadMarker) {
     unsafe {
         main_menu.addItem(&edit_menu_item);
     }
-    
+
     // Create Actions menu with keyboard shortcuts
     let actions_menu = NSMenu::initWithTitle(mtm.alloc(), &NSString::from_str("Actions"));
-    
+
     unsafe {
         use objc2_app_kit::NSEventModifierFlags;
-        
+
         // Chat View shortcuts (Cmd+Shift+...)
         let new_conv = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
@@ -731,10 +731,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("n"),
         );
         new_conv.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&new_conv);
-        
+
         let rename = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Rename Conversation"),
@@ -742,10 +742,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("r"),
         );
         rename.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&rename);
-        
+
         let toggle_think = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Toggle Thinking"),
@@ -753,10 +753,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("t"),
         );
         toggle_think.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&toggle_think);
-        
+
         let history = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Show History"),
@@ -764,10 +764,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("h"),
         );
         history.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&history);
-        
+
         let settings = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Show Settings"),
@@ -775,12 +775,12 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("s"),
         );
         settings.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&settings);
-        
+
         actions_menu.addItem(&NSMenuItem::separatorItem(mtm));
-        
+
         // Settings View shortcuts
         let focus_profiles = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
@@ -789,10 +789,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("p"),
         );
         focus_profiles.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&focus_profiles);
-        
+
         let focus_mcps = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Focus MCPs"),
@@ -800,10 +800,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("m"),
         );
         focus_mcps.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&focus_mcps);
-        
+
         let add_item = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Add Item"),
@@ -811,10 +811,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("="),
         );
         add_item.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&add_item);
-        
+
         let delete_item = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Delete Item"),
@@ -822,10 +822,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("-"),
         );
         delete_item.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&delete_item);
-        
+
         let edit_item = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Edit Item"),
@@ -833,12 +833,12 @@ fn setup_main_menu(mtm: MainThreadMarker) {
             &NSString::from_str("e"),
         );
         edit_item.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
         actions_menu.addItem(&edit_item);
-        
+
         actions_menu.addItem(&NSMenuItem::separatorItem(mtm));
-        
+
         // Arrow key navigation for settings lists
         let move_up = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
@@ -848,7 +848,7 @@ fn setup_main_menu(mtm: MainThreadMarker) {
         );
         move_up.setKeyEquivalentModifierMask(NSEventModifierFlags::empty());
         actions_menu.addItem(&move_up);
-        
+
         let move_down = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
             &NSString::from_str("Move Selection Down"),
@@ -857,9 +857,9 @@ fn setup_main_menu(mtm: MainThreadMarker) {
         );
         move_down.setKeyEquivalentModifierMask(NSEventModifierFlags::empty());
         actions_menu.addItem(&move_down);
-        
+
         actions_menu.addItem(&NSMenuItem::separatorItem(mtm));
-        
+
         // Navigation
         let back = NSMenuItem::initWithTitle_action_keyEquivalent(
             mtm.alloc(),
@@ -870,10 +870,10 @@ fn setup_main_menu(mtm: MainThreadMarker) {
         back.setKeyEquivalentModifierMask(NSEventModifierFlags::empty());
         actions_menu.addItem(&back);
     }
-    
+
     let actions_menu_item = NSMenuItem::new(mtm);
     actions_menu_item.setSubmenu(Some(&actions_menu));
-    
+
     unsafe {
         main_menu.addItem(&actions_menu_item);
     }

@@ -10,11 +10,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::events::{AppEvent, types::{ConversationEvent, UserEvent}};
-use crate::events::bus::EventBus;
-use crate::services::ConversationService;
 use super::{Presenter, PresenterError, ViewCommand};
-use super::view_command::ErrorSeverity;
+use crate::events::bus::EventBus;
+use crate::events::{
+    types::{ConversationEvent, UserEvent},
+    AppEvent,
+};
+use crate::services::ConversationService;
 
 /// HistoryPresenter - handles conversation history UI events
 ///
@@ -61,7 +63,8 @@ impl HistoryPresenter {
             return Ok(());
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         // Subscribe to events from EventBus
         let mut rx = self.event_bus.subscribe();
@@ -96,7 +99,8 @@ impl HistoryPresenter {
     /// @plan PLAN-20250128-PRESENTERS.P02
     /// @requirement REQ-025.1
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -132,16 +136,14 @@ impl HistoryPresenter {
     /// @plan PLAN-20250128-PRESENTERS.P02
     /// @requirement REQ-025.1
     async fn handle_user_event(
-        conversation_service: &Arc<dyn ConversationService>,
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-        event: UserEvent,
+        _conversation_service: &Arc<dyn ConversationService>,
+        _view_tx: &mut mpsc::Sender<ViewCommand>,
+        _event: UserEvent,
     ) {
-        match event {
-            UserEvent::SelectConversation { id } => {
-                Self::handle_select_conversation(conversation_service, view_tx, id).await;
-            }
-            _ => {}
-        }
+        // Conversation selection is handled by ChatPresenter so that activation
+        // and message loading are emitted in a single ordered command stream.
+        // Handling SelectConversation here as well causes duplicate
+        // ConversationActivated commands that can race and clear chat state.
     }
 
     /// Handle conversation domain events
@@ -154,49 +156,30 @@ impl HistoryPresenter {
     ) {
         match event {
             ConversationEvent::Created { id, title: _ } => {
-                let _ = view_tx.send(ViewCommand::ConversationCreated {
-                    id,
-                    profile_id: Uuid::nil(),
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationCreated {
+                        id,
+                        profile_id: Uuid::nil(),
+                    })
+                    .await;
             }
             ConversationEvent::TitleUpdated { id, title } => {
-                let _ = view_tx.send(ViewCommand::ConversationTitleUpdated { id, title }).await;
+                let _ = view_tx
+                    .send(ViewCommand::ConversationTitleUpdated { id, title })
+                    .await;
             }
             ConversationEvent::Deleted { id } => {
                 let _ = view_tx.send(ViewCommand::ConversationDeleted { id }).await;
             }
             ConversationEvent::ListRefreshed { count } => {
-                let _ = view_tx.send(ViewCommand::HistoryUpdated {
-                    count: Some(count),
-                }).await;
+                let _ = view_tx
+                    .send(ViewCommand::HistoryUpdated { count: Some(count) })
+                    .await;
             }
             _ => {}
         }
     }
 
-    /// Handle SelectConversation user event
-    ///
-    /// @plan PLAN-20250128-PRESENTERS.P02
-    /// @requirement REQ-025.1
-    async fn handle_select_conversation(
-        conversation_service: &Arc<dyn ConversationService>,
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-        id: Uuid,
-    ) {
-        match conversation_service.set_active(id).await {
-            Ok(_) => {
-                let _ = view_tx.send(ViewCommand::ConversationActivated { id }).await;
-            }
-            Err(e) => {
-                tracing::error!("Failed to select conversation: {}", e);
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Error".to_string(),
-                    message: format!("Failed to select conversation: {}", e),
-                    severity: ErrorSeverity::Error,
-                }).await;
-            }
-        }
-    }
 }
 
 // Implement Presenter trait
@@ -210,7 +193,8 @@ impl Presenter for HistoryPresenter {
     }
 
     fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -223,7 +207,6 @@ impl Presenter for HistoryPresenter {
 /// @requirement REQ-025.1
 #[cfg(test)]
 mod tests {
-    
 
     /// Test handle select conversation
     /// @plan PLAN-20250128-PRESENTERS.P02

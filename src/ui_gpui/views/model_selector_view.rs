@@ -3,13 +3,15 @@
 //! @plan PLAN-20250130-GPUIREDUX.P07
 //! @requirement REQ-UI-MS
 
-use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight, ScrollWheelEvent};
+use gpui::{
+    div, prelude::*, px, FocusHandle, FontWeight, MouseButton, ScrollWheelEvent, SharedString,
+};
 use std::sync::Arc;
 
-use crate::ui_gpui::theme::Theme;
-use crate::ui_gpui::bridge::GpuiBridge;
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
+use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::theme::Theme;
 
 /// Model information for display
 /// @plan PLAN-20250130-GPUIREDUX.P07
@@ -151,11 +153,7 @@ impl ModelSelectorState {
 
     /// Get unique providers from all models (not just filtered)
     pub fn all_providers(&self) -> Vec<&str> {
-        let mut providers: Vec<&str> = self
-            .models
-            .iter()
-            .map(|m| m.provider_id.as_str())
-            .collect();
+        let mut providers: Vec<&str> = self.models.iter().map(|m| m.provider_id.as_str()).collect();
         providers.sort();
         providers.dedup();
         providers
@@ -201,7 +199,6 @@ impl ModelSelectorView {
         self.state.selected_provider = provider;
     }
 
-
     /// Emit SearchModels event for current query.
     pub fn emit_search_models(&self) {
         self.emit(UserEvent::SearchModels {
@@ -234,7 +231,10 @@ impl ModelSelectorView {
                 // Navigation handled by MainPanel
             }
             ViewCommand::ModelSearchResults { models } => {
-                println!(">>> ModelSelectorView::handle_command received {} models <<<", models.len());
+                println!(
+                    ">>> ModelSelectorView::handle_command received {} models <<<",
+                    models.len()
+                );
                 tracing::info!("ModelSelectorView received {} models", models.len());
 
                 // Extract unique providers from the models
@@ -244,7 +244,10 @@ impl ModelSelectorView {
                 }
                 let providers: Vec<ProviderInfo> = provider_set
                     .into_iter()
-                    .map(|id| ProviderInfo { id: id.clone(), name: id })
+                    .map(|id| ProviderInfo {
+                        id: id.clone(),
+                        name: id,
+                    })
                     .collect();
 
                 println!(">>> Providers extracted: {} <<<", providers.len());
@@ -264,7 +267,10 @@ impl ModelSelectorView {
 
                 println!(">>> Setting {} models on view <<<", local_models.len());
                 self.set_models(providers, local_models);
-                println!(">>> Models set, state.models.len() = {} <<<", self.state.models.len());
+                println!(
+                    ">>> Models set, state.models.len() = {} <<<",
+                    self.state.models.len()
+                );
             }
             _ => {}
         }
@@ -276,7 +282,6 @@ impl ModelSelectorView {
         tracing::info!("ModelSelectorView requesting models");
         self.emit(UserEvent::OpenModelSelector);
     }
-
 
     /// Emit search/filter events when local filter state changes.
     fn emit_filter_events_if_changed(&mut self) {
@@ -321,25 +326,24 @@ impl ModelSelectorView {
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
                     .child("Cancel")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                        crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::Settings,
-                        );
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            crate::ui_gpui::navigation_channel().request_navigate(
+                                crate::presentation::view_command::ViewId::Settings,
+                            );
+                        }),
+                    ),
             )
             // Center: Title
             .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::text_primary())
-                            .child("Select Model")
-                    )
+                div().flex_1().flex().justify_center().child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(Theme::text_primary())
+                        .child("Select Model"),
+                ),
             )
             // Right: spacer for balance
             .child(div().w(px(70.0)))
@@ -389,7 +393,7 @@ impl ModelSelectorView {
                             .text_size(px(12.0))
                             .text_color(Theme::text_primary())
                             .child(search_query)
-                    })
+                    }),
             )
             // Provider dropdown button
             .child(
@@ -401,17 +405,22 @@ impl ModelSelectorView {
                         div()
                             .text_size(px(11.0))
                             .text_color(Theme::text_primary())
-                            .child("Provider:")
+                            .child("Provider:"),
                     )
                     .child(
                         div()
                             .id("provider-dropdown")
-                            .w(px(100.0))
+                            .min_w(px(120.0))
+                            .max_w(px(220.0))
                             .h(px(28.0))
                             .px(px(8.0))
                             .bg(Theme::bg_dark())
                             .border_1()
-                            .border_color(if show_dropdown { Theme::accent() } else { Theme::border() })
+                            .border_color(if show_dropdown {
+                                Theme::accent()
+                            } else {
+                                Theme::border()
+                            })
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
@@ -419,17 +428,21 @@ impl ModelSelectorView {
                             .cursor_pointer()
                             .text_size(px(11.0))
                             .text_color(Theme::text_primary())
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                this.state.show_provider_dropdown = !this.state.show_provider_dropdown;
-                                cx.notify();
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.state.show_provider_dropdown =
+                                        !this.state.show_provider_dropdown;
+                                    cx.notify();
+                                }),
+                            )
                             .child(provider_display)
                             .child(
                                 div()
                                     .text_color(Theme::text_muted())
-                                    .child(if show_dropdown { "^" } else { "v" })
-                            )
-                    )
+                                    .child(if show_dropdown { "^" } else { "v" }),
+                            ),
+                    ),
             )
     }
 
@@ -456,10 +469,13 @@ impl ModelSelectorView {
                     .items_center()
                     .gap(px(4.0))
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.filter_reasoning = !this.state.filter_reasoning;
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.filter_reasoning = !this.state.filter_reasoning;
+                            cx.notify();
+                        }),
+                    )
                     .child(
                         div()
                             .size(px(14.0))
@@ -474,16 +490,16 @@ impl ModelSelectorView {
                                     div()
                                         .text_size(px(10.0))
                                         .text_color(gpui::white())
-                                        .child("[OK]")
+                                        .child("[OK]"),
                                 )
-                            })
+                            }),
                     )
                     .child(
                         div()
                             .text_size(px(11.0))
                             .text_color(Theme::text_primary())
-                            .child("Reasoning")
-                    )
+                            .child("Reasoning"),
+                    ),
             )
             // Vision checkbox
             .child(
@@ -493,10 +509,13 @@ impl ModelSelectorView {
                     .items_center()
                     .gap(px(4.0))
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.filter_vision = !this.state.filter_vision;
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.filter_vision = !this.state.filter_vision;
+                            cx.notify();
+                        }),
+                    )
                     .child(
                         div()
                             .size(px(14.0))
@@ -511,16 +530,16 @@ impl ModelSelectorView {
                                     div()
                                         .text_size(px(10.0))
                                         .text_color(gpui::white())
-                                        .child("[OK]")
+                                        .child("[OK]"),
                                 )
-                            })
+                            }),
                     )
                     .child(
                         div()
                             .text_size(px(11.0))
                             .text_color(Theme::text_primary())
-                            .child("Vision")
-                    )
+                            .child("Vision"),
+                    ),
             )
     }
 
@@ -548,7 +567,11 @@ impl ModelSelectorView {
 
     /// Render a single model row
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_model_row(&self, model: &ModelInfo, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_model_row(
+        &self,
+        model: &ModelInfo,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         let model_id = model.id.clone();
         let provider_id = model.provider_id.clone();
         let context = model.context_display();
@@ -561,7 +584,10 @@ impl ModelSelectorView {
         let cost_out = ModelInfo::cost_display(model.cost_output);
 
         div()
-            .id(SharedString::from(format!("model-{}-{}", provider_id, model_id)))
+            .id(SharedString::from(format!(
+                "model-{}-{}",
+                provider_id, model_id
+            )))
             .h(px(28.0))
             .w_full()
             .px(px(12.0))
@@ -571,14 +597,17 @@ impl ModelSelectorView {
             .hover(|s| s.bg(Theme::bg_dark()))
             .text_size(px(11.0))
             .text_color(Theme::text_primary())
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, _cx| {
-                println!(">>> Model selected: {} from {} <<<", model_id, provider_id);
-                this.emit(UserEvent::SelectModel {
-                    provider_id: provider_id.clone(),
-                    model_id: model_id.clone(),
-                });
-                this.state.show_provider_dropdown = false;
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, _cx| {
+                    println!(">>> Model selected: {} from {} <<<", model_id, provider_id);
+                    this.emit(UserEvent::SelectModel {
+                        provider_id: provider_id.clone(),
+                        model_id: model_id.clone(),
+                    });
+                    this.state.show_provider_dropdown = false;
+                }),
+            )
             .child(div().flex_1().overflow_hidden().child(model.id.clone()))
             .child(
                 div()
@@ -586,7 +615,7 @@ impl ModelSelectorView {
                     .flex()
                     .justify_end()
                     .text_color(Theme::text_primary())
-                    .child(context)
+                    .child(context),
             )
             .child(
                 div()
@@ -594,7 +623,7 @@ impl ModelSelectorView {
                     .flex()
                     .justify_center()
                     .text_color(Theme::text_secondary())
-                    .child(caps)
+                    .child(caps),
             )
             .child(
                 div()
@@ -602,7 +631,7 @@ impl ModelSelectorView {
                     .flex()
                     .justify_end()
                     .text_color(Theme::text_primary())
-                    .child(cost_in)
+                    .child(cost_in),
             )
             .child(
                 div()
@@ -610,7 +639,7 @@ impl ModelSelectorView {
                     .flex()
                     .justify_end()
                     .text_color(Theme::text_primary())
-                    .child(cost_out)
+                    .child(cost_out),
             )
     }
 
@@ -618,7 +647,10 @@ impl ModelSelectorView {
     /// @plan PLAN-20250130-GPUIREDUX.P07
     fn render_provider_header(&self, provider_id: &str) -> impl IntoElement {
         div()
-            .id(SharedString::from(format!("provider-header-{}", provider_id)))
+            .id(SharedString::from(format!(
+                "provider-header-{}",
+                provider_id
+            )))
             .h(px(24.0))
             .w_full()
             .bg(Theme::bg_dark())
@@ -644,38 +676,35 @@ impl ModelSelectorView {
             .bg(Theme::bg_darkest())
             .overflow_y_scroll()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .children(
-                        providers
-                            .iter()
-                            .filter_map(|provider| {
-                                let provider_models: Vec<_> = filtered
-                                    .iter()
-                                    .filter(|m| &m.provider_id == *provider)
-                                    .collect();
+                div().flex().flex_col().children(
+                    providers
+                        .iter()
+                        .filter_map(|provider| {
+                            let provider_models: Vec<_> = filtered
+                                .iter()
+                                .filter(|m| &m.provider_id == *provider)
+                                .collect();
 
-                                if provider_models.is_empty() {
-                                    return None;
-                                }
+                            if provider_models.is_empty() {
+                                return None;
+                            }
 
-                                let provider_id = provider.to_string();
-                                Some(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .child(self.render_provider_header(&provider_id))
-                                        .children(
-                                            provider_models
-                                                .into_iter()
-                                                .map(|model| self.render_model_row(model, cx))
-                                                .collect::<Vec<_>>()
-                                        )
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                    )
+                            let provider_id = provider.to_string();
+                            Some(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(self.render_provider_header(&provider_id))
+                                    .children(
+                                        provider_models
+                                            .into_iter()
+                                            .map(|model| self.render_model_row(model, cx))
+                                            .collect::<Vec<_>>(),
+                                    ),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                ),
             )
     }
 
@@ -699,7 +728,10 @@ impl ModelSelectorView {
             .items_center()
             .text_size(px(11.0))
             .text_color(Theme::text_primary())
-            .child(format!("{} models from {} providers", model_count, provider_count))
+            .child(format!(
+                "{} models from {} providers",
+                model_count, provider_count
+            ))
     }
 
     /// Render the provider dropdown overlay
@@ -711,7 +743,8 @@ impl ModelSelectorView {
             .absolute()
             .top(px(80.0 + 28.0))
             .right(px(12.0))
-            .w(px(150.0))
+            .min_w(px(180.0))
+            .max_w(px(320.0))
             .max_h(px(300.0))
             .overflow_y_scroll()
             .bg(Theme::bg_dark())
@@ -729,13 +762,16 @@ impl ModelSelectorView {
                     .hover(|s| s.bg(Theme::bg_darker()))
                     .text_size(px(11.0))
                     .text_color(Theme::text_primary())
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.selected_provider = None;
-                        this.state.show_provider_dropdown = false;
-                        this.emit_filter_events_if_changed();
-                        cx.notify();
-                    }))
-                    .child("All")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.selected_provider = None;
+                            this.state.show_provider_dropdown = false;
+                            this.emit_filter_events_if_changed();
+                            cx.notify();
+                        }),
+                    )
+                    .child("All"),
             )
             // Provider options
             .children(
@@ -752,15 +788,18 @@ impl ModelSelectorView {
                             .hover(|s| s.bg(Theme::bg_darker()))
                             .text_size(px(11.0))
                             .text_color(Theme::text_primary())
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                                this.state.selected_provider = Some(provider_id.clone());
-                                this.state.show_provider_dropdown = false;
-                                this.emit_filter_events_if_changed();
-                                cx.notify();
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _window, cx| {
+                                    this.state.selected_provider = Some(provider_id.clone());
+                                    this.state.show_provider_dropdown = false;
+                                    this.emit_filter_events_if_changed();
+                                    cx.notify();
+                                }),
+                            )
                             .child(provider_name)
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>(),
             )
     }
 }
@@ -772,7 +811,11 @@ impl gpui::Focusable for ModelSelectorView {
 }
 
 impl gpui::Render for ModelSelectorView {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         let show_dropdown = self.state.show_provider_dropdown;
 
         let root = div()
@@ -783,44 +826,45 @@ impl gpui::Render for ModelSelectorView {
             .size_full()
             .bg(Theme::bg_darkest())
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                let key = &event.keystroke.key;
-                let modifiers = &event.keystroke.modifiers;
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                    let key = &event.keystroke.key;
+                    let modifiers = &event.keystroke.modifiers;
 
-                // Escape: close dropdown or go back
-                if key == "escape" {
-                    if this.state.show_provider_dropdown {
-                        this.state.show_provider_dropdown = false;
-                        cx.notify();
-                    } else {
-                        crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::Settings,
-                        );
+                    // Escape: close dropdown or go back
+                    if key == "escape" {
+                        if this.state.show_provider_dropdown {
+                            this.state.show_provider_dropdown = false;
+                            cx.notify();
+                        } else {
+                            crate::ui_gpui::navigation_channel().request_navigate(
+                                crate::presentation::view_command::ViewId::Settings,
+                            );
+                        }
+                        return;
                     }
-                    return;
-                }
 
-                // Cmd+W: Go back to Settings
-                if modifiers.platform && key == "w" {
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Settings,
-                    );
-                    return;
-                }
-
-                // Handle typing for search - any alphanumeric key updates search
-                if !modifiers.platform && !modifiers.control {
-                    if key == "backspace" {
-                        this.state.search_query.pop();
-                        this.emit_filter_events_if_changed();
-                        cx.notify();
-                    } else if key.len() == 1 {
-                        this.state.search_query.push_str(key);
-                        this.emit_filter_events_if_changed();
-                        cx.notify();
+                    // Cmd+W: Go back to Settings
+                    if modifiers.platform && key == "w" {
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::Settings);
+                        return;
                     }
-                }
-            }))
+
+                    // Handle typing for search - any alphanumeric key updates search
+                    if !modifiers.platform && !modifiers.control {
+                        if key == "backspace" {
+                            this.state.search_query.pop();
+                            this.emit_filter_events_if_changed();
+                            cx.notify();
+                        } else if key.len() == 1 {
+                            this.state.search_query.push_str(key);
+                            this.emit_filter_events_if_changed();
+                            cx.notify();
+                        }
+                    }
+                }),
+            )
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Filter bar (36px)
@@ -845,13 +889,18 @@ impl gpui::Render for ModelSelectorView {
                     .right(px(0.0))
                     .bottom(px(0.0))
                     .block_mouse_except_scroll()
-                    .on_scroll_wheel(cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
-                        cx.stop_propagation();
-                    }))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.show_provider_dropdown = false;
-                        cx.notify();
-                    }))
+                    .on_scroll_wheel(cx.listener(
+                        |_this, _event: &ScrollWheelEvent, _window, cx| {
+                            cx.stop_propagation();
+                        },
+                    ))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.show_provider_dropdown = false;
+                            cx.notify();
+                        }),
+                    )
                     .child(self.render_provider_dropdown(cx)),
             )
         } else {

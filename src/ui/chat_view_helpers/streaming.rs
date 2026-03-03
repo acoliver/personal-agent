@@ -41,9 +41,15 @@ pub fn start_streaming_request(
     streaming_tool_uses: Arc<Mutex<Vec<personal_agent::llm::tools::ToolUse>>>,
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    log_to_file(&format!("Starting streaming request in background with profile: {} ({}:{})", 
-        profile.name, profile.provider_id, profile.model_id));
-    log_to_file(&format!("Number of messages: {}, tools: {}", llm_messages.len(), tools.len()));
+    log_to_file(&format!(
+        "Starting streaming request in background with profile: {} ({}:{})",
+        profile.name, profile.provider_id, profile.model_id
+    ));
+    log_to_file(&format!(
+        "Number of messages: {}, tools: {}",
+        llm_messages.len(),
+        tools.len()
+    ));
     spawn_in_agent_runtime(async move {
         log_to_file("Inside async block, creating client...");
         match LlmClient::from_profile(&profile) {
@@ -128,19 +134,25 @@ pub fn handle_stream_event(
             }
         }
         StreamEvent::ToolCallStarted { tool_name, call_id } => {
-            log_to_file(&format!(
-                "Tool call started: {} ({})",
-                tool_name, call_id
-            ));
+            log_to_file(&format!("Tool call started: {} ({})", tool_name, call_id));
         }
-        StreamEvent::ToolCallCompleted { tool_name, call_id, success, result, error } => {
+        StreamEvent::ToolCallCompleted {
+            tool_name,
+            call_id,
+            success,
+            result,
+            error,
+        } => {
             if success {
                 log_to_file(&format!(
                     "Tool call completed: {} ({}) - success",
                     tool_name, call_id
                 ));
                 if let Some(r) = result {
-                    log_to_file(&format!("Tool result: {}", r.chars().take(200).collect::<String>()));
+                    log_to_file(&format!(
+                        "Tool result: {}",
+                        r.chars().take(200).collect::<String>()
+                    ));
                 }
             } else {
                 log_to_file(&format!(
@@ -327,7 +339,8 @@ pub fn finalize_streaming(controller: &ChatViewController) {
 
     // Add assistant message to conversation and save
     if let Some(ref mut conversation) = *controller.ivars().conversation.borrow_mut() {
-        let mut assistant_msg = personal_agent::models::Message::assistant(state.final_text.clone());
+        let mut assistant_msg =
+            personal_agent::models::Message::assistant(state.final_text.clone());
         if let Some(thinking) = &state.thinking_text {
             if !thinking.is_empty() {
                 assistant_msg.thinking_content = Some(thinking.clone());
@@ -338,11 +351,13 @@ pub fn finalize_streaming(controller: &ChatViewController) {
             "Added assistant message to conversation, now has {} messages",
             conversation.messages.len()
         ));
-        
+
         // Save conversation after assistant response
         if let Ok(storage) = personal_agent::storage::ConversationStorage::with_default_path() {
             if let Err(e) = storage.save(conversation) {
-                log_to_file(&format!("Failed to save conversation after assistant response: {e}"));
+                log_to_file(&format!(
+                    "Failed to save conversation after assistant response: {e}"
+                ));
             } else {
                 log_to_file("Saved conversation after assistant response");
             }

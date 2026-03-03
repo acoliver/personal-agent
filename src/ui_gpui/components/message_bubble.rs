@@ -3,7 +3,7 @@
 //! @plan PLAN-20250128-GPUI.P06
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, IntoElement, px};
+use gpui::{div, prelude::*, px, IntoElement};
 
 pub struct UserBubble {
     content: String,
@@ -11,7 +11,9 @@ pub struct UserBubble {
 
 impl UserBubble {
     pub fn new(content: impl Into<String>) -> Self {
-        Self { content: content.into() }
+        Self {
+            content: content.into(),
+        }
     }
 }
 
@@ -20,21 +22,17 @@ impl IntoElement for UserBubble {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
-        div()
-            .flex()
-            .justify_end()
-            .w_full()
-            .child(
-                div()
-                    .w(px(400.0))
-                    .px(px(Theme::SPACING_MD))
-                    .py(px(Theme::SPACING_SM))
-                    .rounded(px(Theme::RADIUS_LG))
-                    .bg(Theme::bg_dark())
-                    .text_color(Theme::text_primary())
-                    .child(self.content)
-            )
+
+        div().flex().justify_end().w_full().child(
+            div()
+                .w(px(400.0))
+                .px(px(Theme::SPACING_MD))
+                .py(px(Theme::SPACING_SM))
+                .rounded(px(Theme::RADIUS_LG))
+                .bg(Theme::bg_dark())
+                .text_color(Theme::text_primary())
+                .child(self.content),
+        )
     }
 }
 
@@ -83,7 +81,7 @@ impl IntoElement for AssistantBubble {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
+
         let mut bubble = div()
             .flex()
             .flex_col()
@@ -103,7 +101,7 @@ impl IntoElement for AssistantBubble {
                         .bg(Theme::bg_darker())
                         .text_color(Theme::text_secondary())
                         .text_sm()
-                        .child(format!("Thinking: {}", thinking_content))
+                        .child(format!("Thinking: {}", thinking_content)),
                 );
             }
         }
@@ -132,7 +130,7 @@ impl IntoElement for AssistantBubble {
                 div()
                     .text_sm()
                     .text_color(Theme::text_muted())
-                    .child(format!("via {}", model_id))
+                    .child(format!("via {}", model_id)),
             );
         }
 

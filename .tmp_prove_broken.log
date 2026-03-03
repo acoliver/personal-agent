@@ -1,0 +1,26 @@
+\n=== Restart app in NORMAL mode (no auto-open flags) ===
+PID=5228
+\n=== Check startup contract ===
+PASS: No auto-open in normal mode
+PASS: Startup reports tray-click mode
+PASS: No PA_TEST_POPUP_ONSCREEN override in normal startup
+\n=== Popup positioning evidence ===
+PASS: No popup positioning logs captured in normal-mode run (informational)
+\n=== Check profile inventory on disk ===
+default_exists= True
+default_profile_file_exists= False
+profile_json_count= 31
+\n=== Check runtime profile-load warnings ===
+37:[2m2026-02-25T15:54:41.345783Z[0m [32m INFO[0m ProfileService: loaded 30 profiles from disk
+PASS: ProfileService loaded profiles from disk
+PASS: No invalid-profile skip warnings
+\n=== Code-level regression test suite ===
+PASS: seven_bugs_regression_tests passes on current code
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+\n=== UI automation proof (SCN-002) ===
+PASS: SCN-002 passes
+test scn_002_keyboard_profile_switch_from_chat_emits_event_and_routes_model ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 10.11s
+\n=== SCN-003 status (non-blocking observation) ===
+PASS: SCN-003 success artifact not present (non-blocking)
+\n=== Brokenness verdict ===

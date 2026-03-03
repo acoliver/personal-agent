@@ -15,10 +15,18 @@
 //! Run with: cargo test --test e2e_presenter_chat -- --ignored --nocapture
 
 use personal_agent::{
-    events::{AppEvent, bus::EventBus, types::{ChatEvent, UserEvent}},
-    presentation::{chat_presenter::ChatPresenter, view_command::ViewCommand},
-    services::{ChatService, ConversationService, chat_impl::ChatServiceImpl, conversation_impl::ConversationServiceImpl, profile_impl::ProfileServiceImpl, secrets_impl::SecretsServiceImpl},
+    events::{
+        bus::EventBus,
+        types::{ChatEvent, UserEvent},
+        AppEvent,
+    },
     models::ModelProfile,
+    presentation::{chat_presenter::ChatPresenter, view_command::ViewCommand},
+    services::{
+        chat_impl::ChatServiceImpl, conversation_impl::ConversationServiceImpl,
+        profile_impl::ProfileServiceImpl, secrets_impl::SecretsServiceImpl, ChatService,
+        ConversationService,
+    },
     LlmClient,
 };
 use std::sync::Arc;
@@ -49,7 +57,7 @@ fn load_synthetic_profile() -> ModelProfile {
         .as_str()
         .unwrap_or("~/.synthetic_key")
         .to_string();
-    
+
     // Expand ~ to home directory
     let keyfile_path = if keyfile_path.starts_with("~/") {
         home.join(&keyfile_path[2..]).to_string_lossy().to_string()
@@ -111,7 +119,7 @@ async fn test_chat_presenter_receives_stream_events() {
 
     // Setup: Create EventBus
     let event_bus = Arc::new(EventBus::new(100));
-    
+
     // Setup: Create ViewCommand channel to capture presenter output
     let (view_tx, view_rx) = mpsc::channel::<ViewCommand>(100);
 
@@ -123,16 +131,14 @@ async fn test_chat_presenter_receives_stream_events() {
     // Setup: Create SecretsService
     let secrets_dir = home.join(".llxprt/secrets");
     std::fs::create_dir_all(&secrets_dir).expect("Failed to create secrets dir");
-    let _secrets_service: Arc<dyn personal_agent::services::SecretsService> = Arc::new(
-        SecretsServiceImpl::new(secrets_dir)
-            .expect("Failed to create SecretsService")
-    );
+    let _secrets_service: Arc<dyn personal_agent::services::SecretsService> =
+        Arc::new(SecretsServiceImpl::new(secrets_dir).expect("Failed to create SecretsService"));
 
     // Setup: Create ProfileService
     let profiles_dir = home.join(".llxprt/profiles");
     std::fs::create_dir_all(&profiles_dir).expect("Failed to create profiles dir");
-    let profile_service_impl = ProfileServiceImpl::new(profiles_dir.clone())
-        .expect("Failed to create ProfileService");
+    let profile_service_impl =
+        ProfileServiceImpl::new(profiles_dir.clone()).expect("Failed to create ProfileService");
 
     // Initialize profile service to load existing profiles (fire and forget)
     tokio::spawn(async move {
@@ -140,25 +146,29 @@ async fn test_chat_presenter_receives_stream_events() {
         let _ = std::fs::read_to_string(profiles_dir.join("synthetic.json"));
     });
 
-    let profile_service: Arc<dyn personal_agent::services::ProfileService> = Arc::new(profile_service_impl);
+    let profile_service: Arc<dyn personal_agent::services::ProfileService> =
+        Arc::new(profile_service_impl);
 
     // Setup: Create ConversationService
     let conversation_service: Arc<dyn ConversationService> = Arc::new(
         ConversationServiceImpl::new(data_dir.clone())
-            .expect("Failed to create ConversationService")
+            .expect("Failed to create ConversationService"),
     );
 
     // Setup: Create ChatService with synthetic profile
     let profile = load_synthetic_profile();
-    println!("Profile loaded: {} / {}", profile.provider_id, profile.model_id);
+    println!(
+        "Profile loaded: {} / {}",
+        profile.provider_id, profile.model_id
+    );
     println!("Base URL: {}", profile.base_url);
 
-    let _llm_client = Arc::new(
-        LlmClient::from_profile(&profile).expect("Failed to create LlmClient")
-    );
-    let chat_service: Arc<dyn ChatService> = Arc::new(
-        ChatServiceImpl::new(conversation_service.clone(), profile_service)
-    );
+    let _llm_client =
+        Arc::new(LlmClient::from_profile(&profile).expect("Failed to create LlmClient"));
+    let chat_service: Arc<dyn ChatService> = Arc::new(ChatServiceImpl::new(
+        conversation_service.clone(),
+        profile_service.clone(),
+    ));
 
     // Setup: Create ChatPresenter
     let mut presenter = ChatPresenter::new(
@@ -186,36 +196,46 @@ async fn test_chat_presenter_receives_stream_events() {
 
     println!("\nEmitting chat stream events...");
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::StreamStarted {
-        conversation_id,
-        message_id,
-        model_id: "synthetic".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::StreamStarted {
+            conversation_id,
+            message_id,
+            model_id: "synthetic".to_string(),
+        }))
+        .ok();
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
-        text: "Hello".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            text: "Hello".to_string(),
+        }))
+        .ok();
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
-        text: " from".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            text: " from".to_string(),
+        }))
+        .ok();
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
-        text: " presenter".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            text: " presenter".to_string(),
+        }))
+        .ok();
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::StreamCompleted {
-        conversation_id,
-        message_id,
-        total_tokens: Some(10),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::StreamCompleted {
+            conversation_id,
+            message_id,
+            total_tokens: Some(10),
+        }))
+        .ok();
 
     // Collect ViewCommands from presenter
     let mut collector = ViewCommandCollector::new(view_rx, 5000); // 5 second timeout
-    
+
     // Wait a moment for async processing
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    
+
     // We expect at minimum:
     // 1. ShowThinking
     // 2. Multiple AppendStream chunks
@@ -283,7 +303,10 @@ async fn test_chat_presenter_receives_stream_events() {
     assert!(found_hide, "Should have HideThinking ViewCommand");
 
     // Also verify events were on the bus
-    assert!(found_text_delta || event_count > 0, "Should have events on the bus");
+    assert!(
+        found_text_delta || event_count > 0,
+        "Should have events on the bus"
+    );
 
     println!("\n[OK] TEST PASSED: ChatPresenter successfully received and processed stream events");
 }
@@ -299,27 +322,42 @@ async fn test_chat_presenter_error_handling() {
 
     let home = dirs::home_dir().expect("No home directory");
     let data_dir = home.join(".llxprt/test-data");
-    
+
     let conversation_service: Arc<dyn ConversationService> = Arc::new(
-        ConversationServiceImpl::new(data_dir)
-            .expect("Failed to create ConversationService")
+        ConversationServiceImpl::new(data_dir).expect("Failed to create ConversationService"),
     );
+
+    let profiles_dir = home.join(".llxprt/profiles");
+    std::fs::create_dir_all(&profiles_dir).expect("Failed to create profiles dir");
+    let profile_service: Arc<dyn personal_agent::services::ProfileService> =
+        Arc::new(ProfileServiceImpl::new(profiles_dir).expect("Failed to create ProfileService"));
 
     // Create a mock chat service that will fail
     struct FailingChatService;
-    
+
     #[async_trait::async_trait]
     impl ChatService for FailingChatService {
         async fn send_message(
             &self,
             _conversation_id: Uuid,
             _content: String,
-        ) -> Result<Box<dyn futures::Stream<Item = personal_agent::services::ChatStreamEvent> + Send + Unpin>, personal_agent::services::ServiceError> {
-            Err(personal_agent::services::ServiceError::Internal("Simulated failure".to_string()))
+        ) -> Result<
+            Box<
+                dyn futures::Stream<Item = personal_agent::services::ChatStreamEvent>
+                    + Send
+                    + Unpin,
+            >,
+            personal_agent::services::ServiceError,
+        > {
+            Err(personal_agent::services::ServiceError::Internal(
+                "Simulated failure".to_string(),
+            ))
         }
 
         fn cancel(&self) {}
-        fn is_streaming(&self) -> bool { false }
+        fn is_streaming(&self) -> bool {
+            false
+        }
     }
 
     let chat_service: Arc<dyn ChatService> = Arc::new(FailingChatService);
@@ -337,9 +375,11 @@ async fn test_chat_presenter_error_handling() {
 
     // Emit SendMessage event
     let _conversation_id = Uuid::new_v4();
-    event_bus.publish(AppEvent::User(UserEvent::SendMessage {
-        text: "This should fail".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::User(UserEvent::SendMessage {
+            text: "This should fail".to_string(),
+        }))
+        .ok();
 
     // Collect ViewCommands
     let mut collector = ViewCommandCollector::new(view_rx, 2000);
@@ -352,7 +392,10 @@ async fn test_chat_presenter_error_handling() {
 
     // We expect to see error handling commands
     let found_error = commands.iter().any(|cmd| {
-        matches!(cmd, ViewCommand::StreamError { .. } | ViewCommand::ShowError { .. })
+        matches!(
+            cmd,
+            ViewCommand::StreamError { .. } | ViewCommand::ShowError { .. }
+        )
     });
 
     assert!(found_error, "Should have received error ViewCommand");
@@ -370,26 +413,23 @@ async fn test_chat_presenter_manual_events() {
 
     let home = dirs::home_dir().expect("No home directory");
     let data_dir = home.join(".llxprt/test-data");
-    
+
     let conversation_service: Arc<dyn ConversationService> = Arc::new(
-        ConversationServiceImpl::new(data_dir)
-            .expect("Failed to create ConversationService")
+        ConversationServiceImpl::new(data_dir).expect("Failed to create ConversationService"),
     );
 
     let profile = load_synthetic_profile();
-    let _llm_client = Arc::new(
-        LlmClient::from_profile(&profile).expect("Failed to create LlmClient")
-    );
+    let _llm_client =
+        Arc::new(LlmClient::from_profile(&profile).expect("Failed to create LlmClient"));
 
     let profiles_dir = home.join(".llxprt/profiles");
-    let profile_service: Arc<dyn personal_agent::services::ProfileService> = Arc::new(
-        ProfileServiceImpl::new(profiles_dir)
-            .expect("Failed to create ProfileService")
-    );
+    let profile_service: Arc<dyn personal_agent::services::ProfileService> =
+        Arc::new(ProfileServiceImpl::new(profiles_dir).expect("Failed to create ProfileService"));
 
-    let chat_service: Arc<dyn ChatService> = Arc::new(
-        ChatServiceImpl::new(conversation_service.clone(), profile_service)
-    );
+    let chat_service: Arc<dyn ChatService> = Arc::new(ChatServiceImpl::new(
+        conversation_service.clone(),
+        profile_service.clone(),
+    ));
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
@@ -408,29 +448,39 @@ async fn test_chat_presenter_manual_events() {
 
     println!("Emitting manual chat events...");
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::StreamStarted {
-        conversation_id,
-        message_id,
-        model_id: "synthetic".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::StreamStarted {
+            conversation_id,
+            message_id,
+            model_id: "synthetic".to_string(),
+        }))
+        .ok();
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
-        text: "Hello".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            text: "Hello".to_string(),
+        }))
+        .ok();
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
-        text: " from".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            text: " from".to_string(),
+        }))
+        .ok();
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
-        text: " presenter".to_string(),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            text: " presenter".to_string(),
+        }))
+        .ok();
 
-    event_bus.publish(AppEvent::Chat(ChatEvent::StreamCompleted {
-        conversation_id,
-        message_id,
-        total_tokens: Some(10),
-    })).ok();
+    event_bus
+        .publish(AppEvent::Chat(ChatEvent::StreamCompleted {
+            conversation_id,
+            message_id,
+            total_tokens: Some(10),
+        }))
+        .ok();
 
     // Collect ViewCommands
     let mut collector = ViewCommandCollector::new(view_rx, 2000);
@@ -442,7 +492,10 @@ async fn test_chat_presenter_manual_events() {
     }
 
     // Verify expected commands
-    assert!(commands.len() >= 2, "Should receive at least 2 ViewCommands");
+    assert!(
+        commands.len() >= 2,
+        "Should receive at least 2 ViewCommands"
+    );
 
     let mut found_thinking = false;
     let mut found_append = false;

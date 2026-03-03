@@ -18,12 +18,20 @@ fn new_conversation_has_readable_default_title() {
     let conversation = Conversation::new(profile_id);
 
     // Title should exist
-    assert!(conversation.title.is_some(), "New conversation should have a title");
+    assert!(
+        conversation.title.is_some(),
+        "New conversation should have a title"
+    );
 
     let title = conversation.title.as_ref().unwrap();
 
     // Title should be timestamp format (17 chars: YYYYMMDDHHMMSSmmm)
-    assert_eq!(title.len(), 17, "Default title should be 17-char timestamp, got: {}", title);
+    assert_eq!(
+        title.len(),
+        17,
+        "Default title should be 17-char timestamp, got: {}",
+        title
+    );
 
     // Title should be all digits (timestamp format)
     assert!(
@@ -139,7 +147,10 @@ fn load_conversation_by_title_finds_correct_one() {
         .iter()
         .find(|c| c.title.as_deref() == Some("Beta"));
 
-    assert!(found_beta.is_some(), "Should find conversation with title 'Beta'");
+    assert!(
+        found_beta.is_some(),
+        "Should find conversation with title 'Beta'"
+    );
 
     let beta = found_beta.unwrap();
     assert_eq!(beta.messages.len(), 1);

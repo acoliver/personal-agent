@@ -3,14 +3,16 @@
 //! @plan PLAN-20250130-GPUIREDUX.P05
 //! @requirement REQ-UI-HS
 
-use gpui::{div, px, prelude::*, IntoElement, MouseButton, ParentElement, Styled, FocusHandle, FontWeight};
+use gpui::{
+    div, prelude::*, px, FocusHandle, FontWeight, IntoElement, MouseButton, ParentElement, Styled,
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::ui_gpui::theme::Theme;
-use crate::ui_gpui::bridge::GpuiBridge;
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
+use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::theme::Theme;
 
 /// Represents a conversation in the history list
 /// @plan PLAN-20250130-GPUIREDUX.P05
@@ -101,10 +103,61 @@ impl HistoryView {
         }
     }
 
+    fn format_date(dt: chrono::DateTime<chrono::Utc>) -> String {
+        let now = chrono::Utc::now();
+        let diff = now.signed_duration_since(dt);
+
+        if diff.num_minutes() < 1 {
+            "Just now".to_string()
+        } else if diff.num_hours() < 1 {
+            format!("{}m ago", diff.num_minutes())
+        } else if diff.num_days() < 1 {
+            format!("{}h ago", diff.num_hours())
+        } else {
+            format!("{}d ago", diff.num_days())
+        }
+    }
+
     /// Handle ViewCommand from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P05
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
+            ViewCommand::ConversationListRefreshed { conversations } => {
+                self.state.conversations = conversations
+                    .into_iter()
+                    .map(|conversation| {
+                        let title = if conversation.title.trim().is_empty() {
+                            "Untitled Conversation".to_string()
+                        } else {
+                            conversation.title
+                        };
+
+                        ConversationItem {
+                            id: conversation.id,
+                            title,
+                            date_display: Self::format_date(conversation.updated_at),
+                            message_count: conversation.message_count,
+                        }
+                    })
+                    .collect();
+                cx.notify();
+            }
+            ViewCommand::ConversationCreated { id, .. } => {
+                if !self
+                    .state
+                    .conversations
+                    .iter()
+                    .any(|conversation| conversation.id == id)
+                {
+                    self.state.conversations.insert(
+                        0,
+                        ConversationItem::new(id, "New Conversation")
+                            .with_date("Just now")
+                            .with_message_count(0),
+                    );
+                }
+                cx.notify();
+            }
             ViewCommand::ConversationCleared => {
                 // A conversation was deleted, refresh needed
                 self.emit(UserEvent::RefreshHistory);
@@ -151,12 +204,14 @@ impl HistoryView {
                     .text_size(px(14.0))
                     .text_color(Theme::text_secondary())
                     .child("<")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                        tracing::info!("Back clicked - navigating to Chat");
-                        crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::Chat
-                        );
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            tracing::info!("Back clicked - navigating to Chat");
+                            crate::ui_gpui::navigation_channel()
+                                .request_navigate(crate::presentation::view_command::ViewId::Chat);
+                        }),
+                    ),
             )
             // Title
             .child(
@@ -164,13 +219,17 @@ impl HistoryView {
                     .text_size(px(14.0))
                     .font_weight(FontWeight::BOLD)
                     .text_color(Theme::text_primary())
-                    .child("History")
+                    .child("History"),
             )
     }
 
     /// Render a single conversation card
     /// @plan PLAN-20250130-GPUIREDUX.P05
-    fn render_conversation_card(&self, conv: &ConversationItem, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+    fn render_conversation_card(
+        &self,
+        conv: &ConversationItem,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
         let conv_id = conv.id;
         let title = if conv.title.is_empty() {
             "Untitled Conversation".to_string()
@@ -202,14 +261,14 @@ impl HistoryView {
                     .text_color(Theme::text_primary())
                     .overflow_hidden()
                     .text_ellipsis()
-                    .child(title)
+                    .child(title),
             )
             // Date and message count row
             .child(
                 div()
                     .text_size(px(11.0))
                     .text_color(Theme::text_secondary())
-                    .child(format!("{} • {}", date, msg_text))
+                    .child(format!("{} • {}", date, msg_text)),
             )
             // Button row
             .child(
@@ -231,14 +290,17 @@ impl HistoryView {
                             .text_size(px(12.0))
                             .text_color(Theme::text_primary())
                             .child("Load")
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, _cx| {
-                                tracing::info!("Load clicked for conversation: {}", conv_id);
-                                this.emit(UserEvent::SelectConversation { id: conv_id });
-                                // Navigate to chat view after selecting
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::Chat
-                                );
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _window, _cx| {
+                                    tracing::info!("Load clicked for conversation: {}", conv_id);
+                                    this.emit(UserEvent::SelectConversation { id: conv_id });
+                                    // Navigate to chat view after selecting
+                                    crate::ui_gpui::navigation_channel().request_navigate(
+                                        crate::presentation::view_command::ViewId::Chat,
+                                    );
+                                }),
+                            ),
                     )
                     // Delete button
                     .child(
@@ -253,11 +315,14 @@ impl HistoryView {
                             .text_size(px(12.0))
                             .text_color(Theme::text_primary())
                             .child("Delete")
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, _cx| {
-                                tracing::info!("Delete clicked for conversation: {}", conv_id);
-                                this.emit(UserEvent::DeleteConversation { id: conv_id });
-                            }))
-                    )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _window, _cx| {
+                                    tracing::info!("Delete clicked for conversation: {}", conv_id);
+                                    this.emit(UserEvent::DeleteConversation { id: conv_id });
+                                }),
+                            ),
+                    ),
             )
             .into_any_element()
     }
@@ -278,33 +343,31 @@ impl HistoryView {
             .gap(px(8.0))
             .overflow_y_scroll()
             .when(conversations.is_empty(), |d| {
-                d.items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(
-                                div()
-                                    .text_size(px(14.0))
-                                    .text_color(Theme::text_secondary())
-                                    .child("No saved conversations")
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .text_color(Theme::text_muted())
-                                    .child("Start chatting to create history")
-                            )
-                    )
+                d.items_center().justify_center().child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(14.0))
+                                .text_color(Theme::text_secondary())
+                                .child("No saved conversations"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(Theme::text_muted())
+                                .child("Start chatting to create history"),
+                        ),
+                )
             })
             .when(!conversations.is_empty(), |d| {
                 d.children(
-                    conversations.iter().map(|conv| {
-                        self.render_conversation_card(conv, cx)
-                    })
+                    conversations
+                        .iter()
+                        .map(|conv| self.render_conversation_card(conv, cx)),
                 )
             })
     }
@@ -317,7 +380,11 @@ impl gpui::Focusable for HistoryView {
 }
 
 impl gpui::Render for HistoryView {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("history-view")
             .flex()
@@ -325,18 +392,19 @@ impl gpui::Render for HistoryView {
             .size_full()
             .bg(Theme::bg_darkest())
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|_this, event: &gpui::KeyDownEvent, _window, _cx| {
-                let key = &event.keystroke.key;
-                let modifiers = &event.keystroke.modifiers;
-                
-                // Escape or Cmd+W: Go back to Chat
-                if key == "escape" || (modifiers.platform && key == "w") {
-                    println!(">>> Escape/Cmd+W pressed - navigating to Chat <<<");
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Chat
-                    );
-                }
-            }))
+            .on_key_down(
+                cx.listener(|_this, event: &gpui::KeyDownEvent, _window, _cx| {
+                    let key = &event.keystroke.key;
+                    let modifiers = &event.keystroke.modifiers;
+
+                    // Escape or Cmd+W: Go back to Chat
+                    if key == "escape" || (modifiers.platform && key == "w") {
+                        println!(">>> Escape/Cmd+W pressed - navigating to Chat <<<");
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::Chat);
+                    }
+                }),
+            )
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Conversation list (flex)

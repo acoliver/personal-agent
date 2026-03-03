@@ -99,7 +99,10 @@ pub enum UserEvent {
     AddMcp,
 
     /// User searched MCP registry
-    SearchMcpRegistry { query: String, source: McpRegistrySource },
+    SearchMcpRegistry {
+        query: String,
+        source: McpRegistrySource,
+    },
 
     /// User selected MCP from search results
     SelectMcpFromRegistry { source: McpRegistrySource },
@@ -143,7 +146,10 @@ pub enum UserEvent {
     FilterModelsByProvider { provider_id: Option<String> },
 
     /// User selected a model
-    SelectModel { provider_id: String, model_id: String },
+    SelectModel {
+        provider_id: String,
+        model_id: String,
+    },
 
     /// User clicked refresh models registry
     /// @plan PLAN-20250130-GPUIREDUX.P06
@@ -162,7 +168,6 @@ pub enum UserEvent {
     /// User clicked Next in MCP Add view
     /// @plan PLAN-20250130-GPUIREDUX.P09
     McpAddNext,
-
 
     // ===== Navigation =====
     /// User clicked to navigate to a view
@@ -344,10 +349,7 @@ pub enum ProfileEvent {
     },
 
     /// Profile validation failed
-    ValidationFailed {
-        id: Uuid,
-        errors: Vec<String>,
-    },
+    ValidationFailed { id: Uuid, errors: Vec<String> },
 }
 
 /// Conversation lifecycle events

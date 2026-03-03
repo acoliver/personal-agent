@@ -14,7 +14,7 @@ pub mod tray_bridge;
 pub mod views;
 
 pub use app::GpuiApp;
-pub use bridge::{GpuiBridge, ViewCommandSink, spawn_user_event_forwarder};
+pub use bridge::{spawn_user_event_forwarder, GpuiBridge, ViewCommandSink};
 pub use navigation::NavigationState;
 pub use navigation_channel::{navigation_channel, NavigationChannel};
 pub use popup_window::PopupWindow;

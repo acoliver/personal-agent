@@ -67,8 +67,12 @@ impl McpRegistryServiceImpl {
             return Ok(Vec::new());
         }
 
-        let content = std::fs::read_to_string(&cache_path)
-            .map_err(|e| ServiceError::Io(format!("Failed to read cache file {}: {e}", cache_path.display())))?;
+        let content = std::fs::read_to_string(&cache_path).map_err(|e| {
+            ServiceError::Io(format!(
+                "Failed to read cache file {}: {e}",
+                cache_path.display()
+            ))
+        })?;
 
         serde_json::from_str(&content)
             .map_err(|e| ServiceError::Serialization(format!("Failed to parse cache file: {e}")))
@@ -81,8 +85,12 @@ impl McpRegistryServiceImpl {
         let content = serde_json::to_string_pretty(results)
             .map_err(|e| ServiceError::Serialization(format!("Failed to serialize cache: {e}")))?;
 
-        std::fs::write(&cache_path, content)
-            .map_err(|e| ServiceError::Io(format!("Failed to write cache file {}: {e}", cache_path.display())))?;
+        std::fs::write(&cache_path, content).map_err(|e| {
+            ServiceError::Io(format!(
+                "Failed to write cache file {}: {e}",
+                cache_path.display()
+            ))
+        })?;
 
         Ok(())
     }
@@ -133,9 +141,11 @@ impl McpRegistryService for McpRegistryServiceImpl {
         }
 
         // Perform search using the McpRegistry client
-        let search_result = self.registry.search(query).await.map_err(|e| {
-            ServiceError::Network(format!("Failed to search registry: {e}"))
-        })?;
+        let search_result = self
+            .registry
+            .search(query)
+            .await
+            .map_err(|e| ServiceError::Network(format!("Failed to search registry: {e}")))?;
 
         // Convert to wrapper format
         let wrappers: Vec<McpRegistryServerWrapper> = search_result
@@ -154,10 +164,7 @@ impl McpRegistryService for McpRegistryServiceImpl {
         *self.cached_results.write().await = wrappers.clone();
 
         // Convert to output format
-        let results: Vec<McpRegistryEntry> = wrappers
-            .iter()
-            .map(Self::wrapper_to_entry)
-            .collect();
+        let results: Vec<McpRegistryEntry> = wrappers.iter().map(Self::wrapper_to_entry).collect();
 
         Ok(results)
     }
@@ -172,9 +179,7 @@ impl McpRegistryService for McpRegistryServiceImpl {
 
         let results = self.cached_results.read().await;
 
-        let wrapper = results
-            .iter()
-            .find(|w| w.server.name == name);
+        let wrapper = results.iter().find(|w| w.server.name == name);
 
         Ok(wrapper.map(Self::wrapper_to_entry))
     }
@@ -189,10 +194,7 @@ impl McpRegistryService for McpRegistryServiceImpl {
 
         let results = self.cached_results.read().await;
 
-        Ok(results
-            .iter()
-            .map(Self::wrapper_to_entry)
-            .collect())
+        Ok(results.iter().map(Self::wrapper_to_entry).collect())
     }
 
     /// List MCP servers by tag/category
@@ -210,12 +212,15 @@ impl McpRegistryService for McpRegistryServiceImpl {
         Ok(results
             .iter()
             .filter(|w| {
-                w.meta.get("tags")
+                w.meta
+                    .get("tags")
                     .and_then(|t| t.as_array())
-                    .is_some_and(|tags| tags.iter().any(|t| {
-                        t.as_str()
-                            .is_some_and(|s| s.to_lowercase().contains(&tag_lower))
-                    }))
+                    .is_some_and(|tags| {
+                        tags.iter().any(|t| {
+                            t.as_str()
+                                .is_some_and(|s| s.to_lowercase().contains(&tag_lower))
+                        })
+                    })
             })
             .map(Self::wrapper_to_entry)
             .collect())
@@ -231,9 +236,11 @@ impl McpRegistryService for McpRegistryServiceImpl {
     /// Refresh the local MCP registry cache
     async fn refresh(&self) -> ServiceResult<()> {
         // Fetch all servers from registry
-        let all_servers = self.registry.fetch_official().await.map_err(|e| {
-            ServiceError::Network(format!("Failed to fetch registry: {e}"))
-        })?;
+        let all_servers = self
+            .registry
+            .fetch_official()
+            .await
+            .map_err(|e| ServiceError::Network(format!("Failed to fetch registry: {e}")))?;
 
         // Convert to wrapper format
         let wrappers: Vec<McpRegistryServerWrapper> = all_servers
@@ -267,10 +274,15 @@ impl McpRegistryService for McpRegistryServiceImpl {
     async fn install(&self, name: &str, config_name: Option<String>) -> ServiceResult<()> {
         // Get the raw registry data to build proper McpConfig
         let cache = self.cached_results.read().await;
-        let wrapper = cache.iter()
-            .find(|w| w.server.name.eq_ignore_ascii_case(name) || 
-                      w.server.name.to_lowercase().contains(&name.to_lowercase()))
-            .ok_or_else(|| ServiceError::NotFound(format!("MCP server '{name}' not found in registry")))?
+        let wrapper = cache
+            .iter()
+            .find(|w| {
+                w.server.name.eq_ignore_ascii_case(name)
+                    || w.server.name.to_lowercase().contains(&name.to_lowercase())
+            })
+            .ok_or_else(|| {
+                ServiceError::NotFound(format!("MCP server '{name}' not found in registry"))
+            })?
             .clone();
         drop(cache);
 
@@ -279,8 +291,9 @@ impl McpRegistryService for McpRegistryServiceImpl {
             server: wrapper.server.clone(),
             meta: wrapper.meta.clone(),
         };
-        let mut mcp_config = McpRegistry::entry_to_config(&registry_wrapper)
-            .map_err(|e| ServiceError::Internal(format!("Failed to convert server to config: {}", e)))?;
+        let mut mcp_config = McpRegistry::entry_to_config(&registry_wrapper).map_err(|e| {
+            ServiceError::Internal(format!("Failed to convert server to config: {}", e))
+        })?;
 
         // Override name if provided
         if let Some(display_name) = config_name {
@@ -290,7 +303,7 @@ impl McpRegistryService for McpRegistryServiceImpl {
         // Load current app config
         let config_path = crate::config::Config::default_path()
             .map_err(|e| ServiceError::Internal(format!("Failed to get config path: {}", e)))?;
-        
+
         let mut config = crate::config::Config::load(&config_path)
             .map_err(|e| ServiceError::Internal(format!("Failed to load config: {}", e)))?;
 
@@ -306,13 +319,15 @@ impl McpRegistryService for McpRegistryServiceImpl {
         config.mcps.push(mcp_config);
 
         // Save config
-        config.save(&config_path)
+        config
+            .save(&config_path)
             .map_err(|e| ServiceError::Internal(format!("Failed to save config: {}", e)))?;
 
         // Reload MCP service to pick up new config
         let mcp_service = crate::mcp::McpService::global();
         let mut mcp = mcp_service.lock().await;
-        mcp.reload().await
+        mcp.reload()
+            .await
             .map_err(|e| ServiceError::Internal(format!("Failed to reload MCP service: {}", e)))?;
 
         Ok(())

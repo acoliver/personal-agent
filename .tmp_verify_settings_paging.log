@@ -1,0 +1,47 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.30s
+PASS: cargo check
+112:    pub profiles_page_start: usize,
+113:    pub mcps_page_start: usize,
+121:            profiles_page_start: 0,
+122:            mcps_page_start: 0,
+175:            self.state.profiles_page_start = 0;
+177:            self.state.profiles_page_start = self
+179:                .profiles_page_start
+188:            self.state.mcps_page_start = 0;
+190:            self.state.mcps_page_start = self
+192:                .mcps_page_start
+212:            self.state.profiles_page_start = 0;
+214:            self.state.profiles_page_start = self
+216:                .profiles_page_start
+223:            self.state.mcps_page_start = 0;
+225:            self.state.mcps_page_start = self
+227:                .mcps_page_start
+469:        let page_start = self.state.profiles_page_start.min(max_start);
+533:                                .id("btn-profiles-page-up")
+550:                                    if this.state.profiles_page_start > 0 {
+551:                                        this.state.profiles_page_start -= 1;
+558:                                .id("btn-profiles-page-down")
+576:                                    if this.state.profiles_page_start < max_start {
+577:                                        this.state.profiles_page_start += 1;
+788:        let page_start = self.state.mcps_page_start.min(max_start);
+856:                                .id("btn-mcps-page-up")
+873:                                    if this.state.mcps_page_start > 0 {
+874:                                        this.state.mcps_page_start -= 1;
+881:                                .id("btn-mcps-page-down")
+899:                                    if this.state.mcps_page_start < max_start {
+900:                                        this.state.mcps_page_start += 1;
+PASS: settings paging state and controls present
+471:        let visible_profiles = &profiles[page_start..page_end];
+498:                    .children(visible_profiles.iter().map(|p| self.render_profile_row(p, cx)))
+516:                                    "Rows {}-{} of {}",
+790:        let visible_mcps = &mcps[page_start..page_end];
+818:                        visible_mcps.iter().map(|m| self.render_mcp_row(m, cx))
+839:                                    "Rows {}-{} of {}",
+PASS: settings sections render paged subsets with row indicator
+633:                d.child(div().ml(px(2.0)).text_color(Theme::text_primary()).child("|"))
+674:                d.child(div().ml(px(2.0)).text_color(Theme::text_primary()).child("|"))
+PASS: profile editor active-field caret glyph present
+673:                                        this.emit(UserEvent::EditProfile { id });
+1068:                            this.emit(UserEvent::EditProfile { id });
+PASS: settings edit action emits EditProfile event
+PASS: settings view no longer directly navigates to ProfileEditor

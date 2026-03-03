@@ -42,7 +42,9 @@ impl EventBus {
     /// @requirement REQ-021.5
     /// @pseudocode event-bus.md lines 30-38
     pub fn publish(&self, event: AppEvent) -> Result<usize, EventBusError> {
-        self.sender.send(event).map_err(|_| EventBusError::NoSubscribers)
+        self.sender
+            .send(event)
+            .map_err(|_| EventBusError::NoSubscribers)
     }
 
     /// Subscribe to receive all events
@@ -63,12 +65,12 @@ impl EventBus {
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
     }
-    
+
     /// Get a reference to the internal sender for presenter creation
     pub fn sender(&self) -> &broadcast::Sender<AppEvent> {
         &self.sender
     }
-    
+
     /// Create an EventBus from an existing sender
     /// Used to share the same channel across different instances
     pub fn from_sender(sender: broadcast::Sender<AppEvent>) -> Self {
@@ -80,8 +82,8 @@ impl EventBus {
 mod tests {
     use super::*;
     use crate::events::types::{
-        ChatEvent, ConversationEvent, McpEvent, NavigationEvent, ProfileEvent, SystemEvent, UserEvent,
-        ViewId,
+        ChatEvent, ConversationEvent, McpEvent, NavigationEvent, ProfileEvent, SystemEvent,
+        UserEvent, ViewId,
     };
     use tokio::time::Duration;
 
@@ -319,11 +321,18 @@ mod tests {
         // Then - fast subscriber receives immediately
         let fast_result = tokio::time::timeout(Duration::from_millis(100), fast_rx.recv()).await;
         assert!(fast_result.is_ok(), "Fast subscriber receives event");
-        assert_eq!(fast_result.unwrap().unwrap(), event, "Fast got correct event");
+        assert_eq!(
+            fast_result.unwrap().unwrap(),
+            event,
+            "Fast got correct event"
+        );
 
         // Slow subscriber can take its time
         let slow_result = slow_rx.recv().await;
-        assert!(slow_result.is_ok(), "Slow subscriber eventually receives event");
+        assert!(
+            slow_result.is_ok(),
+            "Slow subscriber eventually receives event"
+        );
     }
 
     /// EV-T5: Multiple event types can be emitted and received
@@ -435,19 +444,34 @@ mod tests {
 
         // Then - verify sequence
         let received1 = rx.recv().await.unwrap();
-        assert!(matches!(received1, AppEvent::User(UserEvent::SendMessage { .. })));
+        assert!(matches!(
+            received1,
+            AppEvent::User(UserEvent::SendMessage { .. })
+        ));
 
         let received2 = rx.recv().await.unwrap();
-        assert!(matches!(received2, AppEvent::Chat(ChatEvent::StreamStarted { .. })));
+        assert!(matches!(
+            received2,
+            AppEvent::Chat(ChatEvent::StreamStarted { .. })
+        ));
 
         let received3 = rx.recv().await.unwrap();
-        assert!(matches!(received3, AppEvent::Chat(ChatEvent::TextDelta { .. })));
+        assert!(matches!(
+            received3,
+            AppEvent::Chat(ChatEvent::TextDelta { .. })
+        ));
 
         let received4 = rx.recv().await.unwrap();
-        assert!(matches!(received4, AppEvent::Chat(ChatEvent::TextDelta { .. })));
+        assert!(matches!(
+            received4,
+            AppEvent::Chat(ChatEvent::TextDelta { .. })
+        ));
 
         let received5 = rx.recv().await.unwrap();
-        assert!(matches!(received5, AppEvent::Chat(ChatEvent::StreamCompleted { .. })));
+        assert!(matches!(
+            received5,
+            AppEvent::Chat(ChatEvent::StreamCompleted { .. })
+        ));
     }
 
     /// EV-T7: MCP toggle flow emits correct event sequence
@@ -484,10 +508,16 @@ mod tests {
 
         // Then - verify sequence
         let received1 = rx.recv().await.unwrap();
-        assert!(matches!(received1, AppEvent::User(UserEvent::ToggleMcp { .. })));
+        assert!(matches!(
+            received1,
+            AppEvent::User(UserEvent::ToggleMcp { .. })
+        ));
 
         let received2 = rx.recv().await.unwrap();
-        assert!(matches!(received2, AppEvent::Mcp(McpEvent::Starting { .. })));
+        assert!(matches!(
+            received2,
+            AppEvent::Mcp(McpEvent::Starting { .. })
+        ));
 
         let received3 = rx.recv().await.unwrap();
         if let AppEvent::Mcp(McpEvent::Started { name, .. }) = received3 {
@@ -530,7 +560,10 @@ mod tests {
 
         // Then - verify error events
         let received1 = rx.recv().await.unwrap();
-        if let AppEvent::Chat(ChatEvent::StreamError { error, recoverable, .. }) = received1 {
+        if let AppEvent::Chat(ChatEvent::StreamError {
+            error, recoverable, ..
+        }) = received1
+        {
             assert_eq!(error, "Connection failed");
             assert!(recoverable);
         } else {
@@ -545,7 +578,12 @@ mod tests {
         }
 
         let received3 = rx.recv().await.unwrap();
-        if let AppEvent::System(SystemEvent::Error { source, error, context }) = received3 {
+        if let AppEvent::System(SystemEvent::Error {
+            source,
+            error,
+            context,
+        }) = received3
+        {
             assert_eq!(source, "ChatService");
             assert_eq!(error, "Unexpected error");
             assert_eq!(context, Some("During streaming".to_string()));
@@ -554,4 +592,3 @@ mod tests {
         }
     }
 }
-

@@ -33,7 +33,7 @@ fn load_synthetic_profile() -> ModelProfile {
         .as_str()
         .unwrap_or("~/.synthetic_key")
         .to_string();
-    
+
     // Expand ~ to home directory
     let keyfile_path = if keyfile_path.starts_with("~/") {
         home.join(&keyfile_path[2..]).to_string_lossy().to_string()
@@ -57,7 +57,10 @@ async fn test_real_chat_with_synthetic_api() {
 
     // Load profile from user's config
     let profile = load_synthetic_profile();
-    println!("Profile loaded: {} / {}", profile.provider_id, profile.model_id);
+    println!(
+        "Profile loaded: {} / {}",
+        profile.provider_id, profile.model_id
+    );
     println!("Base URL: {}", profile.base_url);
 
     // Verify key file exists

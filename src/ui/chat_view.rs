@@ -187,7 +187,7 @@ define_class!(
                     "Added message to conversation, now has {} messages",
                     conversation.messages.len()
                 ));
-                
+
                 // Save immediately after adding user message to prevent data loss
                 if let Ok(storage) = ConversationStorage::with_default_path() {
                     if let Err(e) = storage.save(conversation) {
@@ -342,7 +342,7 @@ define_class!(
 
             self.ivars().messages.borrow_mut().clear();
             let mut new_conversation = Conversation::new(profile_id);
-            
+
             // Set a default title so it can be saved and found
             let default_title = format!("New {}", new_conversation.created_at.format("%Y-%m-%d %H:%M"));
             new_conversation.title = Some(default_title.clone());
@@ -362,7 +362,7 @@ define_class!(
 
             log_to_file("Cleared messages, rebuilding view");
             rebuild_messages(self);
-            
+
             // Show edit field so user can name the new conversation
             if let Some(popup) = &*self.ivars().title_popup.borrow() {
                 popup.setHidden(true);
@@ -377,7 +377,7 @@ define_class!(
                     edit_field.selectText(None);
                 }
             }
-            
+
             log_to_file("New conversation setup complete - edit field shown for naming");
         }
 
@@ -503,87 +503,87 @@ define_class!(
 
             update_title_and_model(self);
         }
-        
+
         // Keyboard shortcut handlers - post notifications to be handled by the appropriate view
         #[unsafe(method(newConversationShortcut:))]
         fn new_conversation_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+N pressed - new conversation");
             post_notification("PersonalAgentNewConversation");
         }
-        
+
         #[unsafe(method(renameConversationShortcut:))]
         fn rename_conversation_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+R pressed - rename");
             post_notification("PersonalAgentRenameConversation");
         }
-        
+
         #[unsafe(method(toggleThinkingShortcut:))]
         fn toggle_thinking_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+T pressed - toggle thinking");
             post_notification("PersonalAgentToggleThinking");
         }
-        
+
         #[unsafe(method(showHistoryShortcut:))]
         fn show_history_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+H pressed - show history");
             post_notification("PersonalAgentShowHistory");
         }
-        
+
         #[unsafe(method(showSettingsShortcut:))]
         fn show_settings_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+S pressed - show settings");
             post_notification("PersonalAgentShowSettingsView");
         }
-        
+
         #[unsafe(method(backShortcut:))]
         fn back_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Escape pressed - closing popover");
             post_notification("PersonalAgentClosePopover");
         }
-        
+
         // Settings shortcuts - forwarded to settings view
         #[unsafe(method(focusProfilesShortcut:))]
         fn focus_profiles_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+P pressed - focus profiles");
             post_notification("PersonalAgentFocusProfiles");
         }
-        
+
         #[unsafe(method(focusMcpsShortcut:))]
         fn focus_mcps_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+M pressed - focus MCPs");
             post_notification("PersonalAgentFocusMcps");
         }
-        
+
         #[unsafe(method(addItemShortcut:))]
         fn add_item_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift++ pressed - add item");
             post_notification("PersonalAgentAddItem");
         }
-        
+
         #[unsafe(method(deleteItemShortcut:))]
         fn delete_item_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+- pressed - delete item");
             post_notification("PersonalAgentDeleteItem");
         }
-        
+
         #[unsafe(method(editItemShortcut:))]
         fn edit_item_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+E pressed - edit item");
             post_notification("PersonalAgentEditItem");
         }
-        
+
         #[unsafe(method(toggleMcpShortcut:))]
         fn toggle_mcp_shortcut(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Cmd+Shift+Space pressed - toggle MCP");
             post_notification("PersonalAgentToggleMcp");
         }
-        
+
         #[unsafe(method(moveSelectionUp:))]
         fn move_selection_up(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Up arrow pressed");
             post_notification("PersonalAgentMoveUp");
         }
-        
+
         #[unsafe(method(moveSelectionDown:))]
         fn move_selection_down(&self, _sender: Option<&NSObject>) {
             log_to_file("ChatView: Down arrow pressed");

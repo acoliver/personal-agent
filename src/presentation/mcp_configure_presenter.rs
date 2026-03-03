@@ -10,9 +10,12 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::events::{AppEvent, EventBus, types::{McpEvent, UserEvent}};
-use crate::services::McpService;
 use super::{Presenter, PresenterError, ViewCommand};
+use crate::events::{
+    types::{McpEvent, UserEvent},
+    AppEvent, EventBus,
+};
+use crate::services::McpService;
 
 /// McpConfigurePresenter - handles MCP server configuration UI
 ///
@@ -82,7 +85,8 @@ impl McpConfigurePresenter {
             return Ok(());
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -115,7 +119,8 @@ impl McpConfigurePresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -293,7 +298,6 @@ impl McpConfigurePresenter {
         }
     }
 
-
     /// Handle start OAuth event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
@@ -312,10 +316,7 @@ impl McpConfigurePresenter {
     /// Handle MCP domain events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
-    async fn handle_mcp_event(
-        view_tx: &broadcast::Sender<ViewCommand>,
-        event: McpEvent,
-    ) {
+    async fn handle_mcp_event(view_tx: &broadcast::Sender<ViewCommand>, event: McpEvent) {
         match event {
             McpEvent::ConfigSaved { id } => {
                 let _ = view_tx.send(ViewCommand::McpConfigSaved { id, name: None });
@@ -323,7 +324,6 @@ impl McpConfigurePresenter {
             _ => {} // Ignore other MCP events
         }
     }
-
 }
 
 // Implement Presenter trait
@@ -336,7 +336,8 @@ impl Presenter for McpConfigurePresenter {
     }
 
     fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 

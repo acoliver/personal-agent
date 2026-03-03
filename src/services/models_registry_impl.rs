@@ -1,7 +1,7 @@
 //! Models registry service implementation
 
 use super::{ModelsRegistryService, ServiceError, ServiceResult};
-use crate::registry::{RegistryCache, ModelInfo, ModelRegistry};
+use crate::registry::{ModelInfo, ModelRegistry, RegistryCache};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -23,9 +23,8 @@ impl ModelsRegistryServiceImpl {
     ///
     /// Returns an error if the default cache path cannot be determined.
     pub fn new() -> Result<Self, ServiceError> {
-        let cache_path = RegistryCache::default_path().map_err(|e| {
-            ServiceError::Io(format!("Failed to determine cache path: {e}"))
-        })?;
+        let cache_path = RegistryCache::default_path()
+            .map_err(|e| ServiceError::Io(format!("Failed to determine cache path: {e}")))?;
 
         Ok(Self::with_cache_path(cache_path))
     }
@@ -63,10 +62,10 @@ impl ModelsRegistryServiceImpl {
             .await
             .map_err(|e| ServiceError::Network(format!("Failed to read response body: {e}")))?;
 
-            // Try to parse as CachedRegistry format (with cached_at and data fields)
-            if let Ok(cached) = serde_json::from_str::<crate::registry::CachedRegistry>(&text) {
-                return Ok(cached.data);
-            }
+        // Try to parse as CachedRegistry format (with cached_at and data fields)
+        if let Ok(cached) = serde_json::from_str::<crate::registry::CachedRegistry>(&text) {
+            return Ok(cached.data);
+        }
 
         // Otherwise try direct ModelRegistry format
         serde_json::from_str(&text)
@@ -82,9 +81,9 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
         match self.fetch_from_url().await {
             Ok(registry) => {
                 // Save to cache
-                self.cache.save(&registry).map_err(|e| {
-                    ServiceError::Io(format!("Failed to save cache: {e}"))
-                })?;
+                self.cache
+                    .save(&registry)
+                    .map_err(|e| ServiceError::Io(format!("Failed to save cache: {e}")))?;
 
                 // Update in-memory cache
                 *self.cached_registry.write().await = Some(registry);
@@ -103,7 +102,7 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
                     Ok(None) => Err(e),
                     Err(cache_err) => Err(ServiceError::Io(format!(
                         "Failed to fetch from URL and failed to load cache: {e}, {cache_err}"
-                    )))
+                    ))),
                 }
             }
         }

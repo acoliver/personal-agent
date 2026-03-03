@@ -5,9 +5,9 @@
 //! @requirement REQ-GPUI-006.2
 //! @requirement REQ-GPUI-006.3
 
-use flume::{Receiver, Sender, TrySendError};
 use crate::events::types::UserEvent;
 use crate::presentation::ViewCommand;
+use flume::{Receiver, Sender, TrySendError};
 
 /// Bridge between GPUI (smol) and tokio runtimes
 ///

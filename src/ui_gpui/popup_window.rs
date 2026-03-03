@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
-use objc2_foundation::{NSPoint, NSRect, NSSize, MainThreadMarker};
-use objc2_app_kit::{NSWindow, NSColor};
 use objc2::rc::Retained;
+use objc2_app_kit::{NSColor, NSScreen, NSWindow};
+use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 use crate::ui_gpui::bridge::GpuiBridge;
 
@@ -27,49 +27,48 @@ impl PopupWindow {
     /// Create a new popup window
     pub fn new(gpui_bridge: Arc<GpuiBridge>) -> anyhow::Result<Self> {
         // Get main thread marker
-        let mtm = MainThreadMarker::new()
-            .ok_or_else(|| anyhow::anyhow!("Not on main thread"))?;
-        
-        // Calculate window size (600x400 default)
-        let _window_width = 600.0;
-        let _window_height = 400.0;
-        
+        let mtm = MainThreadMarker::new().ok_or_else(|| anyhow::anyhow!("Not on main thread"))?;
+
+        // Calculate window size (wider default for GPUI content)
+        let _window_width = 760.0;
+        let _window_height = 520.0;
+
         // Create initial frame (off-screen, will be positioned when shown)
         let _frame = NSRect::new(
             NSPoint::new(-1000.0, -1000.0),
             NSSize::new(_window_width, _window_height),
         );
-        
+
         // Create the window with borderless style
         let window = unsafe { NSWindow::new(mtm) };
-        
+
         // Configure window properties
         window.setOpaque(false);
         window.setAlphaValue(0.95);
-        
+
         // Set background color (dark semi-transparent)
         let bg_color = NSColor::colorWithSRGBRed_green_blue_alpha(
-            0.1,  // Red
-            0.1,  // Green
-            0.1,  // Blue
-            1.0,  // Alpha
+            0.1, // Red
+            0.1, // Green
+            0.1, // Blue
+            1.0, // Alpha
         );
         window.setBackgroundColor(Some(&bg_color));
-        
+
         // Set window level to appear above most windows
-        window.setLevel(18);  // NSPopUpMenuWindowLevel + 1
+        window.setLevel(18); // NSPopUpMenuWindowLevel + 1
         window.setHidesOnDeactivate(false);
-        
+
         // Enable rounded corners with shadow
         window.setHasShadow(true);
-        
+
         Ok(Self {
             window: Some(window),
             gpui_bridge,
             is_visible: false,
         })
     }
-    
+
     /// Position the popup window below the status bar item
     pub fn position_below_status_item(&self, status_item_frame: NSRect) {
         if let Some(ref window) = self.window {
@@ -77,32 +76,69 @@ impl PopupWindow {
             let window_frame = window.frame();
             let window_width = window_frame.size.width;
             let window_height = window_frame.size.height;
-            
+
             // Calculate position (centered below status item)
-            let status_item_center_x = status_item_frame.origin.x + (status_item_frame.size.width / 2.0);
-            let mut x = status_item_center_x - (window_width / 2.0);
-            let y = status_item_frame.origin.y - window_height - 4.0;  // 4px gap
-            
-            // Simple bounds checking (assuming standard screen width)
-            let screen_width = 1920.0;
-            let min_x = 8.0;
-            let max_x = screen_width - window_width - 8.0;
-            
-            if x < min_x {
-                x = min_x;
-            } else if x > max_x {
-                x = max_x;
-            }
-            
+            let status_item_center_x =
+                status_item_frame.origin.x + (status_item_frame.size.width / 2.0);
+            let x = status_item_center_x - (window_width / 2.0);
+            let y = status_item_frame.origin.y - window_height - 4.0; // 4px gap
+
+            // Bounds checking against real screen geometry when available.
+            let min_margin = 8.0;
+            let (min_x, max_x, min_y, max_y) = if let Some(screen) = window.screen() {
+                let frame = screen.frame();
+                (
+                    frame.origin.x + min_margin,
+                    frame.origin.x + frame.size.width - window_width - min_margin,
+                    frame.origin.y + min_margin,
+                    frame.origin.y + frame.size.height - window_height - min_margin,
+                )
+            } else if let Some(mtm) = MainThreadMarker::new() {
+                if let Some(main_screen) = NSScreen::mainScreen(mtm) {
+                    let frame = main_screen.frame();
+                    (
+                        frame.origin.x + min_margin,
+                        frame.origin.x + frame.size.width - window_width - min_margin,
+                        frame.origin.y + min_margin,
+                        frame.origin.y + frame.size.height - window_height - min_margin,
+                    )
+                } else {
+                    (
+                        min_margin,
+                        1920.0 - window_width - min_margin,
+                        min_margin,
+                        1080.0 - window_height - min_margin,
+                    )
+                }
+            } else {
+                (
+                    min_margin,
+                    1920.0 - window_width - min_margin,
+                    min_margin,
+                    1080.0 - window_height - min_margin,
+                )
+            };
+
+            let clamped_x = if max_x >= min_x {
+                x.clamp(min_x, max_x)
+            } else {
+                min_x
+            };
+            let clamped_y = if max_y >= min_y {
+                y.clamp(min_y, max_y)
+            } else {
+                min_y
+            };
+
             // Set new frame
             let new_frame = NSRect::new(
-                NSPoint::new(x, y),
+                NSPoint::new(clamped_x, clamped_y),
                 NSSize::new(window_width, window_height),
             );
             window.setFrame_display(new_frame, false);
         }
     }
-    
+
     /// Show the popup window
     pub fn show(&mut self) {
         if !self.is_visible {
@@ -113,7 +149,7 @@ impl PopupWindow {
             }
         }
     }
-    
+
     /// Hide the popup window
     pub fn hide(&mut self) {
         if self.is_visible {
@@ -124,22 +160,22 @@ impl PopupWindow {
             }
         }
     }
-    
+
     /// Check if the window is currently visible
     pub fn is_visible(&self) -> bool {
         self.is_visible
     }
-    
+
     /// Handle ESC key press (dismiss popup)
     pub fn handle_esc_key(&mut self) {
         self.hide();
     }
-    
+
     /// Handle window losing focus (dismiss popup)
     pub fn handle_resign_key(&mut self) {
         self.hide();
     }
-    
+
     /// Get the GPUI bridge
     pub fn gpui_bridge(&self) -> Arc<GpuiBridge> {
         Arc::clone(&self.gpui_bridge)
@@ -149,17 +185,17 @@ impl PopupWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     #[ignore = "Requires macOS main thread GUI context"]
     fn test_popup_window_creation() {
         let (user_tx, _user_rx) = flume::unbounded();
         let (_view_cmd_tx, view_cmd_rx) = flume::unbounded();
         let gpui_bridge = Arc::new(GpuiBridge::new(user_tx, view_cmd_rx));
-        
+
         let popup = PopupWindow::new(gpui_bridge);
         assert!(popup.is_ok());
-        
+
         if let Ok(window) = popup {
             assert!(!window.is_visible());
         }

@@ -3,13 +3,13 @@
 //! @plan PLAN-20250130-GPUIREDUX.P09
 //! @requirement REQ-UI-MA
 
-use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight};
+use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString};
 use std::sync::Arc;
 
-use crate::ui_gpui::theme::Theme;
-use crate::ui_gpui::bridge::GpuiBridge;
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
+use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::theme::Theme;
 
 /// Registry source for MCP search
 /// @plan PLAN-20250130-GPUIREDUX.P09
@@ -46,7 +46,11 @@ pub struct McpSearchResult {
 }
 
 impl McpSearchResult {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, description: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -84,7 +88,6 @@ impl McpSearchResult {
         self
     }
 }
-
 
 /// Loading state for search
 /// @plan PLAN-20250130-GPUIREDUX.P09
@@ -233,7 +236,8 @@ impl McpAddView {
                 env,
             } => {
                 tracing::info!("MCP draft loaded for configure: {}", name);
-                self.state.manual_entry = format!("{} {}", command, args.join(" ")).trim().to_string();
+                self.state.manual_entry =
+                    format!("{} {}", command, args.join(" ")).trim().to_string();
 
                 let (source_hint, normalized_id) = id
                     .split_once("::")
@@ -254,18 +258,16 @@ impl McpAddView {
                     McpRegistry::Both => "both".to_string(),
                 });
 
-                self.state.results = vec![
-                    McpSearchResult::new(normalized_id, name, "Selected MCP")
+                self.state.results =
+                    vec![McpSearchResult::new(normalized_id, name, "Selected MCP")
                         .with_registry(registry)
                         .with_command(package)
                         .with_args(args)
                         .with_env(env)
-                        .with_source(inferred_source),
-                ];
+                        .with_source(inferred_source)];
                 let _ = env_var_name;
-                crate::ui_gpui::navigation_channel().request_navigate(
-                    crate::presentation::view_command::ViewId::McpConfigure,
-                );
+                crate::ui_gpui::navigation_channel()
+                    .request_navigate(crate::presentation::view_command::ViewId::McpConfigure);
             }
             ViewCommand::McpRegistrySearchResults { results } => {
                 let mapped = results
@@ -322,26 +324,25 @@ impl McpAddView {
                     .text_size(px(12.0))
                     .text_color(Theme::text_secondary())
                     .child("Cancel")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                        tracing::info!("Cancel clicked - navigating to Settings");
-                        crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::Settings
-                        );
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            tracing::info!("Cancel clicked - navigating to Settings");
+                            crate::ui_gpui::navigation_channel().request_navigate(
+                                crate::presentation::view_command::ViewId::Settings,
+                            );
+                        }),
+                    ),
             )
             // Center: Title
             .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::text_primary())
-                            .child("Add MCP")
-                    )
+                div().flex_1().flex().justify_center().child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(Theme::text_primary())
+                        .child("Add MCP"),
+                ),
             )
             // Right: Next button
             .child(
@@ -358,25 +359,31 @@ impl McpAddView {
                             .bg(Theme::accent())
                             .hover(|s| s.bg(Theme::accent_hover()))
                             .text_color(gpui::white())
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                if let Some(selected_id) = this.state.selected_result_id.clone() {
-                                    tracing::info!("Next clicked - selected MCP {}", selected_id);
-                                    this.emit(UserEvent::SelectMcpFromRegistry {
-                                        source: crate::events::types::McpRegistrySource {
-                                            name: selected_id,
-                                        },
-                                    });
-                                } else {
-                                    tracing::info!("Next clicked - proceeding via McpAddNext");
-                                    this.emit(UserEvent::McpAddNext);
-                                }
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    if let Some(selected_id) = this.state.selected_result_id.clone()
+                                    {
+                                        tracing::info!(
+                                            "Next clicked - selected MCP {}",
+                                            selected_id
+                                        );
+                                        this.emit(UserEvent::SelectMcpFromRegistry {
+                                            source: crate::events::types::McpRegistrySource {
+                                                name: selected_id,
+                                            },
+                                        });
+                                    } else {
+                                        tracing::info!("Next clicked - proceeding via McpAddNext");
+                                        this.emit(UserEvent::McpAddNext);
+                                    }
+                                }),
+                            )
                     })
                     .when(!can_proceed, |d| {
-                        d.bg(Theme::bg_dark())
-                            .text_color(Theme::text_muted())
+                        d.bg(Theme::bg_dark()).text_color(Theme::text_muted())
                     })
-                    .child("Next")
+                    .child("Next"),
             )
     }
 
@@ -410,17 +417,15 @@ impl McpAddView {
                     .flex()
                     .items_center()
                     .text_size(px(12.0))
-                    .child(
-                        if self.state.manual_entry.is_empty() {
-                            div()
-                                .text_color(Theme::text_muted())
-                                .child("npx @scope/package or docker image or URL")
-                        } else {
-                            div()
-                                .text_color(Theme::text_primary())
-                                .child(self.state.manual_entry.clone())
-                        }
-                    )
+                    .child(if self.state.manual_entry.is_empty() {
+                        div()
+                            .text_color(Theme::text_muted())
+                            .child("npx @scope/package or docker image or URL")
+                    } else {
+                        div()
+                            .text_color(Theme::text_primary())
+                            .child(self.state.manual_entry.clone())
+                    }),
             )
     }
 
@@ -438,7 +443,7 @@ impl McpAddView {
                 div()
                     .text_size(px(11.0))
                     .text_color(Theme::text_muted())
-                    .child("or search registry")
+                    .child("or search registry"),
             )
             .child(div().flex_1().h(px(1.0)).bg(Theme::border()))
     }
@@ -469,7 +474,7 @@ impl McpAddView {
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
                     .child(registry)
-                    .child(div().text_color(Theme::text_muted()).child("v"))
+                    .child(div().text_color(Theme::text_muted()).child("v")),
             )
     }
 
@@ -493,23 +498,25 @@ impl McpAddView {
                     .flex()
                     .items_center()
                     .text_size(px(12.0))
-                    .child(
-                        if self.state.search_query.is_empty() {
-                            div()
-                                .text_color(Theme::text_muted())
-                                .child("Search MCP servers...")
-                        } else {
-                            div()
-                                .text_color(Theme::text_primary())
-                                .child(self.state.search_query.clone())
-                        }
-                    )
+                    .child(if self.state.search_query.is_empty() {
+                        div()
+                            .text_color(Theme::text_muted())
+                            .child("Search MCP servers...")
+                    } else {
+                        div()
+                            .text_color(Theme::text_primary())
+                            .child(self.state.search_query.clone())
+                    }),
             )
     }
 
     /// Render a search result row
     /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_result_row(&self, result: &McpSearchResult, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+    fn render_result_row(
+        &self,
+        result: &McpSearchResult,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
         let id = result.id.clone();
         let id_for_closure = id.clone();
         let is_selected = self.state.selected_result_id.as_ref() == Some(&id);
@@ -530,11 +537,14 @@ impl McpAddView {
             .flex()
             .flex_col()
             .justify_center()
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                tracing::info!("Result selected: {}", id_for_closure);
-                this.state.selected_result_id = Some(id_for_closure.clone());
-                cx.notify();
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    tracing::info!("Result selected: {}", id_for_closure);
+                    this.state.selected_result_id = Some(id_for_closure.clone());
+                    cx.notify();
+                }),
+            )
             // First row: name + badge
             .child(
                 div()
@@ -545,37 +555,53 @@ impl McpAddView {
                         div()
                             .text_size(px(12.0))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(if is_selected { gpui::white() } else { Theme::text_primary() })
-                            .child(name)
+                            .text_color(if is_selected {
+                                gpui::white()
+                            } else {
+                                Theme::text_primary()
+                            })
+                            .child(name),
                     )
                     .child(
                         div()
                             .px(px(6.0))
                             .py(px(2.0))
                             .rounded(px(4.0))
-                            .bg(if is_selected { Theme::bg_darker() } else { Theme::bg_dark() })
+                            .bg(if is_selected {
+                                Theme::bg_darker()
+                            } else {
+                                Theme::bg_dark()
+                            })
                             .text_size(px(9.0))
                             .text_color(Theme::text_secondary())
-                            .child(badge)
-                    )
+                            .child(badge),
+                    ),
             )
             // Second row: description
             .child(
                 div()
                     .text_size(px(11.0))
-                    .text_color(if is_selected { Theme::text_primary() } else { Theme::text_secondary() })
+                    .text_color(if is_selected {
+                        Theme::text_primary()
+                    } else {
+                        Theme::text_secondary()
+                    })
                     .overflow_hidden()
                     .text_ellipsis()
-                    .child(description)
+                    .child(description),
             )
             // Third row: source + command preview
             .child(
                 div()
                     .text_size(px(9.0))
-                    .text_color(if is_selected { Theme::text_secondary() } else { Theme::text_muted() })
+                    .text_color(if is_selected {
+                        Theme::text_secondary()
+                    } else {
+                        Theme::text_muted()
+                    })
                     .overflow_hidden()
                     .text_ellipsis()
-                    .child(format!("{} · {}", source, result.command))
+                    .child(format!("{} · {}", source, result.command)),
             )
             .into_any_element()
     }
@@ -601,75 +627,73 @@ impl McpAddView {
                     .flex_col()
                     // Loading state
                     .when(self.state.search_state == SearchState::Loading, |d| {
-                        d.items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .text_color(Theme::text_secondary())
-                                    .child("Searching...")
-                            )
+                        d.items_center().justify_center().child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(Theme::text_secondary())
+                                .child("Searching..."),
+                        )
                     })
                     // Empty state
                     .when(self.state.search_state == SearchState::Empty, |d| {
-                        d.items_center()
-                            .justify_center()
-                            .p(px(16.0))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.0))
-                                            .text_color(Theme::text_secondary())
-                                            .child(format!("No MCPs found matching \"{}\".", self.state.search_query))
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.0))
-                                            .text_color(Theme::text_muted())
-                                            .child("Try a different search term.")
-                                    )
-                            )
+                        d.items_center().justify_center().p(px(16.0)).child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .text_size(px(13.0))
+                                        .text_color(Theme::text_secondary())
+                                        .child(format!(
+                                            "No MCPs found matching \"{}\".",
+                                            self.state.search_query
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(Theme::text_muted())
+                                        .child("Try a different search term."),
+                                ),
+                        )
                     })
                     // Idle state (no search yet)
                     .when(self.state.search_state == SearchState::Idle, |d| {
-                        d.items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .text_color(Theme::text_muted())
-                                    .child("Enter a search term to find MCPs")
-                            )
+                        d.items_center().justify_center().child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(Theme::text_muted())
+                                .child("Enter a search term to find MCPs"),
+                        )
                     })
                     // Results state
                     .when(self.state.search_state == SearchState::Results, |d| {
-                        let results: Vec<gpui::AnyElement> = self.state.results
+                        let results: Vec<gpui::AnyElement> = self
+                            .state
+                            .results
                             .iter()
                             .map(|r| self.render_result_row(r, cx))
                             .collect();
                         d.children(results)
                     })
                     // Error state
-                    .when(matches!(self.state.search_state, SearchState::Error(_)), |d| {
-                        let message = match &self.state.search_state {
-                            SearchState::Error(msg) => msg.clone(),
-                            _ => String::new(),
-                        };
-                        d.items_center()
-                            .justify_center()
-                            .p(px(16.0))
-                            .child(
+                    .when(
+                        matches!(self.state.search_state, SearchState::Error(_)),
+                        |d| {
+                            let message = match &self.state.search_state {
+                                SearchState::Error(msg) => msg.clone(),
+                                _ => String::new(),
+                            };
+                            d.items_center().justify_center().p(px(16.0)).child(
                                 div()
                                     .text_size(px(12.0))
                                     .text_color(Theme::danger())
-                                    .child(message)
+                                    .child(message),
                             )
-                    })
+                        },
+                    ),
             )
     }
 
@@ -692,17 +716,9 @@ impl McpAddView {
             // Registry dropdown
             .child(self.render_registry_dropdown())
             // Search field
-            .child(
-                div()
-                    .mt(px(12.0))
-                    .child(self.render_search_field())
-            )
+            .child(div().mt(px(12.0)).child(self.render_search_field()))
             // Results
-            .child(
-                div()
-                    .mt(px(12.0))
-                    .child(self.render_results(cx))
-            )
+            .child(div().mt(px(12.0)).child(self.render_results(cx)))
     }
 }
 
@@ -713,7 +729,11 @@ impl gpui::Focusable for McpAddView {
 }
 
 impl gpui::Render for McpAddView {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("mcp-add-view")
             .flex()
@@ -721,18 +741,19 @@ impl gpui::Render for McpAddView {
             .size_full()
             .bg(Theme::bg_base())
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|_this, event: &gpui::KeyDownEvent, _window, _cx| {
-                let key = &event.keystroke.key;
-                let modifiers = &event.keystroke.modifiers;
-                
-                // Escape or Cmd+W: Go back to Settings
-                if key == "escape" || (modifiers.platform && key == "w") {
-                    println!(">>> Escape/Cmd+W pressed - navigating to Settings <<<");
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Settings
-                    );
-                }
-            }))
+            .on_key_down(
+                cx.listener(|_this, event: &gpui::KeyDownEvent, _window, _cx| {
+                    let key = &event.keystroke.key;
+                    let modifiers = &event.keystroke.modifiers;
+
+                    // Escape or Cmd+W: Go back to Settings
+                    if key == "escape" || (modifiers.platform && key == "w") {
+                        println!(">>> Escape/Cmd+W pressed - navigating to Settings <<<");
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::Settings);
+                    }
+                }),
+            )
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Content

@@ -39,7 +39,11 @@ fn popup_should_list_all_conversation_titles() {
     let popup_titles = get_all_conversation_titles(&storage);
 
     // All 3 should be in the list
-    assert_eq!(popup_titles.len(), 3, "Popup should show all 3 conversations");
+    assert_eq!(
+        popup_titles.len(),
+        3,
+        "Popup should show all 3 conversations"
+    );
     assert!(popup_titles.contains(&"Chat A".to_string()));
     assert!(popup_titles.contains(&"Chat B".to_string()));
     assert!(popup_titles.contains(&"Chat C".to_string()));
@@ -68,7 +72,11 @@ fn popup_selection_should_match_existing_conversation() {
         found.is_some(),
         "Should be able to find conversation by the title shown in popup"
     );
-    assert_eq!(found.unwrap().id, conv.id, "Found conversation should be the same one");
+    assert_eq!(
+        found.unwrap().id,
+        conv.id,
+        "Found conversation should be the same one"
+    );
 }
 
 /// The current title should be selected/highlighted in the popup

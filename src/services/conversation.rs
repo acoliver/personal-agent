@@ -27,14 +27,22 @@ pub trait ConversationService: Send + Sync {
     async fn load(&self, id: Uuid) -> ServiceResult<Conversation>;
 
     /// List all conversations, optionally filtered
-    async fn list(&self, limit: Option<usize>, offset: Option<usize>) -> ServiceResult<Vec<Conversation>>;
+    async fn list(
+        &self,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> ServiceResult<Vec<Conversation>>;
 
     /// Add a user message to a conversation
     ///
     /// # Arguments
     /// * `conversation_id` - The conversation to add to
     /// * `content` - The message content
-    async fn add_user_message(&self, conversation_id: Uuid, content: String) -> ServiceResult<Message>;
+    async fn add_user_message(
+        &self,
+        conversation_id: Uuid,
+        content: String,
+    ) -> ServiceResult<Message>;
 
     /// Add an assistant message to a conversation
     ///

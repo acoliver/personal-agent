@@ -31,12 +31,9 @@ impl IntoElement for Divider {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
-        
+
         let color = self.color.unwrap_or(Theme::border());
 
-        div()
-            .w_full()
-            .h(px(1.0))
-            .bg(color)
+        div().w_full().h(px(1.0)).bg(color)
     }
 }

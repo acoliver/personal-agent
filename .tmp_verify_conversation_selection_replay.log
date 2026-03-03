@@ -1,0 +1,6 @@
+PID=95155
+PASS: Conversation list loaded into chat view before selection
+PASS: Conversation dropdown opened
+PASS: Selected old conversation from dropdown (id=f2f8917b-648a-4623-bf77-6870e29c1c7a)
+PASS: Presenter replayed messages for selected old conversation
+PASS: MainPanel routed MessageAppended commands after selection

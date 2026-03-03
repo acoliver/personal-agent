@@ -3,14 +3,16 @@
 //! @plan PLAN-20250130-GPUIREDUX.P06
 //! @requirement REQ-UI-ST
 
-use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight};
+use gpui::{
+    div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString,
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::ui_gpui::theme::Theme;
-use crate::ui_gpui::bridge::GpuiBridge;
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::{ViewCommand, ProfileSummary};
+use crate::presentation::view_command::{ProfileSummary, ViewCommand};
+use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::theme::Theme;
 
 /// Represents a profile in the settings list
 /// @plan PLAN-20250130-GPUIREDUX.P06
@@ -86,7 +88,11 @@ impl McpItem {
 
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
-        self.status = if enabled { McpStatus::Running } else { McpStatus::Stopped };
+        self.status = if enabled {
+            McpStatus::Running
+        } else {
+            McpStatus::Stopped
+        };
         self
     }
 
@@ -161,11 +167,80 @@ impl SettingsView {
         if selected_profile_id.is_some() {
             self.state.selected_profile_id = selected_profile_id;
         }
+
+        if self.state.selected_profile_id.is_none() {
+            self.state.selected_profile_id = self.state.profiles.first().map(|profile| profile.id);
+        }
+
+        if let Some(selected_id) = self.state.selected_profile_id {
+            if self.state.profiles.iter().all(|profile| profile.id != selected_id) {
+                self.state.selected_profile_id = self.state.profiles.first().map(|profile| profile.id);
+            }
+        }
     }
 
     /// Set MCPs from presenter
     pub fn set_mcps(&mut self, mcps: Vec<McpItem>) {
         self.state.mcps = mcps;
+
+        if self.state.selected_mcp_id.is_none() {
+            self.state.selected_mcp_id = self.state.mcps.first().map(|mcp| mcp.id);
+        }
+
+        if let Some(selected_id) = self.state.selected_mcp_id {
+            if self.state.mcps.iter().all(|mcp| mcp.id != selected_id) {
+                self.state.selected_mcp_id = self.state.mcps.first().map(|mcp| mcp.id);
+            }
+        }
+    }
+
+    fn selected_profile_index(&self) -> Option<usize> {
+        self.state
+            .selected_profile_id
+            .and_then(|id| self.state.profiles.iter().position(|profile| profile.id == id))
+    }
+
+    fn selected_mcp_index(&self) -> Option<usize> {
+        self.state
+            .selected_mcp_id
+            .and_then(|id| self.state.mcps.iter().position(|mcp| mcp.id == id))
+    }
+
+    fn select_profile_by_index(&mut self, index: usize, emit_event: bool) {
+        if let Some(profile) = self.state.profiles.get(index) {
+            self.state.selected_profile_id = Some(profile.id);
+            if emit_event {
+                self.emit(UserEvent::SelectProfile { id: profile.id });
+            }
+        }
+    }
+
+    fn select_mcp_by_index(&mut self, index: usize) {
+        if let Some(mcp) = self.state.mcps.get(index) {
+            self.state.selected_mcp_id = Some(mcp.id);
+        }
+    }
+
+    fn scroll_profiles(&mut self, delta_steps: i32) {
+        if self.state.profiles.is_empty() || delta_steps == 0 {
+            return;
+        }
+
+        let current = self.selected_profile_index().unwrap_or(0);
+        let max_index = self.state.profiles.len().saturating_sub(1) as i32;
+        let next = (current as i32 + delta_steps).clamp(0, max_index) as usize;
+        self.select_profile_by_index(next, true);
+    }
+
+    fn scroll_mcps(&mut self, delta_steps: i32) {
+        if self.state.mcps.is_empty() || delta_steps == 0 {
+            return;
+        }
+
+        let current = self.selected_mcp_index().unwrap_or(0);
+        let max_index = self.state.mcps.len().saturating_sub(1) as i32;
+        let next = (current as i32 + delta_steps).clamp(0, max_index) as usize;
+        self.select_mcp_by_index(next);
     }
 
     /// Emit a UserEvent through the bridge
@@ -253,9 +328,9 @@ impl SettingsView {
                     existing.status = McpStatus::Error;
                     existing.enabled = false;
                 } else {
-                    self.state
-                        .mcps
-                        .push(McpItem::new(id, format!("MCP {}", id)).with_status(McpStatus::Error));
+                    self.state.mcps.push(
+                        McpItem::new(id, format!("MCP {}", id)).with_status(McpStatus::Error),
+                    );
                 }
             }
             ViewCommand::McpConfigSaved { id, name } => {
@@ -268,26 +343,20 @@ impl SettingsView {
                     existing.status = McpStatus::Running;
                 } else {
                     self.state.mcps.push(
-                        McpItem::new(
-                            id,
-                            name.unwrap_or_else(|| format!("MCP {}", id)),
-                        )
-                        .with_status(McpStatus::Running)
-                        .with_enabled(true),
+                        McpItem::new(id, name.unwrap_or_else(|| format!("MCP {}", id)))
+                            .with_status(McpStatus::Running)
+                            .with_enabled(true),
                     );
                 }
             }
             ViewCommand::McpDeleted { id } => {
                 self.state.mcps.retain(|m| m.id != id);
                 if self.state.selected_mcp_id == Some(id) {
-                    self.state.selected_mcp_id = None;
+                    self.state.selected_mcp_id = self.state.mcps.first().map(|m| m.id);
                 }
             }
-            ViewCommand::ShowNotification { .. } => {
-                // Notification rendering is currently out-of-band in GPUI wiring.
-            }
             _ => {
-                // Other commands may be added as needed
+                // Other commands handled elsewhere
             }
         }
         cx.notify();
@@ -327,12 +396,15 @@ impl SettingsView {
                             .text_size(px(14.0))
                             .text_color(Theme::text_secondary())
                             .child("<")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                                tracing::info!("Back clicked - navigating to Chat");
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::Chat
-                                );
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_this, _, _window, _cx| {
+                                    tracing::info!("Back clicked - navigating to Chat");
+                                    crate::ui_gpui::navigation_channel().request_navigate(
+                                        crate::presentation::view_command::ViewId::Chat,
+                                    );
+                                }),
+                            ),
                     )
                     // Title
                     .child(
@@ -340,8 +412,8 @@ impl SettingsView {
                             .text_size(px(14.0))
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::text_primary())
-                            .child("Settings")
-                    )
+                            .child("Settings"),
+                    ),
             )
             // Right: Refresh Models button
             .child(
@@ -355,16 +427,23 @@ impl SettingsView {
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
                     .child("Refresh Models")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                        tracing::info!("Refresh Models clicked");
-                        this.emit(UserEvent::RefreshModelsRegistry);
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, _cx| {
+                            tracing::info!("Refresh Models clicked");
+                            this.emit(UserEvent::RefreshModelsRegistry);
+                        }),
+                    ),
             )
     }
 
     /// Render a single profile row
     /// @plan PLAN-20250130-GPUIREDUX.P06
-    fn render_profile_row(&self, profile: &ProfileItem, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+    fn render_profile_row(
+        &self,
+        profile: &ProfileItem,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
         let profile_id = profile.id;
         let is_selected = self.state.selected_profile_id == Some(profile_id);
         let display_text = profile.display_text();
@@ -377,16 +456,24 @@ impl SettingsView {
             .flex()
             .items_center()
             .cursor_pointer()
-            .when(is_selected, |d| d.bg(Theme::accent()).text_color(gpui::white()))
-            .when(!is_selected, |d| d.hover(|s| s.bg(Theme::bg_dark())).text_color(Theme::text_primary()))
+            .when(is_selected, |d| {
+                d.bg(Theme::accent()).text_color(gpui::white())
+            })
+            .when(!is_selected, |d| {
+                d.hover(|s| s.bg(Theme::bg_dark()))
+                    .text_color(Theme::text_primary())
+            })
             .text_size(px(12.0))
             .child(display_text)
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                tracing::info!("Profile selected: {}", profile_id);
-                this.state.selected_profile_id = Some(profile_id);
-                this.emit(UserEvent::SelectProfile { id: profile_id });
-                cx.notify();
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    tracing::info!("Profile selected: {}", profile_id);
+                    this.state.selected_profile_id = Some(profile_id);
+                    this.emit(UserEvent::SelectProfile { id: profile_id });
+                    cx.notify();
+                }),
+            )
             .into_any_element()
     }
 
@@ -395,6 +482,7 @@ impl SettingsView {
     fn render_profiles_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let profiles = &self.state.profiles;
         let has_selection = self.state.selected_profile_id.is_some();
+        let total_profiles = profiles.len();
 
         div()
             .flex()
@@ -405,33 +493,41 @@ impl SettingsView {
                 div()
                     .text_size(px(11.0))
                     .text_color(Theme::text_primary())
-                    .child("PROFILES")
+                    .child("PROFILES"),
             )
             // List box
             .child(
                 div()
+                    .id("profiles-list")
                     .w(px(360.0))
                     .h(px(100.0))
                     .bg(Theme::bg_darker())
                     .border_1()
                     .border_color(Theme::border())
                     .rounded(px(4.0))
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .children(
-                        profiles.iter().map(|p| self.render_profile_row(p, cx))
-                    )
+                    .children(profiles.iter().map(|p| self.render_profile_row(p, cx)))
                     .when(profiles.is_empty(), |d| {
-                        d.items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .text_color(Theme::text_muted())
-                                    .child("No profiles configured")
-                            )
+                        d.items_center().justify_center().child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(Theme::text_muted())
+                                .child("No profiles configured"),
+                        )
                     })
+                    .when(total_profiles > 0, |d| {
+                        d.child(
+                            div()
+                                .w_full()
+                                .px(px(8.0))
+                                .pb(px(2.0))
+                                .text_size(px(10.0))
+                                .text_color(Theme::text_muted())
+                                .child(format!("{} profiles", total_profiles)),
+                        )
+                    }),
             )
             // Toolbar: [-] [+] [spacer] [Edit]
             .child(
@@ -453,14 +549,21 @@ impl SettingsView {
                             .when(has_selection, |d| d.hover(|s| s.bg(Theme::danger())))
                             .when(!has_selection, |d| d.text_color(Theme::text_muted()))
                             .text_size(px(14.0))
-                            .text_color(if has_selection { Theme::text_primary() } else { Theme::text_muted() })
+                            .text_color(if has_selection {
+                                Theme::text_primary()
+                            } else {
+                                Theme::text_muted()
+                            })
                             .child("-")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                if let Some(id) = this.state.selected_profile_id {
-                                    tracing::info!("Delete profile clicked: {}", id);
-                                    this.emit(UserEvent::DeleteProfile { id });
-                                }
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    if let Some(id) = this.state.selected_profile_id {
+                                        tracing::info!("Delete profile clicked: {}", id);
+                                        this.emit(UserEvent::DeleteProfile { id });
+                                    }
+                                }),
+                            ),
                     )
                     // [+] Add button - uses navigation_channel
                     .child(
@@ -476,17 +579,22 @@ impl SettingsView {
                             .text_size(px(14.0))
                             .text_color(Theme::text_primary())
                             .child("+")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                                println!(">>> Add profile button clicked <<<");
-                                tracing::info!("Add profile clicked - navigating to ModelSelector");
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::ModelSelector
-                                );
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_this, _, _window, _cx| {
+                                    println!(">>> Add profile button clicked <<<");
+                                    tracing::info!(
+                                        "Add profile clicked - navigating to ModelSelector"
+                                    );
+                                    crate::ui_gpui::navigation_channel().request_navigate(
+                                        crate::presentation::view_command::ViewId::ModelSelector,
+                                    );
+                                }),
+                            ),
                     )
                     // Spacer
                     .child(div().flex_1())
-                    // [Edit] button - emits event AND navigates
+                    // [Edit] button - emits event (presenter performs prefill + navigation)
                     .child(
                         div()
                             .id("btn-edit-profile")
@@ -499,18 +607,22 @@ impl SettingsView {
                             .cursor_pointer()
                             .when(has_selection, |d| d.hover(|s| s.bg(Theme::bg_dark())))
                             .text_size(px(12.0))
-                            .text_color(if has_selection { Theme::text_primary() } else { Theme::text_muted() })
+                            .text_color(if has_selection {
+                                Theme::text_primary()
+                            } else {
+                                Theme::text_muted()
+                            })
                             .child("Edit")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                if let Some(id) = this.state.selected_profile_id {
-                                    tracing::info!("Edit profile clicked: {}", id);
-                                    this.emit(UserEvent::EditProfile { id });
-                                    crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::ProfileEditor
-                                    );
-                                }
-                            }))
-                    )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    if let Some(id) = this.state.selected_profile_id {
+                                        tracing::info!("Edit profile clicked: {}", id);
+                                        this.emit(UserEvent::EditProfile { id });
+                                    }
+                                }),
+                            ),
+                    ),
             )
     }
 
@@ -546,17 +658,21 @@ impl SettingsView {
                     .size(px(8.0))
                     .rounded_full()
                     .bg(status_color)
-                    .mr(px(8.0))
+                    .mr(px(8.0)),
             )
             // Name (left-aligned, truncate from left for long names)
             .child(
                 div()
                     .flex_1()
                     .text_size(px(12.0))
-                    .text_color(if is_selected { gpui::white() } else { Theme::text_primary() })
+                    .text_color(if is_selected {
+                        gpui::white()
+                    } else {
+                        Theme::text_primary()
+                    })
                     .overflow_hidden()
                     .text_ellipsis()
-                    .child(name)
+                    .child(name),
             )
             // Toggle switch
             .child(
@@ -565,26 +681,47 @@ impl SettingsView {
                     .px(px(8.0))
                     .py(px(2.0))
                     .rounded(px(4.0))
-                    .bg(if enabled { Theme::accent() } else { Theme::bg_dark() })
+                    .bg(if enabled {
+                        Theme::accent()
+                    } else {
+                        Theme::bg_dark()
+                    })
                     .text_size(px(10.0))
-                    .text_color(if enabled { gpui::white() } else { Theme::text_muted() })
+                    .text_color(if enabled {
+                        gpui::white()
+                    } else {
+                        Theme::text_muted()
+                    })
                     .child(if enabled { "ON" } else { "OFF" })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                        tracing::info!("MCP toggle clicked: {} -> {}", mcp_id, !enabled);
-                        this.emit(UserEvent::ToggleMcp { id: mcp_id, enabled: !enabled });
-                        // Update local state
-                        if let Some(m) = this.state.mcps.iter_mut().find(|m| m.id == mcp_id) {
-                            m.enabled = !m.enabled;
-                            m.status = if m.enabled { McpStatus::Running } else { McpStatus::Stopped };
-                        }
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _window, cx| {
+                            tracing::info!("MCP toggle clicked: {} -> {}", mcp_id, !enabled);
+                            this.emit(UserEvent::ToggleMcp {
+                                id: mcp_id,
+                                enabled: !enabled,
+                            });
+                            // Update local state
+                            if let Some(m) = this.state.mcps.iter_mut().find(|m| m.id == mcp_id) {
+                                m.enabled = !m.enabled;
+                                m.status = if m.enabled {
+                                    McpStatus::Running
+                                } else {
+                                    McpStatus::Stopped
+                                };
+                            }
+                            cx.notify();
+                        }),
+                    ),
             )
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                tracing::info!("MCP row selected: {}", mcp_id);
-                this.state.selected_mcp_id = Some(mcp_id);
-                cx.notify();
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    tracing::info!("MCP row selected: {}", mcp_id);
+                    this.state.selected_mcp_id = Some(mcp_id);
+                    cx.notify();
+                }),
+            )
             .into_any_element()
     }
 
@@ -593,6 +730,7 @@ impl SettingsView {
     fn render_mcp_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let mcps = &self.state.mcps;
         let has_selection = self.state.selected_mcp_id.is_some();
+        let total_mcps = mcps.len();
 
         div()
             .flex()
@@ -608,18 +746,17 @@ impl SettingsView {
             // List box
             .child(
                 div()
+                    .id("mcps-list")
                     .w(px(360.0))
                     .h(px(100.0))
                     .bg(Theme::bg_darker())
                     .border_1()
                     .border_color(Theme::border())
                     .rounded(px(4.0))
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .children(
-                        mcps.iter().map(|m| self.render_mcp_row(m, cx))
-                    )
+                    .children(mcps.iter().map(|m| self.render_mcp_row(m, cx)))
                     .when(mcps.is_empty(), |d| {
                         d.items_center()
                             .justify_center()
@@ -629,6 +766,17 @@ impl SettingsView {
                                     .text_color(Theme::text_muted())
                                     .child("No MCP tools configured")
                             )
+                    })
+                    .when(total_mcps > 0, |d| {
+                        d.child(
+                            div()
+                                .w_full()
+                                .px(px(8.0))
+                                .pb(px(2.0))
+                                .text_size(px(10.0))
+                                .text_color(Theme::text_muted())
+                                .child(format!("{} MCP tools", total_mcps)),
+                        )
                     })
             )
             // Toolbar: [-] [+] [spacer] [Edit]
@@ -659,7 +807,7 @@ impl SettingsView {
                                 }
                             }))
                     )
-                    // [+] Add button - uses navigation_channel
+                    // [+] Add button
                     .child(
                         div()
                             .id("btn-add-mcp")
@@ -682,7 +830,7 @@ impl SettingsView {
                     )
                     // Spacer
                     .child(div().flex_1())
-                    // [Edit] button - emits event AND navigates
+                    // [Edit] button
                     .child(
                         div()
                             .id("btn-edit-mcp")
@@ -699,7 +847,7 @@ impl SettingsView {
                             .child("Edit")
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
                                 if let Some(id) = this.state.selected_mcp_id {
-                                    tracing::info!("Configure MCP clicked: {} - navigating to McpConfigure", id);
+                                    tracing::info!("Edit MCP clicked: {}", id);
                                     this.emit(UserEvent::ConfigureMcp { id });
                                     crate::ui_gpui::navigation_channel().request_navigate(
                                         crate::presentation::view_command::ViewId::McpConfigure
@@ -724,7 +872,7 @@ impl SettingsView {
                 div()
                     .text_size(px(11.0))
                     .text_color(Theme::text_primary())
-                    .child("GLOBAL HOTKEY")
+                    .child("GLOBAL HOTKEY"),
             )
             // Hotkey field
             .child(
@@ -740,7 +888,7 @@ impl SettingsView {
                     .items_center()
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
-                    .child(hotkey)
+                    .child(hotkey),
             )
     }
 }
@@ -752,7 +900,11 @@ impl gpui::Focusable for SettingsView {
 }
 
 impl gpui::Render for SettingsView {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("settings-view")
             .flex()
@@ -760,45 +912,53 @@ impl gpui::Render for SettingsView {
             .size_full()
             .bg(Theme::bg_darkest())
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
-                let key = &event.keystroke.key;
-                let modifiers = &event.keystroke.modifiers;
-                
-                println!(">>> SettingsView key: {} platform={} <<<", key, modifiers.platform);
-                
-                // Escape or Cmd+W: Go back to Chat
-                if key == "escape" || (modifiers.platform && key == "w") {
-                    println!(">>> Escape/Cmd+W pressed - navigating to Chat <<<");
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Chat
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                    let key = &event.keystroke.key;
+                    let modifiers = &event.keystroke.modifiers;
+
+                    println!(
+                        ">>> SettingsView key: {} platform={} <<<",
+                        key, modifiers.platform
                     );
-                }
-                // "+" key: Add new profile (navigate to ModelSelector)
-                else if key == "=" && modifiers.shift {
-                    // Shift+= is "+"
-                    println!(">>> + pressed - Add Profile <<<");
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::ModelSelector
-                    );
-                }
-                // "e" key: Edit selected profile
-                else if key == "e" && !modifiers.platform {
-                    if let Some(id) = this.state.selected_profile_id {
-                        println!(">>> e pressed - Edit Profile {:?} <<<", id);
-                        this.emit(UserEvent::EditProfile { id });
+
+                    // Escape or Cmd+W: Go back to Chat
+                    if key == "escape" || (modifiers.platform && key == "w") {
+                        println!(">>> Escape/Cmd+W pressed - navigating to Chat <<<");
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::Chat);
+                    }
+                    // "+" key: Add new profile (navigate to ModelSelector)
+                    else if key == "=" && modifiers.shift {
+                        // Shift+= is "+"
+                        println!(">>> + pressed - Add Profile <<<");
                         crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::ProfileEditor
+                            crate::presentation::view_command::ViewId::ModelSelector,
                         );
                     }
-                }
-                // "m" key: Add MCP
-                else if key == "m" && !modifiers.platform {
-                    println!(">>> m pressed - Add MCP <<<");
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::McpAdd
-                    );
-                }
-            }))
+                    // "e" key: Edit selected profile
+                    else if key == "e" && !modifiers.platform {
+                        if let Some(id) = this.state.selected_profile_id {
+                            println!(">>> e pressed - Edit Profile {:?} <<<", id);
+                            this.emit(UserEvent::EditProfile { id });
+                        }
+                    }
+                    // "m" key: Add MCP
+                    else if key == "m" && !modifiers.platform {
+                        println!(">>> m pressed - Add MCP <<<");
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::McpAdd);
+                    }
+                    // Arrow key navigation for profile list
+                    else if key == "up" && !modifiers.platform {
+                        this.scroll_profiles(-1);
+                        cx.notify();
+                    } else if key == "down" && !modifiers.platform {
+                        this.scroll_profiles(1);
+                        cx.notify();
+                    }
+                }),
+            )
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Content scroll area
@@ -816,7 +976,7 @@ impl gpui::Render for SettingsView {
                     // MCP Tools section
                     .child(self.render_mcp_section(cx))
                     // Hotkey section
-                    .child(self.render_hotkey_section(cx))
+                    .child(self.render_hotkey_section(cx)),
             )
     }
 }

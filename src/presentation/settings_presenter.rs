@@ -13,10 +13,14 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::events::{AppEvent, EventBus, types::{ProfileEvent, UserEvent, McpEvent, SystemEvent}};
-use crate::services::{AppSettingsService, ProfileService};
-use super::{Presenter, PresenterError, ViewCommand};
 use super::view_command::ProfileSummary;
+use super::{Presenter, PresenterError, ViewCommand};
+use crate::events::{
+    emit,
+    types::{McpEvent, ProfileEvent, SystemEvent, UserEvent},
+    AppEvent, EventBus,
+};
+use crate::services::{AppSettingsService, ProfileService};
 
 /// SettingsPresenter - handles settings and profile management UI
 ///
@@ -97,9 +101,15 @@ impl SettingsPresenter {
             return Ok(());
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        Self::emit_profiles_snapshot(&self.profile_service, &self.app_settings_service, &self.view_tx).await;
+        Self::emit_profiles_snapshot(
+            &self.profile_service,
+            &self.app_settings_service,
+            &self.view_tx,
+        )
+        .await;
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -111,7 +121,13 @@ impl SettingsPresenter {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 match rx.recv().await {
                     Ok(event) => {
-                        Self::handle_event(&profile_service, &app_settings_service, &view_tx, event).await;
+                        Self::handle_event(
+                            &profile_service,
+                            &app_settings_service,
+                            &view_tx,
+                            event,
+                        )
+                        .await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("SettingsPresenter lagged: {} events missed", n);
@@ -134,7 +150,8 @@ impl SettingsPresenter {
     /// @plan PLAN-20250125-REFACTOR.P10
     /// @requirement REQ-025.4
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -158,10 +175,17 @@ impl SettingsPresenter {
     ) {
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(profile_service, app_settings_service, view_tx, user_evt).await;
+                Self::handle_user_event(profile_service, app_settings_service, view_tx, user_evt)
+                    .await;
             }
             AppEvent::Profile(profile_evt) => {
-                Self::handle_profile_event(profile_service, app_settings_service, view_tx, profile_evt).await;
+                Self::handle_profile_event(
+                    profile_service,
+                    app_settings_service,
+                    view_tx,
+                    profile_evt,
+                )
+                .await;
             }
             AppEvent::Mcp(mcp_evt) => {
                 Self::handle_mcp_event(view_tx, mcp_evt).await;
@@ -186,6 +210,12 @@ impl SettingsPresenter {
         match event {
             UserEvent::SelectProfile { id } | UserEvent::SelectChatProfile { id } => {
                 Self::on_select_profile(profile_service, app_settings_service, view_tx, id).await;
+            }
+            UserEvent::DeleteProfile { id } | UserEvent::ConfirmDeleteProfile { id } => {
+                Self::on_delete_profile(profile_service, app_settings_service, view_tx, id).await;
+            }
+            UserEvent::EditProfile { id } => {
+                Self::on_edit_profile(profile_service, view_tx, id).await;
             }
             UserEvent::ToggleMcp { id, enabled } => {
                 Self::on_toggle_mcp(profile_service, view_tx, id, enabled).await;
@@ -232,10 +262,7 @@ impl SettingsPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P03
     /// @requirement REQ-025.4
-    async fn handle_mcp_event(
-        view_tx: &broadcast::Sender<ViewCommand>,
-        event: McpEvent,
-    ) {
+    async fn handle_mcp_event(view_tx: &broadcast::Sender<ViewCommand>, event: McpEvent) {
         match event {
             McpEvent::Starting { id, name: _ } => {
                 let _ = view_tx.send(ViewCommand::McpStatusChanged {
@@ -243,21 +270,20 @@ impl SettingsPresenter {
                     status: super::view_command::McpStatus::Starting,
                 });
             }
-            McpEvent::Started { id, name: _, tools: _, tool_count } => {
-                let _ = view_tx.send(ViewCommand::McpServerStarted {
-                    id,
-                    tool_count,
-                });
+            McpEvent::Started {
+                id,
+                name: _,
+                tools: _,
+                tool_count,
+            } => {
+                let _ = view_tx.send(ViewCommand::McpServerStarted { id, tool_count });
                 let _ = view_tx.send(ViewCommand::McpStatusChanged {
                     id,
                     status: super::view_command::McpStatus::Running,
                 });
             }
             McpEvent::StartFailed { id, name: _, error } => {
-                let _ = view_tx.send(ViewCommand::McpServerFailed {
-                    id,
-                    error,
-                });
+                let _ = view_tx.send(ViewCommand::McpServerFailed { id, error });
                 let _ = view_tx.send(ViewCommand::McpStatusChanged {
                     id,
                     status: super::view_command::McpStatus::Failed,
@@ -303,12 +329,13 @@ impl SettingsPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P03
     /// @requirement REQ-025.4
-    async fn handle_system_event(
-        view_tx: &broadcast::Sender<ViewCommand>,
-        event: SystemEvent,
-    ) {
+    async fn handle_system_event(view_tx: &broadcast::Sender<ViewCommand>, event: SystemEvent) {
         match event {
-            SystemEvent::Error { source, error, context } => {
+            SystemEvent::Error {
+                source,
+                error,
+                context,
+            } => {
                 let message = if let Some(ctx) = context {
                     format!("{}: {} (context: {})", source, error, ctx)
                 } else {
@@ -330,9 +357,15 @@ impl SettingsPresenter {
                     message: "Configuration saved".to_string(),
                 });
             }
-            SystemEvent::ModelsRegistryRefreshed { provider_count, model_count } => {
+            SystemEvent::ModelsRegistryRefreshed {
+                provider_count,
+                model_count,
+            } => {
                 let _ = view_tx.send(ViewCommand::ShowNotification {
-                    message: format!("Models refreshed: {} providers, {} models", provider_count, model_count),
+                    message: format!(
+                        "Models refreshed: {} providers, {} models",
+                        provider_count, model_count
+                    ),
                 });
             }
             _ => {} // Ignore other system events
@@ -354,7 +387,9 @@ impl SettingsPresenter {
                 if let Err(e) = app_settings_service.set_default_profile_id(id).await {
                     tracing::warn!("Failed to persist default profile in app settings: {}", e);
                 }
-                let _ = view_tx.send(ViewCommand::DefaultProfileChanged { profile_id: Some(id) });
+                let _ = view_tx.send(ViewCommand::DefaultProfileChanged {
+                    profile_id: Some(id),
+                });
                 Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
             }
             Err(e) => {
@@ -368,6 +403,93 @@ impl SettingsPresenter {
         }
     }
 
+    /// Handle EditProfile user event
+    ///
+    /// @plan PLAN-20250125-REFACTOR.P12
+    /// @requirement REQ-025.4
+    async fn on_edit_profile(
+        profile_service: &Arc<dyn ProfileService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        id: Uuid,
+    ) {
+        match profile_service.get(id).await {
+            Ok(profile) => {
+                let (auth_kind, auth_value) = match profile.auth {
+                    crate::models::AuthConfig::Key { value } => {
+                        ("api_key".to_string(), Some(value))
+                    }
+                    crate::models::AuthConfig::Keyfile { path } => {
+                        ("keyfile".to_string(), Some(path))
+                    }
+                };
+
+                let _ = view_tx.send(ViewCommand::ProfileEditorLoad {
+                    id: profile.id,
+                    name: profile.name,
+                    provider_id: profile.provider_id,
+                    model_id: profile.model_id,
+                    base_url: profile.base_url,
+                    auth_kind,
+                    auth_value,
+                    temperature: profile.parameters.temperature,
+                    max_tokens: profile.parameters.max_tokens,
+                    context_limit: None,
+                    show_thinking: profile.parameters.show_thinking,
+                    enable_thinking: profile.parameters.enable_thinking,
+                    thinking_budget: profile.parameters.thinking_budget,
+                    system_prompt: profile.system_prompt,
+                });
+                let _ = view_tx.send(ViewCommand::NavigateTo {
+                    view: super::view_command::ViewId::ProfileEditor,
+                });
+            }
+            Err(e) => {
+                tracing::error!("Failed to load profile for edit: {}", e);
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Edit Failed".to_string(),
+                    message: format!("Failed to load profile: {}", e),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
+            }
+        }
+    }
+
+    /// Handle DeleteProfile user event
+    ///
+    /// @plan PLAN-20250125-REFACTOR.P12
+    /// @requirement REQ-025.4
+    async fn on_delete_profile(
+        profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        id: Uuid,
+    ) {
+        let profile_name = profile_service
+            .get(id)
+            .await
+            .ok()
+            .map(|profile| profile.name)
+            .unwrap_or_else(|| "Profile".to_string());
+
+        match profile_service.delete(id).await {
+            Ok(_) => {
+                let _ = emit(AppEvent::Profile(ProfileEvent::Deleted {
+                    id,
+                    name: profile_name,
+                }));
+                let _ = view_tx.send(ViewCommand::ProfileDeleted { id });
+                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
+            }
+            Err(e) => {
+                tracing::error!("Failed to delete profile: {}", e);
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Delete Failed".to_string(),
+                    message: format!("Failed to delete profile: {}", e),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
+            }
+        }
+    }
 
     /// Handle ToggleMcp user event
     ///
@@ -402,16 +524,17 @@ impl SettingsPresenter {
             }
         };
 
-        let selected_profile_id = if let Ok(Some(id)) = app_settings_service.get_default_profile_id().await {
-            Some(id)
-        } else {
-            profile_service
-                .get_default()
-                .await
-                .ok()
-                .flatten()
-                .map(|p| p.id)
-        };
+        let selected_profile_id =
+            if let Ok(Some(id)) = app_settings_service.get_default_profile_id().await {
+                Some(id)
+            } else {
+                profile_service
+                    .get_default()
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|p| p.id)
+            };
 
         let summaries = profiles
             .into_iter()
@@ -424,16 +547,26 @@ impl SettingsPresenter {
             })
             .collect::<Vec<_>>();
 
-        let _ = view_tx.send(ViewCommand::ShowSettings {
+        tracing::info!(
+            "SettingsPresenter::emit_profiles_snapshot: sending {} profiles, default={:?}",
+            summaries.len(),
+            selected_profile_id
+        );
+        match view_tx.send(ViewCommand::ShowSettings {
             profiles: summaries.clone(),
             selected_profile_id,
-        });
-        let _ = view_tx.send(ViewCommand::ChatProfilesUpdated {
+        }) {
+            Ok(n) => tracing::info!("SettingsPresenter: ShowSettings sent to {} receivers", n),
+            Err(e) => tracing::error!("SettingsPresenter: ShowSettings send failed: {}", e),
+        }
+        match view_tx.send(ViewCommand::ChatProfilesUpdated {
             profiles: summaries,
             selected_profile_id,
-        });
+        }) {
+            Ok(n) => tracing::info!("SettingsPresenter: ChatProfilesUpdated sent to {} receivers", n),
+            Err(e) => tracing::error!("SettingsPresenter: ChatProfilesUpdated send failed: {}", e),
+        }
     }
-
 }
 // Implement Presenter trait
 //
@@ -446,7 +579,8 @@ impl Presenter for SettingsPresenter {
     }
 
     fn stop(&mut self) -> Result<(), PresenterError> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 

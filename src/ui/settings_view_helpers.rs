@@ -366,7 +366,7 @@ fn apply_mcp_status_color(status_view: &NSView, mcp: &McpConfig) {
 fn build_mcp_row_label(mcp: &McpConfig, mtm: MainThreadMarker) -> Retained<NSTextField> {
     // Use just the name, truncated from the left (show end) if too long
     let display_name = if mcp.name.len() > 35 {
-        format!("...{}", &mcp.name[mcp.name.len()-32..])
+        format!("...{}", &mcp.name[mcp.name.len() - 32..])
     } else {
         mcp.name.clone()
     };
@@ -377,7 +377,9 @@ fn build_mcp_row_label(mcp: &McpConfig, mtm: MainThreadMarker) -> Retained<NSTex
     label.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingHead);
     // Set max width to prevent overflow
     unsafe {
-        let max_width = label.widthAnchor().constraintLessThanOrEqualToConstant(280.0);
+        let max_width = label
+            .widthAnchor()
+            .constraintLessThanOrEqualToConstant(280.0);
         max_width.setActive(true);
     }
     label

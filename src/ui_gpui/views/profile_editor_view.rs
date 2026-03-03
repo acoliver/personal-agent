@@ -3,14 +3,14 @@
 //! @plan PLAN-20250130-GPUIREDUX.P08
 //! @requirement REQ-UI-PE
 
-use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight, Stateful};
+use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString, Stateful};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::ui_gpui::theme::Theme;
-use crate::ui_gpui::bridge::GpuiBridge;
 use crate::events::types::{ModelProfileAuth, ModelProfileParameters, UserEvent};
 use crate::presentation::view_command::ViewCommand;
+use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::theme::Theme;
 
 /// Auth method enum for display
 /// @plan PLAN-20250130-GPUIREDUX.P08
@@ -53,6 +53,7 @@ impl ApiType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ActiveField {
     Name,
+    Model,
     BaseUrl,
     ApiKey,
     KeyfilePath,
@@ -182,6 +183,7 @@ impl ProfileEditorView {
 
         match self.state.active_field {
             Some(ActiveField::Name) => self.state.data.name.push_str(text),
+            Some(ActiveField::Model) => self.state.data.model_id.push_str(text),
             Some(ActiveField::BaseUrl) => self.state.data.base_url.push_str(text),
             Some(ActiveField::ApiKey) => self.state.data.api_key.push_str(text),
             Some(ActiveField::KeyfilePath) => self.state.data.keyfile_path.push_str(text),
@@ -233,6 +235,9 @@ impl ProfileEditorView {
             Some(ActiveField::Name) => {
                 self.state.data.name.pop();
             }
+            Some(ActiveField::Model) => {
+                self.state.data.model_id.pop();
+            }
             Some(ActiveField::BaseUrl) => {
                 self.state.data.base_url.pop();
             }
@@ -283,9 +288,8 @@ impl ProfileEditorView {
         cx: &mut gpui::Context<Self>,
     ) {
         if key == "escape" || (modifiers.platform && key == "w") {
-            crate::ui_gpui::navigation_channel().request_navigate(
-                crate::presentation::view_command::ViewId::Settings,
-            );
+            crate::ui_gpui::navigation_channel()
+                .request_navigate(crate::presentation::view_command::ViewId::Settings);
             return;
         }
 
@@ -333,7 +337,34 @@ impl ProfileEditorView {
         }
 
         if key.len() == 1 {
-            self.append_to_active_field(key);
+            let mut text = key.to_string();
+            if modifiers.shift {
+                text = match key {
+                    "1" => "!".to_string(),
+                    "2" => "@".to_string(),
+                    "3" => "#".to_string(),
+                    "4" => "$".to_string(),
+                    "5" => "%".to_string(),
+                    "6" => "^".to_string(),
+                    "7" => "&".to_string(),
+                    "8" => "*".to_string(),
+                    "9" => "(".to_string(),
+                    "0" => ")".to_string(),
+                    "-" => "_".to_string(),
+                    "=" => "+".to_string(),
+                    "[" => "{".to_string(),
+                    "]" => "}".to_string(),
+                    "\\" => "|".to_string(),
+                    ";" => ":".to_string(),
+                    "'" => "\"".to_string(),
+                    "," => "<".to_string(),
+                    "." => ">".to_string(),
+                    "/" => "?".to_string(),
+                    "`" => "~".to_string(),
+                    _ => key.to_ascii_uppercase(),
+                };
+            }
+            self.append_to_active_field(&text);
             cx.notify();
         }
     }
@@ -437,6 +468,62 @@ impl ProfileEditorView {
                 }
                 self.state.active_field = None;
             }
+            ViewCommand::ProfileEditorLoad {
+                id,
+                name,
+                provider_id,
+                model_id,
+                base_url,
+                auth_kind,
+                auth_value,
+                temperature,
+                max_tokens,
+                context_limit,
+                show_thinking,
+                enable_thinking,
+                thinking_budget,
+                system_prompt,
+            } => {
+                self.state.is_new = false;
+                self.state.data.id = Some(id.to_string());
+                self.state.data.name = name;
+                self.state.data.model_id = model_id;
+                self.state.data.base_url = base_url;
+                self.state.data.api_type = if provider_id == "anthropic" {
+                    ApiType::Anthropic
+                } else {
+                    ApiType::OpenAI
+                };
+                self.state.data.auth_method = match auth_kind.as_str() {
+                    "keyfile" => AuthMethod::Keyfile,
+                    "none" => AuthMethod::None,
+                    _ => AuthMethod::ApiKey,
+                };
+                self.state.data.api_key.clear();
+                self.state.data.keyfile_path.clear();
+                if let Some(value) = auth_value {
+                    match self.state.data.auth_method {
+                        AuthMethod::Keyfile => {
+                            self.state.data.keyfile_path = value;
+                        }
+                        AuthMethod::ApiKey => {
+                            self.state.data.api_key = value;
+                        }
+                        AuthMethod::None => {}
+                    }
+                }
+                self.state.data.temperature = temperature as f32;
+                self.state.data.max_tokens = max_tokens;
+                if let Some(limit) = context_limit {
+                    self.state.data.context_limit = limit;
+                }
+                self.state.data.show_thinking = show_thinking;
+                self.state.data.enable_extended_thinking = enable_thinking;
+                self.state.data.thinking_budget = thinking_budget.unwrap_or(10_000);
+                self.state.data.system_prompt = system_prompt;
+                self.state.active_field = None;
+            }
+
             _ => {}
         }
         cx.notify();
@@ -446,7 +533,11 @@ impl ProfileEditorView {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let can_save = self.state.data.can_save();
-        let title = if self.state.is_new { "New Profile" } else { "Edit Profile" };
+        let title = if self.state.is_new {
+            "New Profile"
+        } else {
+            "Edit Profile"
+        };
 
         div()
             .id("profile-editor-top-bar")
@@ -471,26 +562,25 @@ impl ProfileEditorView {
                     .text_size(px(12.0))
                     .text_color(Theme::text_secondary())
                     .child("Cancel")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                        tracing::info!("Cancel clicked - navigating to Settings");
-                        crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::Settings
-                        );
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            tracing::info!("Cancel clicked - navigating to Settings");
+                            crate::ui_gpui::navigation_channel().request_navigate(
+                                crate::presentation::view_command::ViewId::Settings,
+                            );
+                        }),
+                    ),
             )
             // Center: Title
             .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::text_primary())
-                            .child(title)
-                    )
+                div().flex_1().flex().justify_center().child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(Theme::text_primary())
+                        .child(title),
+                ),
             )
             // Right: Save button
             .child(
@@ -507,16 +597,18 @@ impl ProfileEditorView {
                             .bg(Theme::accent())
                             .hover(|s| s.bg(Theme::accent_hover()))
                             .text_color(gpui::white())
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                tracing::info!("Save clicked - emitting SaveProfile payload");
-                                this.emit_save_profile();
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    tracing::info!("Save clicked - emitting SaveProfile payload");
+                                    this.emit_save_profile();
+                                }),
+                            )
                     })
                     .when(!can_save, |d| {
-                        d.bg(Theme::bg_dark())
-                            .text_color(Theme::text_muted())
+                        d.bg(Theme::bg_dark()).text_color(Theme::text_muted())
                     })
-                    .child("Save")
+                    .child("Save"),
             )
     }
 
@@ -546,23 +638,38 @@ impl ProfileEditorView {
             .px(px(8.0))
             .bg(Theme::bg_dark())
             .border_1()
-            .border_color(if active { Theme::accent() } else { Theme::border() })
+            .border_color(if active {
+                Theme::accent()
+            } else {
+                Theme::border()
+            })
             .rounded(px(4.0))
             .flex()
             .items_center()
             .text_size(px(12.0))
-            .child(
-                if value.is_empty() {
-                    div().text_color(Theme::text_muted()).child(placeholder.to_string())
-                } else {
-                    div().text_color(Theme::text_primary()).child(value.to_string())
-                }
-            )
+            .child(if value.is_empty() {
+                div()
+                    .text_color(Theme::text_muted())
+                    .child(placeholder.to_string())
+            } else {
+                div()
+                    .text_color(Theme::text_primary())
+                    .child(value.to_string())
+            })
+            .when(active, |d| {
+                d.child(div().ml(px(2.0)).text_color(Theme::text_primary()).child("|"))
+            })
     }
 
     /// Render a secure (masked) text field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_secure_field(&self, id: &str, value: &str, masked: bool, active: bool) -> Stateful<gpui::Div> {
+    fn render_secure_field(
+        &self,
+        id: &str,
+        value: &str,
+        masked: bool,
+        active: bool,
+    ) -> Stateful<gpui::Div> {
         let display = if masked && !value.is_empty() {
             "•".repeat(value.len().min(40))
         } else {
@@ -576,18 +683,23 @@ impl ProfileEditorView {
             .px(px(8.0))
             .bg(Theme::bg_dark())
             .border_1()
-            .border_color(if active { Theme::accent() } else { Theme::border() })
+            .border_color(if active {
+                Theme::accent()
+            } else {
+                Theme::border()
+            })
             .rounded(px(4.0))
             .flex()
             .items_center()
             .text_size(px(12.0))
-            .child(
-                if display.is_empty() {
-                    div().text_color(Theme::text_muted()).child("sk-...")
-                } else {
-                    div().text_color(Theme::text_primary()).child(display)
-                }
-            )
+            .child(if display.is_empty() {
+                div().text_color(Theme::text_muted()).child("sk-...")
+            } else {
+                div().text_color(Theme::text_primary()).child(display)
+            })
+            .when(active, |d| {
+                d.child(div().ml(px(2.0)).text_color(Theme::text_primary()).child("|"))
+            })
     }
 
     /// Render the name field
@@ -601,17 +713,20 @@ impl ProfileEditorView {
             .child(self.render_label("NAME"))
             .child(
                 self.render_text_field("field-name", &self.state.data.name, "Profile name", active)
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.active_field = Some(ActiveField::Name);
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.active_field = Some(ActiveField::Name);
+                            cx.notify();
+                        }),
+                    ),
             )
     }
 
-    /// Render the model display with change button
+    /// Render the model field (editable) with browse button
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_model_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let model_id = self.state.data.model_id.clone();
+        let active = self.state.active_field == Some(ActiveField::Model);
 
         div()
             .flex()
@@ -620,31 +735,28 @@ impl ProfileEditorView {
             .child(
                 div()
                     .w(px(360.0))
-                    .h(px(24.0))
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    // Model ID display
                     .child(
-                        div()
-                            .flex_1()
-                            .h(px(24.0))
-                            .px(px(8.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(Theme::border())
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .text_size(px(12.0))
-                            .text_color(Theme::text_primary())
-                            .overflow_hidden()
-                            .child(if model_id.is_empty() { "Select a model".to_string() } else { model_id })
+                        self.render_text_field(
+                            "field-model-id",
+                            &self.state.data.model_id,
+                            "e.g. claude-sonnet-4-20250514",
+                            active,
+                        )
+                        .flex_1()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _window, cx| {
+                                this.state.active_field = Some(ActiveField::Model);
+                                cx.notify();
+                            }),
+                        ),
                     )
-                    // Change button
                     .child(
                         div()
-                            .id("btn-change-model")
+                            .id("btn-browse-model")
                             .w(px(60.0))
                             .h(px(24.0))
                             .bg(Theme::bg_dark())
@@ -658,14 +770,19 @@ impl ProfileEditorView {
                             .hover(|s| s.bg(Theme::bg_darker()))
                             .text_size(px(11.0))
                             .text_color(Theme::text_secondary())
-                            .child("Change")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                                tracing::info!("Change model clicked - navigating to ModelSelector");
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::ModelSelector
-                                );
-                            }))
-                    )
+                            .child("Browse")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_this, _, _window, _cx| {
+                                    tracing::info!(
+                                        "Browse model clicked - navigating to ModelSelector"
+                                    );
+                                    crate::ui_gpui::navigation_channel().request_navigate(
+                                        crate::presentation::view_command::ViewId::ModelSelector,
+                                    );
+                                }),
+                            ),
+                    ),
             )
     }
 
@@ -694,23 +811,28 @@ impl ProfileEditorView {
                     .cursor_pointer()
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.data.api_type = match this.state.data.api_type {
-                            ApiType::Anthropic => ApiType::OpenAI,
-                            ApiType::OpenAI => ApiType::Anthropic,
-                        };
-
-                        if this.state.data.base_url.trim().is_empty() {
-                            this.state.data.base_url = match this.state.data.api_type {
-                                ApiType::Anthropic => "https://api.anthropic.com/v1".to_string(),
-                                ApiType::OpenAI => "https://api.openai.com/v1".to_string(),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.data.api_type = match this.state.data.api_type {
+                                ApiType::Anthropic => ApiType::OpenAI,
+                                ApiType::OpenAI => ApiType::Anthropic,
                             };
-                        }
 
-                        cx.notify();
-                    }))
+                            if this.state.data.base_url.trim().is_empty() {
+                                this.state.data.base_url = match this.state.data.api_type {
+                                    ApiType::Anthropic => {
+                                        "https://api.anthropic.com/v1".to_string()
+                                    }
+                                    ApiType::OpenAI => "https://api.openai.com/v1".to_string(),
+                                };
+                            }
+
+                            cx.notify();
+                        }),
+                    )
                     .child(api_type)
-                    .child(div().text_color(Theme::text_muted()).child("v"))
+                    .child(div().text_color(Theme::text_muted()).child("v")),
             )
     }
 
@@ -730,10 +852,13 @@ impl ProfileEditorView {
                     "https://api.example.com/v1",
                     active,
                 )
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                    this.state.active_field = Some(ActiveField::BaseUrl);
-                    cx.notify();
-                })),
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _window, cx| {
+                        this.state.active_field = Some(ActiveField::BaseUrl);
+                        cx.notify();
+                    }),
+                ),
             )
     }
 
@@ -762,17 +887,20 @@ impl ProfileEditorView {
                     .cursor_pointer()
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.data.auth_method = match this.state.data.auth_method {
-                            AuthMethod::None => AuthMethod::ApiKey,
-                            AuthMethod::ApiKey => AuthMethod::Keyfile,
-                            AuthMethod::Keyfile => AuthMethod::None,
-                        };
-                        this.state.active_field = None;
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.data.auth_method = match this.state.data.auth_method {
+                                AuthMethod::None => AuthMethod::ApiKey,
+                                AuthMethod::ApiKey => AuthMethod::Keyfile,
+                                AuthMethod::Keyfile => AuthMethod::None,
+                            };
+                            this.state.active_field = None;
+                            cx.notify();
+                        }),
+                    )
                     .child(auth_method)
-                    .child(div().text_color(Theme::text_muted()).child("v"))
+                    .child(div().text_color(Theme::text_muted()).child("v")),
             )
     }
 
@@ -795,7 +923,7 @@ impl ProfileEditorView {
                         div()
                             .text_size(px(11.0))
                             .text_color(Theme::text_secondary())
-                            .child("API KEY")
+                            .child("API KEY"),
                     )
                     .child(
                         div()
@@ -815,15 +943,19 @@ impl ProfileEditorView {
                                     .text_size(px(10.0))
                                     .text_color(Theme::text_secondary())
                                     .child("Paste")
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                        if let Some(item) = cx.read_from_clipboard() {
-                                            if let Some(text) = item.text() {
-                                                this.state.active_field = Some(ActiveField::ApiKey);
-                                                this.state.data.api_key = text;
-                                                cx.notify();
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _window, cx| {
+                                            if let Some(item) = cx.read_from_clipboard() {
+                                                if let Some(text) = item.text() {
+                                                    this.state.active_field =
+                                                        Some(ActiveField::ApiKey);
+                                                    this.state.data.api_key = text;
+                                                    cx.notify();
+                                                }
                                             }
-                                        }
-                                    }))
+                                        }),
+                                    ),
                             )
                             .child(
                                 div()
@@ -832,10 +964,13 @@ impl ProfileEditorView {
                                     .items_center()
                                     .gap(px(4.0))
                                     .cursor_pointer()
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                        this.state.mask_api_key = !this.state.mask_api_key;
-                                        cx.notify();
-                                    }))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _window, cx| {
+                                            this.state.mask_api_key = !this.state.mask_api_key;
+                                            cx.notify();
+                                        }),
+                                    )
                                     .child(
                                         div()
                                             .size(px(12.0))
@@ -845,29 +980,40 @@ impl ProfileEditorView {
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .when(masked, |d| d.bg(Theme::accent()).child(
-                                                div().text_size(px(8.0)).text_color(gpui::white()).child("v")
-                                            ))
+                                            .when(masked, |d| {
+                                                d.bg(Theme::accent()).child(
+                                                    div()
+                                                        .text_size(px(8.0))
+                                                        .text_color(gpui::white())
+                                                        .child("v"),
+                                                )
+                                            }),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(10.0))
                                             .text_color(Theme::text_muted())
-                                            .child("Mask")
-                                    )
-                            )
-                    )
+                                            .child("Mask"),
+                                    ),
+                            ),
+                    ),
             )
             .child(
-                div()
-                    .mt(px(4.0))
-                    .child(
-                        self.render_secure_field("field-api-key", &self.state.data.api_key, masked, active)
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                this.state.active_field = Some(ActiveField::ApiKey);
-                                cx.notify();
-                            })),
+                div().mt(px(4.0)).child(
+                    self.render_secure_field(
+                        "field-api-key",
+                        &self.state.data.api_key,
+                        masked,
+                        active,
                     )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.active_field = Some(ActiveField::ApiKey);
+                            cx.notify();
+                        }),
+                    ),
+                ),
             )
     }
 
@@ -895,23 +1041,32 @@ impl ProfileEditorView {
                             .px(px(8.0))
                             .bg(Theme::bg_dark())
                             .border_1()
-                            .border_color(if active { Theme::accent() } else { Theme::border() })
+                            .border_color(if active {
+                                Theme::accent()
+                            } else {
+                                Theme::border()
+                            })
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
                             .text_size(px(12.0))
                             .overflow_hidden()
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                this.state.active_field = Some(ActiveField::KeyfilePath);
-                                cx.notify();
-                            }))
-                            .child(
-                                if self.state.data.keyfile_path.is_empty() {
-                                    div().text_color(Theme::text_muted()).child("/path/to/api_key")
-                                } else {
-                                    div().text_color(Theme::text_primary()).child(self.state.data.keyfile_path.clone())
-                                }
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.state.active_field = Some(ActiveField::KeyfilePath);
+                                    cx.notify();
+                                }),
                             )
+                            .child(if self.state.data.keyfile_path.is_empty() {
+                                div()
+                                    .text_color(Theme::text_muted())
+                                    .child("/path/to/api_key")
+                            } else {
+                                div()
+                                    .text_color(Theme::text_primary())
+                                    .child(self.state.data.keyfile_path.clone())
+                            }),
                     )
                     // Browse button
                     .child(
@@ -931,11 +1086,14 @@ impl ProfileEditorView {
                             .text_size(px(11.0))
                             .text_color(Theme::text_secondary())
                             .child("Browse")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                tracing::info!("Browse clicked");
-                                this.emit(UserEvent::BrowseKeyfile);
-                            }))
-                    )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    tracing::info!("Browse clicked");
+                                    this.emit(UserEvent::BrowseKeyfile);
+                                }),
+                            ),
+                    ),
             )
     }
 
@@ -947,19 +1105,14 @@ impl ProfileEditorView {
             .flex()
             .flex_col()
             .mt(px(8.0))
-            .child(
-                div()
-                    .h(px(1.0))
-                    .w_full()
-                    .bg(Theme::border())
-            )
+            .child(div().h(px(1.0)).w_full().bg(Theme::border()))
             .child(
                 div()
                     .mt(px(8.0))
                     .text_size(px(11.0))
                     .font_weight(FontWeight::BOLD)
                     .text_color(Theme::text_secondary())
-                    .child(title.to_string())
+                    .child(title.to_string()),
             )
     }
 
@@ -991,7 +1144,7 @@ impl ProfileEditorView {
                             .items_center()
                             .text_size(px(12.0))
                             .text_color(Theme::text_primary())
-                            .child(temp)
+                            .child(temp),
                     )
                     // Stepper
                     .child(
@@ -1015,10 +1168,14 @@ impl ProfileEditorView {
                                     .text_size(px(8.0))
                                     .text_color(Theme::text_secondary())
                                     .child("▲")
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                        this.state.data.temperature = (this.state.data.temperature + 0.1).min(2.0);
-                                        cx.notify();
-                                    }))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _window, cx| {
+                                            this.state.data.temperature =
+                                                (this.state.data.temperature + 0.1).min(2.0);
+                                            cx.notify();
+                                        }),
+                                    ),
                             )
                             .child(
                                 div()
@@ -1037,12 +1194,16 @@ impl ProfileEditorView {
                                     .text_size(px(8.0))
                                     .text_color(Theme::text_secondary())
                                     .child("▼")
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                        this.state.data.temperature = (this.state.data.temperature - 0.1).max(0.0);
-                                        cx.notify();
-                                    }))
-                            )
-                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _window, cx| {
+                                            this.state.data.temperature =
+                                                (this.state.data.temperature - 0.1).max(0.0);
+                                            cx.notify();
+                                        }),
+                                    ),
+                            ),
+                    ),
             )
     }
 
@@ -1062,10 +1223,13 @@ impl ProfileEditorView {
                     "4096",
                     active,
                 )
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                    this.state.active_field = Some(ActiveField::MaxTokens);
-                    cx.notify();
-                })),
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _window, cx| {
+                        this.state.active_field = Some(ActiveField::MaxTokens);
+                        cx.notify();
+                    }),
+                ),
             )
     }
 
@@ -1085,10 +1249,13 @@ impl ProfileEditorView {
                     "128000",
                     active,
                 )
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                    this.state.active_field = Some(ActiveField::ContextLimit);
-                    cx.notify();
-                })),
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _window, cx| {
+                        this.state.active_field = Some(ActiveField::ContextLimit);
+                        cx.notify();
+                    }),
+                ),
             )
     }
 
@@ -1103,10 +1270,13 @@ impl ProfileEditorView {
             .items_center()
             .gap(px(8.0))
             .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                this.state.data.show_thinking = !this.state.data.show_thinking;
-                cx.notify();
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.state.data.show_thinking = !this.state.data.show_thinking;
+                    cx.notify();
+                }),
+            )
             .child(
                 div()
                     .size(px(14.0))
@@ -1116,15 +1286,20 @@ impl ProfileEditorView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .when(checked, |d| d.bg(Theme::accent()).child(
-                        div().text_size(px(10.0)).text_color(gpui::white()).child("v")
-                    ))
+                    .when(checked, |d| {
+                        d.bg(Theme::accent()).child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(gpui::white())
+                                .child("v"),
+                        )
+                    }),
             )
             .child(
                 div()
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
-                    .child("Show Thinking")
+                    .child("Show Thinking"),
             )
     }
 
@@ -1145,10 +1320,14 @@ impl ProfileEditorView {
                     .items_center()
                     .gap(px(8.0))
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.data.enable_extended_thinking = !this.state.data.enable_extended_thinking;
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.data.enable_extended_thinking =
+                                !this.state.data.enable_extended_thinking;
+                            cx.notify();
+                        }),
+                    )
                     .child(
                         div()
                             .size(px(14.0))
@@ -1158,16 +1337,21 @@ impl ProfileEditorView {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .when(checked, |d| d.bg(Theme::accent()).child(
-                                div().text_size(px(10.0)).text_color(gpui::white()).child("v")
-                            ))
+                            .when(checked, |d| {
+                                d.bg(Theme::accent()).child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(gpui::white())
+                                        .child("v"),
+                                )
+                            }),
                     )
                     .child(
                         div()
                             .text_size(px(12.0))
                             .text_color(Theme::text_primary())
-                            .child("Enable Extended Thinking")
-                    )
+                            .child("Enable Extended Thinking"),
+                    ),
             )
             .when(checked, |d| {
                 d.child(
@@ -1182,11 +1366,14 @@ impl ProfileEditorView {
                                 "10000",
                                 budget_active,
                             )
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                this.state.active_field = Some(ActiveField::ThinkingBudget);
-                                cx.notify();
-                            })),
-                        )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.state.active_field = Some(ActiveField::ThinkingBudget);
+                                    cx.notify();
+                                }),
+                            ),
+                        ),
                 )
             })
     }
@@ -1210,22 +1397,29 @@ impl ProfileEditorView {
                     .py(px(8.0))
                     .bg(Theme::bg_dark())
                     .border_1()
-                    .border_color(if active { Theme::accent() } else { Theme::border() })
+                    .border_color(if active {
+                        Theme::accent()
+                    } else {
+                        Theme::border()
+                    })
                     .rounded(px(4.0))
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
                     .overflow_hidden()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                        this.state.active_field = Some(ActiveField::SystemPrompt);
-                        cx.notify();
-                    }))
-                    .child(
-                        if self.state.data.system_prompt.is_empty() {
-                            div().text_color(Theme::text_muted()).child("You are a helpful assistant.")
-                        } else {
-                            div().child(self.state.data.system_prompt.clone())
-                        }
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.active_field = Some(ActiveField::SystemPrompt);
+                            cx.notify();
+                        }),
                     )
+                    .child(if self.state.data.system_prompt.is_empty() {
+                        div()
+                            .text_color(Theme::text_muted())
+                            .child("You are a helpful assistant.")
+                    } else {
+                        div().child(self.state.data.system_prompt.clone())
+                    }),
             )
     }
 
@@ -1255,8 +1449,12 @@ impl ProfileEditorView {
             // Auth Method
             .child(self.render_auth_method_section(cx))
             // Conditional auth fields
-            .when(*auth_method == AuthMethod::ApiKey, |d| d.child(self.render_api_key_section(cx)))
-            .when(*auth_method == AuthMethod::Keyfile, |d| d.child(self.render_keyfile_section(cx)))
+            .when(*auth_method == AuthMethod::ApiKey, |d| {
+                d.child(self.render_api_key_section(cx))
+            })
+            .when(*auth_method == AuthMethod::Keyfile, |d| {
+                d.child(self.render_keyfile_section(cx))
+            })
             // Parameters section
             .child(self.render_section_divider("PARAMETERS"))
             .child(
@@ -1269,7 +1467,7 @@ impl ProfileEditorView {
                     .child(self.render_max_tokens_section(cx))
                     .child(self.render_context_limit_section(cx))
                     .child(self.render_show_thinking_section(cx))
-                    .child(self.render_extended_thinking_section(cx))
+                    .child(self.render_extended_thinking_section(cx)),
             )
             // System Prompt
             .child(self.render_system_prompt_section(cx))
@@ -1283,7 +1481,11 @@ impl gpui::Focusable for ProfileEditorView {
 }
 
 impl gpui::Render for ProfileEditorView {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("profile-editor-view")
             .flex()

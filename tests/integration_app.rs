@@ -4,9 +4,9 @@
 //!
 //! @plan PLAN-20250125-REFACTOR.P13
 
-use std::sync::Arc;
-use personal_agent::{App, AppEvent};
 use personal_agent::events::{emit, subscribe};
+use personal_agent::{App, AppEvent};
+use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 
@@ -29,7 +29,11 @@ async fn test_app_initialization_and_services() {
     let app = App::new(base_dir).await;
 
     // Then: app should be created successfully
-    assert!(app.is_ok(), "App initialization should succeed: {:?}", app.err());
+    assert!(
+        app.is_ok(),
+        "App initialization should succeed: {:?}",
+        app.err()
+    );
 
     let app = app.unwrap();
     let context = app.context();
@@ -86,7 +90,10 @@ async fn test_event_emission_and_reception() {
         .expect("Should receive event within timeout")
         .expect("Event should be received");
 
-    assert_eq!(received, test_event, "Received event should match emitted event");
+    assert_eq!(
+        received, test_event,
+        "Received event should match emitted event"
+    );
 }
 
 /// Test: Service registry provides correct service types
@@ -113,11 +120,20 @@ async fn test_service_registry_types() {
 
     // Then: services should be accessible
     // We can't directly test types, but we can verify they're not null
-    assert!(Arc::strong_count(&conversation_svc) > 0, "ConversationService should exist");
-    assert!(Arc::strong_count(&profile_svc) > 0, "ProfileService should exist");
+    assert!(
+        Arc::strong_count(&conversation_svc) > 0,
+        "ConversationService should exist"
+    );
+    assert!(
+        Arc::strong_count(&profile_svc) > 0,
+        "ProfileService should exist"
+    );
     assert!(Arc::strong_count(&chat_svc) > 0, "ChatService should exist");
     assert!(Arc::strong_count(&mcp_svc) > 0, "McpService should exist");
-    assert!(Arc::strong_count(&app_settings_svc) > 0, "AppSettingsService should exist");
+    assert!(
+        Arc::strong_count(&app_settings_svc) > 0,
+        "AppSettingsService should exist"
+    );
 }
 
 /// Test: App shutdown stops all presenters
@@ -148,7 +164,11 @@ async fn test_app_shutdown() {
     let result = app.shutdown().await;
 
     // Then: shutdown should succeed
-    assert!(result.is_ok(), "Shutdown should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Shutdown should succeed: {:?}",
+        result.err()
+    );
 }
 
 /// Test: Multiple event emissions are all received
@@ -193,7 +213,10 @@ async fn test_multiple_events_in_order() {
             .expect("Should receive event within timeout")
             .expect("Event should be received");
 
-        assert_eq!(received, expected, "Received event should match emitted event");
+        assert_eq!(
+            received, expected,
+            "Received event should match emitted event"
+        );
     }
 }
 
@@ -224,7 +247,10 @@ async fn test_global_emit_subscribe() {
         .expect("Should receive event within timeout")
         .expect("Event should be received");
 
-    assert_eq!(received, test_event, "Received event should match emitted event");
+    assert_eq!(
+        received, test_event,
+        "Received event should match emitted event"
+    );
 }
 
 /// Test: Service registry is properly cloned

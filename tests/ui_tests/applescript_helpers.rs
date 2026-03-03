@@ -178,11 +178,7 @@ pub fn get_popup_items(app_name: &str, popup_path: &str) -> Vec<String> {
     let result = run_applescript(&script);
     if result.success && !result.stdout.is_empty() {
         // AppleScript returns items as comma-separated list
-        result
-            .stdout
-            .split(", ")
-            .map(|s| s.to_string())
-            .collect()
+        result.stdout.split(", ").map(|s| s.to_string()).collect()
     } else {
         Vec::new()
     }

@@ -107,12 +107,14 @@ mod tests {
     #[tokio::test]
     async fn test_service_result_type() {
         // Verify ServiceResult<T> works correctly
-        let ok_result: ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> =
-            Ok(Box::new(futures::stream::empty()));
+        let ok_result: ServiceResult<
+            Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>,
+        > = Ok(Box::new(futures::stream::empty()));
         assert!(ok_result.is_ok());
 
-        let err_result: ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> =
-            Err(ServiceError::NotFound("test".to_string()));
+        let err_result: ServiceResult<
+            Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>,
+        > = Err(ServiceError::NotFound("test".to_string()));
         assert!(err_result.is_err());
     }
 

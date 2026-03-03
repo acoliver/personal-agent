@@ -53,7 +53,7 @@ fn build_scroll_view(mtm: MainThreadMarker) -> Retained<NSScrollView> {
             250.0,
             NSLayoutConstraintOrientation::Vertical,
         );
-        
+
         // CRITICAL: Add minimum height constraint to prevent collapse
         let min_height = scroll_view
             .heightAnchor()

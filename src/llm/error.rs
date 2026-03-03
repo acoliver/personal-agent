@@ -55,16 +55,13 @@ pub type LlmResult<T> = Result<T, LlmError>;
 
 impl LlmError {
     /// Check if the error is recoverable
-    #[must_use] 
+    #[must_use]
     pub const fn is_recoverable(&self) -> bool {
-        matches!(
-            self,
-            Self::Stream(_) | Self::Io(_) | Self::SerdesAi(_)
-        )
+        matches!(self, Self::Stream(_) | Self::Io(_) | Self::SerdesAi(_))
     }
 
     /// Check if the error is due to configuration
-    #[must_use] 
+    #[must_use]
     pub const fn is_config_error(&self) -> bool {
         matches!(
             self,

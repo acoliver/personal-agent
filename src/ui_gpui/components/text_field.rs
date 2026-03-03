@@ -3,9 +3,9 @@
 //! @plan PLAN-20250130-GPUIREDUX.P02
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, FocusHandle, Focusable, Styled, Window, Context};
-use std::rc::Rc;
+use gpui::{div, prelude::*, px, Context, FocusHandle, Focusable, Styled, Window};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct TextField {
     focus_handle: FocusHandle,
@@ -72,7 +72,7 @@ impl Focusable for TextField {
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
         use crate::ui_gpui::theme::Theme;
-        
+
         let is_focused = self.focus_handle.is_focused(window);
         let text = self.text.borrow().clone();
         let placeholder = self.placeholder.clone();
@@ -85,14 +85,14 @@ impl Render for TextField {
                 div()
                     .text_color(Theme::text_primary())
                     .text_sm()
-                    .child(text.clone())
+                    .child(text.clone()),
             );
         } else if !placeholder.is_empty() {
             content_div = content_div.child(
                 div()
                     .text_color(Theme::text_muted())
                     .text_sm()
-                    .child(placeholder.clone())
+                    .child(placeholder.clone()),
             );
         }
 

@@ -3,13 +3,13 @@
 //! @plan PLAN-20250130-GPUIREDUX.P10
 //! @requirement REQ-UI-MC
 
-use gpui::{div, px, prelude::*, SharedString, MouseButton, FocusHandle, FontWeight};
+use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString};
 use std::sync::Arc;
 
-use crate::ui_gpui::theme::Theme;
-use crate::ui_gpui::bridge::GpuiBridge;
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
+use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::theme::Theme;
 
 /// Auth method for MCP configuration
 /// @plan PLAN-20250130-GPUIREDUX.P10
@@ -40,7 +40,9 @@ pub enum OAuthStatus {
     #[default]
     NotConnected,
     Connecting,
-    Connected { username: String },
+    Connected {
+        username: String,
+    },
     Error(String),
 }
 
@@ -48,9 +50,19 @@ pub enum OAuthStatus {
 /// @plan PLAN-20250130-GPUIREDUX.P10
 #[derive(Clone, Debug)]
 pub enum ConfigField {
-    String { key: String, value: String, placeholder: String },
-    Boolean { key: String, value: bool },
-    Array { key: String, values: Vec<String> },
+    String {
+        key: String,
+        value: String,
+        placeholder: String,
+    },
+    Boolean {
+        key: String,
+        value: bool,
+    },
+    Array {
+        key: String,
+        values: Vec<String>,
+    },
 }
 
 /// MCP Configure view data
@@ -248,7 +260,11 @@ impl McpConfigureView {
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let can_save = self.state.data.can_save();
-        let title = if self.state.is_new { "Configure MCP" } else { "Edit MCP" };
+        let title = if self.state.is_new {
+            "Configure MCP"
+        } else {
+            "Edit MCP"
+        };
 
         div()
             .id("mcp-configure-top-bar")
@@ -273,26 +289,25 @@ impl McpConfigureView {
                     .text_size(px(12.0))
                     .text_color(Theme::text_secondary())
                     .child("Cancel")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                        tracing::info!("Cancel clicked - navigating to Settings");
-                        crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::Settings
-                        );
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            tracing::info!("Cancel clicked - navigating to Settings");
+                            crate::ui_gpui::navigation_channel().request_navigate(
+                                crate::presentation::view_command::ViewId::Settings,
+                            );
+                        }),
+                    ),
             )
             // Center: Title
             .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::text_primary())
-                            .child(title)
-                    )
+                div().flex_1().flex().justify_center().child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(Theme::text_primary())
+                        .child(title),
+                ),
             )
             // Right: Save button
             .child(
@@ -309,16 +324,18 @@ impl McpConfigureView {
                             .bg(Theme::accent())
                             .hover(|s| s.bg(Theme::accent_hover()))
                             .text_color(gpui::white())
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                tracing::info!("Save clicked - emitting SaveMcpConfig");
-                                this.emit_save_mcp_config();
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    tracing::info!("Save clicked - emitting SaveMcpConfig");
+                                    this.emit_save_mcp_config();
+                                }),
+                            )
                     })
                     .when(!can_save, |d| {
-                        d.bg(Theme::bg_dark())
-                            .text_color(Theme::text_muted())
+                        d.bg(Theme::bg_dark()).text_color(Theme::text_muted())
                     })
-                    .child("Save")
+                    .child("Save"),
             )
     }
 
@@ -352,13 +369,13 @@ impl McpConfigureView {
                     .flex()
                     .items_center()
                     .text_size(px(12.0))
-                    .child(
-                        if self.state.data.name.is_empty() {
-                            div().text_color(Theme::text_muted()).child("MCP name")
-                        } else {
-                            div().text_color(Theme::text_primary()).child(self.state.data.name.clone())
-                        }
-                    )
+                    .child(if self.state.data.name.is_empty() {
+                        div().text_color(Theme::text_muted()).child("MCP name")
+                    } else {
+                        div()
+                            .text_color(Theme::text_primary())
+                            .child(self.state.data.name.clone())
+                    }),
             )
     }
 
@@ -384,13 +401,11 @@ impl McpConfigureView {
                     .text_size(px(12.0))
                     .text_color(Theme::text_secondary())
                     .overflow_hidden()
-                    .child(
-                        if self.state.data.package.is_empty() {
-                            "npx @scope/package".to_string()
-                        } else {
-                            self.state.data.package.clone()
-                        }
-                    )
+                    .child(if self.state.data.package.is_empty() {
+                        "npx @scope/package".to_string()
+                    } else {
+                        self.state.data.package.clone()
+                    }),
             )
     }
 
@@ -402,19 +417,14 @@ impl McpConfigureView {
             .flex()
             .flex_col()
             .mt(px(8.0))
-            .child(
-                div()
-                    .h(px(1.0))
-                    .w_full()
-                    .bg(Theme::border())
-            )
+            .child(div().h(px(1.0)).w_full().bg(Theme::border()))
             .child(
                 div()
                     .mt(px(8.0))
                     .text_size(px(11.0))
                     .font_weight(FontWeight::BOLD)
                     .text_color(Theme::text_secondary())
-                    .child(title.to_string())
+                    .child(title.to_string()),
             )
     }
 
@@ -444,7 +454,7 @@ impl McpConfigureView {
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
                     .child(auth_method)
-                    .child(div().text_color(Theme::text_muted()).child("v"))
+                    .child(div().text_color(Theme::text_muted()).child("v")),
             )
     }
 
@@ -472,7 +482,7 @@ impl McpConfigureView {
                         div()
                             .text_size(px(11.0))
                             .text_color(Theme::text_secondary())
-                            .child(env_var_name)
+                            .child(env_var_name),
                     )
                     .child(
                         div()
@@ -481,10 +491,13 @@ impl McpConfigureView {
                             .items_center()
                             .gap(px(4.0))
                             .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                this.state.mask_api_key = !this.state.mask_api_key;
-                                cx.notify();
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.state.mask_api_key = !this.state.mask_api_key;
+                                    cx.notify();
+                                }),
+                            )
                             .child(
                                 div()
                                     .size(px(12.0))
@@ -494,17 +507,22 @@ impl McpConfigureView {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .when(masked, |d| d.bg(Theme::accent()).child(
-                                        div().text_size(px(8.0)).text_color(gpui::white()).child("v")
-                                    ))
+                                    .when(masked, |d| {
+                                        d.bg(Theme::accent()).child(
+                                            div()
+                                                .text_size(px(8.0))
+                                                .text_color(gpui::white())
+                                                .child("v"),
+                                        )
+                                    }),
                             )
                             .child(
                                 div()
                                     .text_size(px(10.0))
                                     .text_color(Theme::text_muted())
-                                    .child("Mask")
-                            )
-                    )
+                                    .child("Mask"),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -519,13 +537,13 @@ impl McpConfigureView {
                     .flex()
                     .items_center()
                     .text_size(px(12.0))
-                    .child(
-                        if display.is_empty() {
-                            div().text_color(Theme::text_muted()).child("Enter API key...")
-                        } else {
-                            div().text_color(Theme::text_primary()).child(display)
-                        }
-                    )
+                    .child(if display.is_empty() {
+                        div()
+                            .text_color(Theme::text_muted())
+                            .child("Enter API key...")
+                    } else {
+                        div().text_color(Theme::text_primary()).child(display)
+                    }),
             )
     }
 
@@ -557,13 +575,13 @@ impl McpConfigureView {
                             .items_center()
                             .text_size(px(12.0))
                             .overflow_hidden()
-                            .child(
-                                if self.state.data.keyfile_path.is_empty() {
-                                    div().text_color(Theme::text_muted()).child("/path/to/key")
-                                } else {
-                                    div().text_color(Theme::text_primary()).child(self.state.data.keyfile_path.clone())
-                                }
-                            )
+                            .child(if self.state.data.keyfile_path.is_empty() {
+                                div().text_color(Theme::text_muted()).child("/path/to/key")
+                            } else {
+                                div()
+                                    .text_color(Theme::text_primary())
+                                    .child(self.state.data.keyfile_path.clone())
+                            }),
                     )
                     // Browse button
                     .child(
@@ -583,11 +601,14 @@ impl McpConfigureView {
                             .text_size(px(11.0))
                             .text_color(Theme::text_secondary())
                             .child("Browse")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                tracing::info!("Browse clicked");
-                                this.emit(UserEvent::BrowseKeyfile);
-                            }))
-                    )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    tracing::info!("Browse clicked");
+                                    this.emit(UserEvent::BrowseKeyfile);
+                                }),
+                            ),
+                    ),
             )
     }
 
@@ -603,7 +624,9 @@ impl McpConfigureView {
         let status_text = match &self.state.data.oauth_status {
             OAuthStatus::NotConnected => ("Not connected".to_string(), Theme::text_secondary()),
             OAuthStatus::Connecting => ("Connecting...".to_string(), Theme::text_secondary()),
-            OAuthStatus::Connected { username } => (format!("Connected as @{}", username), Theme::success()),
+            OAuthStatus::Connected { username } => {
+                (format!("Connected as @{}", username), Theme::success())
+            }
             OAuthStatus::Error(msg) => (msg.clone(), Theme::error()),
         };
 
@@ -627,27 +650,30 @@ impl McpConfigureView {
                     .text_size(px(12.0))
                     .text_color(gpui::white())
                     .child(format!("Authorize with {}", provider))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                        tracing::info!("OAuth authorize clicked");
-                        let parsed_id = this
-                            .state
-                            .data
-                            .id
-                            .as_ref()
-                            .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
-                            .unwrap_or_else(uuid::Uuid::nil);
-                        this.emit(UserEvent::StartMcpOAuth {
-                            id: parsed_id,
-                            provider: this.state.data.oauth_provider.clone(),
-                        });
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, _cx| {
+                            tracing::info!("OAuth authorize clicked");
+                            let parsed_id = this
+                                .state
+                                .data
+                                .id
+                                .as_ref()
+                                .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+                                .unwrap_or_else(uuid::Uuid::nil);
+                            this.emit(UserEvent::StartMcpOAuth {
+                                id: parsed_id,
+                                provider: this.state.data.oauth_provider.clone(),
+                            });
+                        }),
+                    ),
             )
             // Status
             .child(
                 div()
                     .text_size(px(11.0))
                     .text_color(status_text.1)
-                    .child(format!("Status: {}", status_text.0))
+                    .child(format!("Status: {}", status_text.0)),
             )
     }
 
@@ -663,36 +689,39 @@ impl McpConfigureView {
     /// Render a string config field
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn render_string_field(&self, key: &str, value: &str, placeholder: &str) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .child(self.render_label(key))
-            .child(
-                div()
-                    .id(SharedString::from(format!("config-{}", key)))
-                    .w(px(360.0))
-                    .h(px(24.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .text_size(px(12.0))
-                    .child(
-                        if value.is_empty() {
-                            div().text_color(Theme::text_muted()).child(placeholder.to_string())
-                        } else {
-                            div().text_color(Theme::text_primary()).child(value.to_string())
-                        }
-                    )
-            )
+        div().flex().flex_col().child(self.render_label(key)).child(
+            div()
+                .id(SharedString::from(format!("config-{}", key)))
+                .w(px(360.0))
+                .h(px(24.0))
+                .px(px(8.0))
+                .bg(Theme::bg_dark())
+                .border_1()
+                .border_color(Theme::border())
+                .rounded(px(4.0))
+                .flex()
+                .items_center()
+                .text_size(px(12.0))
+                .child(if value.is_empty() {
+                    div()
+                        .text_color(Theme::text_muted())
+                        .child(placeholder.to_string())
+                } else {
+                    div()
+                        .text_color(Theme::text_primary())
+                        .child(value.to_string())
+                }),
+        )
     }
 
     /// Render a boolean config field
     /// @plan PLAN-20250130-GPUIREDUX.P10
-    fn render_boolean_field(&self, key: &str, value: bool, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_boolean_field(
+        &self,
+        key: &str,
+        value: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         let key_clone = key.to_string();
 
         div()
@@ -701,10 +730,13 @@ impl McpConfigureView {
             .items_center()
             .gap(px(8.0))
             .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, cx.listener(move |_this, _, _window, _cx| {
-                tracing::info!("Toggle config field: {}", key_clone);
-                // Config field toggle would be handled by presenter
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |_this, _, _window, _cx| {
+                    tracing::info!("Toggle config field: {}", key_clone);
+                    // Config field toggle would be handled by presenter
+                }),
+            )
             .child(
                 div()
                     .size(px(14.0))
@@ -714,40 +746,43 @@ impl McpConfigureView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .when(value, |d| d.bg(Theme::accent()).child(
-                        div().text_size(px(10.0)).text_color(gpui::white()).child("v")
-                    ))
+                    .when(value, |d| {
+                        d.bg(Theme::accent()).child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(gpui::white())
+                                .child("v"),
+                        )
+                    }),
             )
             .child(
                 div()
                     .text_size(px(12.0))
                     .text_color(Theme::text_primary())
-                    .child(key.to_string())
+                    .child(key.to_string()),
             )
     }
 
     /// Render an array config field
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn render_array_field(&self, key: &str, values: &[String]) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .child(self.render_label(key))
-            .child(
-                div()
-                    .id(SharedString::from(format!("config-{}", key)))
-                    .w(px(360.0))
-                    .min_h(px(48.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .p(px(4.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .children(
-                        values.iter().map(|v| {
+        div().flex().flex_col().child(self.render_label(key)).child(
+            div()
+                .id(SharedString::from(format!("config-{}", key)))
+                .w(px(360.0))
+                .min_h(px(48.0))
+                .bg(Theme::bg_dark())
+                .border_1()
+                .border_color(Theme::border())
+                .rounded(px(4.0))
+                .p(px(4.0))
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .children(
+                    values
+                        .iter()
+                        .map(|v| {
                             div()
                                 .h(px(24.0))
                                 .px(px(8.0))
@@ -758,7 +793,7 @@ impl McpConfigureView {
                                     div()
                                         .text_size(px(12.0))
                                         .text_color(Theme::text_primary())
-                                        .child(v.clone())
+                                        .child(v.clone()),
                                 )
                                 .child(
                                     div()
@@ -766,29 +801,30 @@ impl McpConfigureView {
                                         .text_size(px(12.0))
                                         .text_color(Theme::text_muted())
                                         .hover(|s| s.text_color(Theme::danger()))
-                                        .child("[-]")
+                                        .child("[-]"),
                                 )
                                 .into_any_element()
-                        }).collect::<Vec<_>>()
-                    )
-                    .child(
-                        div()
-                            .h(px(24.0))
-                            .px(px(8.0))
-                            .cursor_pointer()
-                            .text_size(px(12.0))
-                            .text_color(Theme::text_secondary())
-                            .hover(|s| s.text_color(Theme::text_primary()))
-                            .child("[+ Add]")
-                    )
-            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .child(
+                    div()
+                        .h(px(24.0))
+                        .px(px(8.0))
+                        .cursor_pointer()
+                        .text_size(px(12.0))
+                        .text_color(Theme::text_secondary())
+                        .hover(|s| s.text_color(Theme::text_primary()))
+                        .child("[+ Add]"),
+                ),
+        )
     }
 
     /// Render configuration fields from schema
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn render_config_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let fields = &self.state.data.config_fields;
-        
+
         if fields.is_empty() {
             return div().into_any_element();
         }
@@ -798,26 +834,26 @@ impl McpConfigureView {
             .flex_col()
             .child(self.render_section_divider("CONFIGURATION"))
             .child(
-                div()
-                    .mt(px(8.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.0))
-                    .children(
-                        fields.iter().map(|f| {
-                            match f {
-                                ConfigField::String { key, value, placeholder } => {
-                                    self.render_string_field(key, value, placeholder).into_any_element()
-                                }
-                                ConfigField::Boolean { key, value } => {
-                                    self.render_boolean_field(key, *value, cx).into_any_element()
-                                }
-                                ConfigField::Array { key, values } => {
-                                    self.render_array_field(key, values).into_any_element()
-                                }
+                div().mt(px(8.0)).flex().flex_col().gap(px(12.0)).children(
+                    fields
+                        .iter()
+                        .map(|f| match f {
+                            ConfigField::String {
+                                key,
+                                value,
+                                placeholder,
+                            } => self
+                                .render_string_field(key, value, placeholder)
+                                .into_any_element(),
+                            ConfigField::Boolean { key, value } => self
+                                .render_boolean_field(key, *value, cx)
+                                .into_any_element(),
+                            ConfigField::Array { key, values } => {
+                                self.render_array_field(key, values).into_any_element()
                             }
-                        }).collect::<Vec<_>>()
-                    )
+                        })
+                        .collect::<Vec<_>>(),
+                ),
             )
             .into_any_element()
     }
@@ -850,10 +886,18 @@ impl McpConfigureView {
                     .flex_col()
                     .gap(px(12.0))
                     .child(self.render_auth_method_section())
-                    .when(*auth_method == McpAuthMethod::ApiKey, |d| d.child(self.render_api_key_section(cx)))
-                    .when(*auth_method == McpAuthMethod::Keyfile, |d| d.child(self.render_keyfile_section(cx)))
-                    .when(*auth_method == McpAuthMethod::OAuth, |d| d.child(self.render_oauth_section(cx)))
-                    .when(*auth_method == McpAuthMethod::None, |d| d.child(self.render_no_auth_section()))
+                    .when(*auth_method == McpAuthMethod::ApiKey, |d| {
+                        d.child(self.render_api_key_section(cx))
+                    })
+                    .when(*auth_method == McpAuthMethod::Keyfile, |d| {
+                        d.child(self.render_keyfile_section(cx))
+                    })
+                    .when(*auth_method == McpAuthMethod::OAuth, |d| {
+                        d.child(self.render_oauth_section(cx))
+                    })
+                    .when(*auth_method == McpAuthMethod::None, |d| {
+                        d.child(self.render_no_auth_section())
+                    }),
             )
             // Configuration fields (if any)
             .child(self.render_config_section(cx))
@@ -867,7 +911,11 @@ impl gpui::Focusable for McpConfigureView {
 }
 
 impl gpui::Render for McpConfigureView {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("mcp-configure-view")
             .flex()
@@ -875,23 +923,24 @@ impl gpui::Render for McpConfigureView {
             .size_full()
             .bg(Theme::bg_base())
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
-                let key = &event.keystroke.key;
-                let modifiers = &event.keystroke.modifiers;
-                
-                // Escape or Cmd+W: Go back to Settings
-                if key == "escape" || (modifiers.platform && key == "w") {
-                    println!(">>> Escape/Cmd+W pressed - navigating to Settings <<<");
-                    crate::ui_gpui::navigation_channel().request_navigate(
-                        crate::presentation::view_command::ViewId::Settings
-                    );
-                }
-                // Cmd+S: Save MCP config
-                if modifiers.platform && key == "s" {
-                    println!(">>> Cmd+S pressed - saving MCP config <<<");
-                    this.emit_save_mcp_config();
-                }
-            }))
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
+                    let key = &event.keystroke.key;
+                    let modifiers = &event.keystroke.modifiers;
+
+                    // Escape or Cmd+W: Go back to Settings
+                    if key == "escape" || (modifiers.platform && key == "w") {
+                        println!(">>> Escape/Cmd+W pressed - navigating to Settings <<<");
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::Settings);
+                    }
+                    // Cmd+S: Save MCP config
+                    if modifiers.platform && key == "s" {
+                        println!(">>> Cmd+S pressed - saving MCP config <<<");
+                        this.emit_save_mcp_config();
+                    }
+                }),
+            )
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Content (scrollable)
