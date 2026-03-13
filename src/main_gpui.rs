@@ -915,6 +915,19 @@ fn main() {
 
         cx.set_global(main_panel_state);
 
+        // Register global keyboard shortcuts as GPUI action keybindings.
+        // Only modifier-based shortcuts belong here; bare keys like escape/m/+
+        // stay as on_key_down in their respective views to avoid conflicts with typing.
+        use personal_agent::ui_gpui::views::main_panel::{
+            NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation,
+        };
+        cx.bind_keys([
+            KeyBinding::new("ctrl-h", NavigateToHistory, None),
+            KeyBinding::new("ctrl-s", NavigateToSettings, None),
+            KeyBinding::new("ctrl-n", NewConversation, None),
+            KeyBinding::new("cmd-w", NavigateBack, None),
+        ]);
+
         spawn_runtime_bridge_pump(app_state, cx);
 
         // Initialize system tray

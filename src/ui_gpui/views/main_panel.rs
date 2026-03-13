@@ -11,9 +11,16 @@ use crate::ui_gpui::navigation::NavigationState;
 use crate::ui_gpui::GpuiAppStore;
 
 use gpui::{
-    div, prelude::*, Entity, Focusable, FocusHandle, Global, MouseButton, Subscription, Task,
+    actions, div, prelude::*, Entity, Focusable, FocusHandle, Global, MouseButton, Subscription,
+    Task,
 };
 use std::sync::Arc;
+
+// Global navigation actions bound to keyboard shortcuts (registered in main_gpui.rs)
+actions!(
+    main_panel,
+    [NavigateToHistory, NavigateToSettings, NewConversation, NavigateBack]
+);
 
 // ============================================================
 // REQ-WIRE-002: ViewCommand routing infrastructure
@@ -1248,78 +1255,56 @@ impl gpui::Render for MainPanel {
                     cx.notify();
                 }),
             )
+            // Global navigation actions (keybindings registered in main_gpui.rs)
+            .on_action(
+                cx.listener(|_this, _: &NavigateToHistory, _window, _cx| {
+                    crate::ui_gpui::navigation_channel().request_navigate(ViewId::History);
+                }),
+            )
+            .on_action(
+                cx.listener(|_this, _: &NavigateToSettings, _window, _cx| {
+                    crate::ui_gpui::navigation_channel().request_navigate(ViewId::Settings);
+                }),
+            )
+            .on_action(
+                cx.listener(|_this, _: &NewConversation, _window, _cx| {
+                    crate::ui_gpui::navigation_channel().request_navigate(ViewId::Chat);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &NavigateBack, _window, _cx| {
+                    if this.navigation.current() != ViewId::Chat {
+                        this.navigation.navigate_back();
+                    }
+                }),
+            )
+            // View-specific bare-key shortcuts (escape, +, m) that can't be global
+            // bindings because they'd conflict with text input in other views
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
                     let key = &event.keystroke.key;
                     let modifiers = &event.keystroke.modifiers;
+                    if modifiers.platform || modifiers.control {
+                        return; // handled by GPUI action bindings
+                    }
                     let current = this.navigation.current();
-
-                    println!(
-                        ">>> MainPanel key_down: key={} platform={} shift={} current={:?} <<<",
-                        key, modifiers.platform, modifiers.shift, current
-                    );
-
-                    // Global keyboard shortcuts - work from any view
-                    // Using Ctrl+key to avoid conflicts with system shortcuts
-                    if modifiers.control {
-                        match key.as_str() {
-                            "h" => {
-                                println!(">>> Ctrl+H - navigating to History <<<");
-                                crate::ui_gpui::navigation_channel()
-                                    .request_navigate(ViewId::History);
-                            }
-                            "s" => {
-                                println!(">>> Ctrl+S - navigating to Settings <<<");
-                                crate::ui_gpui::navigation_channel()
-                                    .request_navigate(ViewId::Settings);
-                            }
-                            "n" => {
-                                println!(">>> Ctrl+N - new conversation <<<");
-                                crate::ui_gpui::navigation_channel().request_navigate(ViewId::Chat);
-                            }
+                    match current {
+                        ViewId::Settings => match key.as_str() {
+                            "escape" => { this.navigation.navigate_back(); }
+                            "+" => crate::ui_gpui::navigation_channel()
+                                .request_navigate(ViewId::ProfileEditor),
+                            "=" if modifiers.shift => crate::ui_gpui::navigation_channel()
+                                .request_navigate(ViewId::ProfileEditor),
+                            "m" => crate::ui_gpui::navigation_channel()
+                                .request_navigate(ViewId::McpAdd),
                             _ => {}
+                        },
+                        ViewId::ModelSelector => {
+                            if key == "escape" {
+                                this.navigation.navigate_back();
+                            }
                         }
-                    }
-                    // Cmd+W for close/back (standard macOS)
-                    else if modifiers.platform && key == "w" {
-                        println!(">>> Cmd+W - navigate back <<<");
-                        if current != ViewId::Chat {
-                            this.navigation.navigate_back();
-                        }
-                    }
-                    // View-specific shortcuts (no Cmd modifier)
-                    else if current == ViewId::Settings {
-                        // Settings view shortcuts
-                        if key == "+" || (key == "=" && modifiers.shift) {
-                            // "+" key - Add Profile
-                            println!(">>> + pressed on Settings - Add Profile <<<");
-                            crate::ui_gpui::navigation_channel()
-                                .request_navigate(ViewId::ProfileEditor);
-                        } else if key == "m" {
-                            // "m" key - Add MCP
-                            println!(">>> m pressed on Settings - Add MCP <<<");
-                            crate::ui_gpui::navigation_channel().request_navigate(ViewId::McpAdd);
-                        } else if key == "escape" {
-                            println!(">>> Escape on Settings - back to Chat <<<");
-                            this.navigation.navigate_back();
-                        }
-                    }
-                    // Model Selector view
-                    else if current == ViewId::ModelSelector {
-                        // Let ModelSelectorView own all search/filter key handling to avoid
-                        // duplicate query mutation and duplicate SearchModels emission.
-                        if key == "escape" {
-                            println!(">>> Escape on ModelSelector - back to Settings <<<");
-                            this.navigation.navigate_back();
-                        }
-                    }
-                    // Profile Editor view - owns its own on_key_down + InputHandler
-                    else if current == ViewId::ProfileEditor {
-                        // Focus transferred to ProfileEditorView; it handles its own keys
-                    }
-                    // MCP Add view - owns its own on_key_down + InputHandler
-                    else if current == ViewId::McpAdd {
-                        // Focus transferred to McpAddView; it handles its own keys
+                        _ => {}
                     }
                 }),
             )
