@@ -1421,6 +1421,26 @@ impl ChatView {
                                 );
                             }))
                     )
+                    // Exit/quit button (power icon)
+                    .child(
+                        div()
+                            .id("btn-exit")
+                            .size(px(28.0))
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .bg(Theme::bg_darker())
+                            .hover(|s| s.bg(gpui::rgb(0x8B0000)))
+                            .active(|s| s.bg(gpui::rgb(0x5C0000)))
+                            .text_size(px(14.0))
+                            .text_color(Theme::text_primary())
+                            .child("\u{23FB}")
+                            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
+                                std::process::exit(0);
+                            }))
+                    )
             )
     }
 

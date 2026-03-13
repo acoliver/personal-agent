@@ -818,6 +818,8 @@ impl MainPanel {
                         );
                     });
                 }
+                self.navigation.navigate(ViewId::Chat);
+                cx.notify();
             }
             ViewCommand::ConversationRenamed { id, ref new_title } => {
                 if let Some(ref chat) = self.chat_view {

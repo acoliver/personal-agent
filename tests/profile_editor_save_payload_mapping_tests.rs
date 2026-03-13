@@ -303,7 +303,9 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
     ));
     assert!(matches!(
         second,
-        personal_agent::presentation::ViewCommand::NavigateBack
+        personal_agent::presentation::ViewCommand::NavigateTo {
+            view: personal_agent::presentation::view_command::ViewId::Settings
+        }
     ));
 
     let create_calls = recording.create_calls();

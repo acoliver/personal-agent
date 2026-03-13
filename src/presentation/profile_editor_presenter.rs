@@ -312,7 +312,9 @@ impl ProfileEditorPresenter {
                     id: saved.id,
                     name: saved.name,
                 });
-                let _ = view_tx.send(ViewCommand::NavigateBack);
+                let _ = view_tx.send(ViewCommand::NavigateTo {
+                    view: super::view_command::ViewId::Settings,
+                });
             }
             Err(e) => {
                 tracing::error!("Failed to persist SaveProfile payload: {}", e);
@@ -385,7 +387,9 @@ impl ProfileEditorPresenter {
                     id: profile.id,
                     name: profile.name,
                 });
-                let _ = view_tx.send(ViewCommand::NavigateBack);
+                let _ = view_tx.send(ViewCommand::NavigateTo {
+                    view: super::view_command::ViewId::Settings,
+                });
                 let _ = view_tx.send(ViewCommand::DefaultProfileChanged {
                     profile_id: Some(profile.id),
                 });

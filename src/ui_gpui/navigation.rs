@@ -39,12 +39,18 @@ impl NavigationState {
         self.stack.len() > 1
     }
 
-    /// Navigate to a new view
+    /// Navigate to a view.
     ///
-    /// Pushes the new view onto the stack if different from current view.
-    /// Does nothing if trying to navigate to the same view.
+    /// If the target is already in the stack, pops back to it instead of
+    /// pushing a duplicate. Otherwise pushes the new view on top.
+    /// Does nothing if the current view is already the target.
     pub fn navigate(&mut self, to: ViewId) {
-        if self.current() != to {
+        if self.current() == to {
+            return;
+        }
+        if let Some(pos) = self.stack.iter().rposition(|v| *v == to) {
+            self.stack.truncate(pos + 1);
+        } else {
             self.stack.push(to);
         }
     }
@@ -111,6 +117,21 @@ mod tests {
         nav.navigate(ViewId::Chat); // Already at Chat
 
         assert_eq!(nav.stack_depth(), 1);
+    }
+
+    #[test]
+    fn test_navigate_to_existing_view_pops_back() {
+        let mut nav = NavigationState::new();
+        nav.navigate(ViewId::Settings);
+        nav.navigate(ViewId::ProfileEditor);
+        nav.navigate(ViewId::ModelSelector);
+
+        assert_eq!(nav.stack_depth(), 4);
+
+        // Navigating to Settings should pop back to it, not push a duplicate
+        nav.navigate(ViewId::Settings);
+        assert_eq!(nav.current(), ViewId::Settings);
+        assert_eq!(nav.stack_depth(), 2); // [Chat, Settings]
     }
 
     #[test]
