@@ -1853,12 +1853,15 @@ impl ChatView {
 
     /// Render user message - right aligned, green bubble
     fn render_user_message(&self, content: &str) -> gpui::AnyElement {
+        let content_owned = content.to_string();
         div()
             .w_full()
             .flex()
             .justify_end()
-            .child(
+            .child({
+                let text = content_owned.clone();
                 div()
+                    .id(SharedString::from(format!("ubbl-{}", content.len())))
                     .max_w(px(300.0))
                     .px(px(10.0))
                     .py(px(10.0))
@@ -1866,8 +1869,12 @@ impl ChatView {
                     .bg(Theme::user_bubble())
                     .text_size(px(13.0))
                     .text_color(Theme::text_primary())
-                    .child(content.to_string()),
-            )
+                    .cursor_pointer()
+                    .on_click(move |_event, _window, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+                    })
+                    .child(content_owned)
+            })
             .into_any_element()
     }
 
@@ -1894,9 +1901,12 @@ impl ChatView {
             .when(msg.thinking.is_some() && show_thinking, |d| {
                 d.child(self.render_thinking_block(msg.thinking.as_ref().unwrap()))
             })
-            // Response bubble
-            .child(
+            // Response bubble — click to copy
+            .child({
+                let content = msg.content.clone();
+                let text = content.clone();
                 div()
+                    .id(SharedString::from(format!("abbl-{}", content.len())))
                     .max_w(px(300.0))
                     .px(px(10.0))
                     .py(px(10.0))
@@ -1906,8 +1916,12 @@ impl ChatView {
                     .border_color(Theme::border())
                     .text_size(px(13.0))
                     .text_color(Theme::text_primary())
-                    .child(msg.content.clone()),
-            )
+                    .cursor_pointer()
+                    .on_click(move |_event, _window, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+                    })
+                    .child(content)
+            })
             .into_any_element()
     }
 
@@ -2175,9 +2189,8 @@ impl gpui::EntityInputHandler for ChatView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.state.marked_range = None;
-
         if self.state.conversation_title_editing {
+            self.state.marked_range = None;
             if self.state.rename_replace_on_next_char {
                 self.state.conversation_title_input.clear();
                 self.state.rename_replace_on_next_char = false;
@@ -2188,11 +2201,13 @@ impl gpui::EntityInputHandler for ChatView {
         }
 
         if self.state.conversation_dropdown_open || self.state.profile_dropdown_open {
+            self.state.marked_range = None;
             return;
         }
 
+        let effective_range = range.or_else(|| self.state.marked_range.take());
         let input = &mut self.state.input_text;
-        let (start_utf8, end_utf8) = if let Some(r) = range {
+        let (start_utf8, end_utf8) = if let Some(r) = effective_range {
             (
                 utf16_offset_to_utf8(input, r.start),
                 utf16_offset_to_utf8(input, r.end),
@@ -2204,6 +2219,7 @@ impl gpui::EntityInputHandler for ChatView {
 
         input.replace_range(start_utf8..end_utf8, text);
         self.state.cursor_position = start_utf8 + text.len();
+        self.state.marked_range = None;
         cx.notify();
     }
 
@@ -2376,6 +2392,17 @@ impl gpui::Render for ChatView {
                             }
                             "a" => {
                                 this.handle_select_all(cx);
+                                return;
+                            }
+                            "c" => {
+                                let text = if this.state.conversation_title_editing {
+                                    this.state.conversation_title_input.clone()
+                                } else {
+                                    this.state.input_text.clone()
+                                };
+                                if !text.is_empty() {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                                }
                                 return;
                             }
                             "x" => {

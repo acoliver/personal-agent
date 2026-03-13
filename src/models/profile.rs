@@ -17,8 +17,11 @@ pub struct ModelProfile {
     pub system_prompt: String,
 }
 
+pub const DEFAULT_SYSTEM_PROMPT: &str =
+    "Unless instructed otherwise, respond solely in English.";
+
 fn default_system_prompt() -> String {
-    "You are a helpful assistant, be direct and to the point. Respond in English.".to_string()
+    DEFAULT_SYSTEM_PROMPT.to_string()
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]

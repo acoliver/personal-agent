@@ -168,6 +168,7 @@ pub struct ModelSelectorView {
     state: ModelSelectorState,
     bridge: Option<Arc<GpuiBridge>>,
     focus_handle: FocusHandle,
+    ime_marked_byte_count: usize,
 }
 
 impl ModelSelectorView {
@@ -176,6 +177,7 @@ impl ModelSelectorView {
             state: ModelSelectorState::new(),
             bridge: None,
             focus_handle: cx.focus_handle(),
+            ime_marked_byte_count: 0,
         }
     }
 
@@ -845,14 +847,24 @@ impl gpui::EntityInputHandler for ModelSelectorView {
         _window: &mut gpui::Window,
         _cx: &mut gpui::Context<Self>,
     ) -> Option<Range<usize>> {
-        None
+        if self.ime_marked_byte_count > 0 {
+            let q = &self.state.search_query;
+            let len16: usize = q.encode_utf16().count();
+            let start_utf8 = q.len().saturating_sub(self.ime_marked_byte_count);
+            let start_utf16: usize = q[..start_utf8].encode_utf16().count();
+            Some(start_utf16..len16)
+        } else {
+            None
+        }
     }
 
     fn unmark_text(
         &mut self,
         _window: &mut gpui::Window,
         _cx: &mut gpui::Context<Self>,
-    ) {}
+    ) {
+        self.ime_marked_byte_count = 0;
+    }
 
     fn replace_text_in_range(
         &mut self,
@@ -861,11 +873,16 @@ impl gpui::EntityInputHandler for ModelSelectorView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.ime_marked_byte_count > 0 {
+            let len = self.state.search_query.len();
+            self.state.search_query.truncate(len.saturating_sub(self.ime_marked_byte_count));
+            self.ime_marked_byte_count = 0;
+        }
         if !text.is_empty() {
             self.state.search_query.push_str(text);
-            self.emit_filter_events_if_changed();
-            cx.notify();
         }
+        self.emit_filter_events_if_changed();
+        cx.notify();
     }
 
     fn replace_and_mark_text_in_range(
@@ -876,11 +893,17 @@ impl gpui::EntityInputHandler for ModelSelectorView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.ime_marked_byte_count > 0 {
+            let len = self.state.search_query.len();
+            self.state.search_query.truncate(len.saturating_sub(self.ime_marked_byte_count));
+            self.ime_marked_byte_count = 0;
+        }
         if !new_text.is_empty() {
             self.state.search_query.push_str(new_text);
-            self.emit_filter_events_if_changed();
-            cx.notify();
+            self.ime_marked_byte_count = new_text.len();
         }
+        self.emit_filter_events_if_changed();
+        cx.notify();
     }
 
     fn bounds_for_range(

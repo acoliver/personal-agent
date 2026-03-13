@@ -112,7 +112,7 @@ impl ProfileEditorData {
             context_limit: 128000,
             show_thinking: true,
             thinking_budget: 10000,
-            system_prompt: "You are a helpful assistant.".to_string(),
+            system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
             ..Default::default()
         }
     }
@@ -172,6 +172,9 @@ pub struct ProfileEditorView {
     state: ProfileEditorState,
     bridge: Option<Arc<GpuiBridge>>,
     focus_handle: FocusHandle,
+    /// Number of bytes inserted by IME marked text (dead key composition).
+    /// When composition completes, these bytes are removed before inserting the final text.
+    ime_marked_byte_count: usize,
 }
 
 fn sanitized_clipboard_text(text: &str) -> String {
@@ -185,6 +188,7 @@ impl ProfileEditorView {
             state: ProfileEditorState::new_profile(),
             bridge: None,
             focus_handle: cx.focus_handle(),
+            ime_marked_byte_count: 0,
         }
     }
 
@@ -331,6 +335,39 @@ impl ProfileEditorView {
     }
 
     /// Active field text content for InputHandler
+    fn remove_trailing_bytes_from_active_field(&mut self, byte_count: usize) {
+        if byte_count == 0 {
+            return;
+        }
+        match self.state.active_field {
+            Some(ActiveField::Name) => {
+                let len = self.state.data.name.len();
+                self.state.data.name.truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::Model) => {
+                let len = self.state.data.model_id.len();
+                self.state.data.model_id.truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::BaseUrl) => {
+                let len = self.state.data.base_url.len();
+                self.state.data.base_url.truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::ApiKey) => {
+                let len = self.state.data.api_key.len();
+                self.state.data.api_key.truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::KeyfilePath) => {
+                let len = self.state.data.keyfile_path.len();
+                self.state.data.keyfile_path.truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::SystemPrompt) => {
+                let len = self.state.data.system_prompt.len();
+                self.state.data.system_prompt.truncate(len.saturating_sub(byte_count));
+            }
+            _ => {}
+        }
+    }
+
     fn active_field_text(&self) -> &str {
         match self.state.active_field {
             Some(ActiveField::Name) => &self.state.data.name,
@@ -1498,14 +1535,25 @@ impl gpui::EntityInputHandler for ProfileEditorView {
         _window: &mut gpui::Window,
         _cx: &mut gpui::Context<Self>,
     ) -> Option<Range<usize>> {
-        None
+        if self.ime_marked_byte_count > 0 {
+            let text = self.active_field_text();
+            let len16: usize = text.encode_utf16().count();
+            let marked_bytes = self.ime_marked_byte_count;
+            let marked_start_utf8 = text.len().saturating_sub(marked_bytes);
+            let marked_start_utf16: usize = text[..marked_start_utf8].encode_utf16().count();
+            Some(marked_start_utf16..len16)
+        } else {
+            None
+        }
     }
 
     fn unmark_text(
         &mut self,
         _window: &mut gpui::Window,
         _cx: &mut gpui::Context<Self>,
-    ) {}
+    ) {
+        self.ime_marked_byte_count = 0;
+    }
 
     fn replace_text_in_range(
         &mut self,
@@ -1514,10 +1562,15 @@ impl gpui::EntityInputHandler for ProfileEditorView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        // Remove any pending IME marked text before inserting the composed result
+        if self.ime_marked_byte_count > 0 {
+            self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
+            self.ime_marked_byte_count = 0;
+        }
         if !text.is_empty() {
             self.append_to_active_field(text);
-            cx.notify();
         }
+        cx.notify();
     }
 
     fn replace_and_mark_text_in_range(
@@ -1528,10 +1581,16 @@ impl gpui::EntityInputHandler for ProfileEditorView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        // Remove previously marked text before inserting updated composition
+        if self.ime_marked_byte_count > 0 {
+            self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
+            self.ime_marked_byte_count = 0;
+        }
         if !new_text.is_empty() {
             self.append_to_active_field(new_text);
-            cx.notify();
+            self.ime_marked_byte_count = new_text.len();
         }
+        cx.notify();
     }
 
     fn bounds_for_range(

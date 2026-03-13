@@ -98,9 +98,7 @@ impl ProfileService for RecordingProfileService {
             base_url: "https://api.openai.com/v1".to_string(),
             auth,
             parameters,
-            system_prompt:
-                "You are a helpful assistant, be direct and to the point. Respond in English."
-                    .to_string(),
+            system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
         })
     }
 
@@ -145,9 +143,7 @@ impl ProfileService for RecordingProfileService {
                 value: "".to_string(),
             }),
             parameters: parameters.unwrap_or_default(),
-            system_prompt:
-                "You are a helpful assistant, be direct and to the point. Respond in English."
-                    .to_string(),
+            system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
         })
     }
 

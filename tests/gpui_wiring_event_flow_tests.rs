@@ -188,9 +188,7 @@ impl personal_agent::services::ProfileService for RecordingProfileService {
                 value: String::new(),
             },
             parameters: ModelParameters::default(),
-            system_prompt:
-                "You are a helpful assistant, be direct and to the point. Respond in English."
-                    .to_string(),
+            system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
         })
     }
 

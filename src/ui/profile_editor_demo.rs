@@ -450,8 +450,7 @@ impl ProfileEditorDemoViewController {
         if let Some(field) = &*self.ivars().system_prompt_input.borrow() {
             field.stringValue().to_string().trim().to_string()
         } else {
-            "You are a helpful assistant, be direct and to the point. Respond in English."
-                .to_string()
+            "Unless instructed otherwise, respond solely in English.".to_string()
         }
     }
 

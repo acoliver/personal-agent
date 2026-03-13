@@ -39,8 +39,7 @@ impl ProfileServiceImpl {
     fn normalize_system_prompt(system_prompt: Option<String>) -> String {
         match system_prompt {
             Some(candidate) if !candidate.trim().is_empty() => candidate.trim().to_string(),
-            _ => "You are a helpful assistant, be direct and to the point. Respond in English."
-                .to_string(),
+            _ => crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
         }
     }
 
@@ -272,9 +271,7 @@ impl ProfileServiceImpl {
             let system_prompt = obj
                 .get("system_prompt")
                 .and_then(Value::as_str)
-                .unwrap_or(
-                    "You are a helpful assistant, be direct and to the point. Respond in English.",
-                )
+                .unwrap_or(crate::models::profile::DEFAULT_SYSTEM_PROMPT)
                 .to_string();
 
             return Some(ModelProfile {
@@ -328,9 +325,7 @@ impl ProfileServiceImpl {
                 base_url,
                 auth,
                 parameters,
-                system_prompt:
-                    "You are a helpful assistant, be direct and to the point. Respond in English."
-                        .to_string(),
+                system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
             });
         }
 
