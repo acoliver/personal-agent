@@ -14,9 +14,10 @@ use crate::ui_gpui::components::AssistantBubble;
 use crate::ui_gpui::selection_intent_channel;
 use crate::ui_gpui::theme::Theme;
 use gpui::{
-    div, point, prelude::*, px, FocusHandle, FontWeight, MouseButton, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, SharedString,
+    canvas, div, point, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight,
+    MouseButton, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, UTF16Selection,
 };
+use std::ops::Range;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -100,6 +101,8 @@ pub struct ChatState {
     pub conversation_title_input: String,
     pub rename_replace_on_next_char: bool,
     pub chat_autoscroll_enabled: bool,
+    /// IME marked (composing) text range in UTF-16 offsets, if any.
+    pub marked_range: Option<Range<usize>>,
 }
 
 impl Default for ChatState {
@@ -120,6 +123,7 @@ impl Default for ChatState {
             conversation_title_input: String::new(),
             rename_replace_on_next_char: false,
             chat_autoscroll_enabled: true,
+            marked_range: None,
             current_model: "No profile selected".to_string(),
             profiles: Vec::new(),
             selected_profile_id: None,
@@ -403,11 +407,29 @@ impl ChatView {
         }
 
         self.state.streaming = Self::streaming_state_from_snapshot(&streaming, &load_state);
-        self.state.show_thinking = streaming.thinking_visible;
+        // show_thinking is view-local and sticky — do NOT overwrite from store snapshot
         self.state.thinking_content =
             (!streaming.thinking_buffer.is_empty()).then_some(streaming.thinking_buffer);
         self.state.sync_conversation_dropdown_index();
         cx.notify();
+    }
+
+    /// Apply settings/profile data from the store snapshot so profiles are
+    /// available on first render without waiting for the async presenter.
+    pub fn apply_settings_snapshot(
+        &mut self,
+        settings: crate::ui_gpui::app_store::SettingsStoreSnapshot,
+    ) {
+        self.state.profiles = settings.profiles;
+        self.state.selected_profile_id = settings.selected_profile_id.or_else(|| {
+            self.state
+                .profiles
+                .iter()
+                .find(|p| p.is_default)
+                .map(|p| p.id)
+        });
+        self.state.sync_current_model_from_profile();
+        self.state.sync_profile_dropdown_index();
     }
 
     /// Set the current conversation ID
@@ -464,6 +486,10 @@ impl ChatView {
         self.state.conversation_dropdown_open = false;
         self.state.conversation_title_editing = false;
         if switching_conversation {
+            if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
+                tracing::info!("ChatView: stopping active stream before conversation switch");
+                self.emit(UserEvent::StopStreaming);
+            }
             self.state.chat_autoscroll_enabled = true;
             self.chat_scroll_handle.scroll_to_bottom();
         }
@@ -604,72 +630,6 @@ impl ChatView {
         cx.notify();
     }
 
-    pub fn handle_rename_space(&mut self, cx: &mut gpui::Context<Self>) {
-        if !self.state.conversation_title_editing {
-            return;
-        }
-        if self.state.rename_replace_on_next_char {
-            self.state.conversation_title_input.clear();
-            self.state.rename_replace_on_next_char = false;
-        }
-        self.state.conversation_title_input.push(' ');
-        cx.notify();
-    }
-
-    pub fn map_input_char(key: &str, uppercase: bool) -> Option<char> {
-        if key.len() != 1 {
-            return None;
-        }
-
-        if !uppercase {
-            return key
-                .chars()
-                .next()
-                .filter(|candidate| candidate.is_ascii_graphic());
-        }
-
-        let shifted = match key {
-            "1" => '!',
-            "2" => '@',
-            "3" => '#',
-            "4" => '$',
-            "5" => '%',
-            "6" => '^',
-            "7" => '&',
-            "8" => '*',
-            "9" => '(',
-            "0" => ')',
-            "-" => '_',
-            "=" => '+',
-            "[" => '{',
-            "]" => '}',
-            "\\" => '|',
-            ";" => ':',
-            "'" => '"',
-            "," => '<',
-            "." => '>',
-            "/" => '?',
-            "`" => '~',
-            _ => key.chars().next()?.to_ascii_uppercase(),
-        };
-
-        Some(shifted)
-    }
-
-    pub fn handle_rename_char(&mut self, key: &str, uppercase: bool, cx: &mut gpui::Context<Self>) {
-        if !self.state.conversation_title_editing {
-            return;
-        }
-
-        if let Some(c) = Self::map_input_char(key, uppercase) {
-            if self.state.rename_replace_on_next_char {
-                self.state.conversation_title_input.clear();
-                self.state.rename_replace_on_next_char = false;
-            }
-            self.state.conversation_title_input.push(c);
-            cx.notify();
-        }
-    }
 
     pub fn conversation_title_editing(&self) -> bool {
         self.state.conversation_title_editing
@@ -707,6 +667,22 @@ impl ChatView {
 
     pub fn profile_dropdown_open(&self) -> bool {
         self.state.profile_dropdown_open
+    }
+
+    fn active_input_text(&self) -> &str {
+        if self.state.conversation_title_editing {
+            &self.state.conversation_title_input
+        } else {
+            &self.state.input_text
+        }
+    }
+
+    fn active_cursor_position(&self) -> usize {
+        if self.state.conversation_title_editing {
+            self.state.conversation_title_input.len()
+        } else {
+            self.state.cursor_position
+        }
     }
 
     pub fn move_profile_dropdown_selection(&mut self, delta: isize, cx: &mut gpui::Context<Self>) {
@@ -759,7 +735,12 @@ impl ChatView {
     /// Move cursor left
     pub fn move_cursor_left(&mut self, cx: &mut gpui::Context<Self>) {
         if self.state.cursor_position > 0 {
-            self.state.cursor_position -= 1;
+            let prev = self.state.input_text[..self.state.cursor_position]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.state.cursor_position = prev;
             cx.notify();
         }
     }
@@ -767,7 +748,12 @@ impl ChatView {
     /// Move cursor right
     pub fn move_cursor_right(&mut self, cx: &mut gpui::Context<Self>) {
         if self.state.cursor_position < self.state.input_text.len() {
-            self.state.cursor_position += 1;
+            let next = self.state.input_text[self.state.cursor_position..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| self.state.cursor_position + i)
+                .unwrap_or(self.state.input_text.len());
+            self.state.cursor_position = next;
             cx.notify();
         }
     }
@@ -800,8 +786,15 @@ impl ChatView {
         }
         if self.state.cursor_position > 0 && !self.state.input_text.is_empty() {
             let pos = self.state.cursor_position.min(self.state.input_text.len());
-            self.state.input_text.remove(pos - 1);
-            self.state.cursor_position = pos - 1;
+            // Find the previous char boundary so we delete a whole character,
+            // not a single byte inside a multi-byte character like ´ or é.
+            let prev = self.state.input_text[..pos]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.state.input_text.drain(prev..pos);
+            self.state.cursor_position = prev;
         }
         cx.notify();
     }
@@ -843,50 +836,6 @@ impl ChatView {
         }
     }
 
-    /// Handle space key (called from MainPanel)
-    pub fn handle_space(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.state.conversation_title_editing {
-            self.handle_rename_space(cx);
-            return;
-        }
-
-        if self.state.conversation_dropdown_open {
-            return;
-        }
-
-        if self.state.profile_dropdown_open {
-            return;
-        }
-
-        let pos = self.state.cursor_position.min(self.state.input_text.len());
-        self.state.input_text.insert(pos, ' ');
-        self.state.cursor_position = pos + 1;
-        cx.notify();
-    }
-
-    /// Handle single character input (called from MainPanel)
-    pub fn handle_char(&mut self, key: &str, uppercase: bool, cx: &mut gpui::Context<Self>) {
-        if self.state.conversation_title_editing {
-            self.handle_rename_char(key, uppercase, cx);
-            return;
-        }
-
-        if self.state.conversation_dropdown_open {
-            return;
-        }
-
-        if self.state.profile_dropdown_open {
-            return;
-        }
-
-        if let Some(c) = Self::map_input_char(key, uppercase) {
-            let pos = self.state.cursor_position.min(self.state.input_text.len());
-            self.state.input_text.insert(pos, c);
-            self.state.cursor_position = pos + 1;
-            cx.notify();
-        }
-    }
-
     /// Handle incoming ViewCommands
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub fn handle_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
@@ -897,26 +846,17 @@ impl ChatView {
                 messages,
             } => {
                 if self.state.active_conversation_id != Some(conversation_id) {
-                    tracing::info!(
-                        active_conversation_id = ?self.state.active_conversation_id,
-                        incoming_conversation_id = %conversation_id,
-                        message_count = messages.len(),
-                        "ChatView: ignoring ConversationMessagesLoaded for inactive conversation"
-                    );
+                    tracing::info!(%conversation_id, "ChatView: ignoring ConversationMessagesLoaded for inactive conversation");
                     return;
                 }
-                let current_model = self.state.current_model.clone();
                 let message_count = messages.len();
+                let current_model = self.state.current_model.clone();
                 self.state.messages = Self::messages_from_payload(messages, &current_model);
-                tracing::info!(
-                    conversation_id = %conversation_id,
-                    message_count,
-                    rendered_messages = self.state.messages.len(),
-                    "ChatView: applied ConversationMessagesLoaded"
-                );
+                tracing::info!(%conversation_id, message_count, "ChatView: applied ConversationMessagesLoaded");
                 self.state.streaming = StreamingState::Idle;
                 self.state.thinking_content = None;
                 self.state.chat_autoscroll_enabled = true;
+                self.chat_scroll_handle.scroll_to_bottom();
                 self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
@@ -925,31 +865,25 @@ impl ChatView {
                 role,
                 content,
             } => {
-                let current_model = self.state.current_model.clone();
-
-                if matches!(
-                    role,
-                    crate::presentation::view_command::MessageRole::User
-                        | crate::presentation::view_command::MessageRole::Assistant
-                ) {
-                    if self.state.active_conversation_id != Some(conversation_id) {
-                        return;
-                    }
+                if self.state.active_conversation_id != Some(conversation_id) {
+                    return;
                 }
-
-                let msg = match role {
+                let chat_msg = match role {
                     crate::presentation::view_command::MessageRole::User => {
                         ChatMessage::user(content)
                     }
                     crate::presentation::view_command::MessageRole::Assistant => {
-                        ChatMessage::assistant(content, current_model)
+                        ChatMessage::assistant(content, self.state.current_model.clone())
                     }
                     _ => return,
                 };
-                self.state.messages.push(msg);
+                self.state.messages.push(chat_msg);
                 self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
+
+
+
             ViewCommand::ShowThinking { conversation_id } => {
                 if conversation_id != Uuid::nil()
                     && self.state.active_conversation_id != Some(conversation_id)
@@ -966,6 +900,7 @@ impl ChatView {
                 self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
+
             ViewCommand::HideThinking { conversation_id } => {
                 if conversation_id != Uuid::nil()
                     && self.state.active_conversation_id != Some(conversation_id)
@@ -1894,14 +1829,16 @@ impl ChatView {
                     StreamingState::Streaming { content, done } => (content.clone(), *done),
                     _ => (String::new(), false),
                 };
-                d.child(
-                    div().id("streaming-msg").child(
-                        AssistantBubble::new(content)
-                            .model_id("streaming")
-                            .show_thinking(show_thinking)
-                            .streaming(true),
-                    ),
-                )
+                let mut bubble = AssistantBubble::new(content)
+                    .model_id("streaming")
+                    .show_thinking(show_thinking)
+                    .streaming(true);
+                if let Some(ref thinking) = self.state.thinking_content {
+                    if !thinking.is_empty() {
+                        bubble = bubble.thinking(thinking.clone());
+                    }
+                }
+                d.child(div().id("streaming-msg").child(bubble))
             })
     }
 
@@ -2171,6 +2108,176 @@ impl gpui::Focusable for ChatView {
     }
 }
 
+// ── UTF-8 ↔ UTF-16 helpers for InputHandler ──────────────────────────
+fn utf8_offset_to_utf16(text: &str, utf8_offset: usize) -> usize {
+    text[..utf8_offset.min(text.len())]
+        .encode_utf16()
+        .count()
+}
+
+fn utf16_offset_to_utf8(text: &str, utf16_offset: usize) -> usize {
+    let mut utf16_count = 0;
+    for (byte_idx, ch) in text.char_indices() {
+        if utf16_count >= utf16_offset {
+            return byte_idx;
+        }
+        utf16_count += ch.len_utf16();
+    }
+    text.len()
+}
+
+impl gpui::EntityInputHandler for ChatView {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        _adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<String> {
+        let text = self.active_input_text();
+        let start = utf16_offset_to_utf8(text, range.start);
+        let end = utf16_offset_to_utf8(text, range.end);
+        Some(text[start..end].to_string())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let text = self.active_input_text();
+        let cursor_utf8 = self.active_cursor_position().min(text.len());
+        let cursor_utf16 = utf8_offset_to_utf16(text, cursor_utf8);
+        Some(UTF16Selection {
+            range: cursor_utf16..cursor_utf16,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<Range<usize>> {
+        self.state.marked_range.clone()
+    }
+
+    fn unmark_text(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        self.state.marked_range = None;
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.state.marked_range = None;
+
+        if self.state.conversation_title_editing {
+            if self.state.rename_replace_on_next_char {
+                self.state.conversation_title_input.clear();
+                self.state.rename_replace_on_next_char = false;
+            }
+            self.state.conversation_title_input.push_str(text);
+            cx.notify();
+            return;
+        }
+
+        if self.state.conversation_dropdown_open || self.state.profile_dropdown_open {
+            return;
+        }
+
+        let input = &mut self.state.input_text;
+        let (start_utf8, end_utf8) = if let Some(r) = range {
+            (
+                utf16_offset_to_utf8(input, r.start),
+                utf16_offset_to_utf8(input, r.end),
+            )
+        } else {
+            let pos = self.state.cursor_position.min(input.len());
+            (pos, pos)
+        };
+
+        input.replace_range(start_utf8..end_utf8, text);
+        self.state.cursor_position = start_utf8 + text.len();
+        cx.notify();
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.state.conversation_dropdown_open || self.state.profile_dropdown_open {
+            return;
+        }
+        if self.state.conversation_title_editing {
+            self.state.conversation_title_input.push_str(new_text);
+            cx.notify();
+            return;
+        }
+
+        let input = &mut self.state.input_text;
+        let (start_utf8, end_utf8) = if let Some(r) = range {
+            (
+                utf16_offset_to_utf8(input, r.start),
+                utf16_offset_to_utf8(input, r.end),
+            )
+        } else if let Some(ref mr) = self.state.marked_range {
+            (
+                utf16_offset_to_utf8(input, mr.start),
+                utf16_offset_to_utf8(input, mr.end),
+            )
+        } else {
+            let pos = self.state.cursor_position.min(input.len());
+            (pos, pos)
+        };
+
+        input.replace_range(start_utf8..end_utf8, new_text);
+        self.state.cursor_position = start_utf8 + new_text.len();
+
+        // Compute marked range in UTF-16 over the newly inserted text
+        let mark_start_utf16 = utf8_offset_to_utf16(input, start_utf8);
+        let mark_end_utf16 = mark_start_utf16
+            + new_text.encode_utf16().count();
+        self.state.marked_range = Some(mark_start_utf16..mark_end_utf16);
+
+        if let Some(sel) = new_selected_range {
+            let sel_utf8 = utf16_offset_to_utf8(input, mark_start_utf16 + sel.start);
+            self.state.cursor_position = sel_utf8;
+        }
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        element_bounds: Bounds<Pixels>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        // Return the element bounds so the IME candidate window appears near the input area
+        Some(element_bounds)
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: gpui::Point<Pixels>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<usize> {
+        let text = self.active_input_text();
+        Some(utf8_offset_to_utf16(text, self.active_cursor_position()))
+    }
+}
+
 impl gpui::Render for ChatView {
     #[rustfmt::skip]
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -2183,12 +2290,27 @@ impl gpui::Render for ChatView {
             selected_profile_id = ?self.state.selected_profile_id,
             "ChatView::render state snapshot"
         );
+
         div()
             .id("chat-view")
             .flex()
             .flex_col()
             .size_full()
             .track_focus(&self.focus_handle)
+            .child(
+                canvas(
+                    |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
+                    {
+                        let entity = cx.entity().clone();
+                        let focus = self.focus_handle.clone();
+                        move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
+                            window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+                        }
+                    },
+                )
+                .size_0(),
+            )
+
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
                     let key = &event.keystroke.key;
@@ -2198,7 +2320,6 @@ impl gpui::Render for ChatView {
                     if modifiers.platform {
                         match key.as_str() {
                             "h" => {
-                                // Cmd+H: Navigate to History
                                 println!(">>> Cmd+H pressed - navigating to History <<<");
                                 crate::ui_gpui::navigation_channel().request_navigate(
                                     crate::presentation::view_command::ViewId::History,
@@ -2206,7 +2327,6 @@ impl gpui::Render for ChatView {
                                 return;
                             }
                             "," => {
-                                // Cmd+,: Navigate to Settings (standard macOS)
                                 println!(">>> Cmd+, pressed - navigating to Settings <<<");
                                 crate::ui_gpui::navigation_channel().request_navigate(
                                     crate::presentation::view_command::ViewId::Settings,
@@ -2214,7 +2334,6 @@ impl gpui::Render for ChatView {
                                 return;
                             }
                             "n" => {
-                                // Cmd+N: New conversation
                                 println!(">>> Cmd+N pressed - new conversation <<<");
                                 this.emit(UserEvent::NewConversation);
                                 this.state.messages.clear();
@@ -2231,20 +2350,61 @@ impl gpui::Render for ChatView {
                                 return;
                             }
                             "t" => {
-                                // Cmd+T: Toggle thinking
                                 println!(">>> Cmd+T pressed - toggle thinking <<<");
                                 this.emit(UserEvent::ToggleThinking);
-                                // State update comes back via ToggleThinkingVisibility
                                 return;
                             }
                             "p" => {
-                                // Cmd+P: Toggle chat profile dropdown
                                 this.toggle_profile_dropdown(cx);
                                 return;
                             }
+                            "k" => {
+                                this.toggle_conversation_dropdown(cx);
+                                return;
+                            }
                             "r" => {
-                                // Cmd+R: rename active conversation
                                 this.start_rename_conversation(cx);
+                                return;
+                            }
+                            "v" => {
+                                if let Some(item) = cx.read_from_clipboard() {
+                                    if let Some(text) = item.text() {
+                                        this.handle_paste(&text, cx);
+                                    }
+                                }
+                                return;
+                            }
+                            "a" => {
+                                this.handle_select_all(cx);
+                                return;
+                            }
+                            "x" => {
+                                this.handle_select_all(cx);
+                                let text = if this.state.conversation_title_editing {
+                                    this.state.conversation_title_input.clone()
+                                } else {
+                                    this.state.input_text.clone()
+                                };
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                                if this.state.conversation_title_editing {
+                                    this.state.conversation_title_input.clear();
+                                    this.state.rename_replace_on_next_char = false;
+                                } else if !this.state.conversation_dropdown_open
+                                    && !this.state.profile_dropdown_open
+                                {
+                                    this.state.input_text.clear();
+                                    this.state.cursor_position = 0;
+                                    this.state.marked_range = None;
+                                }
+                                cx.notify();
+                                return;
+                            }
+                            "left" => {
+                                this.move_cursor_home(cx);
+                                return;
+                            }
+                            "right" => {
+                                this.move_cursor_end(cx);
                                 return;
                             }
                             _ => {}
@@ -2255,13 +2415,8 @@ impl gpui::Render for ChatView {
                         match key.as_str() {
                             "escape" => this.cancel_rename_conversation(cx),
                             "backspace" => this.handle_rename_backspace(cx),
-                            "space" => this.handle_rename_space(cx),
                             "enter" => this.submit_rename_conversation(cx),
-                            _ => {
-                                if key.len() == 1 && !modifiers.platform && !modifiers.control {
-                                    this.handle_rename_char(key, modifiers.shift, cx);
-                                }
-                            }
+                            _ => {}
                         }
                         return;
                     }
@@ -2306,21 +2461,24 @@ impl gpui::Render for ChatView {
                         return;
                     }
 
-                    // === ESCAPE KEY ===
-                    if key == "escape" {
-                        // Stop streaming if active
-                        if matches!(this.state.streaming, StreamingState::Streaming { .. }) {
-                            println!(">>> Escape pressed - stopping stream <<<");
-                            this.emit(UserEvent::StopStreaming);
-                            this.state.streaming = StreamingState::Idle;
-                            cx.notify();
+                    match key.as_str() {
+                        "left" => this.move_cursor_left(cx),
+                        "right" => this.move_cursor_right(cx),
+                        "home" => this.move_cursor_home(cx),
+                        "end" => this.move_cursor_end(cx),
+                        "backspace" => this.handle_backspace(cx),
+                        "enter" => this.handle_enter(cx),
+                        "escape" => {
+                            if matches!(this.state.streaming, StreamingState::Streaming { .. }) {
+                                println!(">>> Escape pressed - stopping stream <<<");
+                                this.emit(UserEvent::StopStreaming);
+                                this.state.streaming = StreamingState::Idle;
+                                cx.notify();
+                            }
                         }
-                        return;
+                        _ => {}
                     }
 
-                    // Text entry and send are handled by MainPanel's key forwarding.
-                    // Keeping that as the single owner avoids duplicate SendMessage emissions
-                    // when both MainPanel and ChatView receive the same key event.
                 }),
             )
             .relative()

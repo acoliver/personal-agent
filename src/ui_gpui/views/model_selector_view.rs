@@ -4,8 +4,10 @@
 //! @requirement REQ-UI-MS
 
 use gpui::{
-    div, prelude::*, px, FocusHandle, FontWeight, MouseButton, ScrollWheelEvent, SharedString,
+    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
+    Pixels, ScrollWheelEvent, SharedString,
 };
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::events::types::UserEvent;
@@ -810,6 +812,97 @@ impl gpui::Focusable for ModelSelectorView {
     }
 }
 
+impl gpui::EntityInputHandler for ModelSelectorView {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        _adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<String> {
+        let text = &self.state.search_query;
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let start = range.start.min(utf16.len());
+        let end = range.end.min(utf16.len());
+        String::from_utf16(&utf16[start..end]).ok()
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<gpui::UTF16Selection> {
+        let len16 = self.state.search_query.encode_utf16().count();
+        Some(gpui::UTF16Selection {
+            range: len16..len16,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<Range<usize>> {
+        None
+    }
+
+    fn unmark_text(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) {}
+
+    fn replace_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !text.is_empty() {
+            self.state.search_query.push_str(text);
+            self.emit_filter_events_if_changed();
+            cx.notify();
+        }
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        new_text: &str,
+        _new_selected_range: Option<Range<usize>>,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !new_text.is_empty() {
+            self.state.search_query.push_str(new_text);
+            self.emit_filter_events_if_changed();
+            cx.notify();
+        }
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range: Range<usize>,
+        _element_bounds: Bounds<Pixels>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: gpui::Point<Pixels>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<usize> {
+        None
+    }
+}
+
 impl gpui::Render for ModelSelectorView {
     fn render(
         &mut self,
@@ -826,6 +919,20 @@ impl gpui::Render for ModelSelectorView {
             .size_full()
             .bg(Theme::bg_darkest())
             .track_focus(&self.focus_handle)
+            // Invisible canvas for InputHandler registration (IME/diacritics)
+            .child(
+                canvas(
+                    |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
+                    {
+                        let entity = cx.entity().clone();
+                        let focus = self.focus_handle.clone();
+                        move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
+                            window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+                        }
+                    },
+                )
+                .size_0(),
+            )
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
                     let key = &event.keystroke.key;
@@ -851,17 +958,14 @@ impl gpui::Render for ModelSelectorView {
                         return;
                     }
 
-                    // Handle typing for search - any alphanumeric key updates search
+                    // Handle named keys for search; printable chars go through InputHandler
                     if !modifiers.platform && !modifiers.control {
                         if key == "backspace" {
                             this.state.search_query.pop();
                             this.emit_filter_events_if_changed();
                             cx.notify();
-                        } else if key.len() == 1 {
-                            this.state.search_query.push_str(key);
-                            this.emit_filter_events_if_changed();
-                            cx.notify();
                         }
+                        // All other printable chars fall through to EntityInputHandler
                     }
                 }),
             )

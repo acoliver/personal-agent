@@ -627,27 +627,36 @@ fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewC
             mutate_history_and_selected_selection_if_targeted(inner, id)
         }
         ViewCommand::ConversationCreated { id, .. } => {
-            if inner
+            let already_listed = inner
                 .snapshot
                 .history
                 .conversations
                 .iter()
-                .any(|conversation| conversation.id == id)
-            {
-                return false;
+                .any(|conversation| conversation.id == id);
+            if !already_listed {
+                let conversation = ConversationSummary {
+                    id,
+                    title: "New Conversation".to_string(),
+                    updated_at: chrono::Utc::now(),
+                    message_count: 0,
+                };
+                inner
+                    .snapshot
+                    .history
+                    .conversations
+                    .insert(0, conversation.clone());
+                inner.snapshot.chat.conversations.insert(0, conversation);
             }
-            let conversation = ConversationSummary {
-                id,
-                title: "New Conversation".to_string(),
-                updated_at: chrono::Utc::now(),
-                message_count: 0,
+            // Activate the new conversation through the proper selection path
+            begin_selection_locked(inner, id, BeginSelectionMode::BatchNoPublish);
+            // Immediately mark it Ready with empty transcript (new conversation has no messages)
+            let gen = inner.snapshot.chat.selection_generation;
+            inner.snapshot.chat.transcript.clear();
+            inner.snapshot.chat.load_state = ConversationLoadState::Ready {
+                conversation_id: id,
+                generation: gen,
             };
-            inner
-                .snapshot
-                .history
-                .conversations
-                .insert(0, conversation.clone());
-            inner.snapshot.chat.conversations.insert(0, conversation);
+            inner.snapshot.chat.selected_conversation_title = "New Conversation".to_string();
             true
         }
         ViewCommand::ConversationCleared => false,

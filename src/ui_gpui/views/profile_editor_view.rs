@@ -3,7 +3,11 @@
 //! @plan PLAN-20250130-GPUIREDUX.P08
 //! @requirement REQ-UI-PE
 
-use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString, Stateful};
+use gpui::{
+    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
+    Pixels, SharedString, Stateful,
+};
+use std::ops::Range;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -302,92 +306,42 @@ impl ProfileEditorView {
         }
     }
 
-    pub fn handle_key_input(
-        &mut self,
-        key: &str,
-        modifiers: &gpui::Modifiers,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if key == "escape" || (modifiers.platform && key == "w") {
-            crate::ui_gpui::navigation_channel()
-                .request_navigate(crate::presentation::view_command::ViewId::Settings);
-            return;
-        }
+    /// Cycle to the next editable field on Tab
+    fn cycle_active_field(&mut self) {
+        let fields = [
+            ActiveField::Name,
+            ActiveField::Model,
+            ActiveField::BaseUrl,
+            ActiveField::ApiKey,
+            ActiveField::KeyfilePath,
+            ActiveField::MaxTokens,
+            ActiveField::ContextLimit,
+            ActiveField::ThinkingBudget,
+            ActiveField::SystemPrompt,
+        ];
+        let current_idx = self
+            .state
+            .active_field
+            .and_then(|f| fields.iter().position(|&x| x == f));
+        let next = match current_idx {
+            Some(i) => fields[(i + 1) % fields.len()],
+            None => fields[0],
+        };
+        self.state.active_field = Some(next);
+    }
 
-        if modifiers.platform && key == "s" {
-            self.emit_save_profile();
-            return;
-        }
-
-        if modifiers.platform && key == "v" {
-            if let Some(item) = cx.read_from_clipboard() {
-                if let Some(text) = item.text() {
-                    if self.state.active_field == Some(ActiveField::ApiKey) {
-                        self.state.data.api_key =
-                            sanitized_clipboard_text(&text).trim().to_string();
-                    } else {
-                        self.append_to_active_field(&text);
-                    }
-                    cx.notify();
-                }
-            }
-            return;
-        }
-
-        if modifiers.platform || modifiers.control {
-            return;
-        }
-
-        if key == "backspace" {
-            self.backspace_active_field();
-            cx.notify();
-            return;
-        }
-
-        if key == "enter" {
-            if self.state.active_field == Some(ActiveField::SystemPrompt) {
-                self.append_to_active_field("\n");
-                cx.notify();
-            }
-            return;
-        }
-
-        if key == "space" {
-            self.append_to_active_field(" ");
-            cx.notify();
-            return;
-        }
-
-        if key.len() == 1 {
-            let mut text = key.to_string();
-            if modifiers.shift {
-                text = match key {
-                    "1" => "!".to_string(),
-                    "2" => "@".to_string(),
-                    "3" => "#".to_string(),
-                    "4" => "$".to_string(),
-                    "5" => "%".to_string(),
-                    "6" => "^".to_string(),
-                    "7" => "&".to_string(),
-                    "8" => "*".to_string(),
-                    "9" => "(".to_string(),
-                    "0" => ")".to_string(),
-                    "-" => "_".to_string(),
-                    "=" => "+".to_string(),
-                    "[" => "{".to_string(),
-                    "]" => "}".to_string(),
-                    "\\" => "|".to_string(),
-                    ";" => ":".to_string(),
-                    "'" => "\"".to_string(),
-                    "," => "<".to_string(),
-                    "." => ">".to_string(),
-                    "/" => "?".to_string(),
-                    "`" => "~".to_string(),
-                    _ => key.to_ascii_uppercase(),
-                };
-            }
-            self.append_to_active_field(&text);
-            cx.notify();
+    /// Active field text content for InputHandler
+    fn active_field_text(&self) -> &str {
+        match self.state.active_field {
+            Some(ActiveField::Name) => &self.state.data.name,
+            Some(ActiveField::Model) => &self.state.data.model_id,
+            Some(ActiveField::BaseUrl) => &self.state.data.base_url,
+            Some(ActiveField::ApiKey) => &self.state.data.api_key,
+            Some(ActiveField::KeyfilePath) => &self.state.data.keyfile_path,
+            Some(ActiveField::MaxTokens) | Some(ActiveField::ContextLimit)
+            | Some(ActiveField::ThinkingBudget) => "",
+            Some(ActiveField::SystemPrompt) => &self.state.data.system_prompt,
+            None => "",
         }
     }
 
@@ -1510,6 +1464,96 @@ impl gpui::Focusable for ProfileEditorView {
     }
 }
 
+impl gpui::EntityInputHandler for ProfileEditorView {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        _adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<String> {
+        let text = self.active_field_text();
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let start = range.start.min(utf16.len());
+        let end = range.end.min(utf16.len());
+        String::from_utf16(&utf16[start..end]).ok()
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<gpui::UTF16Selection> {
+        let text = self.active_field_text();
+        let len16 = text.encode_utf16().count();
+        Some(gpui::UTF16Selection {
+            range: len16..len16,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<Range<usize>> {
+        None
+    }
+
+    fn unmark_text(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) {}
+
+    fn replace_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !text.is_empty() {
+            self.append_to_active_field(text);
+            cx.notify();
+        }
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        new_text: &str,
+        _new_selected_range: Option<Range<usize>>,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !new_text.is_empty() {
+            self.append_to_active_field(new_text);
+            cx.notify();
+        }
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range: Range<usize>,
+        _element_bounds: Bounds<Pixels>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: gpui::Point<Pixels>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<usize> {
+        None
+    }
+}
+
 impl gpui::Render for ProfileEditorView {
     fn render(
         &mut self,
@@ -1523,6 +1567,79 @@ impl gpui::Render for ProfileEditorView {
             .size_full()
             .bg(Theme::bg_base())
             .track_focus(&self.focus_handle)
+            // Invisible canvas to register InputHandler for IME/diacritics
+            .child(
+                canvas(
+                    |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
+                    {
+                        let entity = cx.entity().clone();
+                        let focus = self.focus_handle.clone();
+                        move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
+                            window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+                        }
+                    },
+                )
+                .size_0(),
+            )
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                    let key = &event.keystroke.key;
+                    let modifiers = &event.keystroke.modifiers;
+
+                    if key == "escape" || (modifiers.platform && key == "w") {
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::Settings);
+                        return;
+                    }
+
+                    if modifiers.platform && key == "s" {
+                        this.emit_save_profile();
+                        return;
+                    }
+
+                    if modifiers.platform && key == "v" {
+                        if let Some(item) = cx.read_from_clipboard() {
+                            if let Some(text) = item.text() {
+                                if this.state.active_field == Some(ActiveField::ApiKey) {
+                                    this.state.data.api_key =
+                                        sanitized_clipboard_text(&text).trim().to_string();
+                                } else {
+                                    this.append_to_active_field(&text);
+                                }
+                                cx.notify();
+                            }
+                        }
+                        return;
+                    }
+
+                    if modifiers.platform || modifiers.control {
+                        return;
+                    }
+
+                    if key == "backspace" {
+                        this.backspace_active_field();
+                        cx.notify();
+                        return;
+                    }
+
+                    if key == "enter" {
+                        if this.state.active_field == Some(ActiveField::SystemPrompt) {
+                            this.append_to_active_field("
+");
+                            cx.notify();
+                        }
+                        return;
+                    }
+
+                    if key == "tab" {
+                        this.cycle_active_field();
+                        cx.notify();
+                        return;
+                    }
+
+                    // All other keys (printable chars) fall through to EntityInputHandler
+                }),
+            )
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Content (scrollable)

@@ -3,7 +3,11 @@
 //! @plan PLAN-20250130-GPUIREDUX.P09
 //! @requirement REQ-UI-MA
 
-use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString};
+use gpui::{
+    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
+    Pixels, SharedString,
+};
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::events::types::UserEvent;
@@ -728,6 +732,97 @@ impl gpui::Focusable for McpAddView {
     }
 }
 
+impl gpui::EntityInputHandler for McpAddView {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        _adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<String> {
+        let text = &self.state.search_query;
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let start = range.start.min(utf16.len());
+        let end = range.end.min(utf16.len());
+        String::from_utf16(&utf16[start..end]).ok()
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<gpui::UTF16Selection> {
+        let len16 = self.state.search_query.encode_utf16().count();
+        Some(gpui::UTF16Selection {
+            range: len16..len16,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<Range<usize>> {
+        None
+    }
+
+    fn unmark_text(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) {}
+
+    fn replace_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !text.is_empty() {
+            self.state.search_query.push_str(text);
+            self.emit_search_registry();
+            cx.notify();
+        }
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        new_text: &str,
+        _new_selected_range: Option<Range<usize>>,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !new_text.is_empty() {
+            self.state.search_query.push_str(new_text);
+            self.emit_search_registry();
+            cx.notify();
+        }
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range: Range<usize>,
+        _element_bounds: Bounds<Pixels>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: gpui::Point<Pixels>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<usize> {
+        None
+    }
+}
+
 impl gpui::Render for McpAddView {
     fn render(
         &mut self,
@@ -741,17 +836,52 @@ impl gpui::Render for McpAddView {
             .size_full()
             .bg(Theme::bg_base())
             .track_focus(&self.focus_handle)
+            // Invisible canvas for InputHandler registration (IME/diacritics)
+            .child(
+                canvas(
+                    |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
+                    {
+                        let entity = cx.entity().clone();
+                        let focus = self.focus_handle.clone();
+                        move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
+                            window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+                        }
+                    },
+                )
+                .size_0(),
+            )
             .on_key_down(
-                cx.listener(|_this, event: &gpui::KeyDownEvent, _window, _cx| {
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
                     let key = &event.keystroke.key;
                     let modifiers = &event.keystroke.modifiers;
 
                     // Escape or Cmd+W: Go back to Settings
                     if key == "escape" || (modifiers.platform && key == "w") {
-                        println!(">>> Escape/Cmd+W pressed - navigating to Settings <<<");
                         crate::ui_gpui::navigation_channel()
                             .request_navigate(crate::presentation::view_command::ViewId::Settings);
+                        return;
                     }
+
+                    if modifiers.platform || modifiers.control {
+                        return;
+                    }
+
+                    if key == "backspace" {
+                        let mut q = this.state.search_query.clone();
+                        q.pop(); // char-boundary safe unlike byte-level truncation
+                        this.set_search_query(q);
+                        this.emit_search_registry();
+                        cx.notify();
+                        return;
+                    }
+
+                    if key == "enter" {
+                        this.emit_search_registry();
+                        cx.notify();
+                        return;
+                    }
+
+                    // All other keys (printable chars) fall through to EntityInputHandler
                 }),
             )
             // Top bar (44px)

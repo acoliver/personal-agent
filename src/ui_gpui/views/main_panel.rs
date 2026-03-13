@@ -10,7 +10,9 @@ use crate::presentation::view_command::{ViewCommand, ViewId};
 use crate::ui_gpui::navigation::NavigationState;
 use crate::ui_gpui::GpuiAppStore;
 
-use gpui::{div, prelude::*, Entity, FocusHandle, Global, MouseButton, Subscription, Task};
+use gpui::{
+    div, prelude::*, Entity, Focusable, FocusHandle, Global, MouseButton, Subscription, Task,
+};
 use std::sync::Arc;
 
 // ============================================================
@@ -229,8 +231,13 @@ impl MainPanel {
 
         if let Some(ref chat_view) = self.chat_view {
             let chat_snapshot = snapshot.chat.clone();
+            let settings_snapshot = snapshot.settings.clone();
             chat_view.update(cx, |view, cx| {
                 view.apply_store_snapshot(chat_snapshot, cx);
+                // Apply profile data from store so profiles are available on first render
+                if !settings_snapshot.profiles.is_empty() {
+                    view.apply_settings_snapshot(settings_snapshot);
+                }
             });
         }
 
@@ -1186,14 +1193,42 @@ impl gpui::Render for MainPanel {
 
         let current_view = self.navigation.current();
 
+        match current_view {
+            ViewId::Chat => {
+                if let Some(chat_view) = &self.chat_view {
+                    let focus = chat_view.read(cx).focus_handle(cx).clone();
+                    window.focus(&focus, cx);
+                }
+            }
+            ViewId::ProfileEditor => {
+                if let Some(pe_view) = &self.profile_editor_view {
+                    let focus = pe_view.read(cx).focus_handle(cx).clone();
+                    window.focus(&focus, cx);
+                }
+            }
+            ViewId::McpAdd => {
+                if let Some(mcp_view) = &self.mcp_add_view {
+                    let focus = mcp_view.read(cx).focus_handle(cx).clone();
+                    window.focus(&focus, cx);
+                }
+            }
+            ViewId::ModelSelector => {
+                if let Some(ms_view) = &self.model_selector_view {
+                    let focus = ms_view.read(cx).focus_handle(cx).clone();
+                    window.focus(&focus, cx);
+                }
+            }
+            _ => {
+                window.focus(&self.focus_handle, cx);
+            }
+        }
+
         // Schedule a notify after a brief delay to keep polling for navigation
         // This is a workaround since we can't use async notify from static channel
         let entity_id = cx.entity_id();
         cx.defer(move |cx| {
             cx.notify(entity_id);
         });
-
-        // Request focus on the MainPanel so we receive keyboard events
 
         let focus_handle = self.focus_handle.clone();
 
@@ -1278,165 +1313,13 @@ impl gpui::Render for MainPanel {
                             this.navigation.navigate_back();
                         }
                     }
-                    // Profile Editor view - forward key events to the editor
+                    // Profile Editor view - owns its own on_key_down + InputHandler
                     else if current == ViewId::ProfileEditor {
-                        if let Some(ref profile_editor) = this.profile_editor_view {
-                            profile_editor.update(_cx, |view, cx| {
-                                view.handle_key_input(key, modifiers, cx);
-                            });
-                        }
+                        // Focus transferred to ProfileEditorView; it handles its own keys
                     }
-                    // MCP Add view - forward keys for registry search
+                    // MCP Add view - owns its own on_key_down + InputHandler
                     else if current == ViewId::McpAdd {
-                        if key == "escape" {
-                            println!(">>> Escape on McpAdd - back to Settings <<<");
-                            this.navigation.navigate_back();
-                        } else if let Some(ref mcp_add_view) = this.mcp_add_view {
-                            mcp_add_view.update(_cx, |view, cx| {
-                                if key == "backspace" {
-                                    let current = view.get_state().search_query.clone();
-                                    let new_query =
-                                        current[..current.len().saturating_sub(1)].to_string();
-                                    view.set_search_query(new_query);
-                                    view.emit_search_registry();
-                                    cx.notify();
-                                } else if key == "enter" {
-                                    view.emit_search_registry();
-                                    cx.notify();
-                                } else if key.len() == 1
-                                    && !modifiers.platform
-                                    && !modifiers.control
-                                {
-                                    let mut query = view.get_state().search_query.clone();
-                                    query.push_str(key);
-                                    view.set_search_query(query);
-                                    view.emit_search_registry();
-                                    cx.notify();
-                                }
-                            });
-                        }
-                    }
-                    // Chat view - forward all keys to ChatView for text input/dropdown navigation
-                    else if current == ViewId::Chat {
-                        if let Some(ref chat_view) = this.chat_view {
-                            chat_view.update(_cx, |view, cx| {
-                                // Cmd+V paste from clipboard
-                                if modifiers.platform && key == "v" {
-                                    if let Some(item) = cx.read_from_clipboard() {
-                                        if let Some(text) = item.text() {
-                                            view.handle_paste(&text, cx);
-                                        }
-                                    }
-                                    return;
-                                }
-                                // Cmd+A select all
-                                if modifiers.platform && key == "a" {
-                                    view.handle_select_all(cx);
-                                    return;
-                                }
-                                // Cmd+P toggles chat profile dropdown
-                                if modifiers.platform && key == "p" {
-                                    view.toggle_profile_dropdown(cx);
-                                    return;
-                                }
-                                // Cmd+K toggles conversation dropdown
-                                if modifiers.platform && key == "k" {
-                                    view.toggle_conversation_dropdown(cx);
-                                    return;
-                                }
-                                // Cmd+R starts inline rename mode
-                                if modifiers.platform && key == "r" {
-                                    view.start_rename_conversation(cx);
-                                    return;
-                                }
-                                // Arrow keys for cursor movement (when not in dropdown)
-                                if !view.conversation_dropdown_open()
-                                    && !view.profile_dropdown_open()
-                                    && !view.conversation_title_editing()
-                                {
-                                    if key == "left" {
-                                        view.move_cursor_left(cx);
-                                        return;
-                                    } else if key == "right" {
-                                        view.move_cursor_right(cx);
-                                        return;
-                                    } else if key == "home" || (modifiers.platform && key == "left")
-                                    {
-                                        view.move_cursor_home(cx);
-                                        return;
-                                    } else if key == "end" || (modifiers.platform && key == "right")
-                                    {
-                                        view.move_cursor_end(cx);
-                                        return;
-                                    }
-                                }
-                                // Inline rename editing mode
-                                if view.conversation_title_editing() {
-                                    if key == "backspace" {
-                                        view.handle_rename_backspace(cx);
-                                    } else if key == "enter" {
-                                        view.submit_rename_conversation(cx);
-                                    } else if key == "escape" {
-                                        view.cancel_rename_conversation(cx);
-                                    } else if key == "space" {
-                                        view.handle_rename_space(cx);
-                                    } else if key.len() == 1
-                                        && !modifiers.platform
-                                        && !modifiers.control
-                                    {
-                                        view.handle_rename_char(key, modifiers.shift, cx);
-                                    }
-                                }
-                                // Conversation dropdown keyboard navigation
-                                else if view.conversation_dropdown_open() {
-                                    if key == "up" {
-                                        view.move_conversation_dropdown_selection(-1, cx);
-                                    } else if key == "down" {
-                                        view.move_conversation_dropdown_selection(1, cx);
-                                    } else if key == "enter" {
-                                        view.confirm_conversation_dropdown_selection(cx);
-                                    } else if key == "escape" {
-                                        view.toggle_conversation_dropdown(cx);
-                                    }
-                                }
-                                // Profile dropdown keyboard navigation
-                                else if view.profile_dropdown_open() {
-                                    if key == "up" {
-                                        view.move_profile_dropdown_selection(-1, cx);
-                                    } else if key == "down" {
-                                        view.move_profile_dropdown_selection(1, cx);
-                                    } else if key == "enter" {
-                                        view.confirm_profile_dropdown_selection(cx);
-                                    } else if key == "escape" {
-                                        view.toggle_profile_dropdown(cx);
-                                    }
-                                }
-                                // Forward backspace
-                                else if key == "backspace" {
-                                    view.handle_backspace(cx);
-                                }
-                                // Forward enter
-                                else if key == "enter" {
-                                    view.handle_enter(cx);
-                                }
-                                // Forward space
-                                else if key == "space" {
-                                    view.handle_space(cx);
-                                }
-                                // Forward single character keys
-                                else if key.len() == 1
-                                    && !modifiers.platform
-                                    && !modifiers.control
-                                {
-                                    view.handle_char(key, modifiers.shift, cx);
-                                }
-                            });
-                        }
-                    } else if key == "escape" {
-                        println!(">>> Escape pressed - navigate back <<<");
-                        if current != ViewId::Chat {
-                            this.navigation.navigate_back();
-                        }
+                        // Focus transferred to McpAddView; it handles its own keys
                     }
                 }),
             )
