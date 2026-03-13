@@ -217,6 +217,9 @@ impl SettingsPresenter {
             UserEvent::EditProfile { id } => {
                 Self::on_edit_profile(profile_service, view_tx, id).await;
             }
+            UserEvent::RefreshProfiles => {
+                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
+            }
             UserEvent::ToggleMcp { id, enabled } => {
                 Self::on_toggle_mcp(profile_service, view_tx, id, enabled).await;
             }
@@ -563,7 +566,10 @@ impl SettingsPresenter {
             profiles: summaries,
             selected_profile_id,
         }) {
-            Ok(n) => tracing::info!("SettingsPresenter: ChatProfilesUpdated sent to {} receivers", n),
+            Ok(n) => tracing::info!(
+                "SettingsPresenter: ChatProfilesUpdated sent to {} receivers",
+                n
+            ),
             Err(e) => tracing::error!("SettingsPresenter: ChatProfilesUpdated send failed: {}", e),
         }
     }

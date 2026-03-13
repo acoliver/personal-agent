@@ -7,6 +7,7 @@ mod client;
 pub mod client_agent;
 pub mod error;
 pub mod events;
+mod provider_quirks;
 mod stream;
 pub mod tools;
 

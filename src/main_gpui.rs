@@ -16,16 +16,18 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::*;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 // Use the library crate
+use personal_agent::events::types::UserEvent;
 use personal_agent::events::EventBus;
 use personal_agent::presentation::{
     ChatPresenter, HistoryPresenter, McpAddPresenter, McpConfigurePresenter,
-    ModelSelectorPresenter, ProfileEditorPresenter, SettingsPresenter,
+    ModelSelectorPresenter, ProfileEditorPresenter, SettingsPresenter, ViewCommand,
 };
 use personal_agent::services::{
     AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl, ConversationService,
@@ -33,9 +35,16 @@ use personal_agent::services::{
     McpServiceImpl, ModelsRegistryService, ModelsRegistryServiceImpl, ProfileService,
     ProfileServiceImpl, SecretsService, SecretsServiceImpl,
 };
+use personal_agent::ui_gpui::app_store::{
+    BeginSelectionMode, BeginSelectionResult, StartupInputs, StartupMode,
+    StartupSelectedConversation, StartupTranscriptResult,
+};
 use personal_agent::ui_gpui::bridge::{spawn_user_event_forwarder, GpuiBridge};
+use personal_agent::ui_gpui::selection_intent_channel;
 use personal_agent::ui_gpui::theme::Theme;
 use personal_agent::ui_gpui::views::main_panel::MainPanel;
+use personal_agent::ui_gpui::views::main_panel::MainPanelAppState;
+use personal_agent::ui_gpui::GpuiAppStore;
 
 // ============================================================================
 // System Tray using objc2 with NSEvent local monitor
@@ -70,6 +79,12 @@ static TRAY_CLICKED: AtomicBool = AtomicBool::new(false);
 // ============================================================================
 
 /// Global application state (full version with all fields)
+/// @plan PLAN-20260304-GPUIREMEDIATE.P04
+/// @requirement REQ-ARCH-001.1
+/// @requirement REQ-ARCH-001.3
+/// @pseudocode analysis/pseudocode/01-app-store.md:001-098
+
+#[derive(Clone)]
 pub struct AppState {
     /// Event bus for the application
     event_bus: Arc<EventBus>,
@@ -77,6 +92,8 @@ pub struct AppState {
     gpui_bridge: Arc<GpuiBridge>,
     /// View command sender (to send commands to UI)
     view_cmd_tx: flume::Sender<personal_agent::presentation::ViewCommand>,
+    /// Process-lifetime authoritative GPUI store skeleton.
+    app_store: Arc<GpuiAppStore>,
 }
 
 impl Global for AppState {}
@@ -109,11 +126,18 @@ fn spawn_broadcast_to_mpsc_view_command_bridge(
     presenter_name: &'static str,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        tracing::info!("{} bridge: task started, waiting for commands", presenter_name);
+        tracing::info!(
+            "{} bridge: task started, waiting for commands",
+            presenter_name
+        );
         loop {
             match rx.recv().await {
                 Ok(cmd) => {
-                    tracing::info!("{} bridge: forwarding command {:?}", presenter_name, std::mem::discriminant(&cmd));
+                    tracing::info!(
+                        "{} bridge: forwarding command {:?}",
+                        presenter_name,
+                        std::mem::discriminant(&cmd)
+                    );
                     if tx.send(cmd).await.is_err() {
                         tracing::warn!("{} bridge: view command receiver dropped", presenter_name);
                         break;
@@ -163,14 +187,233 @@ fn resolve_runtime_paths() -> Result<RuntimePaths, String> {
     })
 }
 
+/// @plan PLAN-20260304-GPUIREMEDIATE.P06
+/// @requirement REQ-ARCH-002.1
+/// @requirement REQ-ARCH-002.2
+/// @requirement REQ-ARCH-002.5
+/// @requirement REQ-ARCH-006.3
+/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:001-013
+/// @plan PLAN-20260304-GPUIREMEDIATE.P08
+/// @requirement REQ-ARCH-005.1
+/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-127
+fn build_startup_inputs(runtime_paths: &RuntimePaths) -> Result<StartupInputs, String> {
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("Failed to create startup bootstrap runtime: {e}"))?;
 
-fn copy_json_files_if_target_empty(source_dir: &std::path::Path, target_dir: &std::path::Path) -> Result<(), String> {
+    rt.block_on(async {
+        let app_settings = AppSettingsServiceImpl::new(runtime_paths.app_settings_path.clone())
+            .map_err(|e| format!("Failed to create AppSettingsService for startup bootstrap: {e}"))?;
+        let conversation_service = ConversationServiceImpl::new(runtime_paths.conversations_dir.clone())
+            .map_err(|e| format!("Failed to create ConversationService for startup bootstrap: {e}"))?;
+        let profile_service_impl = ProfileServiceImpl::new(runtime_paths.profiles_dir.clone())
+            .map_err(|e| format!("Failed to create ProfileService for startup bootstrap: {e}"))?;
+        profile_service_impl
+            .initialize()
+            .await
+            .map_err(|e| format!("Failed to initialize ProfileService for startup bootstrap: {e}"))?;
+
+        let selected_profile_id = match app_settings.get_default_profile_id().await {
+            Ok(Some(id)) => Some(id),
+            _ => profile_service_impl.get_default().await.ok().flatten().map(|profile| profile.id),
+        };
+
+        let profiles = profile_service_impl
+            .list()
+            .await
+            .map_err(|e| format!("Failed to list profiles for startup bootstrap: {e}"))?
+            .into_iter()
+            .map(|profile| personal_agent::presentation::view_command::ProfileSummary {
+                id: profile.id,
+                name: profile.name,
+                provider_id: profile.provider_id,
+                model_id: profile.model_id,
+                is_default: Some(profile.id) == selected_profile_id,
+            })
+            .collect::<Vec<_>>();
+
+        let conversations = conversation_service
+            .list(None, None)
+            .await
+            .map_err(|e| format!("Failed to list conversations for startup bootstrap: {e}"))?;
+
+        let conversation_summaries = conversations
+            .iter()
+            .map(|conversation| personal_agent::presentation::view_command::ConversationSummary {
+                id: conversation.id,
+                title: conversation
+                    .title
+                    .clone()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| "Untitled Conversation".to_string()),
+                updated_at: conversation.updated_at,
+                message_count: conversation.messages.len(),
+            })
+            .collect::<Vec<_>>();
+
+        let selected_conversation = if let Some(conversation_id) = conversations.first().map(|conversation| conversation.id) {
+            let transcript_result = conversation_service
+                .get_messages(conversation_id)
+                .await
+                .map(|messages| {
+                    StartupTranscriptResult::Success(
+                        messages
+                            .into_iter()
+                            .filter_map(|message| {
+                                let role = match message.role {
+                                    personal_agent::models::MessageRole::User => {
+                                        personal_agent::presentation::view_command::MessageRole::User
+                                    }
+                                    personal_agent::models::MessageRole::Assistant => {
+                                        personal_agent::presentation::view_command::MessageRole::Assistant
+                                    }
+                                    personal_agent::models::MessageRole::System => return None,
+                                };
+
+                                Some(personal_agent::presentation::view_command::ConversationMessagePayload {
+                                    role,
+                                    content: message.content,
+                                    thinking_content: message.thinking_content,
+                                    timestamp: Some(message.timestamp.timestamp_millis() as u64),
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .unwrap_or_else(|e| {
+                    StartupTranscriptResult::Failure(format!(
+                        "Failed to load startup conversation messages for bootstrap: {e}"
+                    ))
+                });
+
+            Some(StartupSelectedConversation {
+                conversation_id,
+                mode: StartupMode::ModeA { transcript_result },
+            })
+        } else {
+            None
+        };
+
+        Ok(StartupInputs {
+            profiles,
+            selected_profile_id,
+            conversations: conversation_summaries,
+            selected_conversation,
+        })
+    })
+}
+
+/// @plan PLAN-20260304-GPUIREMEDIATE.P05
+/// @requirement REQ-ARCH-003.6
+/// @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:004-014
+fn handle_select_conversation_intent(app_state: &AppState, conversation_id: uuid::Uuid) {
+    match app_state
+        .app_store
+        .begin_selection(conversation_id, BeginSelectionMode::PublishImmediately)
+    {
+        BeginSelectionResult::NoOpSameSelection => {}
+        BeginSelectionResult::BeganSelection { generation } => {
+            let sent = app_state.gpui_bridge.emit(UserEvent::SelectConversation {
+                id: conversation_id,
+                selection_generation: generation,
+            });
+            if !sent {
+                app_state
+                    .app_store
+                    .reduce_batch(vec![ViewCommand::ConversationLoadFailed {
+                        conversation_id,
+                        selection_generation: generation,
+                        message: "SelectConversation transport enqueue failed".to_string(),
+                    }]);
+            }
+        }
+    }
+}
+
+/// @plan PLAN-20260304-GPUIREMEDIATE.P05
+/// @requirement REQ-ARCH-003.6
+/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:037-055
+fn drain_selection_intents(app_state: &AppState) {
+    while let Some(conversation_id) = selection_intent_channel().take_pending() {
+        handle_select_conversation_intent(app_state, conversation_id);
+    }
+}
+
+/// @plan PLAN-20260304-GPUIREMEDIATE.P05
+/// @requirement REQ-ARCH-003.4
+/// @requirement REQ-ARCH-004.1
+/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-036
+fn publish_store_snapshot_to_main_panel(app_store: &GpuiAppStore, cx: &mut AsyncApp) {
+    let snapshot = app_store.current_snapshot();
+
+    let popup_window = cx
+        .try_read_global::<MainPanelAppState, _>(|state, _| state.popup_window)
+        .flatten();
+
+    if let Some(window_handle) = popup_window {
+        let _ = window_handle.update(cx, |main_panel: &mut MainPanel, _, cx| {
+            main_panel.apply_store_snapshot(snapshot.clone(), cx);
+            cx.notify();
+        });
+    }
+}
+
+/// @plan PLAN-20260304-GPUIREMEDIATE.P05
+/// @requirement REQ-ARCH-003.4
+/// @requirement REQ-ARCH-004.1
+/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-036
+fn forward_runtime_commands_to_main_panel(commands: Vec<ViewCommand>, cx: &mut AsyncApp) {
+    let popup_window = cx
+        .try_read_global::<MainPanelAppState, _>(|state, _| state.popup_window)
+        .flatten();
+
+    if let Some(window_handle) = popup_window {
+        let _ = window_handle.update(cx, |main_panel: &mut MainPanel, _, cx| {
+            for command in commands {
+                main_panel.handle_command(command, cx);
+            }
+            cx.notify();
+        });
+    }
+}
+
+/// @plan PLAN-20260304-GPUIREMEDIATE.P05
+/// @requirement REQ-ARCH-003.4
+/// @requirement REQ-ARCH-004.1
+/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-036
+fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
+    cx.spawn(async move |cx| loop {
+        cx.background_executor()
+            .timer(Duration::from_millis(16))
+            .await;
+
+        drain_selection_intents(&app_state);
+
+        let commands = app_state.gpui_bridge.drain_commands();
+        let forwarded_commands = commands.clone();
+        let changed = app_state.app_store.reduce_batch(commands);
+        if changed {
+            publish_store_snapshot_to_main_panel(&app_state.app_store, cx);
+        }
+        forward_runtime_commands_to_main_panel(forwarded_commands, cx);
+    })
+    .detach();
+}
+
+fn copy_json_files_if_target_empty(
+    source_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<(), String> {
     if !source_dir.exists() {
         return Ok(());
     }
 
-    let source_entries = std::fs::read_dir(source_dir)
-        .map_err(|e| format!("Failed reading source directory {}: {}", source_dir.display(), e))?;
+    let source_entries = std::fs::read_dir(source_dir).map_err(|e| {
+        format!(
+            "Failed reading source directory {}: {}",
+            source_dir.display(),
+            e
+        )
+    })?;
 
     let source_json_files = source_entries
         .filter_map(Result::ok)
@@ -182,11 +425,22 @@ fn copy_json_files_if_target_empty(source_dir: &std::path::Path, target_dir: &st
         return Ok(());
     }
 
-    std::fs::create_dir_all(target_dir)
-        .map_err(|e| format!("Failed creating target directory {}: {}", target_dir.display(), e))?;
+    std::fs::create_dir_all(target_dir).map_err(|e| {
+        format!(
+            "Failed creating target directory {}: {}",
+            target_dir.display(),
+            e
+        )
+    })?;
 
     let target_has_json = std::fs::read_dir(target_dir)
-        .map_err(|e| format!("Failed reading target directory {}: {}", target_dir.display(), e))?
+        .map_err(|e| {
+            format!(
+                "Failed reading target directory {}: {}",
+                target_dir.display(),
+                e
+            )
+        })?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .any(|path| path.extension().and_then(|s| s.to_str()) == Some("json"));
@@ -226,7 +480,8 @@ fn copy_json_files_if_target_empty(source_dir: &std::path::Path, target_dir: &st
 }
 
 fn bootstrap_legacy_runtime_data(runtime_paths: &RuntimePaths) -> Result<(), String> {
-    let home = dirs::home_dir().ok_or_else(|| "Could not determine home directory for bootstrap".to_string())?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Could not determine home directory for bootstrap".to_string())?;
     let legacy_base = home.join(".llxprt");
 
     if !legacy_base.exists() {
@@ -263,10 +518,6 @@ fn bootstrap_legacy_runtime_data(runtime_paths: &RuntimePaths) -> Result<(), Str
 
     Ok(())
 }
-
-
-// Also set the simplified AppState that MainPanel expects
-use personal_agent::ui_gpui::views::main_panel::MainPanelAppState;
 
 // ============================================================================
 // System Tray Manager
@@ -423,7 +674,7 @@ impl SystemTray {
     fn open_popup(&mut self, cx: &mut App) {
         self.close_popup(cx);
 
-        let menu_width = 500.0_f32;
+        let menu_width = 780.0_f32;
         let menu_height = 600.0_f32;
 
         let (origin_x, origin_y) = self.get_popup_position(menu_width, menu_height);
@@ -458,7 +709,21 @@ impl SystemTray {
             cx.new(|cx| MainPanel::new(cx))
         }) {
             Ok(handle) => {
-                self.popup_window = Some(handle.into());
+                let any_handle: AnyWindowHandle = handle.into();
+                self.popup_window = Some(any_handle);
+                if let Some(state) = cx.try_global::<MainPanelAppState>().cloned() {
+                    cx.set_global(MainPanelAppState {
+                        gpui_bridge: state.gpui_bridge,
+                        popup_window: Some(handle),
+                        app_store: state.app_store,
+                    });
+                }
+                let _ = handle.update(cx, |main_panel, _window, cx| {
+                    if !main_panel.is_runtime_started() {
+                        tracing::info!("MainPanel: starting runtime from open_popup");
+                        main_panel.start_runtime(cx);
+                    }
+                });
                 info!(x = origin_x, y = origin_y, "Popup opened");
             }
             Err(e) => {
@@ -613,17 +878,44 @@ fn main() {
         // Create GPUI bridge
         let gpui_bridge = Arc::new(GpuiBridge::new(user_tx, view_cmd_rx));
 
+        let runtime_paths = resolve_runtime_paths()
+            .expect("Could not resolve runtime paths from platform config/data directories");
+        if let Err(e) = bootstrap_legacy_runtime_data(&runtime_paths) {
+            tracing::warn!("Legacy bootstrap copy failed: {}", e);
+        }
+        let startup_inputs = match build_startup_inputs(&runtime_paths) {
+            Ok(inputs) => inputs,
+            Err(e) => {
+                tracing::warn!("Failed to build startup bootstrap inputs: {}", e);
+                StartupInputs {
+                    profiles: Vec::new(),
+                    selected_profile_id: None,
+                    conversations: Vec::new(),
+                    selected_conversation: None,
+                }
+            }
+        };
+        let app_store = Arc::new(GpuiAppStore::from_startup_inputs(startup_inputs));
+
         // Initialize global state (full version)
         let app_state = AppState {
             event_bus: Arc::clone(&event_bus),
             gpui_bridge: Arc::clone(&gpui_bridge),
             view_cmd_tx,
+            app_store: Arc::clone(&app_store),
         };
-        cx.set_global(app_state);
+        cx.set_global(app_state.clone());
 
         // Also set the simplified AppState for MainPanel's view initialization
-        let main_panel_state = MainPanelAppState { gpui_bridge };
+        let main_panel_state = MainPanelAppState {
+            gpui_bridge,
+            popup_window: None,
+            app_store,
+        };
+
         cx.set_global(main_panel_state);
+
+        spawn_runtime_bridge_pump(app_state, cx);
 
         // Initialize system tray
         let mut tray = SystemTray::new(mtm);

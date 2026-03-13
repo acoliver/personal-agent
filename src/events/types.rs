@@ -55,7 +55,10 @@ pub enum UserEvent {
     NewConversation,
 
     /// User selected a conversation from history
-    SelectConversation { id: Uuid },
+    /// @plan PLAN-20260304-GPUIREMEDIATE.P05
+    /// @requirement REQ-ARCH-003.6
+    /// @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-087
+    SelectConversation { id: Uuid, selection_generation: u64 },
 
     /// User toggled thinking display
     ToggleThinking,
@@ -131,6 +134,9 @@ pub enum UserEvent {
     /// User requested history refresh
     /// @plan PLAN-20250130-GPUIREDUX.P05
     RefreshHistory,
+
+    /// User requested a fresh profile snapshot for chat/settings dropdowns.
+    RefreshProfiles,
 
     /// User initiated OAuth flow
     StartMcpOAuth { id: Uuid, provider: String },

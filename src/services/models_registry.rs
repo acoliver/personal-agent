@@ -28,6 +28,9 @@ pub trait ModelsRegistryService: Send + Sync {
     /// Get all models for a specific provider
     async fn get_provider(&self, provider: &str) -> ServiceResult<Vec<ModelInfo>>;
 
+    /// Get provider API base URL (if known from registry metadata)
+    async fn get_provider_api_url(&self, provider: &str) -> ServiceResult<Option<String>>;
+
     /// List all available providers
     async fn list_providers(&self) -> ServiceResult<Vec<String>>;
 

@@ -85,3 +85,13 @@ fn rename_subsequent_chars_append_normally_after_replacement() {
 
     assert_eq!(state.conversation_title_input, "New");
 }
+
+#[test]
+fn map_input_char_shift_transforms_letters_and_symbols() {
+    use personal_agent::ui_gpui::views::chat_view::ChatView;
+
+    assert_eq!(ChatView::map_input_char("a", false), Some('a'));
+    assert_eq!(ChatView::map_input_char("a", true), Some('A'));
+    assert_eq!(ChatView::map_input_char("1", true), Some('!'));
+    assert_eq!(ChatView::map_input_char("/", true), Some('?'));
+}

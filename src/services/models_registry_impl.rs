@@ -154,6 +154,25 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
             .unwrap_or_default())
     }
 
+    /// Get provider API base URL (if known from registry metadata)
+    async fn get_provider_api_url(&self, provider: &str) -> ServiceResult<Option<String>> {
+        // Ensure we have cached data
+        if self.cached_registry.read().await.is_none() {
+            if let Ok(Some(registry)) = self.cache.load() {
+                *self.cached_registry.write().await = Some(registry);
+            }
+        }
+
+        let registry = self.cached_registry.read().await;
+        let registry = registry.as_ref().ok_or_else(|| {
+            ServiceError::Internal("No cached data available. Call refresh() first.".to_string())
+        })?;
+
+        Ok(registry
+            .get_provider(provider)
+            .and_then(|provider| provider.api.clone()))
+    }
+
     /// List all available providers
     async fn list_providers(&self) -> ServiceResult<Vec<String>> {
         // Ensure we have cached data
@@ -402,6 +421,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_provider_api_url_reads_registry_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_path = temp_dir.path().join("test-cache.json");
+
+        let service = ModelsRegistryServiceImpl::with_cache_path(cache_path.clone());
+
+        let test_registry = create_test_registry();
+        service.cache.save(&test_registry).unwrap();
+
+        let api_url = service.get_provider_api_url("openai").await.unwrap();
+        assert_eq!(api_url.as_deref(), Some("https://api.openai.com/v1"));
+    }
+
     async fn test_cache_miss_without_refresh() {
         let temp_dir = TempDir::new().unwrap();
         let cache_path = temp_dir.path().join("test-cache.json");

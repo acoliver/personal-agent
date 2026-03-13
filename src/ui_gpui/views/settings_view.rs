@@ -3,9 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P06
 //! @requirement REQ-UI-ST
 
-use gpui::{
-    div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString,
-};
+use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -173,8 +171,14 @@ impl SettingsView {
         }
 
         if let Some(selected_id) = self.state.selected_profile_id {
-            if self.state.profiles.iter().all(|profile| profile.id != selected_id) {
-                self.state.selected_profile_id = self.state.profiles.first().map(|profile| profile.id);
+            if self
+                .state
+                .profiles
+                .iter()
+                .all(|profile| profile.id != selected_id)
+            {
+                self.state.selected_profile_id =
+                    self.state.profiles.first().map(|profile| profile.id);
             }
         }
     }
@@ -195,9 +199,12 @@ impl SettingsView {
     }
 
     fn selected_profile_index(&self) -> Option<usize> {
-        self.state
-            .selected_profile_id
-            .and_then(|id| self.state.profiles.iter().position(|profile| profile.id == id))
+        self.state.selected_profile_id.and_then(|id| {
+            self.state
+                .profiles
+                .iter()
+                .position(|profile| profile.id == id)
+        })
     }
 
     fn selected_mcp_index(&self) -> Option<usize> {
@@ -587,7 +594,7 @@ impl SettingsView {
                                         "Add profile clicked - navigating to ModelSelector"
                                     );
                                     crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::ModelSelector,
+                                        crate::presentation::view_command::ViewId::ProfileEditor,
                                     );
                                 }),
                             ),
@@ -741,7 +748,7 @@ impl SettingsView {
                 div()
                     .text_size(px(11.0))
                     .text_color(Theme::text_primary())
-                    .child("MCP TOOLS")
+                    .child("MCP TOOLS"),
             )
             // List box
             .child(
@@ -758,14 +765,12 @@ impl SettingsView {
                     .flex_col()
                     .children(mcps.iter().map(|m| self.render_mcp_row(m, cx)))
                     .when(mcps.is_empty(), |d| {
-                        d.items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .text_color(Theme::text_muted())
-                                    .child("No MCP tools configured")
-                            )
+                        d.items_center().justify_center().child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(Theme::text_muted())
+                                .child("No MCP tools configured"),
+                        )
                     })
                     .when(total_mcps > 0, |d| {
                         d.child(
@@ -777,7 +782,7 @@ impl SettingsView {
                                 .text_color(Theme::text_muted())
                                 .child(format!("{} MCP tools", total_mcps)),
                         )
-                    })
+                    }),
             )
             // Toolbar: [-] [+] [spacer] [Edit]
             .child(
@@ -798,14 +803,21 @@ impl SettingsView {
                             .cursor_pointer()
                             .when(has_selection, |d| d.hover(|s| s.bg(Theme::danger())))
                             .text_size(px(14.0))
-                            .text_color(if has_selection { Theme::text_primary() } else { Theme::text_muted() })
+                            .text_color(if has_selection {
+                                Theme::text_primary()
+                            } else {
+                                Theme::text_muted()
+                            })
                             .child("-")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                if let Some(id) = this.state.selected_mcp_id {
-                                    tracing::info!("Delete MCP clicked: {}", id);
-                                    this.emit(UserEvent::DeleteMcp { id });
-                                }
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    if let Some(id) = this.state.selected_mcp_id {
+                                        tracing::info!("Delete MCP clicked: {}", id);
+                                        this.emit(UserEvent::DeleteMcp { id });
+                                    }
+                                }),
+                            ),
                     )
                     // [+] Add button
                     .child(
@@ -821,12 +833,15 @@ impl SettingsView {
                             .text_size(px(14.0))
                             .text_color(Theme::text_primary())
                             .child("+")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, _cx| {
-                                tracing::info!("Add MCP clicked - navigating to McpAdd");
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::McpAdd
-                                );
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_this, _, _window, _cx| {
+                                    tracing::info!("Add MCP clicked - navigating to McpAdd");
+                                    crate::ui_gpui::navigation_channel().request_navigate(
+                                        crate::presentation::view_command::ViewId::McpAdd,
+                                    );
+                                }),
+                            ),
                     )
                     // Spacer
                     .child(div().flex_1())
@@ -843,18 +858,25 @@ impl SettingsView {
                             .cursor_pointer()
                             .when(has_selection, |d| d.hover(|s| s.bg(Theme::bg_dark())))
                             .text_size(px(12.0))
-                            .text_color(if has_selection { Theme::text_primary() } else { Theme::text_muted() })
+                            .text_color(if has_selection {
+                                Theme::text_primary()
+                            } else {
+                                Theme::text_muted()
+                            })
                             .child("Edit")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, _cx| {
-                                if let Some(id) = this.state.selected_mcp_id {
-                                    tracing::info!("Edit MCP clicked: {}", id);
-                                    this.emit(UserEvent::ConfigureMcp { id });
-                                    crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::McpConfigure
-                                    );
-                                }
-                            }))
-                    )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    if let Some(id) = this.state.selected_mcp_id {
+                                        tracing::info!("Edit MCP clicked: {}", id);
+                                        this.emit(UserEvent::ConfigureMcp { id });
+                                        crate::ui_gpui::navigation_channel().request_navigate(
+                                            crate::presentation::view_command::ViewId::McpConfigure,
+                                        );
+                                    }
+                                }),
+                            ),
+                    ),
             )
     }
 
@@ -933,7 +955,7 @@ impl gpui::Render for SettingsView {
                         // Shift+= is "+"
                         println!(">>> + pressed - Add Profile <<<");
                         crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::ModelSelector,
+                            crate::presentation::view_command::ViewId::ProfileEditor,
                         );
                     }
                     // "e" key: Edit selected profile

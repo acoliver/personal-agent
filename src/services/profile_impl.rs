@@ -1,6 +1,7 @@
 //! Profile service implementation
 
 use super::{ProfileService, ServiceResult};
+use crate::config::default_api_base_url_for_provider;
 use crate::models::{AuthConfig, ModelParameters, ModelProfile};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -18,23 +19,28 @@ pub struct ProfileServiceImpl {
 }
 
 impl ProfileServiceImpl {
+    fn legacy_profile_id_for_path(path: &Path) -> Uuid {
+        let identifier = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| format!("legacy-profile:{name}"))
+            .unwrap_or_else(|| format!("legacy-profile:{}", path.to_string_lossy()));
+
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, identifier.as_bytes())
+    }
+
     fn normalize_api_base_url(provider: &str, base_url: Option<String>) -> String {
         match base_url {
             Some(candidate) if !candidate.trim().is_empty() => candidate.trim().to_string(),
-            _ => match provider.trim() {
-                "anthropic" => "https://api.anthropic.com/v1".to_string(),
-                _ => "https://api.openai.com/v1".to_string(),
-            },
+            _ => default_api_base_url_for_provider(provider),
         }
     }
 
     fn normalize_system_prompt(system_prompt: Option<String>) -> String {
         match system_prompt {
             Some(candidate) if !candidate.trim().is_empty() => candidate.trim().to_string(),
-            _ => {
-                "You are a helpful assistant, be direct and to the point. Respond in English."
-                    .to_string()
-            }
+            _ => "You are a helpful assistant, be direct and to the point. Respond in English."
+                .to_string(),
         }
     }
 
@@ -114,7 +120,6 @@ impl ProfileServiceImpl {
         }
     }
 
-
     fn resolve_key_name_to_path(key_name: &str) -> Option<String> {
         let trimmed = key_name.trim();
         if trimmed.is_empty() {
@@ -137,7 +142,9 @@ impl ProfileServiceImpl {
                 let candidates = [
                     home.join(".keys").join(format!(".{}_key", key_name)),
                     home.join(".keys").join(&key_name),
-                    home.join(".llxprt").join("keys").join(format!(".{}_key", key_name)),
+                    home.join(".llxprt")
+                        .join("keys")
+                        .join(format!(".{}_key", key_name)),
                     home.join(".llxprt").join("keys").join(&key_name),
                 ];
 
@@ -271,7 +278,7 @@ impl ProfileServiceImpl {
                 .to_string();
 
             return Some(ModelProfile {
-                id: Uuid::new_v4(),
+                id: Self::legacy_profile_id_for_path(path),
                 name,
                 provider_id,
                 model_id,
@@ -314,7 +321,7 @@ impl ProfileServiceImpl {
             let parameters = Self::parse_parameters_from_legacy(obj.get("modelParams"), ephemeral);
 
             return Some(ModelProfile {
-                id: Uuid::new_v4(),
+                id: Self::legacy_profile_id_for_path(path),
                 name,
                 provider_id,
                 model_id,
@@ -422,7 +429,7 @@ impl ProfileServiceImpl {
                 profile.model_id = "gpt-4".to_string();
             }
             if profile.base_url.trim().is_empty() {
-                profile.base_url = "https://api.openai.com/v1".to_string();
+                profile.base_url = Self::normalize_api_base_url(&profile.provider_id, None);
             }
 
             // Avoid duplicate IDs if legacy conversion generated conflicting entries.
@@ -470,6 +477,38 @@ impl ProfileServiceImpl {
                     path.display()
                 ))
             })?;
+            return Ok(());
+        }
+
+        // Backward-compatibility: legacy profiles may still be stored under non-UUID file names
+        // (for example, `synthetic.json`). Those profiles now use a deterministic derived ID,
+        // so we can resolve and delete the backing legacy file by matching that derived ID.
+        let entries = fs::read_dir(&self.profiles_dir).map_err(|e| {
+            super::ServiceError::Io(format!("Failed to read profiles directory: {e}"))
+        })?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                super::ServiceError::Io(format!("Failed to read directory entry: {e}"))
+            })?;
+
+            let candidate_path = entry.path();
+            if candidate_path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            if candidate_path.file_name().and_then(|n| n.to_str()) == Some("default.json") {
+                continue;
+            }
+
+            if Self::legacy_profile_id_for_path(&candidate_path) == id {
+                fs::remove_file(&candidate_path).map_err(|e| {
+                    super::ServiceError::Io(format!(
+                        "Failed to delete legacy profile file {}: {e}",
+                        candidate_path.display()
+                    ))
+                })?;
+                break;
+            }
         }
 
         Ok(())
@@ -547,14 +586,9 @@ impl ProfileService for ProfileServiceImpl {
         let normalized_base_url = Self::normalize_api_base_url(&normalized_provider, base_url);
         let normalized_system_prompt = Self::normalize_system_prompt(system_prompt);
 
-        let mut profile = ModelProfile::new(
-            name,
-            normalized_provider,
-            model,
-            normalized_base_url,
-            auth,
-        )
-        .with_parameters(parameters);
+        let mut profile =
+            ModelProfile::new(name, normalized_provider, model, normalized_base_url, auth)
+                .with_parameters(parameters);
         profile.system_prompt = normalized_system_prompt;
 
         // Check if profile with same ID already exists (unlikely but possible)
@@ -571,9 +605,21 @@ impl ProfileService for ProfileServiceImpl {
         // Save to disk
         self.save_profile_to_disk(&profile)?;
 
-        // Add to in-memory cache
+        // Add to in-memory cache and auto-select first created profile as default.
         let mut profiles = self.profiles.write().await;
+        let was_empty = profiles.is_empty();
         profiles.push(profile.clone());
+        drop(profiles);
+
+        if was_empty {
+            if let Err(e) = self.save_default_id(profile.id) {
+                tracing::warn!(
+                    error = %e,
+                    profile_id = %profile.id,
+                    "Failed to persist default for first created profile"
+                );
+            }
+        }
 
         Ok(profile)
     }
@@ -875,6 +921,66 @@ mod tests {
         assert_eq!(profiles.len(), 0);
 
         assert!(service.get(profile.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_legacy_named_profile_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let legacy_path = temp_dir.path().join("synthetic.json");
+        let payload = serde_json::json!({
+            "version": 1,
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "modelParams": {
+                "temperature": 1
+            },
+            "ephemeralSettings": {
+                "base-url": "https://api.openai.com/v1"
+            }
+        });
+
+        std::fs::write(
+            &legacy_path,
+            serde_json::to_string_pretty(&payload).unwrap(),
+        )
+        .unwrap();
+
+        let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        service.initialize().await.unwrap();
+
+        let profiles = service.list().await.unwrap();
+        assert_eq!(profiles.len(), 1);
+
+        service.delete(profiles[0].id).await.unwrap();
+
+        assert!(!legacy_path.exists());
+        assert!(service.list().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_legacy_profile_uses_stable_file_derived_id() {
+        let payload = serde_json::json!({
+            "version": 1,
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "modelParams": {
+                "temperature": 1
+            },
+            "ephemeralSettings": {
+                "base-url": "https://api.openai.com/v1"
+            }
+        });
+
+        let path_a = std::path::Path::new("/tmp/synthetic.json");
+        let path_b = std::path::Path::new("/tmp/synthetic.json");
+        let path_c = std::path::Path::new("/tmp/zai.json");
+
+        let profile_a = ProfileServiceImpl::parse_legacy_profile(&payload, path_a).unwrap();
+        let profile_b = ProfileServiceImpl::parse_legacy_profile(&payload, path_b).unwrap();
+        let profile_c = ProfileServiceImpl::parse_legacy_profile(&payload, path_c).unwrap();
+
+        assert_eq!(profile_a.id, profile_b.id);
+        assert_ne!(profile_a.id, profile_c.id);
     }
 
     #[tokio::test]

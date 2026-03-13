@@ -1,6 +1,18 @@
 use personal_agent::{AuthConfig, LlmClient, ModelProfile};
 use tempfile::TempDir;
 
+fn profile(provider_id: &str, model_id: &str, base_url: &str) -> ModelProfile {
+    ModelProfile::new(
+        "Test".to_string(),
+        provider_id.to_string(),
+        model_id.to_string(),
+        base_url.to_string(),
+        AuthConfig::Key {
+            value: "secret".to_string(),
+        },
+    )
+}
+
 #[test]
 fn llm_client_rejects_empty_api_key() {
     let profile = ModelProfile::new(
@@ -26,7 +38,8 @@ fn llm_client_rejects_whitespace_only_api_key() {
         String::new(),
         AuthConfig::Key {
             value: "   
-	  ".to_string(),
+	  "
+            .to_string(),
         },
     );
 
@@ -85,8 +98,11 @@ fn llm_client_reads_keyfile_with_surrounding_whitespace_in_path() {
         "gpt-4o".to_string(),
         String::new(),
         AuthConfig::Keyfile {
-            path: format!("  {}
-", key_path.to_string_lossy()),
+            path: format!(
+                "  {}
+",
+                key_path.to_string_lossy()
+            ),
         },
     );
 
@@ -103,10 +119,20 @@ fn llm_client_rejects_whitespace_only_keyfile_path() {
         String::new(),
         AuthConfig::Keyfile {
             path: "  	
- ".to_string(),
+ "
+            .to_string(),
         },
     );
 
     let result = LlmClient::from_profile(&profile);
     assert!(result.is_err());
+}
+
+#[test]
+fn llm_client_model_spec_uses_openai_transport_for_kimi_quirk() {
+    let profile = profile("kimi-for-coding", "kimi-for-coding", "");
+
+    let client = LlmClient::from_profile(&profile).expect("client");
+
+    assert_eq!(client.model_spec(), "openai:kimi-for-coding");
 }

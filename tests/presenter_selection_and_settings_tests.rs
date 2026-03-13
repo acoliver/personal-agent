@@ -119,8 +119,13 @@ impl ChatService for MockChatService {
         &self,
         _conversation_id: Uuid,
         _content: String,
-    ) -> Result<Box<dyn futures::Stream<Item = personal_agent::services::ChatStreamEvent> + Send + Unpin>, ServiceError> {
-        Ok(Box::new(futures::stream::empty::<personal_agent::services::ChatStreamEvent>()))
+    ) -> Result<
+        Box<dyn futures::Stream<Item = personal_agent::services::ChatStreamEvent> + Send + Unpin>,
+        ServiceError,
+    > {
+        Ok(Box::new(futures::stream::empty::<
+            personal_agent::services::ChatStreamEvent,
+        >()))
     }
 
     fn cancel(&self) {}
@@ -186,6 +191,137 @@ impl ProfileService for EmptyProfileService {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Phase03SelectionObservation {
+    Activated {
+        id: Uuid,
+    },
+    ReplayLoaded {
+        conversation_id: Uuid,
+        message_count: usize,
+    },
+    Cleared,
+    Other,
+}
+
+struct SelectionTracker {
+    selected_id: Uuid,
+    observations: Vec<Phase03SelectionObservation>,
+}
+
+impl SelectionTracker {
+    fn new(selected_id: Uuid) -> Self {
+        Self {
+            selected_id,
+            observations: Vec::new(),
+        }
+    }
+
+    fn record(&mut self, cmd: &ViewCommand) {
+        let observation = match cmd {
+            ViewCommand::ConversationActivated {
+                id,
+                selection_generation: _,
+            } if *id == self.selected_id => Phase03SelectionObservation::Activated { id: *id },
+            ViewCommand::ConversationMessagesLoaded {
+                conversation_id,
+                selection_generation: _,
+                messages,
+            } if *conversation_id == self.selected_id => {
+                Phase03SelectionObservation::ReplayLoaded {
+                    conversation_id: *conversation_id,
+                    message_count: messages.len(),
+                }
+            }
+            ViewCommand::ConversationCleared => Phase03SelectionObservation::Cleared,
+            _ => Phase03SelectionObservation::Other,
+        };
+
+        self.observations.push(observation);
+    }
+
+    fn saw_activation(&self) -> bool {
+        self.observations.iter().any(|observation| {
+            matches!(
+                observation,
+                Phase03SelectionObservation::Activated { id } if *id == self.selected_id
+            )
+        })
+    }
+
+    fn replay_message_count(&self) -> Option<usize> {
+        self.observations
+            .iter()
+            .find_map(|observation| match observation {
+                Phase03SelectionObservation::ReplayLoaded {
+                    conversation_id,
+                    message_count,
+                } if *conversation_id == self.selected_id => Some(*message_count),
+                _ => None,
+            })
+    }
+
+    fn saw_cleared(&self) -> bool {
+        self.observations
+            .iter()
+            .any(|observation| matches!(observation, Phase03SelectionObservation::Cleared))
+    }
+}
+
+fn spawn_mpsc_to_flume_view_command_bridge_for_test(
+    mut rx: tokio::sync::mpsc::Receiver<ViewCommand>,
+    tx: flume::Sender<ViewCommand>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(cmd) = rx.recv().await {
+            if tx.send(cmd).is_err() {
+                break;
+            }
+        }
+    })
+}
+
+/// @plan PLAN-20260304-GPUIREMEDIATE.P05
+/// @requirement REQ-INT-001.2
+/// @requirement REQ-ARCH-003.4
+/// @requirement REQ-ARCH-003.6
+/// @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-063
+fn assert_selection_generation_protocol(commands: &[ViewCommand]) {
+    let mut activated_generation: Option<u64> = None;
+    let mut loaded_generation: Option<u64> = None;
+
+    for cmd in commands {
+        match cmd {
+            ViewCommand::ConversationActivated {
+                selection_generation,
+                ..
+            } => {
+                activated_generation = Some(*selection_generation);
+            }
+            ViewCommand::ConversationMessagesLoaded {
+                selection_generation,
+                ..
+            } => {
+                loaded_generation = Some(*selection_generation);
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        activated_generation.is_some(),
+        "selection_generation protocol: ConversationActivated must carry selection_generation"
+    );
+    assert!(
+        loaded_generation.is_some(),
+        "selection_generation protocol: ConversationMessagesLoaded must carry selection_generation"
+    );
+    assert_eq!(
+        activated_generation, loaded_generation,
+        "selection_generation protocol: generation token must be consistent across ConversationActivated and ConversationMessagesLoaded"
+    );
+}
+
 #[tokio::test]
 async fn select_conversation_emits_activation_and_replays_messages() {
     let selected_id = Uuid::new_v4();
@@ -222,35 +358,252 @@ async fn select_conversation_emits_activation_and_replays_messages() {
     );
     presenter.start().await.expect("start chat presenter");
 
+    tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+    while view_rx.try_recv().is_ok() {}
+
     event_bus
-        .publish(AppEvent::User(UserEvent::SelectConversation { id: selected_id }))
+        .publish(AppEvent::User(UserEvent::SelectConversation {
+            id: selected_id,
+            selection_generation: 0,
+        }))
         .ok();
 
     tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
 
     let mut saw_activation = false;
-    let mut replayed = Vec::new();
+    let mut replayed = None;
 
     while let Ok(cmd) = view_rx.try_recv() {
         match cmd {
-            ViewCommand::ConversationActivated { id } => {
+            ViewCommand::ConversationActivated {
+                id,
+                selection_generation: _,
+            } => {
                 if id == selected_id {
                     saw_activation = true;
                 }
             }
-            ViewCommand::MessageAppended { role, content, .. } => {
-                replayed.push((role, content));
+            ViewCommand::ConversationMessagesLoaded {
+                conversation_id,
+                selection_generation: _,
+                messages,
+            } if conversation_id == selected_id => {
+                replayed = Some(messages);
             }
             _ => {}
         }
     }
 
-    assert!(saw_activation, "SelectConversation should emit ConversationActivated");
-    assert_eq!(replayed.len(), 2, "Should replay all stored messages for selected conversation");
-    assert!(matches!(replayed[0].0, MessageRole::User));
-    assert_eq!(replayed[0].1, "first");
-    assert!(matches!(replayed[1].0, MessageRole::Assistant));
-    assert_eq!(replayed[1].1, "second");
+    let replayed = replayed.expect("Should replay stored messages via ConversationMessagesLoaded");
+    assert!(
+        saw_activation,
+        "SelectConversation should emit ConversationActivated"
+    );
+    assert_eq!(
+        replayed.len(),
+        2,
+        "Should replay all stored messages for selected conversation"
+    );
+    assert!(matches!(replayed[0].role, MessageRole::User));
+    assert_eq!(replayed[0].content, "first");
+    assert!(matches!(replayed[1].role, MessageRole::Assistant));
+    assert_eq!(replayed[1].content, "second");
+}
+
+/// @plan PLAN-20260304-GPUIREMEDIATE.P06
+/// @requirement REQ-INT-001.2
+/// @requirement REQ-ARCH-002.4
+/// @requirement REQ-ARCH-004.3
+/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:009-013
+#[tokio::test]
+async fn startup_and_manual_selection_converge_on_one_authoritative_delivery_path() {
+    use personal_agent::presentation::view_command::{
+        ConversationMessagePayload, ConversationSummary, ProfileSummary,
+    };
+    use personal_agent::ui_gpui::app_store::ConversationLoadState;
+    use personal_agent::ui_gpui::app_store::{
+        BeginSelectionMode, GpuiAppStore, StartupInputs, StartupMode, StartupSelectedConversation,
+        StartupTranscriptResult,
+    };
+
+    let conv_id = Uuid::new_v4();
+    let messages = vec![
+        ConversationMessagePayload {
+            role: MessageRole::User,
+            content: "hello".to_string(),
+            thinking_content: None,
+            timestamp: Some(1000),
+        },
+        ConversationMessagePayload {
+            role: MessageRole::Assistant,
+            content: "world".to_string(),
+            thinking_content: None,
+            timestamp: Some(2000),
+        },
+    ];
+
+    // ── Startup path: build inputs and hydrate store ────────────────────
+    let startup_inputs = StartupInputs {
+        profiles: vec![],
+        selected_profile_id: None,
+        conversations: vec![ConversationSummary {
+            id: conv_id,
+            title: "Test Conversation".to_string(),
+            updated_at: Utc::now(),
+            message_count: 2,
+        }],
+        selected_conversation: Some(StartupSelectedConversation {
+            conversation_id: conv_id,
+            mode: StartupMode::ModeA {
+                transcript_result: StartupTranscriptResult::Success(messages.clone()),
+            },
+        }),
+    };
+
+    let store = std::sync::Arc::new(GpuiAppStore::from_startup_inputs(startup_inputs));
+    let startup_snap = store.current_snapshot();
+
+    assert_eq!(startup_snap.chat.selected_conversation_id, Some(conv_id));
+    assert_eq!(startup_snap.chat.transcript, messages);
+    assert!(
+        matches!(startup_snap.chat.load_state, ConversationLoadState::Ready { conversation_id, generation } if conversation_id == conv_id && generation == 1),
+        "startup hydration should produce Ready with generation 1"
+    );
+    let startup_generation = startup_snap.chat.selection_generation;
+    assert_eq!(startup_generation, 1, "startup generation should be 1");
+
+    // ── Runtime path: manual selection through the same store ────────────
+    let other_id = Uuid::new_v4();
+    let other_messages = vec![ConversationMessagePayload {
+        role: MessageRole::User,
+        content: "runtime message".to_string(),
+        thinking_content: None,
+        timestamp: Some(3000),
+    }];
+
+    let result = store.begin_selection(other_id, BeginSelectionMode::PublishImmediately);
+    assert!(
+        matches!(result, personal_agent::ui_gpui::app_store::BeginSelectionResult::BeganSelection { generation } if generation == 2),
+        "runtime begin_selection should mint generation 2"
+    );
+
+    let runtime_snap_loading = store.current_snapshot();
+    assert_eq!(
+        runtime_snap_loading.chat.selected_conversation_id,
+        Some(other_id)
+    );
+    assert!(
+        matches!(runtime_snap_loading.chat.load_state, ConversationLoadState::Loading { conversation_id, generation } if conversation_id == other_id && generation == 2),
+        "runtime selection should enter Loading"
+    );
+
+    store.reduce_batch(vec![ViewCommand::ConversationMessagesLoaded {
+        conversation_id: other_id,
+        selection_generation: 2,
+        messages: other_messages.clone(),
+    }]);
+
+    let runtime_snap_ready = store.current_snapshot();
+    assert_eq!(
+        runtime_snap_ready.chat.selected_conversation_id,
+        Some(other_id)
+    );
+    assert_eq!(runtime_snap_ready.chat.transcript, other_messages);
+    assert!(
+        matches!(runtime_snap_ready.chat.load_state, ConversationLoadState::Ready { conversation_id, generation } if conversation_id == other_id && generation == 2),
+        "runtime selection should reach Ready with generation 2"
+    );
+
+    // ── Convergence proof: both paths use the same store reducer ─────────
+    // Startup produced Ready(gen=1), runtime produced Ready(gen=2).
+    // Both used begin_selection + ConversationMessagesLoaded through the same
+    // authoritative store. No legacy build_startup_view_commands or
+    // apply_startup_commands replay was needed for chat state.
+    let source = include_str!("../src/main_gpui.rs");
+    assert!(
+        !source.contains("build_startup_view_commands"),
+        "convergence: legacy build_startup_view_commands should no longer exist"
+    );
+    assert!(
+        source.contains("build_startup_inputs"),
+        "convergence: startup should use structured inputs"
+    );
+}
+
+/// @plan PLAN-20260304-GPUIREMEDIATE.P05
+/// @requirement REQ-INT-001.2
+/// @requirement REQ-ARCH-003.4
+/// @requirement REQ-ARCH-003.6
+/// @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-063
+#[tokio::test]
+async fn selection_generation_protocol_is_present() {
+    let selected_id = Uuid::new_v4();
+    let conversation_service = Arc::new(SelectConversationService {
+        id: selected_id,
+        messages: vec![Message {
+            role: DomainMessageRole::User,
+            content: "first".to_string(),
+            thinking_content: None,
+            timestamp: Utc::now(),
+        }],
+    }) as Arc<dyn ConversationService>;
+
+    let chat_service = Arc::new(MockChatService) as Arc<dyn ChatService>;
+    let profile_service = Arc::new(EmptyProfileService) as Arc<dyn ProfileService>;
+
+    let event_bus = Arc::new(EventBus::new(64));
+    let (user_tx, user_rx) = flume::bounded::<UserEvent>(16);
+    let (flume_view_tx, flume_view_rx) = flume::bounded::<ViewCommand>(16);
+    let (presenter_view_tx, presenter_view_rx) = mpsc::channel::<ViewCommand>(16);
+    let bridge = personal_agent::ui_gpui::bridge::GpuiBridge::new(user_tx, flume_view_rx);
+    let _forwarder =
+        personal_agent::ui_gpui::bridge::spawn_user_event_forwarder(event_bus.clone(), user_rx);
+    let _view_bridge =
+        spawn_mpsc_to_flume_view_command_bridge_for_test(presenter_view_rx, flume_view_tx);
+
+    let mut presenter = ChatPresenter::new(
+        event_bus,
+        conversation_service,
+        chat_service,
+        profile_service,
+        presenter_view_tx,
+    );
+    presenter.start().await.expect("start chat presenter");
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+    bridge.drain_commands();
+
+    assert!(
+        bridge.emit(UserEvent::SelectConversation {
+            id: selected_id,
+            selection_generation: 0
+        }),
+        "precondition: bridge should still accept SelectConversation for runtime delivery"
+    );
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+
+    let commands = bridge.drain_commands();
+    let mut tracker = SelectionTracker::new(selected_id);
+    for command in &commands {
+        tracker.record(command);
+    }
+
+    assert!(
+        tracker.saw_activation(),
+        "precondition: current presenter/bridge harness should still emit ConversationActivated for the selected conversation"
+    );
+    assert_eq!(
+        tracker.replay_message_count(),
+        Some(1),
+        "precondition: current presenter/bridge harness should still bulk replay the selected conversation"
+    );
+    assert!(
+        !tracker.saw_cleared(),
+        "precondition: current presenter/bridge harness should not emit ConversationCleared"
+    );
+
+    assert_selection_generation_protocol(&commands);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -384,7 +737,8 @@ async fn edit_profile_emits_profile_editor_load_with_existing_data() {
         system_prompt: "system".to_string(),
     };
 
-    let profile_service = Arc::new(MockProfileServiceForSettings { profile }) as Arc<dyn ProfileService>;
+    let profile_service =
+        Arc::new(MockProfileServiceForSettings { profile }) as Arc<dyn ProfileService>;
     let app_settings = Arc::new(MockAppSettings) as Arc<dyn AppSettingsService>;
 
     let (event_tx, _) = broadcast::channel::<AppEvent>(64);
@@ -426,7 +780,10 @@ async fn edit_profile_emits_profile_editor_load_with_existing_data() {
         }
     }
 
-    assert!(saw_prefill, "EditProfile should emit ProfileEditorLoad prefill command");
+    assert!(
+        saw_prefill,
+        "EditProfile should emit ProfileEditorLoad prefill command"
+    );
     assert!(saw_nav, "EditProfile should navigate to ProfileEditor");
 }
 
@@ -446,7 +803,8 @@ async fn delete_profile_emits_profile_deleted_command() {
         system_prompt: "system".to_string(),
     };
 
-    let profile_service = Arc::new(MockProfileServiceForSettings { profile }) as Arc<dyn ProfileService>;
+    let profile_service =
+        Arc::new(MockProfileServiceForSettings { profile }) as Arc<dyn ProfileService>;
     let app_settings = Arc::new(MockAppSettings) as Arc<dyn AppSettingsService>;
 
     let (event_tx, _) = broadcast::channel::<AppEvent>(64);
@@ -470,5 +828,8 @@ async fn delete_profile_emits_profile_deleted_command() {
         }
     }
 
-    assert!(saw_deleted, "DeleteProfile should emit ProfileDeleted for settings view refresh");
+    assert!(
+        saw_deleted,
+        "DeleteProfile should emit ProfileDeleted for settings view refresh"
+    );
 }

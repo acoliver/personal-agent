@@ -7,6 +7,7 @@ use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedStri
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::config::default_api_base_url_for_provider;
 use crate::events::types::{ModelProfileAuth, ModelProfileParameters, UserEvent};
 use crate::presentation::view_command::ViewCommand;
 use crate::ui_gpui::bridge::GpuiBridge;
@@ -34,18 +35,33 @@ impl AuthMethod {
 
 /// API type enum
 /// @plan PLAN-20250130-GPUIREDUX.P08
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ApiType {
-    #[default]
     Anthropic,
     OpenAI,
+    Custom(String),
+}
+
+impl Default for ApiType {
+    fn default() -> Self {
+        Self::Anthropic
+    }
 }
 
 impl ApiType {
-    pub fn display(&self) -> &'static str {
+    pub fn display(&self) -> String {
         match self {
-            ApiType::Anthropic => "Anthropic",
-            ApiType::OpenAI => "OpenAI",
+            ApiType::Anthropic => "Anthropic".to_string(),
+            ApiType::OpenAI => "OpenAI".to_string(),
+            ApiType::Custom(provider) => provider.clone(),
+        }
+    }
+
+    fn provider_id(&self) -> String {
+        match self {
+            ApiType::Anthropic => "anthropic".to_string(),
+            ApiType::OpenAI => "openai".to_string(),
+            ApiType::Custom(provider) => provider.clone(),
         }
     }
 }
@@ -152,6 +168,11 @@ pub struct ProfileEditorView {
     state: ProfileEditorState,
     bridge: Option<Arc<GpuiBridge>>,
     focus_handle: FocusHandle,
+}
+
+fn sanitized_clipboard_text(text: &str) -> String {
+    text.trim_matches(|c| c == '\r' || c == '\n' || c == ' ' || c == '\t')
+        .to_string()
 }
 
 impl ProfileEditorView {
@@ -302,7 +323,8 @@ impl ProfileEditorView {
             if let Some(item) = cx.read_from_clipboard() {
                 if let Some(text) = item.text() {
                     if self.state.active_field == Some(ActiveField::ApiKey) {
-                        self.state.data.api_key = text;
+                        self.state.data.api_key =
+                            sanitized_clipboard_text(&text).trim().to_string();
                     } else {
                         self.append_to_active_field(&text);
                     }
@@ -390,10 +412,7 @@ impl ProfileEditorView {
             .and_then(|raw| Uuid::parse_str(raw).ok())
             .unwrap_or_else(Uuid::new_v4);
 
-        let provider_id = match self.state.data.api_type {
-            ApiType::Anthropic => Some("anthropic".to_string()),
-            ApiType::OpenAI => Some("openai".to_string()),
-        };
+        let provider_id = Some(self.state.data.api_type.provider_id());
 
         let auth = match self.state.data.auth_method {
             AuthMethod::None => Some(ModelProfileAuth::None),
@@ -443,25 +462,24 @@ impl ProfileEditorView {
             ViewCommand::ModelSelected {
                 provider_id,
                 model_id,
+                provider_api_url,
                 context_length,
             } => {
                 // Prefill profile editor from model selection flow.
                 self.state.is_new = true;
                 self.state.data.model_id = model_id.clone();
-                self.state.data.api_type = if provider_id == "anthropic" {
-                    ApiType::Anthropic
-                } else {
-                    ApiType::OpenAI
+                self.state.data.api_type = match provider_id.as_str() {
+                    "anthropic" => ApiType::Anthropic,
+                    "openai" => ApiType::OpenAI,
+                    _ => ApiType::Custom(provider_id.clone()),
                 };
                 if self.state.data.name.trim().is_empty() {
                     self.state.data.name = model_id;
                 }
                 if self.state.data.base_url.trim().is_empty() {
-                    self.state.data.base_url = match provider_id.as_str() {
-                        "anthropic" => "https://api.anthropic.com/v1".to_string(),
-                        "openai" => "https://api.openai.com/v1".to_string(),
-                        _ => "https://api.openai.com/v1".to_string(),
-                    };
+                    self.state.data.base_url = provider_api_url
+                        .filter(|url| !url.trim().is_empty())
+                        .unwrap_or_else(|| default_api_base_url_for_provider(&provider_id));
                 }
                 if let Some(limit) = context_length {
                     self.state.data.context_limit = limit;
@@ -489,10 +507,10 @@ impl ProfileEditorView {
                 self.state.data.name = name;
                 self.state.data.model_id = model_id;
                 self.state.data.base_url = base_url;
-                self.state.data.api_type = if provider_id == "anthropic" {
-                    ApiType::Anthropic
-                } else {
-                    ApiType::OpenAI
+                self.state.data.api_type = match provider_id.as_str() {
+                    "anthropic" => ApiType::Anthropic,
+                    "openai" => ApiType::OpenAI,
+                    _ => ApiType::Custom(provider_id.clone()),
                 };
                 self.state.data.auth_method = match auth_kind.as_str() {
                     "keyfile" => AuthMethod::Keyfile,
@@ -657,7 +675,12 @@ impl ProfileEditorView {
                     .child(value.to_string())
             })
             .when(active, |d| {
-                d.child(div().ml(px(2.0)).text_color(Theme::text_primary()).child("|"))
+                d.child(
+                    div()
+                        .ml(px(2.0))
+                        .text_color(Theme::text_primary())
+                        .child("|"),
+                )
             })
     }
 
@@ -698,7 +721,12 @@ impl ProfileEditorView {
                 div().text_color(Theme::text_primary()).child(display)
             })
             .when(active, |d| {
-                d.child(div().ml(px(2.0)).text_color(Theme::text_primary()).child("|"))
+                d.child(
+                    div()
+                        .ml(px(2.0))
+                        .text_color(Theme::text_primary())
+                        .child("|"),
+                )
             })
     }
 
@@ -773,10 +801,11 @@ impl ProfileEditorView {
                             .child("Browse")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|_this, _, _window, _cx| {
+                                cx.listener(|this, _, _window, _cx| {
                                     tracing::info!(
                                         "Browse model clicked - navigating to ModelSelector"
                                     );
+                                    this.state = ProfileEditorState::new_profile();
                                     crate::ui_gpui::navigation_channel().request_navigate(
                                         crate::presentation::view_command::ViewId::ModelSelector,
                                     );
@@ -817,15 +846,13 @@ impl ProfileEditorView {
                             this.state.data.api_type = match this.state.data.api_type {
                                 ApiType::Anthropic => ApiType::OpenAI,
                                 ApiType::OpenAI => ApiType::Anthropic,
+                                ApiType::Custom(_) => ApiType::Anthropic,
                             };
 
                             if this.state.data.base_url.trim().is_empty() {
-                                this.state.data.base_url = match this.state.data.api_type {
-                                    ApiType::Anthropic => {
-                                        "https://api.anthropic.com/v1".to_string()
-                                    }
-                                    ApiType::OpenAI => "https://api.openai.com/v1".to_string(),
-                                };
+                                this.state.data.base_url = default_api_base_url_for_provider(
+                                    &this.state.data.api_type.provider_id(),
+                                );
                             }
 
                             cx.notify();
@@ -950,7 +977,10 @@ impl ProfileEditorView {
                                                 if let Some(text) = item.text() {
                                                     this.state.active_field =
                                                         Some(ActiveField::ApiKey);
-                                                    this.state.data.api_key = text;
+                                                    this.state.data.api_key =
+                                                        sanitized_clipboard_text(&text)
+                                                            .trim()
+                                                            .to_string();
                                                     cx.notify();
                                                 }
                                             }

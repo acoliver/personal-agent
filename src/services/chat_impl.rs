@@ -110,10 +110,15 @@ impl ChatService for ChatServiceImpl {
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {}", e)))?;
 
+        let has_system_message = conversation
+            .messages
+            .iter()
+            .any(|msg| msg.role == MessageRole::System && !msg.content.trim().is_empty());
+
         // Convert conversation messages to LlmClient Message format.
         // The new user message is already persisted above via add_user_message()
         // and included in the loaded conversation, so do not push it again.
-        let messages: Vec<LlmMessage> = conversation
+        let mut messages: Vec<LlmMessage> = conversation
             .messages
             .iter()
             .map(|msg| match msg.role {
@@ -122,6 +127,10 @@ impl ChatService for ChatServiceImpl {
                 MessageRole::Assistant => LlmMessage::assistant(msg.content.clone()),
             })
             .collect();
+
+        if !has_system_message && !profile.system_prompt.trim().is_empty() {
+            messages.insert(0, LlmMessage::system(profile.system_prompt.clone()));
+        }
 
         // Generate message ID for this response
         let message_id = Uuid::new_v4();
@@ -155,13 +164,15 @@ impl ChatService for ChatServiceImpl {
             let mut response_text = String::new();
             let mut thinking_text = String::new();
 
-            // Get system prompt from conversation
+            // Get system prompt from conversation, falling back to profile-level system prompt
+            // when the conversation has no explicit system message.
             let system_prompt = conversation
                 .messages
                 .iter()
-                .find(|m| m.role == MessageRole::System)
+                .find(|m| m.role == MessageRole::System && !m.content.trim().is_empty())
                 .map(|m| m.content.as_str())
-                .unwrap_or("");
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(profile.system_prompt.as_str());
 
             // Create Agent with MCP tools (uses existing AgentClientExt)
             // @requirement AGENT-001, AGENT-003

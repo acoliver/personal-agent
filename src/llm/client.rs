@@ -4,14 +4,17 @@
 //! using models.dev registry data for provider configuration.
 
 use super::error::LlmError;
+use super::provider_quirks::{effective_serdes_provider, resolve_provider_quirks, ProviderQuirks};
 use crate::models::{AuthConfig, ModelProfile};
 use crate::registry::RegistryCache;
 use futures::StreamExt;
+use reqwest::Client as HttpClient;
 use serdes_ai::core::messages::ModelResponseStreamEvent;
 use serdes_ai::models::ModelRequestParameters;
 use serdes_ai::prelude::*;
 use std::collections::HashMap;
 use std::fs;
+use std::time::Duration;
 
 // Use std Result to avoid conflict with serdes_ai::prelude::Result
 type StdResult<T, E> = std::result::Result<T, E>;
@@ -58,6 +61,7 @@ pub struct LlmClient {
     pub(crate) api_key: String,
     /// Base URL from models.dev registry (if available)
     pub(crate) registry_base_url: Option<String>,
+    pub(crate) quirks: ProviderQuirks,
 }
 
 impl LlmClient {
@@ -79,6 +83,7 @@ impl LlmClient {
             profile: profile.clone(),
             api_key,
             registry_base_url,
+            quirks: resolve_provider_quirks(profile),
         })
     }
 
@@ -185,11 +190,15 @@ impl LlmClient {
     }
 
     pub(crate) fn base_url_override(&self) -> Option<&str> {
-        if self.profile.base_url.is_empty() {
-            self.registry_base_url.as_deref()
-        } else {
-            Some(self.profile.base_url.as_str())
+        if !self.profile.base_url.is_empty() {
+            return Some(self.profile.base_url.as_str());
         }
+
+        if let Some(url) = self.quirks.base_url_override.as_deref() {
+            return Some(url);
+        }
+
+        self.registry_base_url.as_deref()
     }
 
     fn build_tool_definitions(tools: &[crate::llm::tools::Tool]) -> Vec<ToolDefinition> {
@@ -292,6 +301,10 @@ impl LlmClient {
         provider: &str,
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        if provider == "openai" && self.quirks.has_custom_headers() {
+            return self.build_openai_model_with_quirks(base_url);
+        }
+
         use serdes_ai::ExtendedModelConfig;
 
         let mut config = ExtendedModelConfig::new().with_api_key(&self.api_key);
@@ -308,6 +321,46 @@ impl LlmClient {
 
         serdes_ai::build_model_extended(provider, &self.profile.model_id, config)
             .map_err(|e| LlmError::SerdesAi(e.to_string()))
+    }
+
+    fn build_openai_model_with_quirks(
+        &self,
+        base_url: Option<&str>,
+    ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        let mut client_builder = HttpClient::builder();
+
+        if let Some(headers) = self.quirks_header_map()? {
+            client_builder = client_builder.default_headers(headers);
+        }
+
+        let http_client = client_builder
+            .build()
+            .map_err(|e| LlmError::InvalidConfig(format!("failed to build HTTP client: {e}")))?;
+
+        let mut model = serdes_ai::OpenAIChatModel::new(&self.profile.model_id, &self.api_key)
+            .with_client(http_client)
+            .with_timeout(self.request_timeout());
+
+        if let Some(url) = base_url {
+            model = model.with_base_url(url);
+        }
+
+        Ok(std::sync::Arc::new(model))
+    }
+
+    fn request_timeout(&self) -> Duration {
+        Duration::from_secs(120)
+    }
+
+    fn quirks_header_map(&self) -> StdResult<Option<reqwest::header::HeaderMap>, LlmError> {
+        if !self.quirks.has_custom_headers() {
+            return Ok(None);
+        }
+
+        self.quirks
+            .header_map()
+            .map(Some)
+            .map_err(|e| LlmError::InvalidConfig(format!("invalid provider quirk header: {e}")))
     }
 
     /// Make a non-streaming request
@@ -497,23 +550,11 @@ impl LlmClient {
         if let Ok(cache_path) = RegistryCache::default_path() {
             let cache = RegistryCache::new(cache_path, 24);
             if let Ok(Some(registry)) = cache.load() {
-                if let Some(provider) = registry.providers.get(&self.profile.provider_id) {
-                    if let Some(npm) = &provider.npm {
-                        if npm.contains("openai-compatible") {
-                            return "openai"; // Use OpenAI provider with custom base URL
-                        }
-                    }
-                }
+                return effective_serdes_provider(&self.profile, Some(&registry));
             }
         }
 
-        // Use provider_id directly for known SerdesAI providers
-        match self.profile.provider_id.as_str() {
-            "anthropic" | "claude" => "anthropic",
-            "groq" => "groq",
-            "mistral" => "mistral",
-            _ => "openai", // Default to OpenAI-compatible
-        }
+        effective_serdes_provider(&self.profile, None)
     }
 }
 

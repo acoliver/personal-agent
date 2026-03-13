@@ -11,7 +11,9 @@ use uuid::Uuid;
 
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
+use crate::ui_gpui::app_store::HistoryStoreSnapshot;
 use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::selection_intent_channel;
 use crate::ui_gpui::theme::Theme;
 
 /// Represents a conversation in the history list
@@ -20,6 +22,7 @@ use crate::ui_gpui::theme::Theme;
 pub struct ConversationItem {
     pub id: Uuid,
     pub title: String,
+    pub is_selected: bool,
     pub date_display: String,
     pub message_count: usize,
 }
@@ -29,6 +32,7 @@ impl ConversationItem {
         Self {
             id,
             title: title.into(),
+            is_selected: false,
             date_display: "Just now".to_string(),
             message_count: 0,
         }
@@ -43,6 +47,11 @@ impl ConversationItem {
         self.message_count = count;
         self
     }
+
+    pub fn with_selected(mut self, is_selected: bool) -> Self {
+        self.is_selected = is_selected;
+        self
+    }
 }
 
 /// History view state
@@ -50,6 +59,7 @@ impl ConversationItem {
 #[derive(Clone, Default)]
 pub struct HistoryState {
     pub conversations: Vec<ConversationItem>,
+    pub selected_conversation_id: Option<Uuid>,
 }
 
 impl HistoryState {
@@ -59,6 +69,11 @@ impl HistoryState {
 
     pub fn with_conversations(mut self, conversations: Vec<ConversationItem>) -> Self {
         self.conversations = conversations;
+        self
+    }
+
+    pub fn with_selected_conversation_id(mut self, selected_conversation_id: Option<Uuid>) -> Self {
+        self.selected_conversation_id = selected_conversation_id;
         self
     }
 }
@@ -86,9 +101,28 @@ impl HistoryView {
         self.bridge = Some(bridge);
     }
 
+    /// @plan PLAN-20260304-GPUIREMEDIATE.P04
+    /// @requirement REQ-ARCH-001.1
+    /// @requirement REQ-ARCH-004.1
+    /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:022-035
+    pub fn apply_store_snapshot(
+        &mut self,
+        snapshot: HistoryStoreSnapshot,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.state = HistoryState::new()
+            .with_selected_conversation_id(snapshot.selected_conversation_id)
+            .with_conversations(Self::items_from_snapshot(&snapshot));
+        cx.notify();
+    }
+
     /// Set conversations from presenter
     pub fn set_conversations(&mut self, conversations: Vec<ConversationItem>) {
         self.state.conversations = conversations;
+    }
+
+    pub fn conversations(&self) -> &[ConversationItem] {
+        &self.state.conversations
     }
 
     /// Emit a UserEvent through the bridge
@@ -118,11 +152,38 @@ impl HistoryView {
         }
     }
 
+    fn items_from_snapshot(snapshot: &HistoryStoreSnapshot) -> Vec<ConversationItem> {
+        snapshot
+            .conversations
+            .iter()
+            .map(|conversation| {
+                let title = if conversation.title.trim().is_empty() {
+                    "Untitled Conversation".to_string()
+                } else {
+                    conversation.title.clone()
+                };
+
+                ConversationItem::new(conversation.id, title)
+                    .with_date(Self::format_date(conversation.updated_at))
+                    .with_message_count(conversation.message_count)
+                    .with_selected(Some(conversation.id) == snapshot.selected_conversation_id)
+            })
+            .collect()
+    }
+
+    fn refresh_selection_flags(&mut self) {
+        let selected_conversation_id = self.state.selected_conversation_id;
+        for conversation in &mut self.state.conversations {
+            conversation.is_selected = Some(conversation.id) == selected_conversation_id;
+        }
+    }
+
     /// Handle ViewCommand from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P05
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
             ViewCommand::ConversationListRefreshed { conversations } => {
+                let selected_conversation_id = self.state.selected_conversation_id;
                 self.state.conversations = conversations
                     .into_iter()
                     .map(|conversation| {
@@ -132,14 +193,20 @@ impl HistoryView {
                             conversation.title
                         };
 
-                        ConversationItem {
-                            id: conversation.id,
-                            title,
-                            date_display: Self::format_date(conversation.updated_at),
-                            message_count: conversation.message_count,
-                        }
+                        ConversationItem::new(conversation.id, title)
+                            .with_date(Self::format_date(conversation.updated_at))
+                            .with_message_count(conversation.message_count)
+                            .with_selected(Some(conversation.id) == selected_conversation_id)
                     })
                     .collect();
+                cx.notify();
+            }
+            ViewCommand::ConversationActivated {
+                id,
+                selection_generation: _,
+            } => {
+                self.state.selected_conversation_id = Some(id);
+                self.refresh_selection_flags();
                 cx.notify();
             }
             ViewCommand::ConversationCreated { id, .. } => {
@@ -153,7 +220,8 @@ impl HistoryView {
                         0,
                         ConversationItem::new(id, "New Conversation")
                             .with_date("Just now")
-                            .with_message_count(0),
+                            .with_message_count(0)
+                            .with_selected(Some(id) == self.state.selected_conversation_id),
                     );
                 }
                 cx.notify();
@@ -164,7 +232,6 @@ impl HistoryView {
                 cx.notify();
             }
             ViewCommand::ConversationRenamed { id, new_title } => {
-                // Update title in local state
                 if let Some(conv) = self.state.conversations.iter_mut().find(|c| c.id == id) {
                     conv.title = new_title;
                 }
@@ -190,7 +257,6 @@ impl HistoryView {
             .flex()
             .items_center()
             .gap(px(8.0))
-            // Back button - uses navigation_channel for direct navigation
             .child(
                 div()
                     .id("btn-back")
@@ -213,7 +279,6 @@ impl HistoryView {
                         }),
                     ),
             )
-            // Title
             .child(
                 div()
                     .text_size(px(14.0))
@@ -244,132 +309,90 @@ impl HistoryView {
             format!("{} messages", msg_count)
         };
 
-        div()
+        let mut card = div()
             .id(gpui::SharedString::from(format!("conv-{}", conv_id)))
             .w_full()
             .p(px(12.0))
             .rounded(px(8.0))
-            .bg(Theme::bg_darker())
             .flex()
             .flex_col()
-            .gap(px(4.0))
-            // Title row
-            .child(
-                div()
-                    .text_size(px(13.0))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(Theme::text_primary())
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(title),
-            )
-            // Date and message count row
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(Theme::text_secondary())
-                    .child(format!("{} • {}", date, msg_text)),
-            )
-            // Button row
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.0))
-                    .pt(px(4.0))
-                    // Load button - select conversation and navigate to chat
-                    .child(
-                        div()
-                            .id(gpui::SharedString::from(format!("load-{}", conv_id)))
-                            .px(px(12.0))
-                            .py(px(6.0))
-                            .rounded(px(6.0))
-                            .bg(Theme::bg_dark())
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::accent()))
-                            .text_size(px(12.0))
-                            .text_color(Theme::text_primary())
-                            .child("Load")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, _window, _cx| {
-                                    tracing::info!("Load clicked for conversation: {}", conv_id);
-                                    this.emit(UserEvent::SelectConversation { id: conv_id });
-                                    // Navigate to chat view after selecting
-                                    crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::Chat,
-                                    );
-                                }),
-                            ),
-                    )
-                    // Delete button
-                    .child(
-                        div()
-                            .id(gpui::SharedString::from(format!("delete-{}", conv_id)))
-                            .px(px(12.0))
-                            .py(px(6.0))
-                            .rounded(px(6.0))
-                            .bg(Theme::bg_dark())
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::danger()))
-                            .text_size(px(12.0))
-                            .text_color(Theme::text_primary())
-                            .child("Delete")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, _window, _cx| {
-                                    tracing::info!("Delete clicked for conversation: {}", conv_id);
-                                    this.emit(UserEvent::DeleteConversation { id: conv_id });
-                                }),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
+            .gap(px(4.0));
 
-    /// Render the conversation list or empty state
-    /// @plan PLAN-20250130-GPUIREDUX.P05
-    fn render_conversation_list(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let conversations = &self.state.conversations;
+        if conv.is_selected {
+            card = card
+                .bg(Theme::accent())
+                .border_1()
+                .border_color(Theme::border());
+        } else {
+            card = card.bg(Theme::bg_darker());
+        }
 
-        div()
-            .id("history-list")
-            .flex_1()
-            .w_full()
-            .bg(Theme::bg_darkest())
-            .p(px(12.0))
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .overflow_y_scroll()
-            .when(conversations.is_empty(), |d| {
-                d.items_center().justify_center().child(
+        card.child(
+            div()
+                .text_size(px(13.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(Theme::text_primary())
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(Theme::text_secondary())
+                .child(format!("{} • {}", date, msg_text)),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_end()
+                .gap(px(8.0))
+                .pt(px(4.0))
+                .child(
                     div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(
-                            div()
-                                .text_size(px(14.0))
-                                .text_color(Theme::text_secondary())
-                                .child("No saved conversations"),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(Theme::text_muted())
-                                .child("Start chatting to create history"),
+                        .id(gpui::SharedString::from(format!("load-{}", conv_id)))
+                        .px(px(12.0))
+                        .py(px(6.0))
+                        .rounded(px(6.0))
+                        .bg(Theme::bg_dark())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(Theme::accent()))
+                        .text_size(px(12.0))
+                        .text_color(Theme::text_primary())
+                        .child("Load")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_this, _, _window, _cx| {
+                                tracing::info!("Load clicked for conversation: {}", conv_id);
+                                selection_intent_channel().request_select(conv_id);
+                                crate::ui_gpui::navigation_channel().request_navigate(
+                                    crate::presentation::view_command::ViewId::Chat,
+                                );
+                            }),
                         ),
                 )
-            })
-            .when(!conversations.is_empty(), |d| {
-                d.children(
-                    conversations
-                        .iter()
-                        .map(|conv| self.render_conversation_card(conv, cx)),
-                )
-            })
+                .child(
+                    div()
+                        .id(gpui::SharedString::from(format!("delete-{}", conv_id)))
+                        .px(px(12.0))
+                        .py(px(6.0))
+                        .rounded(px(6.0))
+                        .bg(Theme::bg_dark())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(Theme::danger()))
+                        .text_size(px(12.0))
+                        .text_color(Theme::text_primary())
+                        .child("Delete")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _window, _cx| {
+                                tracing::info!("Delete clicked for conversation: {}", conv_id);
+                                this.emit(UserEvent::DeleteConversation { id: conv_id });
+                            }),
+                        ),
+                ),
+        )
+        .into_any_element()
     }
 }
 
@@ -387,27 +410,18 @@ impl gpui::Render for HistoryView {
     ) -> impl IntoElement {
         div()
             .id("history-view")
+            .size_full()
+            .bg(Theme::bg_dark())
             .flex()
             .flex_col()
-            .size_full()
-            .bg(Theme::bg_darkest())
-            .track_focus(&self.focus_handle)
-            .on_key_down(
-                cx.listener(|_this, event: &gpui::KeyDownEvent, _window, _cx| {
-                    let key = &event.keystroke.key;
-                    let modifiers = &event.keystroke.modifiers;
-
-                    // Escape or Cmd+W: Go back to Chat
-                    if key == "escape" || (modifiers.platform && key == "w") {
-                        println!(">>> Escape/Cmd+W pressed - navigating to Chat <<<");
-                        crate::ui_gpui::navigation_channel()
-                            .request_navigate(crate::presentation::view_command::ViewId::Chat);
-                    }
-                }),
-            )
-            // Top bar (44px)
             .child(self.render_top_bar(cx))
-            // Conversation list (flex)
-            .child(self.render_conversation_list(cx))
+            .child(
+                div().flex_1().p(px(12.0)).children(
+                    self.state
+                        .conversations
+                        .iter()
+                        .map(|conv| self.render_conversation_card(conv, cx)),
+                ),
+            )
     }
 }

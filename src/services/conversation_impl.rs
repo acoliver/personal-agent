@@ -322,7 +322,6 @@ impl ConversationService for ConversationServiceImpl {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

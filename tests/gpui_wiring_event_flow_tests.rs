@@ -100,6 +100,10 @@ impl personal_agent::services::ModelsRegistryService for NoopModelsRegistryServi
         Ok(vec![])
     }
 
+    async fn get_provider_api_url(&self, _provider: &str) -> ServiceResult<Option<String>> {
+        Ok(None)
+    }
+
     async fn list_providers(&self) -> ServiceResult<Vec<String>> {
         Ok(vec![])
     }
@@ -766,6 +770,7 @@ async fn test_model_selector_presenter_emits_prefill_and_navigation_on_select_mo
             ViewCommand::ModelSelected {
                 ref provider_id,
                 ref model_id,
+                provider_api_url: _,
                 context_length: _
             } if provider_id == "anthropic" && model_id == "claude-3-5-sonnet"
         ),

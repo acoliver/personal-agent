@@ -306,6 +306,12 @@ impl ModelSelectorPresenter {
             model_id
         );
 
+        let provider_api_url = models_registry_service
+            .get_provider_api_url(&provider_id)
+            .await
+            .ok()
+            .flatten();
+
         let context_length = models_registry_service
             .list_all()
             .await
@@ -320,6 +326,7 @@ impl ModelSelectorPresenter {
         let _ = view_tx.send(ViewCommand::ModelSelected {
             provider_id,
             model_id,
+            provider_api_url,
             context_length,
         });
         let _ = view_tx.send(ViewCommand::NavigateTo {

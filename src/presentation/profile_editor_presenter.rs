@@ -11,7 +11,6 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use super::{Presenter, PresenterError, ViewCommand};
-use crate::events::global::emit;
 use crate::events::{
     types::{ModelProfileAuth, ProfileEvent, UserEvent},
     AppEvent, EventBus,
@@ -37,6 +36,9 @@ pub struct ProfileEditorPresenter {
     /// used for lightweight SaveProfileEditor flow.
     pending_selected_model: Arc<Mutex<Option<(String, String)>>>,
 
+    /// Event bus sender for emitting domain events consumed by other presenters.
+    event_bus_tx: broadcast::Sender<AppEvent>,
+
     /// Running flag for event loop
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -56,6 +58,7 @@ impl ProfileEditorPresenter {
             profile_service,
             view_tx,
             pending_selected_model: Arc::new(Mutex::new(None)),
+            event_bus_tx: event_bus.clone(),
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -75,12 +78,14 @@ impl ProfileEditorPresenter {
         event_bus: Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
-        let rx = event_bus.sender().subscribe();
+        let event_bus_tx = event_bus.sender().clone();
+        let rx = event_bus_tx.subscribe();
         Self {
             rx,
             profile_service,
             view_tx,
             pending_selected_model: Arc::new(Mutex::new(None)),
+            event_bus_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -101,6 +106,7 @@ impl ProfileEditorPresenter {
         let profile_service = self.profile_service.clone();
         let view_tx = self.view_tx.clone();
         let pending_selected_model = Arc::clone(&self.pending_selected_model);
+        let event_bus_tx = self.event_bus_tx.clone();
 
         tokio::spawn(async move {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
@@ -110,6 +116,7 @@ impl ProfileEditorPresenter {
                             &profile_service,
                             &view_tx,
                             &pending_selected_model,
+                            &event_bus_tx,
                             event,
                         )
                         .await;
@@ -153,12 +160,19 @@ impl ProfileEditorPresenter {
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         pending_selected_model: &Arc<Mutex<Option<(String, String)>>>,
+        event_bus_tx: &broadcast::Sender<AppEvent>,
         event: AppEvent,
     ) {
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(profile_service, view_tx, pending_selected_model, user_evt)
-                    .await;
+                Self::handle_user_event(
+                    profile_service,
+                    view_tx,
+                    pending_selected_model,
+                    event_bus_tx,
+                    user_evt,
+                )
+                .await;
             }
             AppEvent::Profile(profile_evt) => {
                 Self::handle_profile_event(view_tx, profile_evt).await;
@@ -176,15 +190,21 @@ impl ProfileEditorPresenter {
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         pending_selected_model: &Arc<Mutex<Option<(String, String)>>>,
+        event_bus_tx: &broadcast::Sender<AppEvent>,
         event: UserEvent,
     ) {
         match event {
             UserEvent::SaveProfile { profile } => {
-                Self::on_save_profile(profile_service, view_tx, profile).await;
+                Self::on_save_profile(profile_service, event_bus_tx, view_tx, profile).await;
             }
             UserEvent::SaveProfileEditor => {
-                Self::on_save_profile_editor(profile_service, view_tx, pending_selected_model)
-                    .await;
+                Self::on_save_profile_editor(
+                    profile_service,
+                    event_bus_tx,
+                    view_tx,
+                    pending_selected_model,
+                )
+                .await;
             }
             UserEvent::SelectModel {
                 provider_id,
@@ -204,6 +224,7 @@ impl ProfileEditorPresenter {
     /// @plan PLAN-20250125-REFACTOR.P12
     async fn on_save_profile(
         profile_service: &Arc<dyn ProfileService>,
+        event_bus_tx: &broadcast::Sender<AppEvent>,
         view_tx: &broadcast::Sender<ViewCommand>,
         profile: crate::events::types::ModelProfile,
     ) {
@@ -283,7 +304,7 @@ impl ProfileEditorPresenter {
 
         match persisted {
             Ok(saved) => {
-                let _ = emit(AppEvent::Profile(ProfileEvent::Updated {
+                let _ = event_bus_tx.send(AppEvent::Profile(ProfileEvent::Updated {
                     id: saved.id,
                     name: saved.name.clone(),
                 }));
@@ -291,9 +312,7 @@ impl ProfileEditorPresenter {
                     id: saved.id,
                     name: saved.name,
                 });
-                let _ = view_tx.send(ViewCommand::NavigateTo {
-                    view: super::view_command::ViewId::Settings,
-                });
+                let _ = view_tx.send(ViewCommand::NavigateBack);
             }
             Err(e) => {
                 tracing::error!("Failed to persist SaveProfile payload: {}", e);
@@ -313,6 +332,7 @@ impl ProfileEditorPresenter {
     /// @pseudocode component-003-profile-flow.md lines 140-173
     async fn on_save_profile_editor(
         profile_service: &Arc<dyn ProfileService>,
+        event_bus_tx: &broadcast::Sender<AppEvent>,
         view_tx: &broadcast::Sender<ViewCommand>,
         pending_selected_model: &Arc<Mutex<Option<(String, String)>>>,
     ) {
@@ -354,15 +374,21 @@ impl ProfileEditorPresenter {
 
         match created {
             Ok(profile) => {
-                let _ = emit(AppEvent::Profile(ProfileEvent::Created {
+                let _ = event_bus_tx.send(AppEvent::Profile(ProfileEvent::Created {
                     id: profile.id,
                     name: profile.name.clone(),
+                }));
+                let _ = event_bus_tx.send(AppEvent::Profile(ProfileEvent::DefaultChanged {
+                    profile_id: Some(profile.id),
                 }));
                 let _ = view_tx.send(ViewCommand::ProfileCreated {
                     id: profile.id,
                     name: profile.name,
                 });
                 let _ = view_tx.send(ViewCommand::NavigateBack);
+                let _ = view_tx.send(ViewCommand::DefaultProfileChanged {
+                    profile_id: Some(profile.id),
+                });
             }
             Err(e) => {
                 tracing::error!("Failed to persist profile from SaveProfileEditor: {}", e);

@@ -4,11 +4,19 @@
 //! @requirement REQ-GPUI-003
 
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::{ConversationSummary, ProfileSummary, ViewCommand};
+use crate::presentation::view_command::{
+    ConversationMessagePayload, ConversationSummary, ProfileSummary, ViewCommand,
+};
+use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, StreamingStoreSnapshot};
+
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::components::AssistantBubble;
+use crate::ui_gpui::selection_intent_channel;
 use crate::ui_gpui::theme::Theme;
-use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString};
+use gpui::{
+    div, point, prelude::*, px, FocusHandle, FontWeight, MouseButton, ScrollDelta, ScrollHandle,
+    ScrollWheelEvent, SharedString,
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -91,6 +99,7 @@ pub struct ChatState {
     pub conversation_title_editing: bool,
     pub conversation_title_input: String,
     pub rename_replace_on_next_char: bool,
+    pub chat_autoscroll_enabled: bool,
 }
 
 impl Default for ChatState {
@@ -110,6 +119,7 @@ impl Default for ChatState {
             conversation_title_editing: false,
             conversation_title_input: String::new(),
             rename_replace_on_next_char: false,
+            chat_autoscroll_enabled: true,
             current_model: "No profile selected".to_string(),
             profiles: Vec::new(),
             selected_profile_id: None,
@@ -218,6 +228,7 @@ pub struct ChatView {
     focus_handle: FocusHandle,
     bridge: Option<Arc<GpuiBridge>>,
     conversation_id: Option<Uuid>,
+    chat_scroll_handle: ScrollHandle,
 }
 
 impl ChatView {
@@ -227,13 +238,176 @@ impl ChatView {
             focus_handle: cx.focus_handle(),
             bridge: None,
             conversation_id: None,
+            chat_scroll_handle: ScrollHandle::new(),
         }
+    }
+
+    fn refresh_autoscroll_state_from_handle(&mut self) {
+        let offset = self.chat_scroll_handle.offset();
+        let max_offset = self.chat_scroll_handle.max_offset();
+        let distance_from_bottom = (max_offset.height + offset.y).abs();
+        self.state.chat_autoscroll_enabled = distance_from_bottom <= px(8.0);
+    }
+
+    fn refresh_autoscroll_state_after_wheel(&mut self, event: &ScrollWheelEvent) {
+        let delta = match event.delta {
+            ScrollDelta::Pixels(delta) => delta,
+            ScrollDelta::Lines(delta) => point(px(delta.x * 16.0), px(delta.y * 16.0)),
+        };
+
+        // Positive Y moves the viewport upward (away from bottom) in GPUI's scroll model.
+        // Negative Y moves toward bottom.
+        if delta.y > px(0.0) {
+            self.state.chat_autoscroll_enabled = false;
+            return;
+        }
+
+        // Any downward wheel movement while sticky-follow is disabled should re-enable follow.
+        // This avoids depending on offset timing when content height changes in the same frame.
+        if delta.y < px(0.0) {
+            self.state.chat_autoscroll_enabled = true;
+            return;
+        }
+
+        self.refresh_autoscroll_state_from_handle();
+    }
+
+    fn maybe_scroll_chat_to_bottom(&self, cx: &mut gpui::Context<Self>) {
+        if self.state.chat_autoscroll_enabled {
+            self.chat_scroll_handle.scroll_to_bottom();
+            let entity = cx.entity();
+            cx.defer(move |cx| {
+                entity.update(cx, |this, cx| {
+                    this.chat_scroll_handle.scroll_to_bottom();
+                    cx.notify();
+                });
+                let entity = entity.clone();
+                cx.defer(move |cx| {
+                    entity.update(cx, |this, cx| {
+                        this.chat_scroll_handle.scroll_to_bottom();
+                        cx.notify();
+                    });
+                    let entity = entity.clone();
+                    cx.defer(move |cx| {
+                        entity.update(cx, |this, cx| {
+                            this.chat_scroll_handle.scroll_to_bottom();
+                            cx.notify();
+                        });
+                    });
+                });
+            });
+        }
+    }
+
+    /// @plan PLAN-20260304-GPUIREMEDIATE.P05
+    fn messages_from_payload(
+        messages: Vec<ConversationMessagePayload>,
+        current_model: &str,
+    ) -> Vec<ChatMessage> {
+        messages
+            .into_iter()
+            .map(|message| {
+                let mut chat_message = match message.role {
+                    crate::presentation::view_command::MessageRole::User => {
+                        ChatMessage::user(message.content)
+                    }
+                    crate::presentation::view_command::MessageRole::Assistant => {
+                        ChatMessage::assistant(message.content, current_model.to_string())
+                    }
+                    crate::presentation::view_command::MessageRole::System
+                    | crate::presentation::view_command::MessageRole::Tool => {
+                        unreachable!(
+                            "conversation replay payload excludes non-rendered message roles"
+                        )
+                    }
+                };
+
+                if let Some(thinking) = message.thinking_content {
+                    chat_message = chat_message.with_thinking(thinking);
+                }
+                if let Some(timestamp) = message.timestamp {
+                    chat_message = chat_message.with_timestamp(timestamp);
+                }
+
+                chat_message
+            })
+            .collect()
+    }
+
+    /// @plan PLAN-20260304-GPUIREMEDIATE.P05
+    fn streaming_state_from_snapshot(
+        streaming: &StreamingStoreSnapshot,
+        load_state: &ConversationLoadState,
+    ) -> StreamingState {
+        if let Some(error) = &streaming.last_error {
+            return StreamingState::Error(error.clone());
+        }
+
+        if let ConversationLoadState::Error { message, .. } = load_state {
+            return StreamingState::Error(message.clone());
+        }
+
+        if streaming.active_target.is_some() || !streaming.stream_buffer.is_empty() {
+            return StreamingState::Streaming {
+                content: streaming.stream_buffer.clone(),
+                done: false,
+            };
+        }
+
+        StreamingState::Idle
     }
 
     /// Set the bridge for event communication
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
+    }
+
+    /// @plan PLAN-20260304-GPUIREMEDIATE.P04
+    /// @requirement REQ-ARCH-001.1
+    /// @requirement REQ-ARCH-004.1
+    /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:022-035
+    /// @plan PLAN-20260304-GPUIREMEDIATE.P05
+    pub fn apply_store_snapshot(
+        &mut self,
+        snapshot: ChatStoreSnapshot,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let ChatStoreSnapshot {
+            selected_conversation_id,
+            selected_conversation_title,
+            load_state,
+            transcript,
+            streaming,
+            conversations,
+            ..
+        } = snapshot;
+
+        self.state.conversations = conversations;
+        self.state.active_conversation_id = selected_conversation_id;
+        self.conversation_id = selected_conversation_id;
+        self.state.conversation_title = selected_conversation_title;
+
+        match &load_state {
+            ConversationLoadState::Ready { .. } => {
+                let current_model = self.state.current_model.clone();
+                self.state.messages = Self::messages_from_payload(transcript, &current_model);
+            }
+            ConversationLoadState::Loading { .. } => {}
+            ConversationLoadState::Error { .. } => {}
+            ConversationLoadState::Idle => {
+                if selected_conversation_id.is_none() {
+                    self.state.messages.clear();
+                }
+            }
+        }
+
+        self.state.streaming = Self::streaming_state_from_snapshot(&streaming, &load_state);
+        self.state.show_thinking = streaming.thinking_visible;
+        self.state.thinking_content =
+            (!streaming.thinking_buffer.is_empty()).then_some(streaming.thinking_buffer);
+        self.state.sync_conversation_dropdown_index();
+        cx.notify();
     }
 
     /// Set the current conversation ID
@@ -269,6 +443,9 @@ impl ChatView {
             })
     }
 
+    /// @plan PLAN-20260304-GPUIREMEDIATE.P08
+    /// @requirement REQ-ARCH-005.1
+    /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-127
     fn select_conversation_at_index(&mut self, index: usize, cx: &mut gpui::Context<Self>) {
         if self.state.conversations.is_empty() {
             return;
@@ -282,15 +459,15 @@ impl ChatView {
             total = self.state.conversations.len(),
             "ChatView: selecting conversation from dropdown"
         );
+        let switching_conversation = self.state.active_conversation_id != Some(conversation_id);
         self.state.conversation_dropdown_index = bounded;
-        self.state.active_conversation_id = Some(conversation_id);
-        self.conversation_id = Some(conversation_id);
         self.state.conversation_dropdown_open = false;
         self.state.conversation_title_editing = false;
-        self.state.sync_conversation_title_from_active();
-        self.emit(UserEvent::SelectConversation {
-            id: conversation_id,
-        });
+        if switching_conversation {
+            self.state.chat_autoscroll_enabled = true;
+            self.chat_scroll_handle.scroll_to_bottom();
+        }
+        selection_intent_channel().request_select(conversation_id);
         cx.notify();
     }
 
@@ -337,6 +514,21 @@ impl ChatView {
             return;
         }
         self.select_conversation_at_index(self.state.conversation_dropdown_index, cx);
+    }
+
+    pub fn select_conversation_by_id(
+        &mut self,
+        conversation_id: Uuid,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(index) = self
+            .state
+            .conversations
+            .iter()
+            .position(|conversation| conversation.id == conversation_id)
+        {
+            self.select_conversation_at_index(index, cx);
+        }
     }
 
     pub fn start_rename_conversation(&mut self, cx: &mut gpui::Context<Self>) {
@@ -424,19 +616,58 @@ impl ChatView {
         cx.notify();
     }
 
-    pub fn handle_rename_char(&mut self, key: &str, cx: &mut gpui::Context<Self>) {
+    pub fn map_input_char(key: &str, uppercase: bool) -> Option<char> {
+        if key.len() != 1 {
+            return None;
+        }
+
+        if !uppercase {
+            return key
+                .chars()
+                .next()
+                .filter(|candidate| candidate.is_ascii_graphic());
+        }
+
+        let shifted = match key {
+            "1" => '!',
+            "2" => '@',
+            "3" => '#',
+            "4" => '$',
+            "5" => '%',
+            "6" => '^',
+            "7" => '&',
+            "8" => '*',
+            "9" => '(',
+            "0" => ')',
+            "-" => '_',
+            "=" => '+',
+            "[" => '{',
+            "]" => '}',
+            "\\" => '|',
+            ";" => ':',
+            "'" => '"',
+            "," => '<',
+            "." => '>',
+            "/" => '?',
+            "`" => '~',
+            _ => key.chars().next()?.to_ascii_uppercase(),
+        };
+
+        Some(shifted)
+    }
+
+    pub fn handle_rename_char(&mut self, key: &str, uppercase: bool, cx: &mut gpui::Context<Self>) {
         if !self.state.conversation_title_editing {
             return;
         }
-        if let Some(c) = key.chars().next() {
-            if c.is_ascii_graphic() {
-                if self.state.rename_replace_on_next_char {
-                    self.state.conversation_title_input.clear();
-                    self.state.rename_replace_on_next_char = false;
-                }
-                self.state.conversation_title_input.push(c);
-                cx.notify();
+
+        if let Some(c) = Self::map_input_char(key, uppercase) {
+            if self.state.rename_replace_on_next_char {
+                self.state.conversation_title_input.clear();
+                self.state.rename_replace_on_next_char = false;
             }
+            self.state.conversation_title_input.push(c);
+            cx.notify();
         }
     }
 
@@ -607,6 +838,7 @@ impl ChatView {
                 content: String::new(),
                 done: false,
             };
+            self.maybe_scroll_chat_to_bottom(cx);
             cx.notify();
         }
     }
@@ -633,9 +865,9 @@ impl ChatView {
     }
 
     /// Handle single character input (called from MainPanel)
-    pub fn handle_char(&mut self, key: &str, cx: &mut gpui::Context<Self>) {
+    pub fn handle_char(&mut self, key: &str, uppercase: bool, cx: &mut gpui::Context<Self>) {
         if self.state.conversation_title_editing {
-            self.handle_rename_char(key, cx);
+            self.handle_rename_char(key, uppercase, cx);
             return;
         }
 
@@ -647,13 +879,11 @@ impl ChatView {
             return;
         }
 
-        if let Some(c) = key.chars().next() {
-            if c.is_ascii_graphic() {
-                let pos = self.state.cursor_position.min(self.state.input_text.len());
-                self.state.input_text.insert(pos, c);
-                self.state.cursor_position = pos + 1;
-                cx.notify();
-            }
+        if let Some(c) = Self::map_input_char(key, uppercase) {
+            let pos = self.state.cursor_position.min(self.state.input_text.len());
+            self.state.input_text.insert(pos, c);
+            self.state.cursor_position = pos + 1;
+            cx.notify();
         }
     }
 
@@ -661,8 +891,52 @@ impl ChatView {
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub fn handle_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
-            ViewCommand::MessageAppended { role, content, .. } => {
+            ViewCommand::ConversationMessagesLoaded {
+                conversation_id,
+                selection_generation: _,
+                messages,
+            } => {
+                if self.state.active_conversation_id != Some(conversation_id) {
+                    tracing::info!(
+                        active_conversation_id = ?self.state.active_conversation_id,
+                        incoming_conversation_id = %conversation_id,
+                        message_count = messages.len(),
+                        "ChatView: ignoring ConversationMessagesLoaded for inactive conversation"
+                    );
+                    return;
+                }
                 let current_model = self.state.current_model.clone();
+                let message_count = messages.len();
+                self.state.messages = Self::messages_from_payload(messages, &current_model);
+                tracing::info!(
+                    conversation_id = %conversation_id,
+                    message_count,
+                    rendered_messages = self.state.messages.len(),
+                    "ChatView: applied ConversationMessagesLoaded"
+                );
+                self.state.streaming = StreamingState::Idle;
+                self.state.thinking_content = None;
+                self.state.chat_autoscroll_enabled = true;
+                self.maybe_scroll_chat_to_bottom(cx);
+                cx.notify();
+            }
+            ViewCommand::MessageAppended {
+                conversation_id,
+                role,
+                content,
+            } => {
+                let current_model = self.state.current_model.clone();
+
+                if matches!(
+                    role,
+                    crate::presentation::view_command::MessageRole::User
+                        | crate::presentation::view_command::MessageRole::Assistant
+                ) {
+                    if self.state.active_conversation_id != Some(conversation_id) {
+                        return;
+                    }
+                }
+
                 let msg = match role {
                     crate::presentation::view_command::MessageRole::User => {
                         ChatMessage::user(content)
@@ -673,9 +947,15 @@ impl ChatView {
                     _ => return,
                 };
                 self.state.messages.push(msg);
+                self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
-            ViewCommand::ShowThinking { .. } => {
+            ViewCommand::ShowThinking { conversation_id } => {
+                if conversation_id != Uuid::nil()
+                    && self.state.active_conversation_id != Some(conversation_id)
+                {
+                    return;
+                }
                 if !matches!(self.state.streaming, StreamingState::Streaming { .. }) {
                     self.state.streaming = StreamingState::Streaming {
                         content: String::new(),
@@ -683,13 +963,27 @@ impl ChatView {
                     };
                 }
                 self.state.thinking_content = Some(String::new());
+                self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
-            ViewCommand::HideThinking { .. } => {
+            ViewCommand::HideThinking { conversation_id } => {
+                if conversation_id != Uuid::nil()
+                    && self.state.active_conversation_id != Some(conversation_id)
+                {
+                    return;
+                }
                 self.state.thinking_content = None;
                 cx.notify();
             }
-            ViewCommand::AppendStream { chunk, .. } => {
+            ViewCommand::AppendStream {
+                conversation_id,
+                chunk,
+            } => {
+                if conversation_id != Uuid::nil()
+                    && self.state.active_conversation_id != Some(conversation_id)
+                {
+                    return;
+                }
                 match &mut self.state.streaming {
                     StreamingState::Streaming { content, .. } => {
                         content.push_str(&chunk);
@@ -702,25 +996,46 @@ impl ChatView {
                     }
                     _ => {}
                 }
+                self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
-            ViewCommand::FinalizeStream { .. } => {
+            ViewCommand::FinalizeStream {
+                conversation_id, ..
+            } => {
+                if conversation_id != Uuid::nil()
+                    && self.state.active_conversation_id != Some(conversation_id)
+                {
+                    return;
+                }
+
+                let thinking_content = self
+                    .state
+                    .thinking_content
+                    .take()
+                    .filter(|thinking| !thinking.is_empty());
+
                 if let StreamingState::Streaming { content, .. } = &self.state.streaming {
                     let mut msg =
                         ChatMessage::assistant(content.clone(), self.state.current_model.clone());
-                    if let Some(thinking) = self.state.thinking_content.take() {
-                        if !thinking.is_empty() {
-                            msg = msg.with_thinking(thinking);
-                        }
+                    if let Some(thinking) = thinking_content {
+                        msg = msg.with_thinking(thinking);
                     }
                     self.state.messages.push(msg);
                 }
                 self.state.streaming = StreamingState::Idle;
+                self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
             ViewCommand::StreamCancelled {
-                partial_content, ..
+                conversation_id,
+                partial_content,
             } => {
+                if conversation_id != Uuid::nil()
+                    && self.state.active_conversation_id != Some(conversation_id)
+                {
+                    return;
+                }
+
                 if !partial_content.is_empty() {
                     let mut msg =
                         ChatMessage::assistant(partial_content, self.state.current_model.clone());
@@ -728,15 +1043,36 @@ impl ChatView {
                     self.state.messages.push(msg);
                 }
                 self.state.streaming = StreamingState::Idle;
+                self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
-            ViewCommand::StreamError { error, .. } => {
+            ViewCommand::StreamError {
+                conversation_id,
+                error,
+                ..
+            } => {
+                if conversation_id != Uuid::nil()
+                    && self.state.active_conversation_id != Some(conversation_id)
+                {
+                    return;
+                }
+
                 self.state.streaming = StreamingState::Error(error);
                 cx.notify();
             }
-            ViewCommand::AppendThinking { content, .. } => {
+            ViewCommand::AppendThinking {
+                conversation_id,
+                content,
+            } => {
+                if conversation_id != Uuid::nil()
+                    && self.state.active_conversation_id != Some(conversation_id)
+                {
+                    return;
+                }
+
                 self.state.thinking_content =
                     Some(self.state.thinking_content.clone().unwrap_or_default() + &content);
+                self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
             ViewCommand::ToggleThinkingVisibility => {
@@ -765,20 +1101,23 @@ impl ChatView {
                     count = conversation_count,
                     "ChatView: received ConversationListRefreshed"
                 );
+
+                let previous_active = self.state.active_conversation_id.or(self.conversation_id);
                 self.state.conversations = conversations;
 
                 if self.state.conversations.is_empty() {
                     self.state.active_conversation_id = None;
                     self.conversation_id = None;
+                    self.state.messages.clear();
+                    self.state.streaming = StreamingState::Idle;
+                    self.state.thinking_content = None;
                     self.state.conversation_dropdown_open = false;
                     self.state.conversation_dropdown_index = 0;
                     if !self.state.conversation_title_editing {
                         self.state.conversation_title = "New Conversation".to_string();
                     }
                 } else {
-                    let active_exists = self
-                        .state
-                        .active_conversation_id
+                    let active_exists = previous_active
                         .map(|id| {
                             self.state
                                 .conversations
@@ -787,10 +1126,17 @@ impl ChatView {
                         })
                         .unwrap_or(false);
 
-                    if !active_exists {
+                    if active_exists {
+                        self.state.active_conversation_id = previous_active;
+                        self.conversation_id = previous_active;
+                    } else {
                         let fallback = self.state.conversations[0].id;
                         self.state.active_conversation_id = Some(fallback);
                         self.conversation_id = Some(fallback);
+                        self.state.messages.clear();
+                        self.state.streaming = StreamingState::Idle;
+                        self.state.thinking_content = None;
+                        self.state.chat_autoscroll_enabled = true;
                     }
 
                     self.state.sync_conversation_dropdown_index();
@@ -801,12 +1147,17 @@ impl ChatView {
 
                 cx.notify();
             }
-            ViewCommand::ConversationActivated { id } => {
+            ViewCommand::ConversationActivated {
+                id,
+                selection_generation: _,
+            } => {
                 self.state.active_conversation_id = Some(id);
                 self.conversation_id = Some(id);
                 self.state.streaming = StreamingState::Idle;
                 self.state.thinking_content = None;
                 self.state.conversation_dropdown_open = false;
+                self.state.chat_autoscroll_enabled = true;
+                self.chat_scroll_handle.scroll_to_bottom();
 
                 if !self.state.conversation_title_editing {
                     self.state.conversation_title_input.clear();
@@ -836,6 +1187,8 @@ impl ChatView {
                 self.state.conversation_dropdown_open = false;
                 self.state.conversation_title_editing = false;
                 self.state.conversation_title_input.clear();
+                self.state.chat_autoscroll_enabled = true;
+                self.chat_scroll_handle.scroll_to_bottom();
                 self.state.conversation_title = "New Conversation".to_string();
 
                 if !self
@@ -902,6 +1255,8 @@ impl ChatView {
                 self.state.conversation_dropdown_open = false;
                 self.state.conversation_title_editing = false;
                 self.state.conversation_title_input.clear();
+                self.state.chat_autoscroll_enabled = true;
+                self.chat_scroll_handle.scroll_to_bottom();
                 self.state.sync_conversation_title_from_active();
                 cx.notify();
             }
@@ -1043,39 +1398,6 @@ impl ChatView {
                                 );
                             }))
                     )
-                    // [+] New conversation button
-                    .child(
-                        div()
-                            .id("btn-new")
-                            .size(px(28.0))
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::bg_dark()))
-                            .text_size(px(14.0))
-                            .text_color(Theme::text_primary())
-                            .child("+")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                                tracing::info!("New conversation clicked - emitting UserEvent");
-                                this.emit(UserEvent::NewConversation);
-                                // Clear local state immediately
-                                this.state.messages.clear();
-                                this.state.input_text.clear();
-                                this.state.cursor_position = 0;
-                                this.state.streaming = StreamingState::Idle;
-                                this.state.thinking_content = None;
-                                this.state.active_conversation_id = None;
-                                this.conversation_id = None;
-                                this.state.conversation_title = "New Conversation".to_string();
-                                this.state.conversation_dropdown_open = false;
-                                this.state.conversation_title_editing = false;
-                                this.state.conversation_title_input.clear();
-                                this.state.profile_dropdown_open = false;
-                                cx.notify();
-                            }))
-                    )
                     // Settings button (gear icon) - navigate to settings view
                     .child(
                         div()
@@ -1109,8 +1431,6 @@ impl ChatView {
         let conversation_title_input = self.state.conversation_title_input.clone();
         let conversation_dropdown_open = self.state.conversation_dropdown_open;
         let conversation_title_editing = self.state.conversation_title_editing;
-        let _conversation_dropdown_index = self.state.conversation_dropdown_index;
-        let _active_conversation_id = self.state.active_conversation_id;
         let selected_profile = self
             .state
             .selected_profile()
@@ -1129,9 +1449,9 @@ impl ChatView {
             .gap(px(8.0))
             .child(
                 div()
-                    .flex()
                     .flex_1()
                     .min_w(px(0.0))
+                    .flex()
                     .items_center()
                     .gap(px(8.0))
                     .child(if conversation_title_editing {
@@ -1174,12 +1494,18 @@ impl ChatView {
                             .cursor_pointer()
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
                                     .text_size(px(13.0))
                                     .text_color(Theme::text_primary())
                                     .child(conversation_title),
                             )
                             .child(
                                 div()
+                                    .flex_shrink_0()
                                     .text_size(px(10.0))
                                     .text_color(Theme::text_primary())
                                     .child(if conversation_dropdown_open {
@@ -1197,9 +1523,46 @@ impl ChatView {
                     })
                     .child(
                         div()
+                            .id("btn-new")
+                            .size(px(28.0))
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::bg_dark()))
+                            .text_size(px(14.0))
+                            .text_color(Theme::text_primary())
+                            .child("+")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    tracing::info!("New conversation clicked - emitting UserEvent");
+                                    this.emit(UserEvent::NewConversation);
+                                    // Clear local state immediately
+                                    this.state.messages.clear();
+                                    this.state.input_text.clear();
+                                    this.state.cursor_position = 0;
+                                    this.state.streaming = StreamingState::Idle;
+                                    this.state.thinking_content = None;
+                                    this.state.active_conversation_id = None;
+                                    this.conversation_id = None;
+                                    this.state.conversation_title = "New Conversation".to_string();
+                                    this.state.conversation_dropdown_open = false;
+                                    this.state.conversation_title_editing = false;
+                                    this.state.conversation_title_input.clear();
+                                    this.state.profile_dropdown_open = false;
+                                    this.state.chat_autoscroll_enabled = true;
+                                    this.chat_scroll_handle.scroll_to_bottom();
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .child(
+                        div()
                             .id("chat-profile-dropdown")
-                            .flex_1()
-                            .min_w(px(0.0))
+                            .max_w(px(225.0))
+                            .min_w(px(100.0))
                             .px(px(8.0))
                             .py(px(4.0))
                             .rounded(px(4.0))
@@ -1214,6 +1577,7 @@ impl ChatView {
                             .overflow_hidden()
                             .child(
                                 div()
+                                    .w_full()
                                     .flex()
                                     .items_center()
                                     .gap(px(6.0))
@@ -1223,6 +1587,7 @@ impl ChatView {
                                             .min_w(px(0.0))
                                             .overflow_hidden()
                                             .whitespace_nowrap()
+                                            .text_ellipsis_start()
                                             .text_size(px(11.0))
                                             .text_color(Theme::text_primary())
                                             .child(selected_profile),
@@ -1285,69 +1650,69 @@ impl ChatView {
                     .border_color(Theme::border())
                     .rounded(px(4.0))
                     .shadow_lg()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {
-                        // Keep clicks inside menu from falling through to overlay close handler.
-                    }))
-                    .children(
-                        self.state
-                            .conversations
-                            .iter()
-                            .enumerate()
-                            .map(|(index, conversation)| {
-                                let conversation_id = conversation.id;
-                                let selected = active_conversation_id == Some(conversation_id);
-                                let highlighted = conversation_dropdown_index == index;
-                                let title = if conversation.title.trim().is_empty() {
-                                    "Untitled Conversation".to_string()
-                                } else {
-                                    conversation.title.clone()
-                                };
-                                let count_label = if conversation.message_count == 1 {
-                                    "1 message".to_string()
-                                } else {
-                                    format!("{} messages", conversation.message_count)
-                                };
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _, _, _| {
+                            // Keep clicks inside menu from falling through to overlay close handler.
+                        }),
+                    )
+                    .children(self.state.conversations.iter().enumerate().map(
+                        |(index, conversation)| {
+                            let conversation_id = conversation.id;
+                            let selected = active_conversation_id == Some(conversation_id);
+                            let highlighted = conversation_dropdown_index == index;
+                            let title = if conversation.title.trim().is_empty() {
+                                "Untitled Conversation".to_string()
+                            } else {
+                                conversation.title.clone()
+                            };
+                            let count_label = if conversation.message_count == 1 {
+                                "1 message".to_string()
+                            } else {
+                                format!("{} messages", conversation.message_count)
+                            };
 
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "chat-conversation-item-{}",
-                                        conversation_id
-                                    )))
-                                    .w_full()
-                                    .px(px(8.0))
-                                    .py(px(6.0))
-                                    .cursor_pointer()
-                                    .when(selected, |row| {
-                                        row.bg(Theme::accent()).text_color(gpui::white())
-                                    })
-                                    .when(!selected && highlighted, |row| {
-                                        row.bg(Theme::accent_hover()).text_color(gpui::white())
-                                    })
-                                    .when(!selected && !highlighted, |row| {
-                                        row.hover(|s| s.bg(Theme::bg_darker()))
-                                            .text_color(Theme::text_primary())
-                                    })
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(div().text_size(px(11.0)).child(title))
-                                            .child(
-                                                div()
-                                                    .text_size(px(10.0))
-                                                    .text_color(Theme::text_secondary())
-                                                    .child(count_label),
-                                            ),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, _window, cx| {
-                                            this.select_conversation_at_index(index, cx);
-                                        }),
-                                    )
-                            }),
-                    ),
+                            div()
+                                .id(SharedString::from(format!(
+                                    "chat-conversation-item-{}",
+                                    conversation_id
+                                )))
+                                .w_full()
+                                .px(px(8.0))
+                                .py(px(6.0))
+                                .cursor_pointer()
+                                .when(selected, |row| {
+                                    row.bg(Theme::accent()).text_color(gpui::white())
+                                })
+                                .when(!selected && highlighted, |row| {
+                                    row.bg(Theme::accent_hover()).text_color(gpui::white())
+                                })
+                                .when(!selected && !highlighted, |row| {
+                                    row.hover(|s| s.bg(Theme::bg_darker()))
+                                        .text_color(Theme::text_primary())
+                                })
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .child(div().text_size(px(11.0)).child(title))
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(Theme::text_secondary())
+                                                .child(count_label),
+                                        ),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _window, cx| {
+                                        this.select_conversation_at_index(index, cx);
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                        },
+                    )),
             )
     }
 
@@ -1384,16 +1749,20 @@ impl ChatView {
                     .border_color(Theme::border())
                     .rounded(px(4.0))
                     .shadow_lg()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {
-                        // Keep clicks inside menu from falling through to overlay close handler.
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _, _, _| {
+                            // Keep clicks inside menu from falling through to overlay close handler.
+                        }),
+                    )
                     .children(
                         self.state
                             .profiles
                             .iter()
                             .enumerate()
                             .map(|(index, profile)| {
-                                let is_selected = self.state.selected_profile_id == Some(profile.id);
+                                let is_selected =
+                                    self.state.selected_profile_id == Some(profile.id);
                                 let is_highlighted = self.state.profile_dropdown_index == index;
                                 let label = if profile.is_default {
                                     format!("{} (default)", profile.name)
@@ -1446,19 +1815,34 @@ impl ChatView {
 
     /// Render the chat area with messages
     /// @plan PLAN-20250130-GPUIREDUX.P03
-    fn render_chat_area(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_chat_area(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let messages = self.state.messages.clone();
         let streaming = self.state.streaming.clone();
         let show_thinking = self.state.show_thinking;
         div()
             .id("chat-area")
             .flex_1()
+            .min_h_0()
             .w_full()
             .bg(Theme::bg_base())
             .overflow_y_scroll()
+            .track_scroll(&self.chat_scroll_handle)
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
+                this.refresh_autoscroll_state_after_wheel(event);
+                cx.notify();
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _event, _window, cx| {
+                    this.refresh_autoscroll_state_from_handle();
+                    cx.notify();
+                }),
+            )
             .p(px(12.0))
             .flex()
             .flex_col()
+            .items_stretch()
+            .justify_start()
             .gap(px(8.0))
             // Empty state
             .when(
@@ -1476,7 +1860,12 @@ impl ChatView {
             .when(!messages.is_empty(), |d| {
                 d.children(messages.into_iter().enumerate().map(|(i, msg)| {
                     let id = SharedString::from(format!("msg-{}", i));
-                    div().id(id).child(self.render_message(&msg, show_thinking))
+                    div()
+                        .id(id)
+                        .w_full()
+                        .flex()
+                        .justify_start()
+                        .child(self.render_message(&msg, show_thinking))
                 }))
             })
             // Streaming message
@@ -1603,68 +1992,86 @@ impl ChatView {
         let focus_handle = self.focus_handle.clone();
         let cursor_pos = self.state.cursor_position.min(input_text.len());
 
-        let bar_min_height = 44.0;
-        // 25% of total window height (600px) = 150px max for the input bar
-        let max_input_height = 150.0;
+        let wrapped_line_count = if input_text.is_empty() {
+            1
+        } else {
+            input_text
+                .split('\n')
+                .map(|line| {
+                    let len = line.chars().count();
+                    if len == 0 {
+                        1
+                    } else {
+                        // Keep line growth aligned with the visible composer width and font metrics.
+                        // A conservative width avoids premature height jumps while still wrapping
+                        // before the send/stop button area.
+                        let approx_chars_per_line = 65usize;
+                        (len + (approx_chars_per_line - 1)) / approx_chars_per_line
+                    }
+                })
+                .sum::<usize>()
+                .max(1)
+        };
+
+        // Keep composer capped to about 25% of a typical 600px chat panel.
+        let max_composer_height = 150.0;
+        let min_composer_height = 44.0;
+        let line_height = 18.0;
+        let computed_height = wrapped_line_count as f32 * line_height + 14.0;
+        let input_box_height = computed_height.clamp(min_composer_height, max_composer_height);
+        let text_content = if input_text.is_empty() {
+            "Type a message...".to_string()
+        } else {
+            let before = &input_text[..cursor_pos];
+            let after = &input_text[cursor_pos..];
+            format!("{}|{}", before, after)
+        };
 
         div()
             .w_full()
             .flex()
             .items_end()
+            .min_h(px(56.0))
             .gap(px(Theme::SPACING_SM))
             .p(px(Theme::SPACING_MD))
             .bg(Theme::bg_darker())
             .border_t_1()
             .border_color(Theme::bg_dark())
+            .overflow_hidden()
             // Text input field
             .child(
                 div()
                     .id("input-field")
                     .flex_1()
                     .min_w(px(0.0))
-                    .min_h(px(bar_min_height))
-                    .max_h(px(max_input_height))
-                    .p(px(Theme::SPACING_SM))
+                    .h(px(input_box_height))
+                    .max_h(px(max_composer_height))
+                    .px(px(Theme::SPACING_SM))
+                    .py(px(7.0))
                     .bg(Theme::bg_darkest())
                     .rounded(px(Theme::RADIUS_MD))
-                    .overflow_hidden()
+                    .overflow_x_hidden()
                     .overflow_y_scroll()
                     .cursor_text()
                     .on_mouse_down(MouseButton::Left, {
                         let focus_handle = focus_handle.clone();
                         move |_, window, cx| {
-                            tracing::info!("Input field clicked - requesting focus");
                             window.focus(&focus_handle, cx);
                         }
                     })
-                    .child(if input_text.is_empty() {
+                    .child(
                         div()
                             .w_full()
                             .text_size(px(13.0))
-                            .text_color(Theme::text_secondary())
-                            .flex()
-                            .child("Type a message...")
-                            .into_any_element()
-                    } else {
-                        let before = &input_text[..cursor_pos];
-                        let after = &input_text[cursor_pos..];
-                        div()
-                            .w_full()
-                            .text_size(px(13.0))
-                            .text_color(Theme::text_primary())
-                            .flex()
-                            .flex_wrap()
-                            .child(before.to_string())
-                            .child(
-                                div()
-                                    .w(px(1.0))
-                                    .h(px(15.0))
-                                    .bg(Theme::accent())
-                                    .flex_shrink_0(),
-                            )
-                            .child(after.to_string())
-                            .into_any_element()
-                    }),
+                            .line_height(px(line_height))
+                            .text_color(if input_text.is_empty() {
+                                Theme::text_secondary()
+                            } else {
+                                Theme::text_primary()
+                            })
+                            .whitespace_normal()
+                            .child(text_content),
+                    ),
             )
             // Send/Stop button with event emission
             // @plan PLAN-20250130-GPUIREDUX.P04
@@ -1687,6 +2094,7 @@ impl ChatView {
                                     tracing::info!("Stop button clicked - emitting StopStreaming");
                                     this.emit(UserEvent::StopStreaming);
                                     this.state.streaming = StreamingState::Idle;
+                                    this.maybe_scroll_chat_to_bottom(cx);
                                     cx.notify();
                                 }),
                             )
@@ -1722,6 +2130,7 @@ impl ChatView {
                                             content: String::new(),
                                             done: false,
                                         };
+                                        this.maybe_scroll_chat_to_bottom(cx);
                                         cx.notify();
                                     }
                                 }),
@@ -1743,7 +2152,17 @@ impl gpui::Focusable for ChatView {
 }
 
 impl gpui::Render for ChatView {
+    #[rustfmt::skip]
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        tracing::info!(
+            chat_view_entity_id = ?cx.entity_id(),
+            conversation_title = %self.state.conversation_title,
+            active_conversation_id = ?self.state.active_conversation_id,
+            message_count = self.state.messages.len(),
+            profile_count = self.state.profiles.len(),
+            selected_profile_id = ?self.state.selected_profile_id,
+            "ChatView::render state snapshot"
+        );
         div()
             .id("chat-view")
             .flex()
@@ -1781,14 +2200,13 @@ impl gpui::Render for ChatView {
                                 this.state.messages.clear();
                                 this.state.input_text.clear();
                                 this.state.cursor_position = 0;
+                                this.state.streaming = StreamingState::Idle;
                                 this.state.thinking_content = None;
-                                this.state.active_conversation_id = None;
-                                this.conversation_id = None;
-                                this.state.conversation_title = "New Conversation".to_string();
-                                this.state.conversation_dropdown_open = false;
                                 this.state.conversation_title_editing = false;
                                 this.state.conversation_title_input.clear();
-                                this.state.profile_dropdown_open = false;
+                                this.state.chat_autoscroll_enabled = true;
+                                this.chat_scroll_handle.scroll_to_bottom();
+                                this.state.conversation_title = "New Conversation".to_string();
                                 cx.notify();
                                 return;
                             }
@@ -1821,7 +2239,7 @@ impl gpui::Render for ChatView {
                             "enter" => this.submit_rename_conversation(cx),
                             _ => {
                                 if key.len() == 1 && !modifiers.platform && !modifiers.control {
-                                    this.handle_rename_char(key, cx);
+                                    this.handle_rename_char(key, modifiers.shift, cx);
                                 }
                             }
                         }

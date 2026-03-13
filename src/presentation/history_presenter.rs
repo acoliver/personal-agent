@@ -179,7 +179,6 @@ impl HistoryPresenter {
             _ => {}
         }
     }
-
 }
 
 // Implement Presenter trait

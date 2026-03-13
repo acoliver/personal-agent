@@ -28,6 +28,20 @@ pub enum ViewCommand {
         content: String,
     },
 
+    /// Replace the visible transcript for a conversation with a full replay payload.
+    ConversationMessagesLoaded {
+        conversation_id: Uuid,
+        selection_generation: u64,
+        messages: Vec<ConversationMessagePayload>,
+    },
+
+    /// Explicit load failure for the currently selected conversation generation.
+    ConversationLoadFailed {
+        conversation_id: Uuid,
+        selection_generation: u64,
+        message: String,
+    },
+
     /// Show thinking indicator
     ShowThinking { conversation_id: Uuid },
 
@@ -100,7 +114,7 @@ pub enum ViewCommand {
     },
 
     /// Conversation was activated
-    ConversationActivated { id: Uuid },
+    ConversationActivated { id: Uuid, selection_generation: u64 },
 
     /// Conversation was deleted
     ConversationDeleted { id: Uuid },
@@ -188,6 +202,7 @@ pub enum ViewCommand {
     ModelSelected {
         provider_id: String,
         model_id: String,
+        provider_api_url: Option<String>,
         context_length: Option<u32>,
     },
 
@@ -243,6 +258,14 @@ pub enum MessageRole {
     Assistant,
     System,
     Tool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConversationMessagePayload {
+    pub role: MessageRole,
+    pub content: String,
+    pub thinking_content: Option<String>,
+    pub timestamp: Option<u64>,
 }
 
 /// Conversation summary for list display

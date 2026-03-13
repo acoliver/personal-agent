@@ -198,7 +198,10 @@ fn test_history_view_conversation_activated_is_routed() {
     let (bridge, sink) = make_bridge_and_sink();
     let conv_id = Uuid::new_v4();
 
-    sink.send(ViewCommand::ConversationActivated { id: conv_id });
+    sink.send(ViewCommand::ConversationActivated {
+        id: conv_id,
+        selection_generation: 7,
+    });
 
     let mut targets = CommandTargets::default();
     for cmd in bridge.drain_commands() {
@@ -541,6 +544,7 @@ fn test_model_selected_is_routed_to_profile_prefill_target() {
     sink.send(ViewCommand::ModelSelected {
         provider_id: "anthropic".to_string(),
         model_id: "claude-3-5-sonnet".to_string(),
+        provider_api_url: Some("https://api.anthropic.com/v1".to_string()),
         context_length: Some(200_000),
     });
 
@@ -558,7 +562,6 @@ fn test_model_selected_is_routed_to_profile_prefill_target() {
         "ModelSelected must be routed as a profile prefill signal"
     );
 }
-
 
 /// REQ-WIRE-002: ProfileEditorLoad reaches ProfileEditor routing target
 ///
@@ -624,7 +627,10 @@ fn test_mixed_drain_routes_to_all_target_views() {
         role: MessageRole::User,
         content: "hello".to_string(),
     });
-    sink.send(ViewCommand::ConversationActivated { id: conv_id });
+    sink.send(ViewCommand::ConversationActivated {
+        id: conv_id,
+        selection_generation: 11,
+    });
     sink.send(ViewCommand::ProfileCreated {
         id: profile_id,
         name: "Profile A".to_string(),

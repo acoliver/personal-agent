@@ -11,7 +11,9 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
-use super::view_command::{ConversationSummary, ErrorSeverity, MessageRole};
+use super::view_command::{
+    ConversationMessagePayload, ConversationSummary, ErrorSeverity, MessageRole,
+};
 use super::{Presenter, PresenterError, ViewCommand};
 use crate::events::bus::EventBus;
 use crate::events::{
@@ -83,19 +85,66 @@ impl ChatPresenter {
 
         // Emit initial conversation list so the dropdown is populated on startup
         tracing::info!("ChatPresenter: emitting initial conversation list");
-        match Self::emit_conversation_list(&self.conversation_service, &mut self.view_tx.clone()).await {
-            Ok(_) => tracing::info!("ChatPresenter: initial conversation list emitted successfully"),
-            Err(e) => tracing::error!("ChatPresenter: failed to emit initial conversation list: {}", e),
+        match Self::emit_conversation_list(&self.conversation_service, &mut self.view_tx.clone())
+            .await
+        {
+            Ok(_) => {
+                tracing::info!("ChatPresenter: initial conversation list emitted successfully")
+            }
+            Err(e) => tracing::error!(
+                "ChatPresenter: failed to emit initial conversation list: {}",
+                e
+            ),
         }
 
-        // If there's an active conversation, activate it so the chat view shows it
-        match self.conversation_service.get_active().await {
-            Ok(Some(active_id)) => {
-                tracing::info!("ChatPresenter: activating conversation {}", active_id);
-                let _ = self.view_tx.send(ViewCommand::ConversationActivated { id: active_id }).await;
+        // On startup, always activate and replay the newest conversation when available.
+        // This guarantees the selected conversation and visible transcript are consistent,
+        // even when persisted active-id metadata is absent.
+        match self.conversation_service.list(Some(1), Some(0)).await {
+            Ok(conversations) => {
+                if let Some(conversation) = conversations.first() {
+                    let startup_id = conversation.id;
+                    tracing::info!(
+                        conversation_id = %startup_id,
+                        "ChatPresenter: startup selecting newest conversation"
+                    );
+                    let _ = self.conversation_service.set_active(startup_id).await;
+
+                    let mut startup_view_tx = self.view_tx.clone();
+                    let _ = startup_view_tx
+                        .send(ViewCommand::ConversationActivated {
+                            id: startup_id,
+                            selection_generation: 1,
+                        })
+                        .await;
+
+                    match Self::replay_conversation_messages(
+                        &self.conversation_service,
+                        &mut startup_view_tx,
+                        startup_id,
+                        1,
+                    )
+                    .await
+                    {
+                        Ok(count) => tracing::info!(
+                            conversation_id = %startup_id,
+                            count,
+                            "ChatPresenter: replayed startup conversation messages"
+                        ),
+                        Err(e) => tracing::warn!(
+                            "ChatPresenter: failed to replay startup conversation {}: {}",
+                            startup_id,
+                            e
+                        ),
+                    }
+                } else {
+                    tracing::info!("ChatPresenter: no conversations at startup");
+                }
             }
-            Ok(None) => tracing::info!("ChatPresenter: no active conversation at startup"),
-            Err(e) => tracing::warn!("ChatPresenter: failed to get active conversation: {}", e),
+            Err(e) => tracing::warn!(
+                "ChatPresenter: failed to list conversations at startup: {}",
+                e
+            ),
         }
 
         // Subscribe to events from EventBus
@@ -221,8 +270,20 @@ impl ChatPresenter {
             UserEvent::ConfirmRenameConversation { id, title } => {
                 Self::handle_rename_conversation(conversation_service, view_tx, id, title).await;
             }
-            UserEvent::SelectConversation { id } => {
-                Self::handle_select_conversation(conversation_service, view_tx, id).await;
+            UserEvent::SelectConversation {
+                id,
+                selection_generation,
+            } => {
+                Self::handle_select_conversation(
+                    conversation_service,
+                    view_tx,
+                    id,
+                    selection_generation,
+                )
+                .await;
+            }
+            UserEvent::RefreshHistory => {
+                let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             _ => {} // Ignore other user events
         }
@@ -253,6 +314,43 @@ impl ChatPresenter {
             .await;
 
         Ok(())
+    }
+
+    async fn replay_conversation_messages(
+        conversation_service: &Arc<dyn ConversationService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        selection_generation: u64,
+    ) -> Result<usize, ServiceError> {
+        let messages = conversation_service.get_messages(conversation_id).await?;
+        let replay_count = messages.len();
+        let loaded_messages = messages
+            .into_iter()
+            .filter_map(|message| {
+                let role = match message.role {
+                    crate::models::MessageRole::User => MessageRole::User,
+                    crate::models::MessageRole::Assistant => MessageRole::Assistant,
+                    crate::models::MessageRole::System => return None,
+                };
+
+                Some(ConversationMessagePayload {
+                    role,
+                    content: message.content,
+                    thinking_content: message.thinking_content,
+                    timestamp: Some(message.timestamp.timestamp_millis() as u64),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let _ = view_tx
+            .send(ViewCommand::ConversationMessagesLoaded {
+                conversation_id,
+                selection_generation,
+                messages: loaded_messages,
+            })
+            .await;
+
+        Ok(replay_count)
     }
 
     /// Handle chat events
@@ -530,7 +628,10 @@ impl ChatPresenter {
             }
             ConversationEvent::Activated { id } => {
                 let _ = view_tx
-                    .send(ViewCommand::ConversationActivated { id })
+                    .send(ViewCommand::ConversationActivated {
+                        id,
+                        selection_generation: 0,
+                    })
                     .await;
             }
             ConversationEvent::Deactivated => {
@@ -543,7 +644,10 @@ impl ChatPresenter {
             }
             ConversationEvent::Loaded { id } => {
                 let _ = view_tx
-                    .send(ViewCommand::ConversationActivated { id })
+                    .send(ViewCommand::ConversationActivated {
+                        id,
+                        selection_generation: 0,
+                    })
                     .await;
             }
         }
@@ -601,6 +705,7 @@ impl ChatPresenter {
                 let _ = view_tx
                     .send(ViewCommand::ConversationActivated {
                         id: conversation_id,
+                        selection_generation: 1,
                     })
                     .await;
 
@@ -628,44 +733,55 @@ impl ChatPresenter {
         conversation_service: &Arc<dyn ConversationService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         id: Uuid,
+        selection_generation: u64,
     ) {
         let result = conversation_service.set_active(id).await;
         match result {
             Ok(_) => {
                 let _ = view_tx
-                    .send(ViewCommand::ConversationActivated { id })
+                    .send(ViewCommand::ConversationActivated {
+                        id,
+                        selection_generation,
+                    })
                     .await;
 
-                match conversation_service.get_messages(id).await {
-                    Ok(messages) => {
-                        let message_count = messages.len();
+                match Self::replay_conversation_messages(
+                    conversation_service,
+                    view_tx,
+                    id,
+                    selection_generation,
+                )
+                .await
+                {
+                    Ok(count) => {
                         tracing::info!(
                             conversation_id = %id,
-                            count = message_count,
+                            count,
                             "ChatPresenter: replaying selected conversation messages"
                         );
-                        for message in messages {
-                            let role = match message.role {
-                                crate::models::MessageRole::User => MessageRole::User,
-                                crate::models::MessageRole::Assistant => MessageRole::Assistant,
-                                crate::models::MessageRole::System => MessageRole::System,
-                            };
-
-                            let _ = view_tx
-                                .send(ViewCommand::MessageAppended {
-                                    conversation_id: id,
-                                    role,
-                                    content: message.content,
-                                })
-                                .await;
-                        }
                     }
                     Err(e) => {
+                        let error_msg =
+                            format!("Failed to load messages for selected conversation: {}", e);
                         tracing::warn!(
                             "Failed to load messages for selected conversation {}: {}",
                             id,
                             e
                         );
+                        let _ = view_tx
+                            .send(ViewCommand::ConversationLoadFailed {
+                                conversation_id: id,
+                                selection_generation,
+                                message: error_msg.clone(),
+                            })
+                            .await;
+                        let _ = view_tx
+                            .send(ViewCommand::ShowError {
+                                title: "Error".to_string(),
+                                message: error_msg,
+                                severity: ErrorSeverity::Error,
+                            })
+                            .await;
                     }
                 }
 
@@ -674,6 +790,13 @@ impl ChatPresenter {
             Err(e) => {
                 let error_msg = format!("Failed to select conversation: {}", e);
                 tracing::error!("{}", error_msg);
+                let _ = view_tx
+                    .send(ViewCommand::ConversationLoadFailed {
+                        conversation_id: id,
+                        selection_generation,
+                        message: error_msg.clone(),
+                    })
+                    .await;
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
                         title: "Error".to_string(),
@@ -723,6 +846,7 @@ impl ChatPresenter {
                 let _ = view_tx
                     .send(ViewCommand::ConversationActivated {
                         id: conversation_id,
+                        selection_generation: 1,
                     })
                     .await;
 

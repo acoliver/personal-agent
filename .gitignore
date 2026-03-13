@@ -19,3 +19,5 @@ Cargo.lock
 *.app
 *.dmg
 tmp/
+.tmp/
+.tmp_*
