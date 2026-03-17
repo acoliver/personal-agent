@@ -116,8 +116,8 @@ mod tests {
             provider_id.to_string(),
             model_id.to_string(),
             String::new(),
-            AuthConfig::Key {
-                value: "sk-test".to_string(),
+            AuthConfig::Keychain {
+                label: "test".to_string(),
             },
         )
     }

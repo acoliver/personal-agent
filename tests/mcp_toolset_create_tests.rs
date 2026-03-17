@@ -2,13 +2,11 @@ use personal_agent::mcp::{
     create_toolset_from_config, McpAuthType, McpConfig, McpPackage, McpPackageType, McpSource,
     McpTransport, SecretsManager,
 };
-use tempfile::TempDir;
 use uuid::Uuid;
 
 #[tokio::test]
 async fn create_toolset_from_config_allows_http_without_command() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
 
     let config = McpConfig {
         id: Uuid::new_v4(),
@@ -37,8 +35,7 @@ async fn create_toolset_from_config_allows_http_without_command() {
 
 #[tokio::test]
 async fn create_toolset_from_config_errors_for_stdio_without_command() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
 
     let config = McpConfig {
         id: Uuid::new_v4(),

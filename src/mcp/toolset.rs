@@ -89,14 +89,14 @@ pub fn build_env_for_config(
             }
         }
         McpAuthType::Keyfile => {
-            if let Some(ref path) = config.keyfile_path {
-                let key = secrets.read_keyfile(path)?;
-                // Use the first env var name, or a default
-                let var_name = config
-                    .env_vars
-                    .first()
-                    .map_or_else(|| "API_KEY".to_string(), |v| v.name.clone());
-                env.insert(var_name, key);
+            // Keyfile auth is deprecated — treat as API key lookup.
+            for var in &config.env_vars {
+                let key = if config.env_vars.len() == 1 {
+                    secrets.load_api_key(config.id)?
+                } else {
+                    secrets.load_api_key_named(config.id, &var.name)?
+                };
+                env.insert(var.name.clone(), key);
             }
         }
         McpAuthType::OAuth => {

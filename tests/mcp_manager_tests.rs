@@ -3,7 +3,6 @@ use personal_agent::mcp::{
     SecretsManager,
 };
 use std::time::Duration;
-use tempfile::TempDir;
 use uuid::Uuid;
 
 fn base_config() -> McpConfig {
@@ -31,8 +30,7 @@ fn base_config() -> McpConfig {
 
 #[test]
 fn manager_tracks_activity_and_cleanup() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
     let mut manager = McpManager::with_idle_timeout(secrets, Duration::from_secs(0));
 
     let config = base_config();
@@ -45,8 +43,7 @@ fn manager_tracks_activity_and_cleanup() {
 
 #[test]
 fn manager_handle_config_change_stops_disabled_mcp() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
     let mut manager = McpManager::new(secrets);
 
     let mut config = base_config();

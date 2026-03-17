@@ -158,6 +158,7 @@ use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::chat_view::{ChatState, ChatView};
 use crate::ui_gpui::views::history_view::HistoryView;
+use crate::ui_gpui::views::api_key_manager_view::ApiKeyManagerView;
 use crate::ui_gpui::views::mcp_add_view::McpAddView;
 use crate::ui_gpui::views::mcp_configure_view::McpConfigureView;
 use crate::ui_gpui::views::model_selector_view::ModelSelectorView;
@@ -193,6 +194,7 @@ pub struct MainPanel {
     profile_editor_view: Option<Entity<ProfileEditorView>>,
     mcp_add_view: Option<Entity<McpAddView>>,
     mcp_configure_view: Option<Entity<McpConfigureView>>,
+    api_key_manager_view: Option<Entity<ApiKeyManagerView>>,
     runtime_started: bool,
     store_snapshot_revision: u64,
 
@@ -215,6 +217,7 @@ impl MainPanel {
             profile_editor_view: None,
             mcp_add_view: None,
             mcp_configure_view: None,
+            api_key_manager_view: None,
             runtime_started: false,
             store_snapshot_revision: 0,
             _store_subscription_task: None,
@@ -290,6 +293,7 @@ impl MainPanel {
             let bridge = app_state.gpui_bridge.clone();
             let _ = bridge.emit(UserEvent::RefreshProfiles);
             let _ = bridge.emit(UserEvent::RefreshHistory);
+            let _ = bridge.emit(UserEvent::RefreshApiKeys);
         }
     }
 
@@ -375,6 +379,15 @@ impl MainPanel {
         // MCP Configure view
         self.mcp_configure_view = Some(cx.new(|cx: &mut gpui::Context<McpConfigureView>| {
             let mut view = McpConfigureView::new(cx);
+            if let Some(ref b) = bridge {
+                view.set_bridge(b.clone());
+            }
+            view
+        }));
+
+        // API Key Manager view
+        self.api_key_manager_view = Some(cx.new(|cx: &mut gpui::Context<ApiKeyManagerView>| {
+            let mut view = ApiKeyManagerView::new(cx);
             if let Some(ref b) = bridge {
                 view.set_bridge(b.clone());
             }
@@ -497,6 +510,7 @@ impl MainPanel {
             && self.profile_editor_view.is_some()
             && self.mcp_add_view.is_some()
             && self.mcp_configure_view.is_some()
+            && self.api_key_manager_view.is_some()
     }
 
     pub fn is_runtime_started(&self) -> bool {
@@ -596,8 +610,7 @@ impl MainPanel {
                 ref provider_id,
                 ref model_id,
                 ref base_url,
-                ref auth_kind,
-                ref auth_value,
+                ref api_key_label,
                 temperature,
                 max_tokens,
                 context_limit,
@@ -611,8 +624,7 @@ impl MainPanel {
                     let provider_id_clone = provider_id.clone();
                     let model_id_clone = model_id.clone();
                     let base_url_clone = base_url.clone();
-                    let auth_kind_clone = auth_kind.clone();
-                    let auth_value_clone = auth_value.clone();
+                    let api_key_label_clone = api_key_label.clone();
                     let system_prompt_clone = system_prompt.clone();
                     profile_editor.update(cx, |view, cx| {
                         view.handle_command(
@@ -622,8 +634,7 @@ impl MainPanel {
                                 provider_id: provider_id_clone,
                                 model_id: model_id_clone,
                                 base_url: base_url_clone,
-                                auth_kind: auth_kind_clone,
-                                auth_value: auth_value_clone,
+                                api_key_label: api_key_label_clone,
                                 temperature,
                                 max_tokens,
                                 context_limit,
@@ -1124,6 +1135,44 @@ impl MainPanel {
                     });
                 }
             }
+            ViewCommand::ApiKeysListed { ref keys } => {
+                tracing::info!(key_count = keys.len(), "MainPanel: forwarding ApiKeysListed to GPUI views");
+                if let Some(ref akm) = self.api_key_manager_view {
+                    let keys_clone = keys.clone();
+                    akm.update(cx, |view, cx| {
+                        view.handle_command(
+                            ViewCommand::ApiKeysListed { keys: keys_clone },
+                            cx,
+                        );
+                    });
+                }
+                // Also forward to profile editor so its key dropdown refreshes
+                if let Some(ref pe) = self.profile_editor_view {
+                    let keys_clone = keys.clone();
+                    pe.update(cx, |view, cx| {
+                        view.handle_command(
+                            ViewCommand::ApiKeysListed { keys: keys_clone },
+                            cx,
+                        );
+                    });
+                }
+            }
+            ViewCommand::ApiKeyStored { ref label } => {
+                if let Some(ref akm) = self.api_key_manager_view {
+                    let l = label.clone();
+                    akm.update(cx, |view, cx| {
+                        view.handle_command(ViewCommand::ApiKeyStored { label: l }, cx);
+                    });
+                }
+            }
+            ViewCommand::ApiKeyDeleted { ref label } => {
+                if let Some(ref akm) = self.api_key_manager_view {
+                    let l = label.clone();
+                    akm.update(cx, |view, cx| {
+                        view.handle_command(ViewCommand::ApiKeyDeleted { label: l }, cx);
+                    });
+                }
+            }
             other => {
                 tracing::debug!("MainPanel: command {:?} not forwarded to child view", other);
             }
@@ -1193,6 +1242,12 @@ impl gpui::Render for MainPanel {
                     }
                 }
 
+                if view_id == ViewId::ProfileEditor {
+                    if let Some(app_state) = cx.try_global::<MainPanelAppState>() {
+                        let _ = app_state.gpui_bridge.emit(UserEvent::RefreshApiKeys);
+                    }
+                }
+
                 self.navigation.navigate(view_id);
                 cx.notify();
             }
@@ -1222,6 +1277,12 @@ impl gpui::Render for MainPanel {
             ViewId::ModelSelector => {
                 if let Some(ms_view) = &self.model_selector_view {
                     let focus = ms_view.read(cx).focus_handle(cx).clone();
+                    window.focus(&focus, cx);
+                }
+            }
+            ViewId::ApiKeyManager => {
+                if let Some(akm_view) = &self.api_key_manager_view {
+                    let focus = akm_view.read(cx).focus_handle(cx).clone();
                     window.focus(&focus, cx);
                 }
             }
@@ -1369,6 +1430,14 @@ impl gpui::Render for MainPanel {
                             d.child(view.clone())
                         } else {
                             d.child(div().child("Loading MCP configure..."))
+                        }
+                    })
+                    // API Key Manager view
+                    .when(current_view == ViewId::ApiKeyManager, |d| {
+                        if let Some(view) = &self.api_key_manager_view {
+                            d.child(view.clone())
+                        } else {
+                            d.child(div().child("Loading API key manager..."))
                         }
                     }),
             )

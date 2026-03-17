@@ -2,7 +2,6 @@ use personal_agent::mcp::{
     EnvVarConfig, McpAuthType, McpConfig, McpPackage, McpPackageArg, McpPackageArgType,
     McpPackageType, McpRuntime, McpSource, McpStatus, McpTransport, SecretsManager,
 };
-use tempfile::TempDir;
 use uuid::Uuid;
 
 fn base_config() -> McpConfig {
@@ -33,8 +32,7 @@ fn base_config() -> McpConfig {
 
 #[tokio::test]
 async fn start_mcp_disabled_sets_stopped_status() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
     let mut runtime = McpRuntime::new(secrets);
 
     let mut config = base_config();
@@ -49,8 +47,7 @@ async fn start_mcp_disabled_sets_stopped_status() {
 
 #[tokio::test]
 async fn start_mcp_missing_package_args_sets_error() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
     let mut runtime = McpRuntime::new(secrets);
 
     let mut config = base_config();
@@ -74,8 +71,7 @@ async fn start_mcp_missing_package_args_sets_error() {
 
 #[tokio::test]
 async fn call_tool_without_provider_returns_error() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
     let mut runtime = McpRuntime::new(secrets);
 
     let result = runtime.call_tool("missing", serde_json::json!({})).await;

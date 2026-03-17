@@ -26,8 +26,9 @@ use tracing_subscriber::FmtSubscriber;
 use personal_agent::events::types::UserEvent;
 use personal_agent::events::EventBus;
 use personal_agent::presentation::{
-    ChatPresenter, HistoryPresenter, McpAddPresenter, McpConfigurePresenter,
-    ModelSelectorPresenter, ProfileEditorPresenter, SettingsPresenter, ViewCommand,
+    ApiKeyManagerPresenter, ChatPresenter, HistoryPresenter, McpAddPresenter,
+    McpConfigurePresenter, ModelSelectorPresenter, ProfileEditorPresenter, SettingsPresenter,
+    ViewCommand,
 };
 use personal_agent::services::{
     AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl, ConversationService,
@@ -1047,6 +1048,9 @@ fn main() {
                 let (mcp_configure_view_tx, _) = tokio::sync::broadcast::channel::<
                     personal_agent::presentation::ViewCommand,
                 >(100);
+                let (api_key_manager_view_tx, _) = tokio::sync::broadcast::channel::<
+                    personal_agent::presentation::ViewCommand,
+                >(100);
 
                 let _settings_bridge = spawn_broadcast_to_mpsc_view_command_bridge(
                     settings_view_tx.subscribe(),
@@ -1072,6 +1076,11 @@ fn main() {
                     mcp_configure_view_tx.subscribe(),
                     view_tx.clone(),
                     "McpConfigurePresenter",
+                );
+                let _api_key_manager_bridge = spawn_broadcast_to_mpsc_view_command_bridge(
+                    api_key_manager_view_tx.subscribe(),
+                    view_tx.clone(),
+                    "ApiKeyManagerPresenter",
                 );
 
                 // Create and start presenters
@@ -1114,30 +1123,54 @@ fn main() {
                     Arc::clone(&event_bus_for_tokio),
                     mcp_configure_view_tx,
                 );
+                let mut api_key_manager_presenter = ApiKeyManagerPresenter::new_with_event_bus(
+                    profile_service.clone(),
+                    Arc::clone(&event_bus_for_tokio),
+                    api_key_manager_view_tx,
+                );
 
                 info!("Starting presenters...");
+                info!("Starting ChatPresenter...");
                 if let Err(e) = chat_presenter.start().await {
                     tracing::error!("Failed to start ChatPresenter: {:?}", e);
                 }
+                info!("Started ChatPresenter");
+                info!("Starting HistoryPresenter...");
                 if let Err(e) = history_presenter.start().await {
                     tracing::error!("Failed to start HistoryPresenter: {:?}", e);
                 }
+                info!("Started HistoryPresenter");
+                info!("Starting SettingsPresenter...");
                 if let Err(e) = settings_presenter.start().await {
                     tracing::error!("Failed to start SettingsPresenter: {:?}", e);
                 }
+                info!("Started SettingsPresenter");
+                info!("Starting ModelSelectorPresenter...");
                 if let Err(e) = model_selector_presenter.start().await {
                     tracing::error!("Failed to start ModelSelectorPresenter: {:?}", e);
                 }
+                info!("Started ModelSelectorPresenter");
+                info!("Starting ProfileEditorPresenter...");
                 if let Err(e) = profile_editor_presenter.start().await {
                     tracing::error!("Failed to start ProfileEditorPresenter: {:?}", e);
                 }
+                info!("Started ProfileEditorPresenter");
+                info!("Starting McpAddPresenter...");
                 if let Err(e) = mcp_add_presenter.start().await {
                     tracing::error!("Failed to start McpAddPresenter: {:?}", e);
                 }
+                info!("Started McpAddPresenter");
+                info!("Starting McpConfigurePresenter...");
                 if let Err(e) = mcp_configure_presenter.start().await {
                     tracing::error!("Failed to start McpConfigurePresenter: {:?}", e);
                 }
-                info!("All 7 presenters started");
+                info!("Started McpConfigurePresenter");
+                info!("Starting ApiKeyManagerPresenter...");
+                if let Err(e) = api_key_manager_presenter.start().await {
+                    tracing::error!("Failed to start ApiKeyManagerPresenter: {:?}", e);
+                }
+                info!("Started ApiKeyManagerPresenter");
+                info!("All 8 presenters started");
 
                 // Keep runtime alive
                 loop {

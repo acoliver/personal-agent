@@ -24,19 +24,46 @@ fn default_system_prompt() -> String {
     DEFAULT_SYSTEM_PROMPT.to_string()
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum AuthConfig {
-    Key { value: String },
-    Keyfile { path: String },
+    /// API key stored in the OS keychain, referenced by label.
+    Keychain { label: String },
 }
 
-// Custom Debug impl to redact API keys from logs
+impl<'de> serde::Deserialize<'de> for AuthConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+        use std::collections::HashMap;
+
+        let map = HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
+        match map.get("type").and_then(|v| v.as_str()) {
+            Some("keychain") => {
+                let label = map
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Ok(AuthConfig::Keychain { label })
+            }
+            // Legacy formats: map to empty keychain label (key must be re-stored)
+            Some("key") | Some("keyfile") | _ => Ok(AuthConfig::Keychain {
+                label: String::new(),
+            }),
+        }
+    }
+}
+
 impl std::fmt::Debug for AuthConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Key { .. } => f.debug_struct("Key").field("value", &"[REDACTED]").finish(),
-            Self::Keyfile { path } => f.debug_struct("Keyfile").field("path", path).finish(),
+            Self::Keychain { label } => f
+                .debug_struct("Keychain")
+                .field("label", label)
+                .finish(),
         }
     }
 }
@@ -59,8 +86,8 @@ impl Default for ModelProfile {
             provider_id: "openai".to_string(),
             model_id: "gpt-4".to_string(),
             base_url: "https://api.openai.com/v1".to_string(),
-            auth: AuthConfig::Key {
-                value: String::new(),
+            auth: AuthConfig::Keychain {
+                label: String::new(),
             },
             parameters: ModelParameters::default(),
             system_prompt: default_system_prompt(),

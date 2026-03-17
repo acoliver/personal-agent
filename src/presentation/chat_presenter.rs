@@ -1118,8 +1118,8 @@ mod tests {
                 provider_id: "openai".to_string(),
                 model_id: "gpt-4".to_string(),
                 base_url: "https://api.openai.com/v1".to_string(),
-                auth: crate::models::AuthConfig::Key {
-                    value: "test-key".to_string(),
+                auth: crate::models::AuthConfig::Keychain {
+                    label: "test-key".to_string(),
                 },
                 parameters: crate::models::ModelParameters::default(),
                 system_prompt: "test".to_string(),

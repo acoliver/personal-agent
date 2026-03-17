@@ -20,11 +20,7 @@ async fn main() {
     println!("\nEnabled MCPs: {}", enabled.len());
 
     // Try to start
-    let secrets_path = dirs::data_local_dir()
-        .expect("data dir")
-        .join("PersonalAgent")
-        .join("mcp_secrets");
-    let secrets = SecretsManager::new(secrets_path);
+    let secrets = SecretsManager::new();
     let mut runtime = McpRuntime::new(secrets);
 
     println!("\nStarting MCPs...");

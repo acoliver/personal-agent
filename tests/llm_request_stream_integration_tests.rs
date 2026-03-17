@@ -5,13 +5,20 @@ use std::sync::Arc;
 /// (e.g., invalid API key). This verifies the error propagation behavior.
 #[tokio::test]
 async fn request_stream_returns_error_on_api_failure() {
+    personal_agent::services::secure_store::use_mock_backend();
+    personal_agent::services::secure_store::api_keys::store(
+        "_test_stream_err",
+        "invalid-key-for-testing",
+    )
+    .expect("store test key");
+
     let profile = ModelProfile::new(
         "Test".to_string(),
         "openai".to_string(),
         "gpt-4o".to_string(),
         String::new(),
-        AuthConfig::Key {
-            value: "invalid-key-for-testing".to_string(),
+        AuthConfig::Keychain {
+            label: "_test_stream_err".to_string(),
         },
     );
 
@@ -30,4 +37,6 @@ async fn request_stream_returns_error_on_api_failure() {
 
     // The request should fail due to invalid API key
     assert!(result.is_err(), "Expected error from invalid API key");
+
+    let _ = personal_agent::services::secure_store::api_keys::delete("_test_stream_err");
 }

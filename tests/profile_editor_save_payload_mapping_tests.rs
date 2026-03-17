@@ -139,8 +139,8 @@ impl ProfileService for RecordingProfileService {
             provider_id: "openai".to_string(),
             model_id: model.unwrap_or_else(|| "gpt-4o".to_string()),
             base_url: "https://api.openai.com/v1".to_string(),
-            auth: auth.unwrap_or(AuthConfig::Key {
-                value: "".to_string(),
+            auth: auth.unwrap_or(AuthConfig::Keychain {
+                label: "".to_string(),
             }),
             parameters: parameters.unwrap_or_default(),
             system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
@@ -171,8 +171,8 @@ fn payload() -> EventModelProfile {
         provider_id: Some("anthropic".to_string()),
         model_id: Some("claude-3-5-sonnet".to_string()),
         base_url: Some("https://api.anthropic.com/v1".to_string()),
-        auth: Some(ModelProfileAuth::Keyfile {
-            path: "/tmp/keyfile.txt".to_string(),
+        auth: Some(ModelProfileAuth::Keychain {
+            label: "test-key".to_string(),
         }),
         parameters: Some(ModelProfileParameters {
             temperature: Some(0.2),
@@ -241,7 +241,7 @@ async fn test_save_profile_payload_maps_fields_to_update_call() {
     assert_eq!(call.id, save_payload.id);
     assert_eq!(call.name.as_deref(), Some("Editor Name"));
     assert_eq!(call.model.as_deref(), Some("claude-3-5-sonnet"));
-    assert!(matches!(call.auth, Some(AuthConfig::Keyfile { .. })));
+    assert!(matches!(call.auth, Some(AuthConfig::Keychain { .. })));
 
     let params = call
         .parameters
@@ -314,7 +314,7 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
     assert_eq!(create.provider, "anthropic");
     assert_eq!(create.model, "claude-3-5-sonnet");
     assert_eq!(create.name, "Editor Name");
-    assert!(matches!(create.auth, AuthConfig::Keyfile { .. }));
+    assert!(matches!(create.auth, AuthConfig::Keychain { .. }));
     assert!((create.parameters.temperature - 0.2).abs() < f64::EPSILON);
     assert_eq!(create.parameters.max_tokens, 2048);
     assert!(create.parameters.show_thinking);

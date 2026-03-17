@@ -26,12 +26,7 @@ impl McpService {
     pub fn global() -> Arc<Mutex<Self>> {
         MCP_SERVICE
             .get_or_init(|| {
-                let secrets = SecretsManager::new(
-                    dirs::data_local_dir()
-                        .expect("Could not determine data directory")
-                        .join("PersonalAgent")
-                        .join("mcp_secrets"),
-                );
+                let secrets = SecretsManager::new();
                 Arc::new(Mutex::new(Self {
                     runtime: McpRuntime::new(secrets),
                     tool_registry: HashMap::new(),

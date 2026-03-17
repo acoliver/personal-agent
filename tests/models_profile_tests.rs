@@ -16,18 +16,18 @@ fn model_profile_apply_parameters_and_auth() {
         "openai".to_string(),
         "gpt-4o".to_string(),
         "https://api.example.com".to_string(),
-        AuthConfig::Key {
-            value: "secret".to_string(),
+        AuthConfig::Keychain {
+            label: "secret".to_string(),
         },
     )
     .with_parameters(parameters.clone());
 
     profile.set_name("Updated".to_string());
-    profile.set_auth(AuthConfig::Keyfile {
-        path: "/tmp/key".to_string(),
+    profile.set_auth(AuthConfig::Keychain {
+        label: "/tmp/key".to_string(),
     });
 
     assert_eq!(profile.name, "Updated");
     assert_eq!(profile.parameters, parameters);
-    assert!(matches!(profile.auth, AuthConfig::Keyfile { .. }));
+    assert!(matches!(profile.auth, AuthConfig::Keychain { .. }));
 }

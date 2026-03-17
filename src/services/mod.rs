@@ -29,6 +29,7 @@ pub mod profile;
 pub mod profile_impl;
 pub mod secrets;
 pub mod secrets_impl;
+pub mod secure_store;
 
 use thiserror::Error;
 

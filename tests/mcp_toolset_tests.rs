@@ -2,7 +2,6 @@ use personal_agent::mcp::{
     build_command, build_env_for_config, McpAuthType, McpConfig, McpPackage, McpPackageArg,
     McpPackageArgType, McpPackageType, McpSource, McpTransport, SecretsManager,
 };
-use tempfile::TempDir;
 use uuid::Uuid;
 
 fn base_config() -> McpConfig {
@@ -55,8 +54,8 @@ fn build_command_includes_named_package_args() {
 
 #[test]
 fn build_env_for_config_loads_secrets() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
 
     let config = base_config();
     secrets.store_api_key(config.id, "secret").unwrap();

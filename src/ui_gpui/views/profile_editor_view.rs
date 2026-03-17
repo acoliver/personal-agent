@@ -21,18 +21,14 @@ use crate::ui_gpui::theme::Theme;
 /// @plan PLAN-20250130-GPUIREDUX.P08
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum AuthMethod {
-    None,
     #[default]
-    ApiKey,
-    Keyfile,
+    Keychain,
 }
 
 impl AuthMethod {
     pub fn display(&self) -> &'static str {
         match self {
-            AuthMethod::None => "None",
-            AuthMethod::ApiKey => "API Key",
-            AuthMethod::Keyfile => "Key File",
+            AuthMethod::Keychain => "Keychain",
         }
     }
 }
@@ -75,8 +71,6 @@ enum ActiveField {
     Name,
     Model,
     BaseUrl,
-    ApiKey,
-    KeyfilePath,
     MaxTokens,
     ContextLimit,
     ThinkingBudget,
@@ -92,9 +86,10 @@ pub struct ProfileEditorData {
     pub model_id: String,
     pub api_type: ApiType,
     pub base_url: String,
-    pub auth_method: AuthMethod,
-    pub api_key: String,
-    pub keyfile_path: String,
+    /// Keychain label for the API key (empty = none selected).
+    pub key_label: String,
+    /// Available keychain labels populated by `ApiKeysListed`.
+    pub available_keys: Vec<String>,
     pub temperature: f32,
     pub max_tokens: u32,
     pub context_limit: u32,
@@ -128,11 +123,7 @@ impl ProfileEditorData {
         if self.base_url.trim().is_empty() {
             return false;
         }
-        match self.auth_method {
-            AuthMethod::None => true,
-            AuthMethod::ApiKey => !self.api_key.trim().is_empty(),
-            AuthMethod::Keyfile => !self.keyfile_path.trim().is_empty(),
-        }
+        !self.key_label.trim().is_empty()
     }
 }
 
@@ -142,7 +133,6 @@ impl ProfileEditorData {
 pub struct ProfileEditorState {
     pub data: ProfileEditorData,
     pub is_new: bool,
-    pub mask_api_key: bool,
     active_field: Option<ActiveField>,
 }
 
@@ -151,7 +141,6 @@ impl ProfileEditorState {
         Self {
             data: ProfileEditorData::new(),
             is_new: true,
-            mask_api_key: true,
             active_field: None,
         }
     }
@@ -160,7 +149,6 @@ impl ProfileEditorState {
         Self {
             data,
             is_new: false,
-            mask_api_key: true,
             active_field: None,
         }
     }
@@ -196,6 +184,11 @@ impl ProfileEditorView {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
+        self.request_api_key_refresh();
+    }
+
+    fn request_api_key_refresh(&self) {
+        self.emit(UserEvent::RefreshApiKeys);
     }
 
     /// Set profile data from presenter
@@ -214,8 +207,6 @@ impl ProfileEditorView {
             Some(ActiveField::Name) => self.state.data.name.push_str(text),
             Some(ActiveField::Model) => self.state.data.model_id.push_str(text),
             Some(ActiveField::BaseUrl) => self.state.data.base_url.push_str(text),
-            Some(ActiveField::ApiKey) => self.state.data.api_key.push_str(text),
-            Some(ActiveField::KeyfilePath) => self.state.data.keyfile_path.push_str(text),
             Some(ActiveField::MaxTokens) => {
                 if text.chars().all(|c| c.is_ascii_digit()) {
                     let mut s = self.state.data.max_tokens.to_string();
@@ -270,12 +261,6 @@ impl ProfileEditorView {
             Some(ActiveField::BaseUrl) => {
                 self.state.data.base_url.pop();
             }
-            Some(ActiveField::ApiKey) => {
-                self.state.data.api_key.pop();
-            }
-            Some(ActiveField::KeyfilePath) => {
-                self.state.data.keyfile_path.pop();
-            }
             Some(ActiveField::MaxTokens) => {
                 let mut s = self.state.data.max_tokens.to_string();
                 s.pop();
@@ -316,8 +301,6 @@ impl ProfileEditorView {
             ActiveField::Name,
             ActiveField::Model,
             ActiveField::BaseUrl,
-            ActiveField::ApiKey,
-            ActiveField::KeyfilePath,
             ActiveField::MaxTokens,
             ActiveField::ContextLimit,
             ActiveField::ThinkingBudget,
@@ -352,14 +335,6 @@ impl ProfileEditorView {
                 let len = self.state.data.base_url.len();
                 self.state.data.base_url.truncate(len.saturating_sub(byte_count));
             }
-            Some(ActiveField::ApiKey) => {
-                let len = self.state.data.api_key.len();
-                self.state.data.api_key.truncate(len.saturating_sub(byte_count));
-            }
-            Some(ActiveField::KeyfilePath) => {
-                let len = self.state.data.keyfile_path.len();
-                self.state.data.keyfile_path.truncate(len.saturating_sub(byte_count));
-            }
             Some(ActiveField::SystemPrompt) => {
                 let len = self.state.data.system_prompt.len();
                 self.state.data.system_prompt.truncate(len.saturating_sub(byte_count));
@@ -373,8 +348,6 @@ impl ProfileEditorView {
             Some(ActiveField::Name) => &self.state.data.name,
             Some(ActiveField::Model) => &self.state.data.model_id,
             Some(ActiveField::BaseUrl) => &self.state.data.base_url,
-            Some(ActiveField::ApiKey) => &self.state.data.api_key,
-            Some(ActiveField::KeyfilePath) => &self.state.data.keyfile_path,
             Some(ActiveField::MaxTokens) | Some(ActiveField::ContextLimit)
             | Some(ActiveField::ThinkingBudget) => "",
             Some(ActiveField::SystemPrompt) => &self.state.data.system_prompt,
@@ -405,15 +378,9 @@ impl ProfileEditorView {
 
         let provider_id = Some(self.state.data.api_type.provider_id());
 
-        let auth = match self.state.data.auth_method {
-            AuthMethod::None => Some(ModelProfileAuth::None),
-            AuthMethod::ApiKey => Some(ModelProfileAuth::ApiKey {
-                value: self.state.data.api_key.clone(),
-            }),
-            AuthMethod::Keyfile => Some(ModelProfileAuth::Keyfile {
-                path: self.state.data.keyfile_path.clone(),
-            }),
-        };
+        let auth = Some(ModelProfileAuth::Keychain {
+            label: self.state.data.key_label.clone(),
+        });
 
         let parameters = Some(ModelProfileParameters {
             temperature: Some(self.state.data.temperature as f64),
@@ -483,8 +450,7 @@ impl ProfileEditorView {
                 provider_id,
                 model_id,
                 base_url,
-                auth_kind,
-                auth_value,
+                api_key_label,
                 temperature,
                 max_tokens,
                 context_limit,
@@ -503,24 +469,7 @@ impl ProfileEditorView {
                     "openai" => ApiType::OpenAI,
                     _ => ApiType::Custom(provider_id.clone()),
                 };
-                self.state.data.auth_method = match auth_kind.as_str() {
-                    "keyfile" => AuthMethod::Keyfile,
-                    "none" => AuthMethod::None,
-                    _ => AuthMethod::ApiKey,
-                };
-                self.state.data.api_key.clear();
-                self.state.data.keyfile_path.clear();
-                if let Some(value) = auth_value {
-                    match self.state.data.auth_method {
-                        AuthMethod::Keyfile => {
-                            self.state.data.keyfile_path = value;
-                        }
-                        AuthMethod::ApiKey => {
-                            self.state.data.api_key = value;
-                        }
-                        AuthMethod::None => {}
-                    }
-                }
+                self.state.data.key_label = api_key_label;
                 self.state.data.temperature = temperature as f32;
                 self.state.data.max_tokens = max_tokens;
                 if let Some(limit) = context_limit {
@@ -531,6 +480,11 @@ impl ProfileEditorView {
                 self.state.data.thinking_budget = thinking_budget.unwrap_or(10_000);
                 self.state.data.system_prompt = system_prompt;
                 self.state.active_field = None;
+            }
+
+            ViewCommand::ApiKeysListed { keys } => {
+                self.state.data.available_keys =
+                    keys.iter().map(|k| k.label.clone()).collect();
             }
 
             _ => {}
@@ -796,7 +750,10 @@ impl ProfileEditorView {
                                     tracing::info!(
                                         "Browse model clicked - navigating to ModelSelector"
                                     );
+                                    let available_keys = this.state.data.available_keys.clone();
                                     this.state = ProfileEditorState::new_profile();
+                                    this.state.data.available_keys = available_keys;
+                                    this.request_api_key_refresh();
                                     crate::ui_gpui::navigation_channel().request_navigate(
                                         crate::presentation::view_command::ViewId::ModelSelector,
                                     );
@@ -882,219 +839,77 @@ impl ProfileEditorView {
 
     /// Render auth method dropdown
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_auth_method_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let auth_method = self.state.data.auth_method.display();
+    /// Render API key label dropdown and "Manage Keys" button.
+    fn render_key_label_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let current_label = if self.state.data.key_label.is_empty() {
+            "Select API Key…".to_string()
+        } else {
+            self.state.data.key_label.clone()
+        };
+        let _available = self.state.data.available_keys.clone();
 
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("AUTH METHOD"))
+            .child(self.render_label("API KEY"))
             .child(
                 div()
-                    .id("dropdown-auth-method")
-                    .w(px(360.0))
-                    .h(px(24.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .text_color(Theme::text_primary())
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.data.auth_method = match this.state.data.auth_method {
-                                AuthMethod::None => AuthMethod::ApiKey,
-                                AuthMethod::ApiKey => AuthMethod::Keyfile,
-                                AuthMethod::Keyfile => AuthMethod::None,
-                            };
-                            this.state.active_field = None;
-                            cx.notify();
-                        }),
-                    )
-                    .child(auth_method)
-                    .child(div().text_color(Theme::text_muted()).child("v")),
-            )
-    }
-
-    /// Render API key field with mask toggle
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_api_key_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let masked = self.state.mask_api_key;
-        let active = self.state.active_field == Some(ActiveField::ApiKey);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .w(px(360.0))
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(Theme::text_secondary())
-                            .child("API KEY"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(
-                                div()
-                                    .id("btn-paste-api-key")
-                                    .px(px(6.0))
-                                    .py(px(2.0))
-                                    .rounded(px(3.0))
-                                    .border_1()
-                                    .border_color(Theme::border())
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(Theme::bg_dark()))
-                                    .text_size(px(10.0))
-                                    .text_color(Theme::text_secondary())
-                                    .child("Paste")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _window, cx| {
-                                            if let Some(item) = cx.read_from_clipboard() {
-                                                if let Some(text) = item.text() {
-                                                    this.state.active_field =
-                                                        Some(ActiveField::ApiKey);
-                                                    this.state.data.api_key =
-                                                        sanitized_clipboard_text(&text)
-                                                            .trim()
-                                                            .to_string();
-                                                    cx.notify();
-                                                }
-                                            }
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("checkbox-mask")
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.0))
-                                    .cursor_pointer()
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _window, cx| {
-                                            this.state.mask_api_key = !this.state.mask_api_key;
-                                            cx.notify();
-                                        }),
-                                    )
-                                    .child(
-                                        div()
-                                            .size(px(12.0))
-                                            .border_1()
-                                            .border_color(Theme::border())
-                                            .rounded(px(2.0))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .when(masked, |d| {
-                                                d.bg(Theme::accent()).child(
-                                                    div()
-                                                        .text_size(px(8.0))
-                                                        .text_color(gpui::white())
-                                                        .child("v"),
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(10.0))
-                                            .text_color(Theme::text_muted())
-                                            .child("Mask"),
-                                    ),
-                            ),
-                    ),
-            )
-            .child(
-                div().mt(px(4.0)).child(
-                    self.render_secure_field(
-                        "field-api-key",
-                        &self.state.data.api_key,
-                        masked,
-                        active,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.active_field = Some(ActiveField::ApiKey);
-                            cx.notify();
-                        }),
-                    ),
-                ),
-            )
-    }
-
-    /// Render keyfile field with browse button
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_keyfile_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::KeyfilePath);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(self.render_label("KEY FILE"))
-            .child(
-                div()
-                    .w(px(360.0))
-                    .h(px(24.0))
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    // Path field
+                    // Dropdown cycling through available keys
                     .child(
                         div()
+                            .id("dropdown-key-label")
                             .flex_1()
                             .h(px(24.0))
                             .px(px(8.0))
                             .bg(Theme::bg_dark())
                             .border_1()
-                            .border_color(if active {
-                                Theme::accent()
-                            } else {
-                                Theme::border()
-                            })
+                            .border_color(Theme::border())
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
+                            .justify_between()
+                            .cursor_pointer()
                             .text_size(px(12.0))
+                            .text_color(if self.state.data.key_label.is_empty() {
+                                Theme::text_muted()
+                            } else {
+                                Theme::text_primary()
+                            })
                             .overflow_hidden()
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _window, cx| {
-                                    this.state.active_field = Some(ActiveField::KeyfilePath);
+                                cx.listener(move |this, _, _window, cx| {
+                                    if this.state.data.available_keys.is_empty() {
+                                        this.request_api_key_refresh();
+                                        cx.notify();
+                                        return;
+                                    }
+                                    let current_idx = this
+                                        .state
+                                        .data
+                                        .available_keys
+                                        .iter()
+                                        .position(|k| k == &this.state.data.key_label)
+                                        .map(|i| i + 1)
+                                        .unwrap_or(0);
+                                    let next_idx = current_idx % this.state.data.available_keys.len();
+                                    this.state.data.key_label =
+                                        this.state.data.available_keys[next_idx].clone();
                                     cx.notify();
                                 }),
                             )
-                            .child(if self.state.data.keyfile_path.is_empty() {
-                                div()
-                                    .text_color(Theme::text_muted())
-                                    .child("/path/to/api_key")
-                            } else {
-                                div()
-                                    .text_color(Theme::text_primary())
-                                    .child(self.state.data.keyfile_path.clone())
-                            }),
+                            .child(current_label)
+                            .child(div().text_color(Theme::text_muted()).child("▾")),
                     )
-                    // Browse button
+                    // "Manage Keys" button
                     .child(
                         div()
-                            .id("btn-browse")
-                            .w(px(60.0))
+                            .id("btn-manage-keys")
                             .h(px(24.0))
+                            .px(px(8.0))
                             .bg(Theme::bg_dark())
                             .border_1()
                             .border_color(Theme::border())
@@ -1106,12 +921,13 @@ impl ProfileEditorView {
                             .hover(|s| s.bg(Theme::bg_darker()))
                             .text_size(px(11.0))
                             .text_color(Theme::text_secondary())
-                            .child("Browse")
+                            .child("Manage Keys")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
-                                    tracing::info!("Browse clicked");
-                                    this.emit(UserEvent::BrowseKeyfile);
+                                cx.listener(|_this, _, _window, _cx| {
+                                    crate::ui_gpui::navigation_channel().request_navigate(
+                                        crate::presentation::view_command::ViewId::ApiKeyManager,
+                                    );
                                 }),
                             ),
                     ),
@@ -1447,8 +1263,6 @@ impl ProfileEditorView {
     /// Render the content area
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_content(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let auth_method = &self.state.data.auth_method;
-
         div()
             .id("profile-editor-content")
             .flex_1()
@@ -1467,15 +1281,8 @@ impl ProfileEditorView {
             .child(self.render_api_type_section(cx))
             // Base URL
             .child(self.render_base_url_section(cx))
-            // Auth Method
-            .child(self.render_auth_method_section(cx))
-            // Conditional auth fields
-            .when(*auth_method == AuthMethod::ApiKey, |d| {
-                d.child(self.render_api_key_section(cx))
-            })
-            .when(*auth_method == AuthMethod::Keyfile, |d| {
-                d.child(self.render_keyfile_section(cx))
-            })
+            // API Key (keychain label dropdown + manage button)
+            .child(self.render_key_label_section(cx))
             // Parameters section
             .child(self.render_section_divider("PARAMETERS"))
             .child(
@@ -1659,12 +1466,7 @@ impl gpui::Render for ProfileEditorView {
                     if modifiers.platform && key == "v" {
                         if let Some(item) = cx.read_from_clipboard() {
                             if let Some(text) = item.text() {
-                                if this.state.active_field == Some(ActiveField::ApiKey) {
-                                    this.state.data.api_key =
-                                        sanitized_clipboard_text(&text).trim().to_string();
-                                } else {
-                                    this.append_to_active_field(&text);
-                                }
+                                this.append_to_active_field(&text);
                                 cx.notify();
                             }
                         }

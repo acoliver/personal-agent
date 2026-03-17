@@ -4,7 +4,8 @@
 //! @requirement REQ-UI-HS
 
 use gpui::{
-    div, prelude::*, px, FocusHandle, FontWeight, IntoElement, MouseButton, ParentElement, Styled,
+    div, prelude::*, px, FocusHandle, FontWeight, IntoElement, MouseButton, ParentElement,
+    ScrollHandle, Styled,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -84,6 +85,7 @@ pub struct HistoryView {
     state: HistoryState,
     bridge: Option<Arc<GpuiBridge>>,
     focus_handle: FocusHandle,
+    scroll_handle: ScrollHandle,
 }
 
 impl HistoryView {
@@ -92,6 +94,7 @@ impl HistoryView {
             state: HistoryState::new(),
             bridge: None,
             focus_handle: cx.focus_handle(),
+            scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -226,8 +229,19 @@ impl HistoryView {
                 }
                 cx.notify();
             }
+            ViewCommand::ConversationDeleted { id } => {
+                self.state.conversations.retain(|c| c.id != id);
+                if self.state.selected_conversation_id == Some(id) {
+                    self.state.selected_conversation_id = self
+                        .state
+                        .conversations
+                        .first()
+                        .map(|c| c.id);
+                    self.refresh_selection_flags();
+                }
+                cx.notify();
+            }
             ViewCommand::ConversationCleared => {
-                // A conversation was deleted, refresh needed
                 self.emit(UserEvent::RefreshHistory);
                 cx.notify();
             }
@@ -309,6 +323,8 @@ impl HistoryView {
             format!("{} messages", msg_count)
         };
 
+        let is_selected = conv.is_selected;
+
         let mut card = div()
             .id(gpui::SharedString::from(format!("conv-{}", conv_id)))
             .w_full()
@@ -318,7 +334,7 @@ impl HistoryView {
             .flex_col()
             .gap(px(4.0));
 
-        if conv.is_selected {
+        if is_selected {
             card = card
                 .bg(Theme::accent())
                 .border_1()
@@ -327,11 +343,22 @@ impl HistoryView {
             card = card.bg(Theme::bg_darker());
         }
 
+        let title_color = if is_selected {
+            Theme::bg_dark()
+        } else {
+            Theme::text_primary()
+        };
+        let subtitle_color = if is_selected {
+            Theme::bg_darker()
+        } else {
+            Theme::text_secondary()
+        };
+
         card.child(
             div()
                 .text_size(px(13.0))
                 .font_weight(FontWeight::BOLD)
-                .text_color(Theme::text_primary())
+                .text_color(title_color)
                 .overflow_hidden()
                 .text_ellipsis()
                 .child(title),
@@ -339,7 +366,7 @@ impl HistoryView {
         .child(
             div()
                 .text_size(px(11.0))
-                .text_color(Theme::text_secondary())
+                .text_color(subtitle_color)
                 .child(format!("{} • {}", date, msg_text)),
         )
         .child(
@@ -416,12 +443,24 @@ impl gpui::Render for HistoryView {
             .flex_col()
             .child(self.render_top_bar(cx))
             .child(
-                div().flex_1().p(px(12.0)).children(
-                    self.state
-                        .conversations
-                        .iter()
-                        .map(|conv| self.render_conversation_card(conv, cx)),
-                ),
+                div()
+                    .id("history-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(
+                        div()
+                            .p(px(12.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .children(
+                                self.state
+                                    .conversations
+                                    .iter()
+                                    .map(|conv| self.render_conversation_card(conv, cx)),
+                            ),
+                    ),
             )
     }
 }

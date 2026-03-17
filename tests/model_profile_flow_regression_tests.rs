@@ -181,29 +181,30 @@ fn provider_defaults_should_use_models_dev_metadata_for_kimi_and_builtin_fallbac
 }
 
 #[test]
-fn bug_api_key_paste_paths_should_trim_clipboard_whitespace() {
+fn bug_api_key_storage_uses_keychain_not_inline_paste() {
+    // API keys are now stored in the OS keychain via secure_store, not pasted inline.
+    // Verify the profile editor no longer has inline API key entry fields.
     let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
 
-    let cmd_v_start = source
-        .find("if modifiers.platform && key == \"v\"")
-        .expect("Cmd+V handler should exist");
-    let cmd_v_end = (cmd_v_start + 1200).min(source.len());
-    let cmd_v_window = &source[cmd_v_start..cmd_v_end];
-
     assert!(
-        cmd_v_window.contains("trim()"),
-        "Cmd+V API key paste path should trim clipboard text before persisting"
+        !source.contains(".id(\"btn-paste-api-key\")"),
+        "Inline API key paste button should be removed — keys are stored via keychain"
     );
+    assert!(
+        source.contains("key_label") || source.contains("api_key_label"),
+        "Profile editor should reference keychain labels instead of inline API keys"
+    );
+}
 
-    let paste_btn_start = source
-        .find(".id(\"btn-paste-api-key\")")
-        .expect("Paste API key button should exist");
-    let paste_btn_end = (paste_btn_start + 2000).min(source.len());
-    let paste_btn_window = &source[paste_btn_start..paste_btn_end];
+#[test]
+fn bug_browse_model_should_preserve_or_refresh_available_api_keys_for_new_profile_flow() {
+    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
 
     assert!(
-        paste_btn_window.contains("trim()"),
-        "Paste button API key path should trim clipboard text before persisting"
+        source.contains("let available_keys = this.state.data.available_keys.clone();")
+            && source.contains("this.state.data.available_keys = available_keys;")
+            && source.contains("this.request_api_key_refresh();"),
+        "Browse -> ModelSelector should not strand the new-profile API key dropdown with an empty available_keys list"
     );
 }
 

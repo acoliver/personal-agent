@@ -37,6 +37,7 @@
 //! @requirement REQ-025.1
 
 // Presenter modules
+pub mod api_key_manager_presenter;
 pub mod chat_presenter;
 pub mod error_presenter;
 pub mod history_presenter;
@@ -79,6 +80,7 @@ pub trait Presenter: Send + Sync {
     fn is_running(&self) -> bool;
 }
 
+pub use api_key_manager_presenter::ApiKeyManagerPresenter;
 pub use chat_presenter::ChatPresenter;
 pub use error_presenter::ErrorPresenter;
 pub use history_presenter::HistoryPresenter;

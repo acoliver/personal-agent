@@ -2,13 +2,11 @@ use personal_agent::mcp::{
     McpAuthType, McpConfig, McpPackage, McpPackageArg, McpPackageArgType, McpPackageType,
     McpRuntime, McpSource, McpTransport, SecretsManager,
 };
-use tempfile::TempDir;
 use uuid::Uuid;
 
 #[tokio::test]
 async fn start_mcp_requires_package_args() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
     let mut runtime = McpRuntime::new(secrets);
 
     let config = McpConfig {

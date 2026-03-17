@@ -141,6 +141,15 @@ pub enum ViewCommand {
     /// Profile was deleted
     ProfileDeleted { id: Uuid },
 
+    /// Full list of stored API key entries (response to RefreshApiKeys).
+    ApiKeysListed { keys: Vec<ApiKeyInfo> },
+
+    /// An API key was stored successfully.
+    ApiKeyStored { label: String },
+
+    /// An API key was deleted successfully.
+    ApiKeyDeleted { label: String },
+
     /// Default profile was changed
     DefaultProfileChanged { profile_id: Option<Uuid> },
 
@@ -213,8 +222,8 @@ pub enum ViewCommand {
         provider_id: String,
         model_id: String,
         base_url: String,
-        auth_kind: String,
-        auth_value: Option<String>,
+        /// Keychain label for the API key (empty string = none set).
+        api_key_label: String,
         temperature: f64,
         max_tokens: u32,
         context_limit: Option<u32>,
@@ -277,6 +286,17 @@ pub struct ConversationSummary {
     pub title: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub message_count: usize,
+}
+
+/// Summary of a stored API key for the key manager UI.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiKeyInfo {
+    /// The keychain label (e.g. "anthropic").
+    pub label: String,
+    /// Masked display of the secret value (e.g. "sk-a••••••••b3Xz").
+    pub masked_value: String,
+    /// Names of profiles referencing this label.
+    pub used_by: Vec<String>,
 }
 
 /// Profile summary for settings display
@@ -345,6 +365,7 @@ pub enum ViewId {
     History,
     Settings,
     ProfileEditor,
+    ApiKeyManager,
     McpAdd,
     McpConfigure,
     ModelSelector,

@@ -53,7 +53,7 @@ fn load_synthetic_profile() -> ModelProfile {
         provider,
         model,
         base_url,
-        AuthConfig::Keyfile { path: keyfile_path },
+        AuthConfig::Keychain { label: keyfile_path },
     )
 }
 

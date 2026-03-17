@@ -3,7 +3,6 @@ use personal_agent::mcp::{
     SecretsManager,
 };
 use personal_agent::Config;
-use tempfile::TempDir;
 use uuid::Uuid;
 
 fn disabled_config(name: &str) -> McpConfig {
@@ -31,8 +30,7 @@ fn disabled_config(name: &str) -> McpConfig {
 
 #[tokio::test]
 async fn start_all_returns_error_per_disabled_mcp() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
     let mut runtime = McpRuntime::new(secrets);
 
     let mut config = Config::default();

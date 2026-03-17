@@ -136,14 +136,26 @@ impl HistoryPresenter {
     /// @plan PLAN-20250128-PRESENTERS.P02
     /// @requirement REQ-025.1
     async fn handle_user_event(
-        _conversation_service: &Arc<dyn ConversationService>,
-        _view_tx: &mut mpsc::Sender<ViewCommand>,
-        _event: UserEvent,
+        conversation_service: &Arc<dyn ConversationService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        event: UserEvent,
     ) {
-        // Conversation selection is handled by ChatPresenter so that activation
-        // and message loading are emitted in a single ordered command stream.
-        // Handling SelectConversation here as well causes duplicate
-        // ConversationActivated commands that can race and clear chat state.
+        match event {
+            UserEvent::DeleteConversation { id } => {
+                tracing::info!(%id, "HistoryPresenter: deleting conversation");
+                match conversation_service.delete(id).await {
+                    Ok(()) => {
+                        let _ = view_tx.send(ViewCommand::ConversationDeleted { id }).await;
+                    }
+                    Err(e) => {
+                        tracing::error!(%id, error = %e, "Failed to delete conversation");
+                    }
+                }
+            }
+            // Conversation selection is handled by ChatPresenter so that activation
+            // and message loading are emitted in a single ordered command stream.
+            _ => {}
+        }
     }
 
     /// Handle conversation domain events

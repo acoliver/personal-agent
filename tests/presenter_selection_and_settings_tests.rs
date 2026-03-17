@@ -730,8 +730,8 @@ async fn edit_profile_emits_profile_editor_load_with_existing_data() {
         provider_id: "anthropic".to_string(),
         model_id: "claude-sonnet-4-20250514".to_string(),
         base_url: "https://api.anthropic.com/v1".to_string(),
-        auth: AuthConfig::Key {
-            value: "sk-test".to_string(),
+        auth: AuthConfig::Keychain {
+            label: "sk-test".to_string(),
         },
         parameters: ModelParameters::default(),
         system_prompt: "system".to_string(),
@@ -796,8 +796,8 @@ async fn delete_profile_emits_profile_deleted_command() {
         provider_id: "openai".to_string(),
         model_id: "gpt-4o".to_string(),
         base_url: "https://api.openai.com/v1".to_string(),
-        auth: AuthConfig::Key {
-            value: "sk-test".to_string(),
+        auth: AuthConfig::Keychain {
+            label: "sk-test".to_string(),
         },
         parameters: ModelParameters::default(),
         system_prompt: "system".to_string(),

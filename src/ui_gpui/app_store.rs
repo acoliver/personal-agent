@@ -431,8 +431,7 @@ fn begin_selection_locked(
     clear_streaming_ephemera_only(inner);
     inner.last_finalized_stream_guard = None;
 
-    let title_changed = maybe_upgrade_selected_title_from_history(inner, conversation_id);
-    if !title_changed {
+    if !apply_selected_title_from_history(inner, conversation_id) {
         inner.snapshot.chat.selected_conversation_title = "Untitled Conversation".to_string();
         inner.title_provenance = SelectedTitleProvenance::LiteralFallback;
     }

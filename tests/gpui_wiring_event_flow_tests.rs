@@ -184,8 +184,8 @@ impl personal_agent::services::ProfileService for RecordingProfileService {
             provider_id: provider,
             model_id: model,
             base_url: "https://api.openai.com/v1".to_string(),
-            auth: AuthConfig::Key {
-                value: String::new(),
+            auth: AuthConfig::Keychain {
+                label: String::new(),
             },
             parameters: ModelParameters::default(),
             system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),

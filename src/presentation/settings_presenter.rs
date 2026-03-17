@@ -417,13 +417,8 @@ impl SettingsPresenter {
     ) {
         match profile_service.get(id).await {
             Ok(profile) => {
-                let (auth_kind, auth_value) = match profile.auth {
-                    crate::models::AuthConfig::Key { value } => {
-                        ("api_key".to_string(), Some(value))
-                    }
-                    crate::models::AuthConfig::Keyfile { path } => {
-                        ("keyfile".to_string(), Some(path))
-                    }
+                let api_key_label = match &profile.auth {
+                    crate::models::AuthConfig::Keychain { label } => label.clone(),
                 };
 
                 let _ = view_tx.send(ViewCommand::ProfileEditorLoad {
@@ -432,8 +427,7 @@ impl SettingsPresenter {
                     provider_id: profile.provider_id,
                     model_id: profile.model_id,
                     base_url: profile.base_url,
-                    auth_kind,
-                    auth_value,
+                    api_key_label,
                     temperature: profile.parameters.temperature,
                     max_tokens: profile.parameters.max_tokens,
                     context_limit: None,

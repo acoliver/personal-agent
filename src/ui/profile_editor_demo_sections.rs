@@ -239,8 +239,7 @@ pub fn build_auth_section(
     let (auth_index, auth_value_str) = profile.map_or_else(
         || (0, String::new()),
         |profile| match &profile.auth {
-            AuthConfig::Key { value } => (0, value.clone()),
-            AuthConfig::Keyfile { path } => (1, path.clone()),
+            AuthConfig::Keychain { label } => (0, label.clone()),
         },
     );
     auth_popup.selectItemAtIndex(auth_index);

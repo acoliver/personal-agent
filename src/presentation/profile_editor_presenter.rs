@@ -230,14 +230,11 @@ impl ProfileEditorPresenter {
     ) {
         tracing::info!("Saving profile: {}", profile.name);
 
-        let auth = match profile.auth.clone().unwrap_or(ModelProfileAuth::ApiKey {
-            value: String::new(),
-        }) {
-            ModelProfileAuth::None => AuthConfig::Key {
-                value: String::new(),
+        let auth = match profile.auth.clone() {
+            Some(ModelProfileAuth::Keychain { label }) => AuthConfig::Keychain { label },
+            None => AuthConfig::Keychain {
+                label: String::new(),
             },
-            ModelProfileAuth::ApiKey { value } => AuthConfig::Key { value },
-            ModelProfileAuth::Keyfile { path } => AuthConfig::Keyfile { path },
         };
 
         let mut parameters = ModelParameters::default();
@@ -354,12 +351,8 @@ impl ProfileEditorPresenter {
         let mut parameters = ModelParameters::default();
         parameters.show_thinking = true;
 
-        let auth = AuthConfig::Key {
-            value: std::env::var("OPENAI_API_KEY")
-                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-                .unwrap_or_default()
-                .trim()
-                .to_string(),
+        let auth = AuthConfig::Keychain {
+            label: String::new(),
         };
 
         let created = profile_service

@@ -73,8 +73,8 @@ fn config_keyfile_profile_requires_valid_key() {
         "openai".to_string(),
         "gpt-4o".to_string(),
         String::new(),
-        AuthConfig::Keyfile {
-            path: temp_dir
+        AuthConfig::Keychain {
+            label: temp_dir
                 .path()
                 .join("missing.key")
                 .to_string_lossy()

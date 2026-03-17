@@ -38,13 +38,17 @@ async fn kimi_requests_include_required_user_agent_header() {
         .mount(&mock_server)
         .await;
 
+    personal_agent::services::secure_store::use_mock_backend();
+    personal_agent::services::secure_store::api_keys::store("_test_kimi_ua", "sk-kimi-test")
+        .expect("store test key");
+
     let profile = ModelProfile::new(
         "Kimi".to_string(),
         "kimi-for-coding".to_string(),
         "kimi-for-coding".to_string(),
         mock_server.uri(),
-        AuthConfig::Key {
-            value: "sk-kimi-test".to_string(),
+        AuthConfig::Keychain {
+            label: "_test_kimi_ua".to_string(),
         },
     );
 
@@ -55,6 +59,8 @@ async fn kimi_requests_include_required_user_agent_header() {
         .expect("request should succeed");
 
     assert_eq!(response.content, "ok");
+
+    let _ = personal_agent::services::secure_store::api_keys::delete("_test_kimi_ua");
 }
 
 #[tokio::test]
@@ -93,13 +99,18 @@ async fn kimi_requests_respect_explicit_profile_base_url_override() {
         .mount(&mock_server)
         .await;
 
+    personal_agent::services::secure_store::use_mock_backend();
+    personal_agent::services::secure_store::use_mock_backend();
+    personal_agent::services::secure_store::api_keys::store("_test_kimi_base", "sk-kimi-test")
+        .expect("store test key");
+
     let profile = ModelProfile::new(
         "Kimi".to_string(),
         "kimi-for-coding".to_string(),
         "kimi-for-coding".to_string(),
         mock_server.uri(),
-        AuthConfig::Key {
-            value: "sk-kimi-test".to_string(),
+        AuthConfig::Keychain {
+            label: "_test_kimi_base".to_string(),
         },
     );
 
@@ -110,4 +121,6 @@ async fn kimi_requests_respect_explicit_profile_base_url_override() {
         .expect("request should succeed with explicit base url");
 
     assert_eq!(response.content, "override ok");
+
+    let _ = personal_agent::services::secure_store::api_keys::delete("_test_kimi_base");
 }

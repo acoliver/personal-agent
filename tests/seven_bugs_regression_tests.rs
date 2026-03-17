@@ -172,8 +172,8 @@ fn make_test_profile(id: Uuid) -> ModelProfile {
         provider_id: "anthropic".to_string(),
         model_id: "claude-sonnet-4-20250514".to_string(),
         base_url: "https://api.anthropic.com/v1".to_string(),
-        auth: AuthConfig::Key {
-            value: "test-key".to_string(),
+        auth: AuthConfig::Keychain {
+            label: "test-key".to_string(),
         },
         parameters: ModelParameters::default(),
         system_prompt: "You are a helpful assistant.".to_string(),

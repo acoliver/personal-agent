@@ -468,14 +468,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_message() {
+        crate::services::secure_store::use_mock_backend();
+        crate::services::secure_store::api_keys::store("_test_send_msg", "fake-key-for-test")
+            .expect("store test key");
+
         // Set default profile
         let profile = crate::models::ModelProfile::new(
             "Test Profile".to_string(),
             "openai".to_string(),
             "gpt-4".to_string(),
             "https://api.openai.com/v1".to_string(),
-            AuthConfig::Key {
-                value: "test-key".to_string(),
+            AuthConfig::Keychain {
+                label: "_test_send_msg".to_string(),
             },
         );
         let profile_id = profile.id;
@@ -504,6 +508,9 @@ mod tests {
             "send_message should return Ok with a stream, got: {:?}",
             result.err()
         );
+
+        // Clean up test key
+        let _ = crate::services::secure_store::api_keys::delete("_test_send_msg");
     }
 
     #[tokio::test]
@@ -513,8 +520,8 @@ mod tests {
             "openai".to_string(),
             "gpt-4".to_string(),
             "https://api.openai.com/v1".to_string(),
-            AuthConfig::Key {
-                value: "test-key".to_string(),
+            AuthConfig::Keychain {
+                label: "test-key".to_string(),
             },
         );
         let profile_id = profile.id;
@@ -542,8 +549,8 @@ mod tests {
             "openai".to_string(),
             "gpt-4".to_string(),
             "https://api.openai.com/v1".to_string(),
-            AuthConfig::Key {
-                value: "test-key".to_string(),
+            AuthConfig::Keychain {
+                label: "test-key".to_string(),
             },
         );
         let profile_id = profile.id;

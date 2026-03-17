@@ -368,10 +368,7 @@ impl McpConfigureViewController {
     }
 
     fn create_secrets_manager(&self) -> SecretsManager {
-        let secrets_dir = dirs::home_dir()
-            .unwrap_or_default()
-            .join("Library/Application Support/PersonalAgent/secrets");
-        SecretsManager::new(secrets_dir)
+        SecretsManager::new()
     }
 
     fn save_manual_api_key(&self, secrets_manager: &SecretsManager, config: &McpConfig) {

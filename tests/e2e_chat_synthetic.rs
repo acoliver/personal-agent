@@ -1,76 +1,53 @@
-//! E2E test using real Synthetic API with GLM-4.6
+//! E2E test using the real runtime-selected keychain-backed profile.
 //!
 //! This test hits the actual API - run with:
 //!   cargo test --test e2e_chat_synthetic -- --ignored --nocapture
 //!
 //! Requires:
-//! - ~/.llxprt/profiles/synthetic.json (profile config)
-//! - ~/.synthetic_key (API key)
+//! - ~/Library/Application Support/PersonalAgent/profiles/default.json
+//! - the corresponding runtime profile JSON
+//! - the profile's keychain label to exist in the OS keychain
 
 use personal_agent::{AuthConfig, LlmClient, ModelProfile};
 
-/// Load synthetic profile from ~/.llxprt/profiles/synthetic.json
-fn load_synthetic_profile() -> ModelProfile {
+/// Load the runtime-selected default profile from the app support directory.
+fn load_runtime_default_profile() -> ModelProfile {
     let home = dirs::home_dir().expect("No home directory");
-    let profile_path = home.join(".llxprt/profiles/synthetic.json");
+    let profiles_dir = home.join("Library/Application Support/PersonalAgent/profiles");
+    let default_path = profiles_dir.join("default.json");
 
+    let default_content = std::fs::read_to_string(&default_path)
+        .expect("Failed to read runtime profiles/default.json");
+    let default_profile_id: String =
+        serde_json::from_str(&default_content).expect("Failed to parse runtime profiles/default.json");
+
+    let profile_path = profiles_dir.join(format!("{default_profile_id}.json"));
     let content = std::fs::read_to_string(&profile_path)
-        .expect("Failed to read ~/.llxprt/profiles/synthetic.json");
+        .unwrap_or_else(|_| panic!("Failed to read runtime profile: {}", profile_path.display()));
 
-    let json: serde_json::Value =
-        serde_json::from_str(&content).expect("Failed to parse synthetic.json");
-
-    let provider = json["provider"].as_str().unwrap_or("openai").to_string();
-    let model = json["model"]
-        .as_str()
-        .expect("No model in profile")
-        .to_string();
-    let base_url = json["ephemeralSettings"]["base-url"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-    let keyfile_path = json["ephemeralSettings"]["auth-keyfile"]
-        .as_str()
-        .unwrap_or("~/.synthetic_key")
-        .to_string();
-
-    // Expand ~ to home directory
-    let keyfile_path = if keyfile_path.starts_with("~/") {
-        home.join(&keyfile_path[2..]).to_string_lossy().to_string()
-    } else {
-        keyfile_path
-    };
-
-    ModelProfile::new(
-        "Synthetic GLM".to_string(),
-        provider,
-        model,
-        base_url,
-        AuthConfig::Keyfile { path: keyfile_path },
-    )
+    serde_json::from_str(&content).expect("Failed to parse runtime default profile JSON")
 }
 
 #[tokio::test]
 #[ignore] // Run manually: cargo test --test e2e_chat_synthetic -- --ignored --nocapture
 async fn test_real_chat_with_synthetic_api() {
-    println!("=== E2E Test: Real Chat with Synthetic API ===\n");
+    println!("=== E2E Test: Real Chat with Runtime Default Profile ===\n");
 
-    // Load profile from user's config
-    let profile = load_synthetic_profile();
+    let profile = load_runtime_default_profile();
     println!(
         "Profile loaded: {} / {}",
         profile.provider_id, profile.model_id
     );
     println!("Base URL: {}", profile.base_url);
 
-    // Verify key file exists
-    if let AuthConfig::Keyfile { ref path } = profile.auth {
-        let path = std::path::Path::new(path);
-        assert!(path.exists(), "Key file not found: {:?}", path);
-        println!("Key file: {:?} [OK]", path);
-    }
+    let AuthConfig::Keychain { ref label } = profile.auth;
+    assert!(!label.is_empty(), "Keychain label must not be empty");
+    println!("Keychain label: {} [OK]", label);
 
-    // Create LlmClient from profile
+    let key_exists = personal_agent::services::secure_store::api_keys::exists(label)
+        .expect("Keychain lookup should not fail");
+    assert!(key_exists, "Expected runtime profile keychain label to exist");
+
     let client =
         LlmClient::from_profile(&profile).expect("Failed to create LlmClient from profile");
 

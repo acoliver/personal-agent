@@ -70,7 +70,7 @@ fn load_synthetic_profile() -> ModelProfile {
         provider,
         model,
         base_url,
-        personal_agent::AuthConfig::Keyfile { path: keyfile_path },
+        personal_agent::AuthConfig::Keychain { label: keyfile_path },
     )
 }
 

@@ -3,6 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P10
 //! @requirement REQ-GPUI-003
 
+pub mod api_key_manager_view;
 pub mod chat_view;
 pub mod history_view;
 pub mod main_panel;
@@ -12,6 +13,7 @@ pub mod model_selector_view;
 pub mod profile_editor_view;
 pub mod settings_view;
 
+pub use api_key_manager_view::ApiKeyManagerView;
 pub use chat_view::{ChatState, ChatView};
 pub use history_view::{ConversationItem, HistoryState, HistoryView};
 pub use main_panel::MainPanel;

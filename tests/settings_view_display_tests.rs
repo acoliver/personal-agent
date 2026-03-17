@@ -28,8 +28,8 @@ fn create_config_with_profiles(dir: &TempDir, num_profiles: usize) -> Config {
             "openai".to_string(),
             format!("gpt-4-{}", i),
             String::new(),
-            AuthConfig::Key {
-                value: format!("key-{}", i),
+            AuthConfig::Keychain {
+                label: format!("key-{}", i),
             },
         );
         config.profiles.push(profile);
@@ -153,8 +153,8 @@ fn profile_row_text_format() {
         "openai".to_string(),
         "gpt-4".to_string(),
         String::new(),
-        AuthConfig::Key {
-            value: "test".to_string(),
+        AuthConfig::Keychain {
+            label: "test".to_string(),
         },
     );
 

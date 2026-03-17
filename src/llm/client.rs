@@ -13,7 +13,6 @@ use serdes_ai::core::messages::ModelResponseStreamEvent;
 use serdes_ai::models::ModelRequestParameters;
 use serdes_ai::prelude::*;
 use std::collections::HashMap;
-use std::fs;
 use std::time::Duration;
 
 // Use std Result to avoid conflict with serdes_ai::prelude::Result
@@ -99,36 +98,20 @@ impl LlmClient {
         None
     }
 
-    /// Resolve the API key from profile auth config
+    /// Resolve the API key from profile auth config (OS keychain lookup).
     fn resolve_api_key(profile: &ModelProfile) -> StdResult<String, LlmError> {
-        let key = match &profile.auth {
-            AuthConfig::Key { value } => {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    return Err(LlmError::NoApiKey);
-                }
-                trimmed.to_string()
-            }
-            AuthConfig::Keyfile { path } => {
-                let trimmed_path = path.trim();
-                if trimmed_path.is_empty() {
-                    return Err(LlmError::NoApiKey);
-                }
-                fs::read_to_string(trimmed_path)
-                    .map_err(|e| LlmError::KeyfileRead {
-                        path: trimmed_path.to_string(),
-                        source: e,
-                    })?
-                    .trim()
-                    .to_string()
-            }
-        };
-
-        if key.is_empty() {
+        let AuthConfig::Keychain { label } = &profile.auth;
+        let trimmed = label.trim();
+        if trimmed.is_empty() {
             return Err(LlmError::NoApiKey);
         }
-
-        Ok(key)
+        let key = crate::services::secure_store::api_keys::get(trimmed)
+            .map_err(|e| LlmError::Auth(format!("Keychain lookup failed: {e}")))?
+            .ok_or(LlmError::NoApiKey)?;
+        if key.trim().is_empty() {
+            return Err(LlmError::NoApiKey);
+        }
+        Ok(key.trim().to_string())
     }
 
     /// Get the model spec string for `SerdesAI` (e.g., "openai:gpt-4o")
@@ -654,16 +637,23 @@ mod tests {
 
     #[test]
     fn parse_response_includes_tool_uses_and_thinking() {
+        crate::services::secure_store::use_mock_backend();
+        crate::services::secure_store::api_keys::store("_test_parse_resp", "fake-key-for-test")
+            .expect("store test key");
+
         let profile = ModelProfile {
             provider_id: "anthropic".to_string(),
             model_id: "claude-3-opus".to_string(),
-            auth: AuthConfig::Key {
-                value: "test".to_string(),
+            auth: AuthConfig::Keychain {
+                label: "_test_parse_resp".to_string(),
             },
             ..Default::default()
         };
 
         let _client = LlmClient::from_profile(&profile).unwrap();
+
+        // Clean up test key
+        let _ = crate::services::secure_store::api_keys::delete("_test_parse_resp");
         let response = ModelResponse {
             parts: vec![
                 ModelResponsePart::Thinking(serdes_ai::core::messages::parts::ThinkingPart::new(

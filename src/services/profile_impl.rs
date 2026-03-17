@@ -84,38 +84,26 @@ impl ProfileServiceImpl {
         Ok(())
     }
 
-    fn parse_auth_from_legacy(value: Option<&Value>, keyfile_hint: Option<String>) -> AuthConfig {
+    /// Parse legacy auth config JSON into the keychain-only AuthConfig.
+    ///
+    /// Legacy profiles stored inline keys or keyfile paths. Since we no longer
+    /// store secrets in config, legacy profiles get an empty keychain label —
+    /// the user must re-assign a keychain-stored key via the profile editor.
+    fn parse_auth_from_legacy(value: Option<&Value>, _keyfile_hint: Option<String>) -> AuthConfig {
+        // New-format profiles already have `{ "Keychain": { "label": "..." } }`.
         if let Some(Value::Object(auth_obj)) = value {
-            if let Some(Value::String(kind)) = auth_obj.get("type") {
-                match kind.as_str() {
-                    "key" => {
-                        if let Some(Value::String(v)) = auth_obj.get("value") {
-                            return AuthConfig::Key { value: v.clone() };
-                        }
-                    }
-                    "keyfile" => {
-                        if let Some(Value::String(path)) = auth_obj.get("path") {
-                            return AuthConfig::Keyfile { path: path.clone() };
-                        }
-                    }
-                    "oauth" => {
-                        // OAuth cannot be represented in current AuthConfig, so degrade to empty key.
-                        tracing::warn!("Legacy oauth auth config encountered; mapping to empty key auth for compatibility");
-                        return AuthConfig::Key {
-                            value: String::new(),
-                        };
-                    }
-                    _ => {}
+            if let Some(Value::Object(inner)) = auth_obj.get("Keychain") {
+                if let Some(Value::String(label)) = inner.get("label") {
+                    return AuthConfig::Keychain {
+                        label: label.clone(),
+                    };
                 }
             }
         }
 
-        if let Some(path) = keyfile_hint {
-            return AuthConfig::Keyfile { path };
-        }
-
-        AuthConfig::Key {
-            value: String::new(),
+        // Everything else (old key/keyfile/oauth) maps to an empty label.
+        AuthConfig::Keychain {
+            label: String::new(),
         }
     }
 
@@ -395,8 +383,8 @@ impl ProfileServiceImpl {
                                 p.name,
                                 p.model_id,
                                 match &p.auth {
-                                    AuthConfig::Key { .. } => "key",
-                                    AuthConfig::Keyfile { .. } => "keyfile",
+                                    AuthConfig::Keychain { label } if label.is_empty() => "none",
+                                    AuthConfig::Keychain { label } => label.as_str(),
                                 }
                             );
                             p
@@ -789,8 +777,8 @@ mod tests {
         service.initialize().await.unwrap();
 
         // Create profile
-        let auth = AuthConfig::Key {
-            value: "test-key".to_string(),
+        let auth = AuthConfig::Keychain {
+            label: "test-key".to_string(),
         };
         let params = ModelParameters::default();
 
@@ -820,8 +808,8 @@ mod tests {
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let auth = AuthConfig::Key {
-            value: "test-key".to_string(),
+        let auth = AuthConfig::Keychain {
+            label: "test-key".to_string(),
         };
         let params = ModelParameters::default();
 
@@ -849,8 +837,8 @@ mod tests {
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let auth = AuthConfig::Key {
-            value: "test-key".to_string(),
+        let auth = AuthConfig::Keychain {
+            label: "test-key".to_string(),
         };
         let params = ModelParameters::default();
 
@@ -892,8 +880,8 @@ mod tests {
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let auth = AuthConfig::Key {
-            value: "test-key".to_string(),
+        let auth = AuthConfig::Keychain {
+            label: "test-key".to_string(),
         };
         let params = ModelParameters::default();
 
@@ -985,8 +973,8 @@ mod tests {
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let auth = AuthConfig::Key {
-            value: "test-key".to_string(),
+        let auth = AuthConfig::Keychain {
+            label: "test-key".to_string(),
         };
         let params = ModelParameters::default();
 
@@ -1016,8 +1004,8 @@ mod tests {
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
         service.initialize().await.unwrap();
 
-        let auth = AuthConfig::Key {
-            value: "test-key".to_string(),
+        let auth = AuthConfig::Keychain {
+            label: "test-key".to_string(),
         };
         let params = ModelParameters::default();
 

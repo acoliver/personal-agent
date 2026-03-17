@@ -2,7 +2,6 @@ use personal_agent::mcp::{
     EnvVarConfig, McpAuthType, McpConfig, McpPackage, McpPackageType, McpRuntime, McpSource,
     McpTransport, SecretsManager,
 };
-use tempfile::TempDir;
 use uuid::Uuid;
 
 fn base_config() -> McpConfig {
@@ -33,8 +32,7 @@ fn base_config() -> McpConfig {
 
 #[tokio::test]
 async fn runtime_cleanup_idle_removes_connections() {
-    let temp_dir = TempDir::new().unwrap();
-    let secrets = SecretsManager::new(temp_dir.path().to_path_buf());
+    let secrets = SecretsManager::new();
     let mut runtime = McpRuntime::new(secrets);
 
     let config = base_config();

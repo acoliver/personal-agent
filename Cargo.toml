@@ -84,6 +84,7 @@ urlencoding = "2.1"
 tiny_http = "0.12"
 once_cell = "1.19"
 flume = "0.11"
+keyring = { version = "3", features = ["apple-native"] }
 cocoa = "0.26"
 objc = "0.2"
 rand = "0.9"

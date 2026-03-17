@@ -22,8 +22,8 @@ fn test_profile(name: &str) -> ModelProfile {
         "openai".to_string(),
         "gpt-4".to_string(),
         String::new(),
-        AuthConfig::Key {
-            value: "test-key".to_string(),
+        AuthConfig::Keychain {
+            label: "test-key".to_string(),
         },
     )
 }

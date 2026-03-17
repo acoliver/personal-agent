@@ -166,9 +166,14 @@ pub enum UserEvent {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     SaveProfileEditor,
 
-    /// User clicked browse for keyfile
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    BrowseKeyfile,
+    /// Store a new API key in the OS keychain.
+    StoreApiKey { label: String, value: String },
+
+    /// Delete an API key from the OS keychain.
+    DeleteApiKey { label: String },
+
+    /// Request the full list of stored API key labels (triggers ApiKeysListed command).
+    RefreshApiKeys,
 
     // ===== MCP Add Actions =====
     /// User clicked Next in MCP Add view
@@ -465,13 +470,10 @@ pub enum SystemEvent {
 // These will be replaced with actual types in later phases
 
 /// Lightweight profile auth payload for GPUI save flow
-///
-/// @plan PLAN-20250125-REFACTOR.P04
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum ModelProfileAuth {
-    None,
-    ApiKey { value: String },
-    Keyfile { path: String },
+    /// API key stored in OS keychain, referenced by label.
+    Keychain { label: String },
 }
 
 /// Lightweight profile parameters payload for GPUI save flow

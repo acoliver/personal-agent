@@ -603,9 +603,8 @@ impl McpConfigureView {
                             .child("Browse")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
-                                    tracing::info!("Browse clicked");
-                                    this.emit(UserEvent::BrowseKeyfile);
+                                cx.listener(|_this, _, _window, _cx| {
+                                    tracing::info!("Browse keyfile is not supported — use the API Key Manager instead");
                                 }),
                             ),
                     ),

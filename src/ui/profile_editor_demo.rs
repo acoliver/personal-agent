@@ -378,18 +378,10 @@ impl ProfileEditorDemoViewController {
                 String::new()
             };
 
-            if index == 0 {
-                AuthConfig::Key { value }
-            } else if index == 1 {
-                AuthConfig::Keyfile { path: value }
-            } else {
-                AuthConfig::Key {
-                    value: String::new(),
-                }
-            }
+            AuthConfig::Keychain { label: value }
         } else {
-            AuthConfig::Key {
-                value: String::new(),
+            AuthConfig::Keychain {
+                label: String::new(),
             }
         };
         log_to_file(&format!("  Auth: {auth:?}"));
