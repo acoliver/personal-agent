@@ -145,8 +145,7 @@ async fn bug_save_profile_editor_should_emit_default_profile_changed() {
         observed
             .iter()
             .any(|cmd| matches!(cmd, ViewCommand::DefaultProfileChanged { profile_id: Some(_) })),
-        "Saving from profile editor should emit DefaultProfileChanged so chat/settings stay selected after back navigation. Observed commands: {:?}",
-        observed
+        "Saving from profile editor should emit DefaultProfileChanged so chat/settings stay selected after back navigation. Observed commands: {observed:?}"
     );
 }
 

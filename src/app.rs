@@ -1,7 +1,7 @@
 //! Application Bootstrap
 //!
 //! Initializes and wires together all application components including:
-//! - EventBus
+//! - `EventBus`
 //! - Service layer
 //! - Presenter layer
 //! - Shared application context
@@ -9,7 +9,7 @@
 //! # Architecture
 //!
 //! The App struct is the main entry point that:
-//! 1. Creates the EventBus for decoupled communication
+//! 1. Creates the `EventBus` for decoupled communication
 //! 2. Initializes all service implementations
 //! 3. Wires up presenters to subscribe to events
 //! 4. Provides access to shared application context
@@ -74,6 +74,10 @@ pub enum AppError {
 impl App {
     /// Create a new application instance
     ///
+    /// # Errors
+    ///
+    /// Returns `AppError` if service initialization or presenter startup fails.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P13
     pub async fn new(base_dir: PathBuf) -> Result<Self, AppError> {
         // Initialize EventBus
@@ -83,7 +87,7 @@ impl App {
         let services = Self::initialize_services(base_dir.clone()).await?;
 
         // Initialize presenter instances
-        let mut presenters = Self::initialize_presenters(Arc::clone(&event_bus), &services)?;
+        let mut presenters = Self::initialize_presenters(&event_bus, &services);
 
         // Start all presenters
         for presenter in &mut presenters {
@@ -117,58 +121,57 @@ impl App {
             .await
             .map_err(|e| {
                 AppError::ServiceInitFailed(format!(
-                    "Failed to create conversations directory: {}",
-                    e
+                    "Failed to create conversations directory: {e}"
                 ))
             })?;
 
         // Initialize services
         let secrets_service: Arc<SecretsServiceImpl> = Arc::new(
             SecretsServiceImpl::new(secrets_path)
-                .map_err(|e| AppError::ServiceInitFailed(format!("SecretsService: {}", e)))?,
+                .map_err(|e| AppError::ServiceInitFailed(format!("SecretsService: {e}")))?,
         );
 
         let profile_service: Arc<ProfileServiceImpl> = Arc::new(
             ProfileServiceImpl::new(config_path.clone())
-                .map_err(|e| AppError::ServiceInitFailed(format!("ProfileService: {}", e)))?,
+                .map_err(|e| AppError::ServiceInitFailed(format!("ProfileService: {e}")))?,
         );
 
         // Initialize profile service to load existing profiles
         profile_service
             .initialize()
             .await
-            .map_err(|e| AppError::ServiceInitFailed(format!("ProfileService init: {}", e)))?;
+            .map_err(|e| AppError::ServiceInitFailed(format!("ProfileService init: {e}")))?;
 
         let conversation_service: Arc<ConversationServiceImpl> = Arc::new(
             ConversationServiceImpl::new(conversations_dir.clone())
-                .map_err(|e| AppError::ServiceInitFailed(format!("ConversationService: {}", e)))?,
+                .map_err(|e| AppError::ServiceInitFailed(format!("ConversationService: {e}")))?,
         );
 
         let app_settings_service: Arc<AppSettingsServiceImpl> = Arc::new(
             AppSettingsServiceImpl::new(base_dir.join("app_settings.json"))
-                .map_err(|e| AppError::ServiceInitFailed(format!("AppSettingsService: {}", e)))?,
+                .map_err(|e| AppError::ServiceInitFailed(format!("AppSettingsService: {e}")))?,
         );
 
-        let models_registry_service: Arc<ModelsRegistryServiceImpl> =
-            Arc::new(ModelsRegistryServiceImpl::new().map_err(|e| {
-                AppError::ServiceInitFailed(format!("ModelsRegistryService: {}", e))
-            })?);
+        let models_registry_service: Arc<ModelsRegistryServiceImpl> = Arc::new(
+            ModelsRegistryServiceImpl::new()
+                .map_err(|e| AppError::ServiceInitFailed(format!("ModelsRegistryService: {e}")))?,
+        );
 
         let mcp_registry_service: Arc<McpRegistryServiceImpl> = Arc::new(
             McpRegistryServiceImpl::new()
-                .map_err(|e| AppError::ServiceInitFailed(format!("McpRegistryService: {}", e)))?,
+                .map_err(|e| AppError::ServiceInitFailed(format!("McpRegistryService: {e}")))?,
         );
 
         let mcp_service: Arc<McpServiceImpl> = Arc::new(
             McpServiceImpl::new(base_dir.join("mcp_configs"))
-                .map_err(|e| AppError::ServiceInitFailed(format!("McpService: {}", e)))?,
+                .map_err(|e| AppError::ServiceInitFailed(format!("McpService: {e}")))?,
         );
 
         // Initialize MCP service to load existing configs
         mcp_service
             .initialize()
             .await
-            .map_err(|e| AppError::ServiceInitFailed(format!("McpService init: {}", e)))?;
+            .map_err(|e| AppError::ServiceInitFailed(format!("McpService init: {e}")))?;
 
         let chat_service: Arc<ChatServiceImpl> = Arc::new(ChatServiceImpl::new(
             Arc::clone(&conversation_service) as Arc<dyn ConversationService>,
@@ -191,9 +194,9 @@ impl App {
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
     fn initialize_presenters(
-        _event_bus: Arc<EventBus>,
+        event_bus: &Arc<EventBus>,
         services: &ServiceRegistry,
-    ) -> Result<Vec<Box<dyn PresenterLifecycle>>, AppError> {
+    ) -> Vec<Box<dyn PresenterLifecycle>> {
         let mut presenters: Vec<Box<dyn PresenterLifecycle>> = Vec::new();
 
         // Create channels for presenters
@@ -208,7 +211,7 @@ impl App {
         // Create presenters with their dependencies
         let chat_presenter = ChatPresenterWrapper {
             _presenter: ChatPresenter::new(
-                Arc::clone(&_event_bus),
+                Arc::clone(event_bus),
                 Arc::clone(&services.conversation),
                 Arc::clone(&services.chat),
                 Arc::clone(&services.profile),
@@ -229,7 +232,7 @@ impl App {
 
         let history_presenter = HistoryPresenterWrapper {
             _presenter: HistoryPresenter::new(
-                Arc::clone(&(_event_bus)),
+                Arc::clone(event_bus),
                 Arc::clone(&services.conversation),
                 history_view_tx,
             ),
@@ -247,19 +250,24 @@ impl App {
         // - McpConfigurePresenter
         // - ModelSelectorPresenter
 
-        Ok(presenters)
+        presenters
     }
 
     /// Get the application context
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
-    pub fn context(&self) -> &AppContext {
+    #[must_use]
+    pub const fn context(&self) -> &AppContext {
         &self.context
     }
 
     /// Shutdown the application
     ///
     /// Stops all presenters and releases resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError` if shutdown work becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
     pub async fn shutdown(mut self) -> Result<(), AppError> {
@@ -289,7 +297,7 @@ pub struct ServiceRegistry {
 ///
 /// @plan PLAN-20250125-REFACTOR.P13
 pub struct AppContext {
-    /// EventBus for event-driven communication
+    /// `EventBus` for event-driven communication
     pub event_bus: Arc<EventBus>,
 
     /// Service registry
@@ -300,9 +308,10 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    /// Get the EventBus
+    /// Get the `EventBus`
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
+    #[must_use]
     pub fn event_bus(&self) -> Arc<EventBus> {
         Arc::clone(&self.event_bus)
     }
@@ -310,14 +319,16 @@ impl AppContext {
     /// Get the service registry
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
-    pub fn services(&self) -> &ServiceRegistry {
+    #[must_use]
+    pub const fn services(&self) -> &ServiceRegistry {
         &self.services
     }
 
     /// Get base directory
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
-    pub fn base_dir(&self) -> &PathBuf {
+    #[must_use]
+    pub const fn base_dir(&self) -> &PathBuf {
         &self.base_dir
     }
 }

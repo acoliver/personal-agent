@@ -41,12 +41,10 @@ async fn create_toolset_from_config_errors_for_stdio_without_command() {
         id: Uuid::new_v4(),
         name: "Stdio".to_string(),
         enabled: true,
-        source: McpSource::Manual {
-            url: "".to_string(),
-        },
+        source: McpSource::Manual { url: String::new() },
         package: McpPackage {
             package_type: McpPackageType::Http,
-            identifier: "".to_string(),
+            identifier: String::new(),
             runtime_hint: None,
         },
         transport: McpTransport::Stdio,

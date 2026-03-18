@@ -30,6 +30,7 @@ pub struct MigrationRunner {
 
 impl MigrationRunner {
     /// Create a new migration runner with the given data directory
+    #[must_use]
     pub fn new(data_dir: PathBuf) -> Self {
         let backup_dir = data_dir.join("backup_before_migration");
         Self {
@@ -68,7 +69,7 @@ impl MigrationRunner {
         info!("Backup created at: {:?}", self.backup_dir);
 
         // 2. Migrate conversations
-        let stats = self.migrate_conversations();
+        let stats = Self::migrate_conversations();
         report.conversations_migrated = stats.count;
         info!("Migrated {} conversations", stats.count);
 
@@ -128,7 +129,10 @@ impl MigrationRunner {
                         .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
                     let dest_path = backup_dir.join(filename);
                     fs::copy(&src_path, &dest_path).with_context(|| {
-                        format!("Failed to backup conversation file: {:?}", filename)
+                        format!(
+                            "Failed to backup conversation file: {}",
+                            filename.to_string_lossy()
+                        )
                     })?;
                 }
             }
@@ -140,7 +144,7 @@ impl MigrationRunner {
     }
 
     /// Migrate conversations to new format
-    fn migrate_conversations(&self) -> MigrationStats {
+    fn migrate_conversations() -> MigrationStats {
         // Load existing conversations using old storage format
         let storage = match ConversationStorage::with_default_path() {
             Ok(s) => s,
@@ -158,7 +162,7 @@ impl MigrationRunner {
             }
         };
 
-        let count = old_conversations.len() as u32;
+        let count = u32::try_from(old_conversations.len()).unwrap_or(u32::MAX);
 
         // Verify each conversation can be deserialized
         for conv in &old_conversations {
@@ -166,7 +170,11 @@ impl MigrationRunner {
             if conv.id.is_nil() {
                 warn!("Conversation has invalid ID: {:?}", conv.filename());
             }
-            if conv.title.as_ref().is_some_and(|t| t.is_empty()) {
+            if conv
+                .title
+                .as_ref()
+                .is_some_and(std::string::String::is_empty)
+            {
                 warn!("Conversation has empty title: {:?}", conv.filename());
             }
         }
@@ -205,7 +213,7 @@ impl MigrationRunner {
             }
         };
 
-        let count = config.profiles.len() as u32;
+        let count = u32::try_from(config.profiles.len()).unwrap_or(u32::MAX);
 
         // Verify each profile
         for profile in &config.profiles {
@@ -243,7 +251,7 @@ impl MigrationRunner {
             }
         };
 
-        let count = config.mcps.len() as u32;
+        let count = u32::try_from(config.mcps.len()).unwrap_or(u32::MAX);
 
         // Verify each MCP config
         for mcp in &config.mcps {
@@ -284,7 +292,10 @@ impl MigrationRunner {
                         .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
                     let dest_path = conversations_dir.join(filename);
                     fs::copy(&src_path, &dest_path).with_context(|| {
-                        format!("Failed to restore conversation file: {:?}", filename)
+                        format!(
+                            "Failed to restore conversation file: {}",
+                            filename.to_string_lossy()
+                        )
                     })?;
                 }
             }

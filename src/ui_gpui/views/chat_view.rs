@@ -22,7 +22,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Represents a single message in the chat (for UI display)
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessage {
     pub role: MessageRole,
     pub content: String,
@@ -32,7 +32,7 @@ pub struct ChatMessage {
 }
 
 /// Message role enum
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MessageRole {
     User,
     Assistant,
@@ -59,19 +59,21 @@ impl ChatMessage {
         }
     }
 
+    #[must_use]
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
         self.thinking = Some(thinking.into());
         self
     }
 
-    pub fn with_timestamp(mut self, timestamp: u64) -> Self {
+    #[must_use]
+    pub const fn with_timestamp(mut self, timestamp: u64) -> Self {
         self.timestamp = Some(timestamp);
         self
     }
 }
 
 /// Streaming state for AI responses
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamingState {
     Idle,
     Streaming { content: String, done: bool },
@@ -79,6 +81,7 @@ pub enum StreamingState {
 }
 
 /// Main chat state container
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
@@ -134,20 +137,24 @@ impl Default for ChatState {
 }
 
 impl ChatState {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_messages(mut self, messages: Vec<ChatMessage>) -> Self {
         self.messages = messages;
         self
     }
 
+    #[must_use]
     pub fn with_streaming(mut self, state: StreamingState) -> Self {
         self.streaming = state;
         self
     }
 
+    #[must_use]
     pub fn with_thinking(mut self, enabled: bool, content: Option<String>) -> Self {
         self.show_thinking = enabled;
         self.thinking_content = content;
@@ -178,16 +185,16 @@ impl ChatState {
     }
 
     fn sync_conversation_title_from_active(&mut self) {
-        self.conversation_title = self
-            .selected_conversation()
-            .map(|conversation| {
+        self.conversation_title = self.selected_conversation().map_or_else(
+            || "New Conversation".to_string(),
+            |conversation| {
                 if conversation.title.trim().is_empty() {
                     "Untitled Conversation".to_string()
                 } else {
                     conversation.title.clone()
                 }
-            })
-            .unwrap_or_else(|| "New Conversation".to_string());
+            },
+        );
     }
 
     fn sync_conversation_dropdown_index(&mut self) {
@@ -209,10 +216,10 @@ impl ChatState {
     }
 
     fn sync_current_model_from_profile(&mut self) {
-        self.current_model = self
-            .selected_profile()
-            .map(|profile| profile.model_id.clone())
-            .unwrap_or_else(|| "No profile selected".to_string());
+        self.current_model = self.selected_profile().map_or_else(
+            || "No profile selected".to_string(),
+            |profile| profile.model_id.clone(),
+        );
     }
 
     fn sync_profile_dropdown_index(&mut self) {
@@ -397,8 +404,7 @@ impl ChatView {
                 let current_model = self.state.current_model.clone();
                 self.state.messages = Self::messages_from_payload(transcript, &current_model);
             }
-            ConversationLoadState::Loading { .. } => {}
-            ConversationLoadState::Error { .. } => {}
+            ConversationLoadState::Loading { .. } | ConversationLoadState::Error { .. } => {}
             ConversationLoadState::Idle => {
                 if selected_conversation_id.is_none() {
                     self.state.messages.clear();
@@ -441,7 +447,7 @@ impl ChatView {
         self.state.sync_conversation_title_from_active();
     }
 
-    /// Emit a UserEvent through the bridge
+    /// Emit a `UserEvent` through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P04
     fn emit(&self, event: UserEvent) {
         tracing::info!("ChatView::emit called with event: {:?}", event);
@@ -513,7 +519,8 @@ impl ChatView {
         cx.notify();
     }
 
-    pub fn conversation_dropdown_open(&self) -> bool {
+    #[must_use]
+    pub const fn conversation_dropdown_open(&self) -> bool {
         self.state.conversation_dropdown_open
     }
 
@@ -526,9 +533,9 @@ impl ChatView {
             return;
         }
 
-        let len = self.state.conversations.len() as isize;
-        let current = self.state.conversation_dropdown_index as isize;
-        let next = (current + delta).clamp(0, len - 1) as usize;
+        let len = self.state.conversations.len().cast_signed();
+        let current = self.state.conversation_dropdown_index.cast_signed();
+        let next = (current + delta).clamp(0, len - 1).cast_unsigned();
         if next != self.state.conversation_dropdown_index {
             self.state.conversation_dropdown_index = next;
             cx.notify();
@@ -587,14 +594,14 @@ impl ChatView {
                 return;
             }
 
-            self.state.conversation_title = title.clone();
+            self.state.conversation_title.clone_from(&title);
             if let Some(conversation) = self
                 .state
                 .conversations
                 .iter_mut()
                 .find(|conversation| conversation.id == id)
             {
-                conversation.title = title.clone();
+                conversation.title.clone_from(&title);
             }
 
             self.state.conversation_title_editing = false;
@@ -630,8 +637,8 @@ impl ChatView {
         cx.notify();
     }
 
-
-    pub fn conversation_title_editing(&self) -> bool {
+    #[must_use]
+    pub const fn conversation_title_editing(&self) -> bool {
         self.state.conversation_title_editing
     }
 
@@ -665,7 +672,8 @@ impl ChatView {
         cx.notify();
     }
 
-    pub fn profile_dropdown_open(&self) -> bool {
+    #[must_use]
+    pub const fn profile_dropdown_open(&self) -> bool {
         self.state.profile_dropdown_open
     }
 
@@ -677,7 +685,7 @@ impl ChatView {
         }
     }
 
-    fn active_cursor_position(&self) -> usize {
+    const fn active_cursor_position(&self) -> usize {
         if self.state.conversation_title_editing {
             self.state.conversation_title_input.len()
         } else {
@@ -690,9 +698,9 @@ impl ChatView {
             return;
         }
 
-        let len = self.state.profiles.len() as isize;
-        let current = self.state.profile_dropdown_index as isize;
-        let next = (current + delta).clamp(0, len - 1) as usize;
+        let len = self.state.profiles.len().cast_signed();
+        let current = self.state.profile_dropdown_index.cast_signed();
+        let next = (current + delta).clamp(0, len - 1).cast_unsigned();
         if next != self.state.profile_dropdown_index {
             self.state.profile_dropdown_index = next;
             cx.notify();
@@ -727,7 +735,7 @@ impl ChatView {
     }
 
     /// Handle select-all (Cmd+A)
-    pub fn handle_select_all(&mut self, _cx: &mut gpui::Context<Self>) {
+    pub const fn handle_select_all(&mut self, _cx: &mut gpui::Context<Self>) {
         // No visual selection yet, but move cursor to end
         self.state.cursor_position = self.state.input_text.len();
     }
@@ -738,8 +746,7 @@ impl ChatView {
             let prev = self.state.input_text[..self.state.cursor_position]
                 .char_indices()
                 .next_back()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
             self.state.cursor_position = prev;
             cx.notify();
         }
@@ -751,8 +758,9 @@ impl ChatView {
             let next = self.state.input_text[self.state.cursor_position..]
                 .char_indices()
                 .nth(1)
-                .map(|(i, _)| self.state.cursor_position + i)
-                .unwrap_or(self.state.input_text.len());
+                .map_or(self.state.input_text.len(), |(i, _)| {
+                    self.state.cursor_position + i
+                });
             self.state.cursor_position = next;
             cx.notify();
         }
@@ -770,7 +778,7 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Handle backspace key (called from MainPanel)
+    /// Handle backspace key (called from `MainPanel`)
     pub fn handle_backspace(&mut self, cx: &mut gpui::Context<Self>) {
         if self.state.conversation_title_editing {
             self.handle_rename_backspace(cx);
@@ -791,15 +799,14 @@ impl ChatView {
             let prev = self.state.input_text[..pos]
                 .char_indices()
                 .next_back()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
             self.state.input_text.drain(prev..pos);
             self.state.cursor_position = prev;
         }
         cx.notify();
     }
 
-    /// Handle enter key (called from MainPanel)
+    /// Handle enter key (called from `MainPanel`)
     pub fn handle_enter(&mut self, cx: &mut gpui::Context<Self>) {
         if self.state.conversation_title_editing {
             self.submit_rename_conversation(cx);
@@ -836,8 +843,9 @@ impl ChatView {
         }
     }
 
-    /// Handle incoming ViewCommands
+    /// Handle incoming `ViewCommands`
     /// @plan PLAN-20250130-GPUIREDUX.P04
+    #[allow(clippy::too_many_lines)]
     pub fn handle_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
             ViewCommand::ConversationMessagesLoaded {
@@ -881,8 +889,6 @@ impl ChatView {
                 self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
             }
-
-
 
             ViewCommand::ShowThinking { conversation_id } => {
                 if conversation_id != Uuid::nil()
@@ -929,7 +935,7 @@ impl ChatView {
                             done: false,
                         };
                     }
-                    _ => {}
+                    StreamingState::Error(_) => {}
                 }
                 self.maybe_scroll_chat_to_bottom(cx);
                 cx.notify();
@@ -1021,7 +1027,7 @@ impl ChatView {
                     .iter_mut()
                     .find(|conversation| conversation.id == id)
                 {
-                    conversation.title = new_title.clone();
+                    conversation.title.clone_from(&new_title);
                     conversation.updated_at = chrono::Utc::now();
                 }
 
@@ -1052,14 +1058,12 @@ impl ChatView {
                         self.state.conversation_title = "New Conversation".to_string();
                     }
                 } else {
-                    let active_exists = previous_active
-                        .map(|id| {
-                            self.state
-                                .conversations
-                                .iter()
-                                .any(|conversation| conversation.id == id)
-                        })
-                        .unwrap_or(false);
+                    let active_exists = previous_active.is_some_and(|id| {
+                        self.state
+                            .conversations
+                            .iter()
+                            .any(|conversation| conversation.id == id)
+                    });
 
                     if active_exists {
                         self.state.active_conversation_id = previous_active;
@@ -1154,7 +1158,7 @@ impl ChatView {
                     .iter_mut()
                     .find(|conversation| conversation.id == id)
                 {
-                    conversation.title = title.clone();
+                    conversation.title.clone_from(&title);
                     conversation.updated_at = chrono::Utc::now();
                 }
 
@@ -1238,6 +1242,7 @@ impl ChatView {
 
     /// Render the top bar with icon, title, and toolbar buttons
     /// @plan PLAN-20250130-GPUIREDUX.P04
+    #[allow(clippy::too_many_lines)]
     fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
 
@@ -1367,8 +1372,8 @@ impl ChatView {
                             .justify_center()
                             .cursor_pointer()
                             .bg(Theme::bg_darker())
-                            .hover(|s| s.bg(gpui::rgb(0x8B0000)))
-                            .active(|s| s.bg(gpui::rgb(0x5C0000)))
+                            .hover(|s| s.bg(gpui::rgb(0x008B_0000)))
+                            .active(|s| s.bg(gpui::rgb(0x005C_0000)))
                             .text_size(px(14.0))
                             .text_color(Theme::text_primary())
                             .child("\u{23FB}")
@@ -1381,16 +1386,16 @@ impl ChatView {
 
     /// Render the title bar with conversation dropdown and model label
     /// @plan PLAN-20250130-GPUIREDUX.P03
+    #[allow(clippy::too_many_lines)]
     fn render_title_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let conversation_title = self.state.conversation_title.clone();
         let conversation_title_input = self.state.conversation_title_input.clone();
         let conversation_dropdown_open = self.state.conversation_dropdown_open;
         let conversation_title_editing = self.state.conversation_title_editing;
-        let selected_profile = self
-            .state
-            .selected_profile()
-            .map(|profile| profile.name.clone())
-            .unwrap_or_else(|| "Select profile".to_string());
+        let selected_profile = self.state.selected_profile().map_or_else(
+            || "Select profile".to_string(),
+            |profile| profile.name.clone(),
+        );
         let profile_dropdown_open = self.state.profile_dropdown_open;
 
         div()
@@ -1629,8 +1634,7 @@ impl ChatView {
 
                             div()
                                 .id(SharedString::from(format!(
-                                    "chat-conversation-item-{}",
-                                    conversation_id
+                                    "chat-conversation-item-{conversation_id}"
                                 )))
                                 .w_full()
                                 .px(px(8.0))
@@ -1814,13 +1818,13 @@ impl ChatView {
             // Messages
             .when(!messages.is_empty(), |d| {
                 d.children(messages.into_iter().enumerate().map(|(i, msg)| {
-                    let id = SharedString::from(format!("msg-{}", i));
+                    let id = SharedString::from(format!("msg-{i}"));
                     div()
                         .id(id)
                         .w_full()
                         .flex()
                         .justify_start()
-                        .child(self.render_message(&msg, show_thinking))
+                        .child(Self::render_message(&msg, show_thinking))
                 }))
             })
             // Streaming message
@@ -1844,15 +1848,15 @@ impl ChatView {
 
     /// Render a single message
     /// @plan PLAN-20250130-GPUIREDUX.P03
-    fn render_message(&self, msg: &ChatMessage, show_thinking: bool) -> impl IntoElement {
+    fn render_message(msg: &ChatMessage, show_thinking: bool) -> impl IntoElement {
         match msg.role {
-            MessageRole::User => self.render_user_message(&msg.content),
-            MessageRole::Assistant => self.render_assistant_message(msg, show_thinking),
+            MessageRole::User => Self::render_user_message(&msg.content),
+            MessageRole::Assistant => Self::render_assistant_message(msg, show_thinking),
         }
     }
 
     /// Render user message - right aligned, green bubble
-    fn render_user_message(&self, content: &str) -> gpui::AnyElement {
+    fn render_user_message(content: &str) -> gpui::AnyElement {
         let content_owned = content.to_string();
         div()
             .w_full()
@@ -1879,7 +1883,7 @@ impl ChatView {
     }
 
     /// Render assistant message - left aligned, dark bubble with model label
-    fn render_assistant_message(&self, msg: &ChatMessage, show_thinking: bool) -> gpui::AnyElement {
+    fn render_assistant_message(msg: &ChatMessage, show_thinking: bool) -> gpui::AnyElement {
         let model_id = msg
             .model_id
             .clone()
@@ -1899,7 +1903,7 @@ impl ChatView {
             )
             // Thinking block (if present and visible)
             .when(msg.thinking.is_some() && show_thinking, |d| {
-                d.child(self.render_thinking_block(msg.thinking.as_ref().unwrap()))
+                d.child(Self::render_thinking_block(msg.thinking.as_ref().unwrap()))
             })
             // Response bubble — click to copy
             .child({
@@ -1926,7 +1930,7 @@ impl ChatView {
     }
 
     /// Render thinking block with blue tint
-    fn render_thinking_block(&self, content: &str) -> impl IntoElement {
+    fn render_thinking_block(content: &str) -> impl IntoElement {
         div()
             .max_w(px(300.0))
             .px(px(8.0))
@@ -1956,6 +1960,7 @@ impl ChatView {
             )
     }
 
+    #[allow(clippy::too_many_lines)]
     fn render_input_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let is_streaming = matches!(self.state.streaming, StreamingState::Streaming { .. });
         let input_text = self.state.input_text.clone();
@@ -1977,7 +1982,7 @@ impl ChatView {
                         // A conservative width avoids premature height jumps while still wrapping
                         // before the send/stop button area.
                         let approx_chars_per_line = 65usize;
-                        (len + (approx_chars_per_line - 1)) / approx_chars_per_line
+                        len.div_ceil(approx_chars_per_line)
                     }
                 })
                 .sum::<usize>()
@@ -1988,14 +1993,15 @@ impl ChatView {
         let max_composer_height = 150.0;
         let min_composer_height = 44.0;
         let line_height = 18.0;
-        let computed_height = wrapped_line_count as f32 * line_height + 14.0;
+        #[allow(clippy::cast_precision_loss)]
+        let computed_height = (wrapped_line_count as f32).mul_add(line_height, 14.0);
         let input_box_height = computed_height.clamp(min_composer_height, max_composer_height);
         let text_content = if input_text.is_empty() {
             "Type a message...".to_string()
         } else {
             let before = &input_text[..cursor_pos];
             let after = &input_text[cursor_pos..];
-            format!("{}|{}", before, after)
+            format!("{before}|{after}")
         };
 
         div()
@@ -2025,7 +2031,7 @@ impl ChatView {
                     .overflow_y_scroll()
                     .cursor_text()
                     .on_mouse_down(MouseButton::Left, {
-                        let focus_handle = focus_handle.clone();
+                        let focus_handle = focus_handle;
                         move |_, window, cx| {
                             window.focus(&focus_handle, cx);
                         }
@@ -2124,9 +2130,7 @@ impl gpui::Focusable for ChatView {
 
 // ── UTF-8 ↔ UTF-16 helpers for InputHandler ──────────────────────────
 fn utf8_offset_to_utf16(text: &str, utf8_offset: usize) -> usize {
-    text[..utf8_offset.min(text.len())]
-        .encode_utf16()
-        .count()
+    text[..utf8_offset.min(text.len())].encode_utf16().count()
 }
 
 fn utf16_offset_to_utf8(text: &str, utf16_offset: usize) -> usize {
@@ -2261,8 +2265,7 @@ impl gpui::EntityInputHandler for ChatView {
 
         // Compute marked range in UTF-16 over the newly inserted text
         let mark_start_utf16 = utf8_offset_to_utf16(input, start_utf8);
-        let mark_end_utf16 = mark_start_utf16
-            + new_text.encode_utf16().count();
+        let mark_end_utf16 = mark_start_utf16 + new_text.encode_utf16().count();
         self.state.marked_range = Some(mark_start_utf16..mark_end_utf16);
 
         if let Some(sel) = new_selected_range {
@@ -2295,6 +2298,7 @@ impl gpui::EntityInputHandler for ChatView {
 }
 
 impl gpui::Render for ChatView {
+    #[allow(clippy::too_many_lines)]
     #[rustfmt::skip]
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         tracing::info!(
@@ -2317,7 +2321,7 @@ impl gpui::Render for ChatView {
                 canvas(
                     |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
                     {
-                        let entity = cx.entity().clone();
+                        let entity = cx.entity();
                         let focus = self.focus_handle.clone();
                         move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
                             window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);

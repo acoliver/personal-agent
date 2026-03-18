@@ -367,7 +367,7 @@ impl McpConfigureViewController {
             .unwrap_or_default()
     }
 
-    fn create_secrets_manager(&self) -> SecretsManager {
+    const fn create_secrets_manager(&self) -> SecretsManager {
         SecretsManager::new()
     }
 

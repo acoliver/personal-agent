@@ -1,4 +1,4 @@
-//! GPUI-based UI module for PersonalAgent
+//! GPUI-based UI module for `PersonalAgent`
 //!
 //! @plan PLAN-20250128-GPUI.P03
 //! @requirement REQ-GPUI-001

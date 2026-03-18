@@ -1,8 +1,10 @@
-//! Bridge between AppKit NSStatusItem and GPUI popup window
+//! Bridge between `AppKit` `NSStatusItem` and GPUI popup window
 //!
 //! @plan PLAN-20250128-GPUI.P13
 //! @requirement REQ-GPUI-007
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use objc2::rc::Retained;
@@ -12,12 +14,12 @@ use objc2_foundation::{MainThreadMarker, NSString};
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::popup_window::PopupWindow;
 
-/// Bridge between NSStatusItem and GPUI application
+/// Bridge between `NSStatusItem` and GPUI application
 pub struct TrayBridge {
-    /// NSStatusItem for the menu bar icon
+    /// `NSStatusItem` for the menu bar icon
     status_item: Retained<objc2_app_kit::NSStatusItem>,
     /// GPUI popup window (shown/hidden on click)
-    popup_window: Arc<Mutex<Option<PopupWindow>>>,
+    popup_window: Rc<RefCell<Option<PopupWindow>>>,
     /// GPUI bridge for event handling
     gpui_bridge: Arc<GpuiBridge>,
     /// Whether the popup is currently visible
@@ -27,7 +29,11 @@ pub struct TrayBridge {
 }
 
 impl TrayBridge {
-    /// Create a new tray bridge with status item and popup window
+    /// Create a new tray bridge with status item and popup window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tray is not created on the macOS main thread.
     pub fn new(gpui_bridge: Arc<GpuiBridge>) -> anyhow::Result<Self> {
         // Get main thread marker
         let mtm = MainThreadMarker::new().ok_or_else(|| anyhow::anyhow!("Not on main thread"))?;
@@ -47,7 +53,7 @@ impl TrayBridge {
 
         let tray_bridge = Self {
             status_item,
-            popup_window: Arc::new(Mutex::new(None)),
+            popup_window: Rc::new(RefCell::new(None)),
             gpui_bridge,
             is_visible: Arc::new(Mutex::new(false)),
             mtm,
@@ -56,7 +62,11 @@ impl TrayBridge {
         Ok(tray_bridge)
     }
 
-    /// Toggle the popup window visibility
+    /// Toggle the popup window visibility.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the visibility mutex is poisoned.
     pub fn toggle_popup(&self) {
         let mut visible = self.is_visible.lock().unwrap();
 
@@ -69,9 +79,9 @@ impl TrayBridge {
         }
     }
 
-    /// Show the popup window
+    /// Show the popup window.
     pub fn show_popup(&self) {
-        let mut popup_guard = self.popup_window.lock().unwrap();
+        let mut popup_guard = self.popup_window.borrow_mut();
         if let Some(window) = popup_guard.as_mut() {
             // Get status item button frame for positioning
             if let Some(button) = self.status_item.button(self.mtm) {
@@ -82,27 +92,36 @@ impl TrayBridge {
         }
     }
 
-    /// Hide the popup window
+    /// Hide the popup window.
     pub fn hide_popup(&self) {
-        if let Some(mut window) = self.popup_window.lock().unwrap().take() {
+        if let Some(mut window) = self.popup_window.borrow_mut().take() {
             window.hide();
             // Put it back
-            *self.popup_window.lock().unwrap() = Some(window);
+            *self.popup_window.borrow_mut() = Some(window);
         }
     }
 
-    /// Set the popup window
+    /// Set the popup window.
     pub fn set_popup_window(&self, window: PopupWindow) {
-        let mut popup = self.popup_window.lock().unwrap();
+        let mut popup = self.popup_window.borrow_mut();
         *popup = Some(window);
     }
 
-    /// Check if popup is currently visible
+    /// Check if popup is currently visible.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the visibility mutex is poisoned.
+    #[must_use]
     pub fn is_popup_visible(&self) -> bool {
         *self.is_visible.lock().unwrap()
     }
 
-    /// Handle click outside the popup window to dismiss it
+    /// Handle click outside the popup window to dismiss it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the visibility mutex is poisoned.
     pub fn handle_click_outside(&self) {
         if self.is_popup_visible() {
             self.hide_popup();
@@ -111,6 +130,7 @@ impl TrayBridge {
     }
 
     /// Get the GPUI bridge
+    #[must_use]
     pub fn gpui_bridge(&self) -> Arc<GpuiBridge> {
         Arc::clone(&self.gpui_bridge)
     }

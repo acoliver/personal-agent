@@ -3,7 +3,7 @@ use personal_agent::registry::RegistryCache;
 
 fn main() {
     let cache_path = RegistryCache::default_path().expect("get path");
-    println!("Cache path: {:?}", cache_path);
+    println!("Cache path: {}", cache_path.display());
 
     let cache = RegistryCache::new(cache_path, 24);
     match cache.load() {
@@ -17,6 +17,6 @@ fn main() {
             }
         }
         Ok(None) => println!("No cache found or expired"),
-        Err(e) => println!("Error loading cache: {:?}", e),
+        Err(e) => println!("Error loading cache: {e:?}"),
     }
 }

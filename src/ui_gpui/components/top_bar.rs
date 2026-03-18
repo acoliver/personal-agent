@@ -18,6 +18,7 @@ impl TopBarButton {
         }
     }
 
+    #[must_use]
     pub fn on_click(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
         self.on_click = Some(Box::new(f));
         self
@@ -39,16 +40,19 @@ impl TopBar {
         }
     }
 
+    #[must_use]
     pub fn left_button(mut self, button: TopBarButton) -> Self {
         self.left_button = Some(button);
         self
     }
 
+    #[must_use]
     pub fn right_button(mut self, button: TopBarButton) -> Self {
         self.right_buttons.push(button);
         self
     }
 
+    #[must_use]
     pub fn right_buttons(mut self, buttons: Vec<TopBarButton>) -> Self {
         self.right_buttons = buttons;
         self
@@ -74,7 +78,7 @@ impl IntoElement for TopBar {
         // Left button (back button, etc.)
         if let Some(left_btn) = self.left_button {
             let btn = crate::ui_gpui::components::Button::new(left_btn.label)
-                .on_click(left_btn.on_click.unwrap_or(Box::new(|| {})));
+                .on_click(left_btn.on_click.unwrap_or_else(|| Box::new(|| {})));
             top_bar = top_bar.child(btn);
         } else {
             top_bar = top_bar.child(div().w(px(Theme::SPACING_LG)));
@@ -93,7 +97,7 @@ impl IntoElement for TopBar {
         // Right buttons
         for btn in self.right_buttons {
             let button = crate::ui_gpui::components::Button::new(btn.label)
-                .on_click(btn.on_click.unwrap_or(Box::new(|| {})));
+                .on_click(btn.on_click.unwrap_or_else(|| Box::new(|| {})));
             top_bar = top_bar.child(button);
         }
 

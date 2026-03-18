@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use personal_agent::events::types::UserEvent;
 use personal_agent::presentation::view_command::ViewId;
+use personal_agent::presentation::ViewCommand;
 use personal_agent::ui_gpui::bridge::GpuiBridge;
 use personal_agent::ui_gpui::navigation::NavigationState;
 use personal_agent::ui_gpui::views::chat_view::{
@@ -74,7 +75,6 @@ fn test_channel_communication() {
     assert!(matches!(received, UserEvent::ToggleThinking));
 
     // Send a view command
-    use personal_agent::presentation::ViewCommand;
     view_cmd_tx
         .send(ViewCommand::ShowThinking {
             conversation_id: uuid::Uuid::new_v4(),
@@ -109,11 +109,11 @@ fn test_chat_state_message_persistence() {
 
 #[test]
 fn test_chat_message_with_metadata() {
-    let msg = ChatMessage::assistant("Response", "claude-3").with_timestamp(1234567890);
+    let msg = ChatMessage::assistant("Response", "claude-3").with_timestamp(1_234_567_890);
 
     assert_eq!(msg.role, MessageRole::Assistant);
     assert_eq!(msg.content, "Response");
-    assert_eq!(msg.timestamp, Some(1234567890));
+    assert_eq!(msg.timestamp, Some(1_234_567_890));
     assert_eq!(msg.model_id, Some("claude-3".to_string()));
 }
 

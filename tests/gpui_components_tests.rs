@@ -19,7 +19,7 @@ use personal_agent::ui_gpui::components::{
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-002.1
-/// @scenario TabBar can be created with an active tab
+/// @scenario `TabBar` can be created with an active tab
 #[test]
 fn test_tab_bar_creation() {
     let tab_bar = TabBar::new(Tab::Chat);
@@ -31,32 +31,32 @@ fn test_tab_bar_creation() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-002.2
-/// @scenario TabBar stores the active tab state correctly
+/// @scenario `TabBar` stores the active tab state correctly
 #[test]
 fn test_tab_bar_active_state() {
     // Create with different active tabs
-    let _chat_bar = TabBar::new(Tab::Chat);
-    let _history_bar = TabBar::new(Tab::History);
-    let _settings_bar = TabBar::new(Tab::Settings);
+    let chat_bar = TabBar::new(Tab::Chat);
+    let history_bar = TabBar::new(Tab::History);
+    let settings_bar = TabBar::new(Tab::Settings);
 
     // Will panic: unimplemented!() in render
-    let _ = _chat_bar.into_element();
-    let _ = _history_bar.into_element();
-    let _ = _settings_bar.into_element();
+    let _ = chat_bar.into_element();
+    let _ = history_bar.into_element();
+    let _ = settings_bar.into_element();
 }
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-002.3
-/// @scenario TabBar stores on_select callback
+/// @scenario `TabBar` stores `on_select` callback
 #[test]
 fn test_tab_bar_on_select_callback() {
     // We can't verify closure contents, but we can verify the builder accepts it
-    let _tab_bar = TabBar::new(Tab::Chat).on_select(|_tab| {
+    let tab_bar = TabBar::new(Tab::Chat).on_select(|_tab| {
         // Callback stored - would be invoked on click in real usage
     });
 
     // Will panic: unimplemented!() in render
-    let _ = _tab_bar.into_element();
+    let _ = tab_bar.into_element();
 }
 
 // ============================================================================
@@ -65,7 +65,7 @@ fn test_tab_bar_on_select_callback() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.1
-/// @scenario UserBubble can be created with content
+/// @scenario `UserBubble` can be created with content
 #[test]
 fn test_user_bubble_creation() {
     let bubble = UserBubble::new("Hello, world!");
@@ -76,7 +76,7 @@ fn test_user_bubble_creation() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.2
-/// @scenario AssistantBubble can be created with content
+/// @scenario `AssistantBubble` can be created with content
 #[test]
 fn test_assistant_bubble_creation() {
     let bubble = AssistantBubble::new("I can help you with that!");
@@ -87,7 +87,7 @@ fn test_assistant_bubble_creation() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.2
-/// @scenario AssistantBubble builder methods work
+/// @scenario `AssistantBubble` builder methods work
 #[test]
 fn test_assistant_bubble_builder_methods() {
     let bubble = AssistantBubble::new("Response text")
@@ -101,7 +101,7 @@ fn test_assistant_bubble_builder_methods() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.3
-/// @scenario AssistantBubble stores streaming state
+/// @scenario `AssistantBubble` stores streaming state
 #[test]
 fn test_assistant_bubble_streaming_state() {
     let streaming_bubble = AssistantBubble::new("Partial response").streaming(true);
@@ -119,7 +119,7 @@ fn test_assistant_bubble_streaming_state() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.4
-/// @scenario InputBar can be created
+/// @scenario `InputBar` can be created
 #[test]
 fn test_input_bar_creation() {
     let input_bar = InputBar::new();
@@ -130,7 +130,7 @@ fn test_input_bar_creation() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.4
-/// @scenario InputBar text setter works
+/// @scenario `InputBar` text setter works
 #[test]
 fn test_input_bar_text_setter() {
     let input_bar = InputBar::new().text("Type your message here");
@@ -141,7 +141,7 @@ fn test_input_bar_text_setter() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.4
-/// @scenario InputBar streaming state works
+/// @scenario `InputBar` streaming state works
 #[test]
 fn test_input_bar_streaming_state() {
     let streaming_bar = InputBar::new().is_streaming(true);
@@ -155,7 +155,7 @@ fn test_input_bar_streaming_state() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.4
-/// @scenario InputBar callbacks are stored
+/// @scenario `InputBar` callbacks are stored
 #[test]
 fn test_input_bar_callbacks() {
     // We can't verify closure contents, but we can verify the builder accepts them
@@ -214,7 +214,7 @@ fn test_button_disabled_state() {
 
 /// @plan PLAN-20250128-GPUI.P07
 /// @requirement REQ-GPUI-003.5
-/// @scenario Button stores on_click callback
+/// @scenario Button stores `on_click` callback
 #[test]
 fn test_button_callback() {
     // We can't verify closure contents, but we can verify the builder accepts it

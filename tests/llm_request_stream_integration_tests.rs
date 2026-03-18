@@ -1,7 +1,7 @@
 use personal_agent::{AuthConfig, LlmClient, LlmMessage, ModelProfile};
 use std::sync::Arc;
 
-/// Tests that request_stream_with_tools returns an error when the API call fails
+/// Tests that `request_stream_with_tools` returns an error when the API call fails
 /// (e.g., invalid API key). This verifies the error propagation behavior.
 #[tokio::test]
 async fn request_stream_returns_error_on_api_failure() {

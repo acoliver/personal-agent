@@ -43,6 +43,7 @@ pub fn provider_api_url(provider_id: &str) -> Option<String> {
     builtin_provider_api_url(provider_id).map(str::to_string)
 }
 
+#[must_use]
 pub fn default_api_base_url_for_provider(provider_id: &str) -> String {
     provider_api_url(provider_id).unwrap_or_else(|| OPENAI_API_BASE_URL.to_string())
 }

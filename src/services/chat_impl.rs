@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-/// Minimal implementation of ChatService
+/// Minimal implementation of `ChatService`
 pub struct ChatServiceImpl {
     conversation_service: Arc<dyn ConversationService>,
     profile_service: Arc<dyn super::ProfileService>,
@@ -26,7 +26,7 @@ pub struct ChatServiceImpl {
 }
 
 impl ChatServiceImpl {
-    /// Create a new ChatServiceImpl
+    /// Create a new `ChatServiceImpl`
     #[must_use]
     pub fn new(
         conversation_service: Arc<dyn ConversationService>,
@@ -41,6 +41,7 @@ impl ChatServiceImpl {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 #[async_trait::async_trait]
 impl ChatService for ChatServiceImpl {
     /// Send a message and get a streaming response
@@ -64,26 +65,24 @@ impl ChatService for ChatServiceImpl {
         *self.current_conversation_id.write().await = Some(conversation_id);
 
         // Get or create conversation
-        let _conversation = match self.conversation_service.load(conversation_id).await {
-            Ok(conv) => conv,
-            Err(_) => {
-                // Create new conversation if it doesn't exist
-                // Use default profile for now
-                let default_profile = self
-                    .profile_service
-                    .get_default()
-                    .await
-                    .map_err(|_| {
-                        ServiceError::Internal("No default profile available".to_string())
-                    })?
-                    .ok_or_else(|| {
-                        ServiceError::Internal("No default profile available".to_string())
-                    })?;
+        let _conversation = if let Ok(conv) = self.conversation_service.load(conversation_id).await
+        {
+            conv
+        } else {
+            // Create new conversation if it doesn't exist
+            // Use default profile for now
+            let default_profile = self
+                .profile_service
+                .get_default()
+                .await
+                .map_err(|_| ServiceError::Internal("No default profile available".to_string()))?
+                .ok_or_else(|| {
+                    ServiceError::Internal("No default profile available".to_string())
+                })?;
 
-                self.conversation_service
-                    .create(None, default_profile.id)
-                    .await?
-            }
+            self.conversation_service
+                .create(None, default_profile.id)
+                .await?
         };
 
         // Add user message
@@ -104,11 +103,11 @@ impl ChatService for ChatServiceImpl {
             .conversation_service
             .load(conversation_id)
             .await
-            .map_err(|e| ServiceError::Internal(format!("Failed to load conversation: {}", e)))?;
+            .map_err(|e| ServiceError::Internal(format!("Failed to load conversation: {e}")))?;
 
         // Create LLM client from profile
         let client = LlmClient::from_profile(&profile)
-            .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {}", e)))?;
+            .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
 
         let has_system_message = conversation
             .messages
@@ -179,7 +178,7 @@ impl ChatService for ChatServiceImpl {
             let agent = match client.create_agent(mcp_tools, system_prompt).await {
                 Ok(a) => a,
                 Err(e) => {
-                    let err_msg = format!("Failed to create agent: {}", e);
+                    let err_msg = format!("Failed to create agent: {e}");
                     let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
                         conversation_id: event_conversation_id,
                         error: err_msg.clone(),
@@ -240,15 +239,10 @@ impl ChatService for ChatServiceImpl {
 
             // Save the assistant message when complete
             if !response_text.is_empty() || !thinking_text.is_empty() {
-                let content = if !thinking_text.is_empty() {
-                    // For now, just save the text content (thinking could be stored separately)
-                    response_text.clone()
-                } else {
-                    response_text.clone()
-                };
-
+                // For now, persist only the assistant text content; thinking is surfaced
+                // separately during streaming and is not stored durably here.
                 let _ = conversation_service
-                    .add_assistant_message(event_conversation_id, content)
+                    .add_assistant_message(event_conversation_id, response_text.clone())
                     .await;
             }
 
@@ -266,10 +260,7 @@ impl ChatService for ChatServiceImpl {
         // Convert the channel receiver to a stream
         let message_stream: Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>> =
             Box::pin(stream::unfold(rx, move |mut rx| async move {
-                match rx.recv().await {
-                    Some(event) => Some((event, rx)),
-                    None => None,
-                }
+                rx.recv().await.map(|event| (event, rx))
             }));
 
         Ok(Box::new(message_stream))

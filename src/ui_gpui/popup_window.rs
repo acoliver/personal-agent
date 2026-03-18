@@ -15,7 +15,7 @@ use crate::ui_gpui::bridge::GpuiBridge;
 
 /// Popup window manager for GPUI content
 pub struct PopupWindow {
-    /// NSWindow instance
+    /// `NSWindow` instance
     window: Option<Retained<NSWindow>>,
     /// GPUI bridge for event handling
     gpui_bridge: Arc<GpuiBridge>,
@@ -24,19 +24,23 @@ pub struct PopupWindow {
 }
 
 impl PopupWindow {
-    /// Create a new popup window
+    /// Create a new popup window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the popup is not created on the macOS main thread.
     pub fn new(gpui_bridge: Arc<GpuiBridge>) -> anyhow::Result<Self> {
         // Get main thread marker
         let mtm = MainThreadMarker::new().ok_or_else(|| anyhow::anyhow!("Not on main thread"))?;
 
         // Calculate window size (wider default for GPUI content)
-        let _window_width = 760.0;
-        let _window_height = 520.0;
+        let window_width = 760.0;
+        let window_height = 520.0;
 
         // Create initial frame (off-screen, will be positioned when shown)
         let _frame = NSRect::new(
             NSPoint::new(-1000.0, -1000.0),
-            NSSize::new(_window_width, _window_height),
+            NSSize::new(window_width, window_height),
         );
 
         // Create the window with borderless style
@@ -85,32 +89,7 @@ impl PopupWindow {
 
             // Bounds checking against real screen geometry when available.
             let min_margin = 8.0;
-            let (min_x, max_x, min_y, max_y) = if let Some(screen) = window.screen() {
-                let frame = screen.frame();
-                (
-                    frame.origin.x + min_margin,
-                    frame.origin.x + frame.size.width - window_width - min_margin,
-                    frame.origin.y + min_margin,
-                    frame.origin.y + frame.size.height - window_height - min_margin,
-                )
-            } else if let Some(mtm) = MainThreadMarker::new() {
-                if let Some(main_screen) = NSScreen::mainScreen(mtm) {
-                    let frame = main_screen.frame();
-                    (
-                        frame.origin.x + min_margin,
-                        frame.origin.x + frame.size.width - window_width - min_margin,
-                        frame.origin.y + min_margin,
-                        frame.origin.y + frame.size.height - window_height - min_margin,
-                    )
-                } else {
-                    (
-                        min_margin,
-                        1920.0 - window_width - min_margin,
-                        min_margin,
-                        1080.0 - window_height - min_margin,
-                    )
-                }
-            } else {
+            let default_bounds = || {
                 (
                     min_margin,
                     1920.0 - window_width - min_margin,
@@ -118,6 +97,30 @@ impl PopupWindow {
                     1080.0 - window_height - min_margin,
                 )
             };
+            let (min_x, max_x, min_y, max_y) = window.screen().map_or_else(
+                || {
+                    MainThreadMarker::new().map_or_else(default_bounds, |mtm| {
+                        NSScreen::mainScreen(mtm).map_or_else(default_bounds, |main_screen| {
+                            let frame = main_screen.frame();
+                            (
+                                frame.origin.x + min_margin,
+                                frame.origin.x + frame.size.width - window_width - min_margin,
+                                frame.origin.y + min_margin,
+                                frame.origin.y + frame.size.height - window_height - min_margin,
+                            )
+                        })
+                    })
+                },
+                |screen| {
+                    let frame = screen.frame();
+                    (
+                        frame.origin.x + min_margin,
+                        frame.origin.x + frame.size.width - window_width - min_margin,
+                        frame.origin.y + min_margin,
+                        frame.origin.y + frame.size.height - window_height - min_margin,
+                    )
+                },
+            );
 
             let clamped_x = if max_x >= min_x {
                 x.clamp(min_x, max_x)
@@ -140,43 +143,45 @@ impl PopupWindow {
     }
 
     /// Show the popup window
-    pub fn show(&mut self) {
+    pub const fn show(&mut self) {
         if !self.is_visible {
             if let Some(ref window) = self.window {
                 // Make window key and order front
-                let _ = &*window;
+                let _ = window;
                 self.is_visible = true;
             }
         }
     }
 
     /// Hide the popup window
-    pub fn hide(&mut self) {
+    pub const fn hide(&mut self) {
         if self.is_visible {
             if let Some(ref window) = self.window {
                 // Order out the window
-                let _ = &*window;
+                let _ = window;
                 self.is_visible = false;
             }
         }
     }
 
     /// Check if the window is currently visible
-    pub fn is_visible(&self) -> bool {
+    #[must_use]
+    pub const fn is_visible(&self) -> bool {
         self.is_visible
     }
 
     /// Handle ESC key press (dismiss popup)
-    pub fn handle_esc_key(&mut self) {
+    pub const fn handle_esc_key(&mut self) {
         self.hide();
     }
 
     /// Handle window losing focus (dismiss popup)
-    pub fn handle_resign_key(&mut self) {
+    pub const fn handle_resign_key(&mut self) {
         self.hide();
     }
 
     /// Get the GPUI bridge
+    #[must_use]
     pub fn gpui_bridge(&self) -> Arc<GpuiBridge> {
         Arc::clone(&self.gpui_bridge)
     }

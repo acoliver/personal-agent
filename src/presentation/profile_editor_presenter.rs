@@ -1,6 +1,6 @@
-//! ProfileEditorPresenter - handles profile creation/editing UI
+//! `ProfileEditorPresenter` - handles profile creation/editing UI
 //!
-//! ProfileEditorPresenter subscribes to profile editor events,
+//! `ProfileEditorPresenter` subscribes to profile editor events,
 //! coordinates with profile service, and emits view commands.
 //!
 //! @plan PLAN-20250125-REFACTOR.P10
@@ -18,12 +18,12 @@ use crate::events::{
 use crate::models::{AuthConfig, ModelParameters};
 use crate::services::{ProfileService, ServiceError};
 
-/// ProfileEditorPresenter - handles profile creation/editing UI
+/// `ProfileEditorPresenter` - handles profile creation/editing UI
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
 /// @requirement REQ-025.1
 pub struct ProfileEditorPresenter {
-    /// Event receiver from EventBus
+    /// Event receiver from `EventBus`
     rx: broadcast::Receiver<AppEvent>,
 
     /// Reference to profile service
@@ -32,8 +32,8 @@ pub struct ProfileEditorPresenter {
     /// View command sender
     view_tx: broadcast::Sender<ViewCommand>,
 
-    /// Last model selected via ModelSelector (provider_id, model_id)
-    /// used for lightweight SaveProfileEditor flow.
+    /// Last model selected via `ModelSelector` (`provider_id`, `model_id`)
+    /// used for lightweight `SaveProfileEditor` flow.
     pending_selected_model: Arc<Mutex<Option<(String, String)>>>,
 
     /// Event bus sender for emitting domain events consumed by other presenters.
@@ -44,7 +44,7 @@ pub struct ProfileEditorPresenter {
 }
 
 impl ProfileEditorPresenter {
-    /// Create a new ProfileEditorPresenter
+    /// Create a new `ProfileEditorPresenter`
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub fn new(
@@ -63,10 +63,10 @@ impl ProfileEditorPresenter {
         }
     }
 
-    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    /// Stub constructor using unified global `EventBus` (REQ-WIRE-006 unification path).
     ///
     /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
-    /// bus rather than a caller-supplied broadcast::Sender. Full wiring deferred to
+    /// bus rather than a caller-supplied `broadcast::Sender`. Full wiring deferred to
     /// later implementation phases.
     ///
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
@@ -75,7 +75,7 @@ impl ProfileEditorPresenter {
     #[allow(dead_code)]
     pub fn new_with_event_bus(
         profile_service: Arc<dyn ProfileService>,
-        event_bus: Arc<EventBus>,
+        event_bus: &Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
         let event_bus_tx = event_bus.sender().clone();
@@ -91,6 +91,10 @@ impl ProfileEditorPresenter {
     }
 
     /// Start the presenter event loop
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn start(&mut self) -> Result<(), PresenterError> {
@@ -123,7 +127,6 @@ impl ProfileEditorPresenter {
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ProfileEditorPresenter lagged: {} events missed", n);
-                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::info!("ProfileEditorPresenter event stream closed");
@@ -139,6 +142,10 @@ impl ProfileEditorPresenter {
 
     /// Stop the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
@@ -149,6 +156,7 @@ impl ProfileEditorPresenter {
     /// Check if presenter is running
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -324,7 +332,7 @@ impl ProfileEditorPresenter {
         }
     }
 
-    /// Handle SaveProfileEditor event (lightweight save without full profile payload)
+    /// Handle `SaveProfileEditor` event (lightweight save without full profile payload)
     ///
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
     /// @requirement REQ-WIRE-001
@@ -348,8 +356,10 @@ impl ProfileEditorPresenter {
                 .unwrap_or_else(|| ("openai".to_string(), "gpt-4o".to_string()))
         };
 
-        let mut parameters = ModelParameters::default();
-        parameters.show_thinking = true;
+        let parameters = ModelParameters {
+            show_thinking: true,
+            ..ModelParameters::default()
+        };
 
         let auth = AuthConfig::Keychain {
             label: String::new(),
@@ -398,7 +408,7 @@ impl ProfileEditorPresenter {
         }
     }
 
-    /// Track latest model selection from ModelSelector flow.
+    /// Track latest model selection from `ModelSelector` flow.
     fn on_select_model(
         pending_selected_model: &Arc<Mutex<Option<(String, String)>>>,
         provider_id: String,

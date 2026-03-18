@@ -1,6 +1,6 @@
 use personal_agent::mcp::registry::{
-    McpRegistryEnvVar, McpRegistryPackage, McpRegistryPackageArgument, McpRegistryServer,
-    McpRegistryTransport,
+    McpRegistryEnvVar, McpRegistryPackage, McpRegistryPackageArgument, McpRegistryRepository,
+    McpRegistryServer, McpRegistryTransport,
 };
 use personal_agent::mcp::{
     McpPackageType, McpRegistry, McpRegistryServerWrapper, McpSource, McpTransport,
@@ -12,7 +12,7 @@ fn mcp_registry_entry_to_config_maps_package_args() {
         server: McpRegistryServer {
             name: "test/fs-server".to_string(),
             description: "Filesystem MCP".to_string(),
-            repository: Default::default(),
+            repository: McpRegistryRepository::default(),
             version: "1.0.0".to_string(),
             packages: vec![McpRegistryPackage {
                 registry_type: "npm".to_string(),

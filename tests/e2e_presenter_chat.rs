@@ -1,18 +1,18 @@
-//! E2E test for ChatPresenter event wiring with real services
+//! E2E test for `ChatPresenter` event wiring with real services
 //!
 //! @plan PLAN-20250128-PRESENTERS.P04
 //! @requirement REQ-019.2
 //!
-//! This test proves ChatPresenter receives events through the full stack:
-//! - EventBus
-//! - ChatPresenter
-//! - ChatService with synthetic API
+//! This test proves `ChatPresenter` receives events through the full stack:
+//! - `EventBus`
+//! - `ChatPresenter`
+//! - `ChatService` with synthetic API
 //!
 //! Requires:
 //! - ~/.llxprt/profiles/synthetic.json (profile config)
-//! - ~/.synthetic_key (API key)
+//! - ~/.`synthetic_key` (API key)
 //!
-//! Run with: cargo test --test e2e_presenter_chat -- --ignored --nocapture
+//! Run with: cargo test --test `e2e_presenter_chat` -- --ignored --nocapture
 
 use personal_agent::{
     events::{
@@ -59,29 +59,30 @@ fn load_synthetic_profile() -> ModelProfile {
         .to_string();
 
     // Expand ~ to home directory
-    let keyfile_path = if keyfile_path.starts_with("~/") {
-        home.join(&keyfile_path[2..]).to_string_lossy().to_string()
-    } else {
-        keyfile_path
-    };
+    let keyfile_path = keyfile_path.strip_prefix("~/").map_or_else(
+        || keyfile_path.clone(),
+        |stripped| home.join(stripped).to_string_lossy().to_string(),
+    );
 
     ModelProfile::new(
         "Synthetic GLM".to_string(),
         provider,
         model,
         base_url,
-        personal_agent::AuthConfig::Keychain { label: keyfile_path },
+        personal_agent::AuthConfig::Keychain {
+            label: keyfile_path,
+        },
     )
 }
 
-/// Helper to collect ViewCommands from a channel
+/// Helper to collect `ViewCommands` from a channel
 struct ViewCommandCollector {
     receiver: mpsc::Receiver<ViewCommand>,
     timeout_ms: u64,
 }
 
 impl ViewCommandCollector {
-    fn new(receiver: mpsc::Receiver<ViewCommand>, timeout_ms: u64) -> Self {
+    const fn new(receiver: mpsc::Receiver<ViewCommand>, timeout_ms: u64) -> Self {
         Self {
             receiver,
             timeout_ms,
@@ -99,12 +100,11 @@ impl ViewCommandCollector {
             if elapsed >= timeout {
                 break;
             }
-            let remaining = timeout - elapsed;
+            let remaining = timeout.checked_sub(elapsed).unwrap();
 
             match tokio::time::timeout(remaining, self.receiver.recv()).await {
                 Ok(Some(cmd)) => commands.push(cmd),
-                Ok(None) => break,
-                Err(_) => break,
+                Ok(None) | Err(_) => break,
             }
         }
 
@@ -114,6 +114,7 @@ impl ViewCommandCollector {
 
 #[tokio::test]
 #[ignore = "Requires ~/.llxprt/profiles/synthetic.json and ~/.synthetic_key"]
+#[allow(clippy::too_many_lines)]
 async fn test_chat_presenter_receives_stream_events() {
     println!("=== E2E Test: ChatPresenter Receives Stream Events ===\n");
 
@@ -244,7 +245,7 @@ async fn test_chat_presenter_receives_stream_events() {
 
     println!("\nReceived {} ViewCommands:", commands.len());
     for (i, cmd) in commands.iter().enumerate() {
-        println!("  [{}] {:?}", i, cmd);
+        println!("  [{i}] {cmd:?}");
     }
 
     // Verify we got the expected ViewCommands
@@ -283,19 +284,16 @@ async fn test_chat_presenter_receives_stream_events() {
         match event_monitor.try_recv() {
             Ok(event) => {
                 event_count += 1;
-                match event {
-                    AppEvent::Chat(ChatEvent::TextDelta { .. }) => {
-                        found_text_delta = true;
-                        println!("  [OK] Found TextDelta event on bus");
-                    }
-                    _ => {}
+                if let AppEvent::Chat(ChatEvent::TextDelta { .. }) = event {
+                    found_text_delta = true;
+                    println!("  [OK] Found TextDelta event on bus");
                 }
             }
             Err(_) => break,
         }
     }
 
-    println!("\nTotal events observed on bus: {}", event_count);
+    println!("\nTotal events observed on bus: {event_count}");
 
     // Verify test expectations
     assert!(found_thinking, "Should have ShowThinking ViewCommand");
@@ -333,8 +331,10 @@ async fn test_chat_presenter_error_handling() {
         Arc::new(ProfileServiceImpl::new(profiles_dir).expect("Failed to create ProfileService"));
 
     // Create a mock chat service that will fail
+    #[allow(clippy::items_after_statements)]
     struct FailingChatService;
 
+    #[allow(clippy::items_after_statements)]
     #[async_trait::async_trait]
     impl ChatService for FailingChatService {
         async fn send_message(
@@ -387,7 +387,7 @@ async fn test_chat_presenter_error_handling() {
 
     println!("Received {} ViewCommands during error:", commands.len());
     for (i, cmd) in commands.iter().enumerate() {
-        println!("  [{}] {:?}", i, cmd);
+        println!("  [{i}] {cmd:?}");
     }
 
     // We expect to see error handling commands
@@ -488,7 +488,7 @@ async fn test_chat_presenter_manual_events() {
 
     println!("\nReceived {} ViewCommands:", commands.len());
     for (i, cmd) in commands.iter().enumerate() {
-        println!("  [{}] {:?}", i, cmd);
+        println!("  [{i}] {cmd:?}");
     }
 
     // Verify expected commands

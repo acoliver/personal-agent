@@ -84,6 +84,6 @@ pub trait ConversationService: Send + Sync {
 }
 
 /// @plan PLAN-20250125-REFACTOR.P09
-/// Conversation service implementation stub (replaced by conversation_impl)
+/// Conversation service implementation stub (replaced by `conversation_impl`)
 #[deprecated(note = "Use conversation_impl::ConversationServiceImpl instead")]
 pub struct ConversationServiceImplStub;

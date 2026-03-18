@@ -33,7 +33,7 @@ impl ModelInfo {
         Self {
             id: id.into(),
             provider_id: provider_id.into(),
-            context: 128000,
+            context: 128_000,
             reasoning: false,
             vision: false,
             cost_input: 0.0,
@@ -41,24 +41,28 @@ impl ModelInfo {
         }
     }
 
-    pub fn with_context(mut self, context: u64) -> Self {
+    #[must_use]
+    pub const fn with_context(mut self, context: u64) -> Self {
         self.context = context;
         self
     }
 
-    pub fn with_capabilities(mut self, reasoning: bool, vision: bool) -> Self {
+    #[must_use]
+    pub const fn with_capabilities(mut self, reasoning: bool, vision: bool) -> Self {
         self.reasoning = reasoning;
         self.vision = vision;
         self
     }
 
-    pub fn with_costs(mut self, input: f64, output: f64) -> Self {
+    #[must_use]
+    pub const fn with_costs(mut self, input: f64, output: f64) -> Self {
         self.cost_input = input;
         self.cost_output = output;
         self
     }
 
     /// Format context for display (e.g., "128K", "1M")
+    #[must_use]
     pub fn context_display(&self) -> String {
         if self.context >= 1_000_000 {
             format!("{}M", self.context / 1_000_000)
@@ -70,20 +74,24 @@ impl ModelInfo {
     }
 
     /// Format cost for display (e.g., "$3", "$0.25", "free")
+    #[must_use]
     pub fn cost_display(cost: f64) -> String {
+        #[allow(clippy::float_cmp)]
         if cost == 0.0 {
             "free".to_string()
-        } else if cost == cost.floor() {
-            format!("${}", cost as i64)
+        } else if (cost - cost.floor()).abs() < f64::EPSILON {
+            #[allow(clippy::cast_possible_truncation)]
+            let whole = cost as i64;
+            format!("${whole}")
         } else {
-            format!("${:.2}", cost)
+            format!("${cost:.2}")
         }
     }
 }
 
 /// Provider information
 /// @plan PLAN-20250130-GPUIREDUX.P07
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderInfo {
     pub id: String,
     pub name: String,
@@ -117,11 +125,13 @@ pub struct ModelSelectorState {
 }
 
 impl ModelSelectorState {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Get filtered models based on current filters
+    #[must_use]
     pub fn filtered_models(&self) -> Vec<&ModelInfo> {
         self.models
             .iter()
@@ -154,9 +164,10 @@ impl ModelSelectorState {
     }
 
     /// Get unique providers from all models (not just filtered)
+    #[must_use]
     pub fn all_providers(&self) -> Vec<&str> {
         let mut providers: Vec<&str> = self.models.iter().map(|m| m.provider_id.as_str()).collect();
-        providers.sort();
+        providers.sort_unstable();
         providers.dedup();
         providers
     }
@@ -203,21 +214,22 @@ impl ModelSelectorView {
         self.state.selected_provider = provider;
     }
 
-    /// Emit SearchModels event for current query.
+    /// Emit `SearchModels` event for current query.
     pub fn emit_search_models(&self) {
-        self.emit(UserEvent::SearchModels {
+        self.emit(&UserEvent::SearchModels {
             query: self.state.search_query.clone(),
         });
     }
 
     /// Get current state for testing
-    pub fn get_state(&self) -> &ModelSelectorState {
+    #[must_use]
+    pub const fn get_state(&self) -> &ModelSelectorState {
         &self.state
     }
 
-    /// Emit a UserEvent through the bridge
+    /// Emit a `UserEvent` through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn emit(&self, event: UserEvent) {
+    fn emit(&self, event: &UserEvent) {
         if let Some(bridge) = &self.bridge {
             if !bridge.emit(event.clone()) {
                 tracing::error!("Failed to emit event {:?}", event);
@@ -227,56 +239,50 @@ impl ModelSelectorView {
         }
     }
 
-    /// Handle ViewCommand from presenter
+    /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P07
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
-        match command {
-            ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
-                // Navigation handled by MainPanel
+        if let ViewCommand::ModelSearchResults { models } = command {
+            println!(
+                ">>> ModelSelectorView::handle_command received {} models <<<",
+                models.len()
+            );
+            tracing::info!("ModelSelectorView received {} models", models.len());
+
+            // Extract unique providers from the models
+            let mut provider_set = std::collections::HashSet::new();
+            for m in &models {
+                provider_set.insert(m.provider_id.clone());
             }
-            ViewCommand::ModelSearchResults { models } => {
-                println!(
-                    ">>> ModelSelectorView::handle_command received {} models <<<",
-                    models.len()
-                );
-                tracing::info!("ModelSelectorView received {} models", models.len());
+            let providers: Vec<ProviderInfo> = provider_set
+                .into_iter()
+                .map(|id| ProviderInfo {
+                    id: id.clone(),
+                    name: id,
+                })
+                .collect();
 
-                // Extract unique providers from the models
-                let mut provider_set = std::collections::HashSet::new();
-                for m in &models {
-                    provider_set.insert(m.provider_id.clone());
-                }
-                let providers: Vec<ProviderInfo> = provider_set
-                    .into_iter()
-                    .map(|id| ProviderInfo {
-                        id: id.clone(),
-                        name: id,
-                    })
-                    .collect();
+            println!(">>> Providers extracted: {} <<<", providers.len());
 
-                println!(">>> Providers extracted: {} <<<", providers.len());
+            let local_models: Vec<ModelInfo> = models
+                .into_iter()
+                .map(|m| ModelInfo {
+                    id: m.model_id,
+                    provider_id: m.provider_id,
+                    context: u64::from(m.context_length.unwrap_or(128_000)),
+                    reasoning: false,
+                    vision: false,
+                    cost_input: 0.0,
+                    cost_output: 0.0,
+                })
+                .collect();
 
-                let local_models: Vec<ModelInfo> = models
-                    .into_iter()
-                    .map(|m| ModelInfo {
-                        id: m.model_id,
-                        provider_id: m.provider_id,
-                        context: m.context_length.unwrap_or(128000) as u64,
-                        reasoning: false,
-                        vision: false,
-                        cost_input: 0.0,
-                        cost_output: 0.0,
-                    })
-                    .collect();
-
-                println!(">>> Setting {} models on view <<<", local_models.len());
-                self.set_models(providers, local_models);
-                println!(
-                    ">>> Models set, state.models.len() = {} <<<",
-                    self.state.models.len()
-                );
-            }
-            _ => {}
+            println!(">>> Setting {} models on view <<<", local_models.len());
+            self.set_models(providers, local_models);
+            println!(
+                ">>> Models set, state.models.len() = {} <<<",
+                self.state.models.len()
+            );
         }
         cx.notify();
     }
@@ -284,20 +290,20 @@ impl ModelSelectorView {
     /// Request models from presenter on view open
     pub fn request_models(&self) {
         tracing::info!("ModelSelectorView requesting models");
-        self.emit(UserEvent::OpenModelSelector);
+        self.emit(&UserEvent::OpenModelSelector);
     }
 
     /// Emit search/filter events when local filter state changes.
     fn emit_filter_events_if_changed(&mut self) {
         if self.state.search_query != self.state.last_emitted_search_query {
-            self.emit(UserEvent::SearchModels {
+            self.emit(&UserEvent::SearchModels {
                 query: self.state.search_query.clone(),
             });
             self.state.last_emitted_search_query = self.state.search_query.clone();
         }
 
         if self.state.selected_provider != self.state.last_emitted_provider {
-            self.emit(UserEvent::FilterModelsByProvider {
+            self.emit(&UserEvent::FilterModelsByProvider {
                 provider_id: self.state.selected_provider.clone(),
             });
             self.state.last_emitted_provider = self.state.selected_provider.clone();
@@ -306,7 +312,7 @@ impl ModelSelectorView {
 
     /// Render the top bar with cancel button and title
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("top-bar")
             .h(px(44.0))
@@ -549,7 +555,7 @@ impl ModelSelectorView {
 
     /// Render column header
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_column_header(&self) -> impl IntoElement {
+    fn render_column_header() -> impl IntoElement {
         div()
             .id("column-header")
             .h(px(20.0))
@@ -571,11 +577,7 @@ impl ModelSelectorView {
 
     /// Render a single model row
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_model_row(
-        &self,
-        model: &ModelInfo,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
+    fn render_model_row(model: &ModelInfo, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let model_id = model.id.clone();
         let provider_id = model.provider_id.clone();
         let context = model.context_display();
@@ -589,8 +591,7 @@ impl ModelSelectorView {
 
         div()
             .id(SharedString::from(format!(
-                "model-{}-{}",
-                provider_id, model_id
+                "model-{provider_id}-{model_id}"
             )))
             .h(px(28.0))
             .w_full()
@@ -604,8 +605,8 @@ impl ModelSelectorView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, _cx| {
-                    println!(">>> Model selected: {} from {} <<<", model_id, provider_id);
-                    this.emit(UserEvent::SelectModel {
+                    println!(">>> Model selected: {model_id} from {provider_id} <<<");
+                    this.emit(&UserEvent::SelectModel {
                         provider_id: provider_id.clone(),
                         model_id: model_id.clone(),
                     });
@@ -649,12 +650,9 @@ impl ModelSelectorView {
 
     /// Render a provider section header
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_provider_header(&self, provider_id: &str) -> impl IntoElement {
+    fn render_provider_header(provider_id: &str) -> impl IntoElement {
         div()
-            .id(SharedString::from(format!(
-                "provider-header-{}",
-                provider_id
-            )))
+            .id(SharedString::from(format!("provider-header-{provider_id}")))
             .h(px(24.0))
             .w_full()
             .bg(Theme::bg_dark())
@@ -686,7 +684,7 @@ impl ModelSelectorView {
                         .filter_map(|provider| {
                             let provider_models: Vec<_> = filtered
                                 .iter()
-                                .filter(|m| &m.provider_id == *provider)
+                                .filter(|m| m.provider_id == *provider)
                                 .collect();
 
                             if provider_models.is_empty() {
@@ -698,11 +696,11 @@ impl ModelSelectorView {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .child(self.render_provider_header(&provider_id))
+                                    .child(Self::render_provider_header(&provider_id))
                                     .children(
                                         provider_models
                                             .into_iter()
-                                            .map(|model| self.render_model_row(model, cx))
+                                            .map(|model| Self::render_model_row(model, cx))
                                             .collect::<Vec<_>>(),
                                     ),
                             )
@@ -733,8 +731,7 @@ impl ModelSelectorView {
             .text_size(px(11.0))
             .text_color(Theme::text_primary())
             .child(format!(
-                "{} models from {} providers",
-                model_count, provider_count
+                "{model_count} models from {provider_count} providers"
             ))
     }
 
@@ -778,33 +775,28 @@ impl ModelSelectorView {
                     .child("All"),
             )
             // Provider options
-            .children(
-                providers
-                    .into_iter()
-                    .map(|p| {
-                        let provider_id = p.to_string();
-                        let provider_name = p.to_string();
-                        div()
-                            .id(SharedString::from(format!("provider-{}", provider_id)))
-                            .px(px(8.0))
-                            .py(px(6.0))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::bg_darker()))
-                            .text_size(px(11.0))
-                            .text_color(Theme::text_primary())
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, _window, cx| {
-                                    this.state.selected_provider = Some(provider_id.clone());
-                                    this.state.show_provider_dropdown = false;
-                                    this.emit_filter_events_if_changed();
-                                    cx.notify();
-                                }),
-                            )
-                            .child(provider_name)
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            .children(providers.into_iter().map(|p| {
+                let provider_id = p.to_string();
+                let provider_name = p.to_string();
+                div()
+                    .id(SharedString::from(format!("provider-{provider_id}")))
+                    .px(px(8.0))
+                    .py(px(6.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::bg_darker()))
+                    .text_size(px(11.0))
+                    .text_color(Theme::text_primary())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _window, cx| {
+                            this.state.selected_provider = Some(provider_id.clone());
+                            this.state.show_provider_dropdown = false;
+                            this.emit_filter_events_if_changed();
+                            cx.notify();
+                        }),
+                    )
+                    .child(provider_name)
+            }))
     }
 }
 
@@ -858,11 +850,7 @@ impl gpui::EntityInputHandler for ModelSelectorView {
         }
     }
 
-    fn unmark_text(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) {
+    fn unmark_text(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) {
         self.ime_marked_byte_count = 0;
     }
 
@@ -875,7 +863,9 @@ impl gpui::EntityInputHandler for ModelSelectorView {
     ) {
         if self.ime_marked_byte_count > 0 {
             let len = self.state.search_query.len();
-            self.state.search_query.truncate(len.saturating_sub(self.ime_marked_byte_count));
+            self.state
+                .search_query
+                .truncate(len.saturating_sub(self.ime_marked_byte_count));
             self.ime_marked_byte_count = 0;
         }
         if !text.is_empty() {
@@ -895,7 +885,9 @@ impl gpui::EntityInputHandler for ModelSelectorView {
     ) {
         if self.ime_marked_byte_count > 0 {
             let len = self.state.search_query.len();
-            self.state.search_query.truncate(len.saturating_sub(self.ime_marked_byte_count));
+            self.state
+                .search_query
+                .truncate(len.saturating_sub(self.ime_marked_byte_count));
             self.ime_marked_byte_count = 0;
         }
         if !new_text.is_empty() {
@@ -947,10 +939,17 @@ impl gpui::Render for ModelSelectorView {
                 canvas(
                     |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
                     {
-                        let entity = cx.entity().clone();
+                        let entity = cx.entity();
                         let focus = self.focus_handle.clone();
-                        move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
-                            window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+                        move |bounds: Bounds<Pixels>,
+                              _,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::App| {
+                            window.handle_input(
+                                &focus,
+                                ElementInputHandler::new(bounds, entity),
+                                cx,
+                            );
                         }
                     },
                 )
@@ -982,24 +981,22 @@ impl gpui::Render for ModelSelectorView {
                     }
 
                     // Handle named keys for search; printable chars go through InputHandler
-                    if !modifiers.platform && !modifiers.control {
-                        if key == "backspace" {
-                            this.state.search_query.pop();
-                            this.emit_filter_events_if_changed();
-                            cx.notify();
-                        }
-                        // All other printable chars fall through to EntityInputHandler
+                    if !modifiers.platform && !modifiers.control && key == "backspace" {
+                        this.state.search_query.pop();
+                        this.emit_filter_events_if_changed();
+                        cx.notify();
                     }
+                    // All other printable chars fall through to EntityInputHandler
                 }),
             )
             // Top bar (44px)
-            .child(self.render_top_bar(cx))
+            .child(Self::render_top_bar(cx))
             // Filter bar (36px)
             .child(self.render_filter_bar(cx))
             // Capability toggles (28px)
             .child(self.render_capability_toggles(cx))
             // Column header (20px)
-            .child(self.render_column_header())
+            .child(Self::render_column_header())
             // Model list (flex, scrollable)
             .child(self.render_model_list(cx))
             // Status bar (24px)

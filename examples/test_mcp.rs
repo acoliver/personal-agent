@@ -3,7 +3,7 @@
 //! This example demonstrates connecting to an MCP server and calling tools.
 //!
 //! Usage:
-//!   cargo run --example test_mcp
+//!   cargo run --example `test_mcp`
 
 use serdes_ai::mcp::{McpClient, StdioTransport};
 
@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     tool.name,
                                     tool.description
                                         .as_ref()
-                                        .unwrap_or(&"(no description)".to_string())
+                                        .map_or("(no description)", String::as_str)
                                 );
                             }
 
@@ -54,12 +54,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         Err(e) => {
-                            println!(" Failed to list tools: {}", e);
+                            println!(" Failed to list tools: {e}");
                         }
                     }
                 }
                 Err(e) => {
-                    println!(" Failed to initialize: {}", e);
+                    println!(" Failed to initialize: {e}");
                 }
             }
 
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("[OK] Connection closed");
         }
         Err(e) => {
-            println!(" Failed to spawn MCP server: {}", e);
+            println!(" Failed to spawn MCP server: {e}");
             println!("\nNote: This is expected if 'npx' is not available on your system.");
             println!("To test MCP integration, ensure Node.js and npm/npx are installed.");
         }

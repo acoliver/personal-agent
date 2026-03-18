@@ -7,12 +7,15 @@ use gpui::{div, prelude::*, px, IntoElement, Styled};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+type OnChangeCallback = Rc<RefCell<dyn Fn(bool)>>;
+
 pub struct Toggle {
     is_on: Rc<RefCell<bool>>,
-    on_change: Option<Rc<RefCell<dyn Fn(bool)>>>,
+    on_change: Option<OnChangeCallback>,
 }
 
 impl Toggle {
+    #[must_use]
     pub fn new(is_on: bool) -> Self {
         Self {
             is_on: Rc::new(RefCell::new(is_on)),
@@ -20,10 +23,12 @@ impl Toggle {
         }
     }
 
+    #[must_use]
     pub fn is_on(&self) -> bool {
         *self.is_on.borrow()
     }
 
+    #[must_use]
     pub fn on_change(mut self, callback: impl Fn(bool) + 'static) -> Self {
         self.on_change = Some(Rc::new(RefCell::new(callback)));
         self

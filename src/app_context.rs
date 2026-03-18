@@ -18,13 +18,14 @@ use crate::services::{
 /// @plan PLAN-20250125-REFACTOR.P13
 pub use crate::app::AppContext;
 
-/// Extension methods for AppContext
+/// Extension methods for `AppContext`
 ///
 /// @plan PLAN-20250125-REFACTOR.P13
 impl AppContext {
     /// Get conversation service
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
+    #[must_use]
     pub fn conversation_service(&self) -> Arc<dyn ConversationService> {
         Arc::clone(&self.services.conversation)
     }
@@ -32,6 +33,7 @@ impl AppContext {
     /// Get profile service
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
+    #[must_use]
     pub fn profile_service(&self) -> Arc<dyn ProfileService> {
         Arc::clone(&self.services.profile)
     }
@@ -39,6 +41,7 @@ impl AppContext {
     /// Get chat service
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
+    #[must_use]
     pub fn chat_service(&self) -> Arc<dyn ChatService> {
         Arc::clone(&self.services.chat)
     }
@@ -46,6 +49,7 @@ impl AppContext {
     /// Get MCP service
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
+    #[must_use]
     pub fn mcp_service(&self) -> Arc<dyn McpService> {
         Arc::clone(&self.services.mcp)
     }
@@ -53,6 +57,7 @@ impl AppContext {
     /// Get app settings service
     ///
     /// @plan PLAN-20250125-REFACTOR.P13
+    #[must_use]
     pub fn app_settings_service(&self) -> Arc<dyn AppSettingsService> {
         Arc::clone(&self.services.app_settings)
     }

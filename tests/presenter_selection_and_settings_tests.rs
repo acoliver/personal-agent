@@ -1,9 +1,9 @@
 //! Presenter regression tests for conversation selection and settings profile actions.
 //!
 //! These tests cover wiring that is hard to verify from script greps alone:
-//! - SelectConversation should emit ConversationActivated and replay stored messages
-//! - EditProfile should emit ProfileEditorLoad
-//! - DeleteProfile should emit ProfileDeleted
+//! - `SelectConversation` should emit `ConversationActivated` and replay stored messages
+//! - `EditProfile` should emit `ProfileEditorLoad`
+//! - `DeleteProfile` should emit `ProfileDeleted`
 
 use std::sync::Arc;
 
@@ -144,7 +144,7 @@ impl ProfileService for EmptyProfileService {
     }
 
     async fn get(&self, id: Uuid) -> Result<ModelProfile, ServiceError> {
-        Err(ServiceError::NotFound(format!("profile {} not found", id)))
+        Err(ServiceError::NotFound(format!("profile {id} not found")))
     }
 
     async fn create(
@@ -210,7 +210,7 @@ struct SelectionTracker {
 }
 
 impl SelectionTracker {
-    fn new(selected_id: Uuid) -> Self {
+    const fn new(selected_id: Uuid) -> Self {
         Self {
             selected_id,
             observations: Vec::new(),
@@ -418,7 +418,7 @@ async fn select_conversation_emits_activation_and_replays_messages() {
 #[tokio::test]
 async fn startup_and_manual_selection_converge_on_one_authoritative_delivery_path() {
     use personal_agent::presentation::view_command::{
-        ConversationMessagePayload, ConversationSummary, ProfileSummary,
+        ConversationMessagePayload, ConversationSummary,
     };
     use personal_agent::ui_gpui::app_store::ConversationLoadState;
     use personal_agent::ui_gpui::app_store::{
@@ -571,7 +571,7 @@ async fn selection_generation_protocol_is_present() {
     presenter.start().await.expect("start chat presenter");
 
     tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
-    bridge.drain_commands();
+    let _ = bridge.drain_commands();
 
     assert!(
         bridge.emit(UserEvent::SelectConversation {

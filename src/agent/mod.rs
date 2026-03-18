@@ -153,8 +153,10 @@ mod tests {
             .await
             .unwrap();
 
-        let lock = global_agent().read().await;
-        let agent = lock.as_ref().expect("agent initialized");
-        assert_eq!(agent.tool_count(), 1);
+        let tool_count = {
+            let lock = global_agent().read().await;
+            lock.as_ref().expect("agent initialized").tool_count()
+        };
+        assert_eq!(tool_count, 1);
     }
 }

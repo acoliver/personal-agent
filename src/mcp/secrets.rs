@@ -13,10 +13,8 @@ pub enum SecretsError {
 impl From<secure_store::SecureStoreError> for SecretsError {
     fn from(e: secure_store::SecureStoreError) -> Self {
         match e {
-            secure_store::SecureStoreError::NotFound(msg) => {
-                SecretsError::Keychain(msg)
-            }
-            other => SecretsError::Keychain(other.to_string()),
+            secure_store::SecureStoreError::NotFound(msg)
+            | secure_store::SecureStoreError::Keychain(msg) => Self::Keychain(msg),
         }
     }
 }
@@ -26,7 +24,7 @@ pub struct SecretsManager;
 
 impl SecretsManager {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 
@@ -61,8 +59,7 @@ impl SecretsManager {
     ///
     /// Returns `SecretsError` if the key cannot be loaded.
     pub fn load_api_key(&self, mcp_id: Uuid) -> Result<String, SecretsError> {
-        mcp_keys::get(mcp_id)?
-            .ok_or(SecretsError::SecretNotFound(mcp_id))
+        mcp_keys::get(mcp_id)?.ok_or(SecretsError::SecretNotFound(mcp_id))
     }
 
     /// Load a named API key for an MCP.
@@ -71,8 +68,7 @@ impl SecretsManager {
     ///
     /// Returns `SecretsError` if the key cannot be loaded.
     pub fn load_api_key_named(&self, mcp_id: Uuid, var_name: &str) -> Result<String, SecretsError> {
-        mcp_keys::get_named(mcp_id, var_name)?
-            .ok_or(SecretsError::SecretNotFound(mcp_id))
+        mcp_keys::get_named(mcp_id, var_name)?.ok_or(SecretsError::SecretNotFound(mcp_id))
     }
 
     /// Delete all keys for an MCP.

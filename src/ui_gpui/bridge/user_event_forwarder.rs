@@ -1,4 +1,4 @@
-//! UserEvent forwarder - tokio task that bridges flume to EventBus
+//! `UserEvent` forwarder - tokio task that bridges flume to `EventBus`
 //!
 //! @plan PLAN-20250128-GPUI.P05
 //! @requirement REQ-GPUI-006.1
@@ -9,17 +9,18 @@ use flume::Receiver;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
-/// Spawn a tokio task that forwards UserEvents from flume to EventBus
+/// Spawn a tokio task that forwards `UserEvents` from flume to `EventBus`
 ///
 /// This task runs on the tokio runtime and:
-/// 1. Receives UserEvents from the flume channel (from GPUI)
-/// 2. Wraps them in AppEvent::User
-/// 3. Publishes to the EventBus
+/// 1. Receives `UserEvents` from the flume channel (from GPUI)
+/// 2. Wraps them in `AppEvent::User`
+/// 3. Publishes to the `EventBus`
 ///
 /// The task exits when the sender is dropped (GPUI closed).
 ///
 /// @plan PLAN-20250128-GPUI.P05
 /// @requirement REQ-GPUI-006.1
+#[must_use]
 pub fn spawn_user_event_forwarder(
     event_bus: Arc<EventBus>,
     user_rx: Receiver<UserEvent>,

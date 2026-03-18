@@ -18,6 +18,7 @@ pub struct TabBar {
 }
 
 impl TabBar {
+    #[must_use]
     pub fn new(active: Tab) -> Self {
         Self {
             active,
@@ -25,6 +26,7 @@ impl TabBar {
         }
     }
 
+    #[must_use]
     pub fn on_select(mut self, f: impl Fn(Tab) + Send + Sync + 'static) -> Self {
         self.on_select = Some(Box::new(f));
         self

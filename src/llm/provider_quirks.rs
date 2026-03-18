@@ -8,7 +8,7 @@ const KIMI_PROVIDER_ID: &str = "kimi-for-coding";
 const KIMI_USER_AGENT: &str = "RooCode/1.0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct ProviderQuirks {
+pub struct ProviderQuirks {
     pub serdes_provider: Option<String>,
     pub base_url_override: Option<String>,
     pub headers: HashMap<String, String>,
@@ -39,12 +39,12 @@ impl ProviderQuirks {
     }
 }
 
-pub(crate) fn resolve_provider_quirks(profile: &ModelProfile) -> ProviderQuirks {
+pub fn resolve_provider_quirks(profile: &ModelProfile) -> ProviderQuirks {
     let registry = load_registry();
     resolve_provider_quirks_with_registry(profile, registry.as_ref())
 }
 
-pub(crate) fn resolve_provider_quirks_with_registry(
+pub fn resolve_provider_quirks_with_registry(
     profile: &ModelProfile,
     registry: Option<&ModelRegistry>,
 ) -> ProviderQuirks {
@@ -68,7 +68,7 @@ pub(crate) fn resolve_provider_quirks_with_registry(
     quirks
 }
 
-pub(crate) fn effective_serdes_provider(
+pub fn effective_serdes_provider(
     profile: &ModelProfile,
     registry: Option<&ModelRegistry>,
 ) -> &'static str {

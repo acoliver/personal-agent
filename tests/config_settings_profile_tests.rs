@@ -8,8 +8,10 @@ fn config_profile_lifecycle_updates_default() {
     let config_path = temp_dir.path().join("config.json");
     let mut config = Config::load(&config_path).unwrap();
 
-    let mut profile = ModelProfile::default();
-    profile.id = Uuid::new_v4();
+    let profile = ModelProfile {
+        id: Uuid::new_v4(),
+        ..ModelProfile::default()
+    };
     config.add_profile(profile.clone());
     config.default_profile = Some(profile.id);
 

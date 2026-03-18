@@ -134,7 +134,7 @@ pub fn handle_stream_event(
             }
         }
         StreamEvent::ToolCallStarted { tool_name, call_id } => {
-            log_to_file(&format!("Tool call started: {} ({})", tool_name, call_id));
+            log_to_file(&format!("Tool call started: {tool_name} ({call_id})"));
         }
         StreamEvent::ToolCallCompleted {
             tool_name,
@@ -145,8 +145,7 @@ pub fn handle_stream_event(
         } => {
             if success {
                 log_to_file(&format!(
-                    "Tool call completed: {} ({}) - success",
-                    tool_name, call_id
+                    "Tool call completed: {tool_name} ({call_id}) - success"
                 ));
                 if let Some(r) = result {
                     log_to_file(&format!(
@@ -156,8 +155,7 @@ pub fn handle_stream_event(
                 }
             } else {
                 log_to_file(&format!(
-                    "Tool call failed: {} ({}) - {:?}",
-                    tool_name, call_id, error
+                    "Tool call failed: {tool_name} ({call_id}) - {error:?}"
                 ));
             }
         }

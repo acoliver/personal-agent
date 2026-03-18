@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-/// File-based implementation of McpService
+/// File-based implementation of `McpService`
 pub struct McpServiceImpl {
     config_dir: PathBuf,
     configs: Arc<RwLock<Vec<StoredMcpConfig>>>,
@@ -41,12 +41,13 @@ enum TransportData {
 impl From<&McpServerConfig> for TransportData {
     fn from(config: &McpServerConfig) -> Self {
         match &config.transport {
-            McpTransportConfig::Stdio { command, args } => TransportData::Stdio {
+            McpTransportConfig::Stdio { command, args } => Self::Stdio {
                 command: command.clone(),
                 args: args.clone(),
             },
-            McpTransportConfig::Http { url } => TransportData::Http { url: url.clone() },
-            McpTransportConfig::Sse { url } => TransportData::Http { url: url.clone() },
+            McpTransportConfig::Http { url } | McpTransportConfig::Sse { url } => {
+                Self::Http { url: url.clone() }
+            }
         }
     }
 }
@@ -54,11 +55,11 @@ impl From<&McpServerConfig> for TransportData {
 impl From<&TransportData> for McpTransportConfig {
     fn from(data: &TransportData) -> Self {
         match data {
-            TransportData::Stdio { command, args } => McpTransportConfig::Stdio {
+            TransportData::Stdio { command, args } => Self::Stdio {
                 command: command.clone(),
                 args: args.clone(),
             },
-            TransportData::Http { url } => McpTransportConfig::Http { url: url.clone() },
+            TransportData::Http { url } => Self::Http { url: url.clone() },
         }
     }
 }
@@ -73,7 +74,7 @@ impl From<&StoredMcpConfig> for McpServerConfig {
 }
 
 impl McpServiceImpl {
-    /// Create a new McpServiceImpl
+    /// Create a new `McpServiceImpl`
     ///
     /// # Errors
     ///
@@ -103,8 +104,7 @@ impl McpServiceImpl {
     /// Returns an error if the configs cannot be loaded from disk.
     pub async fn initialize(&self) -> Result<(), ServiceError> {
         let configs = self.load_configs_from_disk()?;
-        let mut configs_lock = self.configs.write().await;
-        *configs_lock = configs;
+        *self.configs.write().await = configs;
         Ok(())
     }
 
@@ -175,7 +175,7 @@ impl McpServiceImpl {
 
     /// Delete a config from disk
     fn delete_config_from_disk(&self, id: Uuid) -> Result<(), ServiceError> {
-        let filename = format!("{}.json", id);
+        let filename = format!("{id}.json");
         let path = self.config_dir.join(filename);
 
         if path.exists() {
@@ -204,7 +204,7 @@ impl McpService for McpServiceImpl {
     /// List all MCP configs
     async fn list(&self) -> ServiceResult<Vec<McpServerConfig>> {
         let configs = self.configs.read().await;
-        Ok(configs.iter().map(|c| McpServerConfig::from(c)).collect())
+        Ok(configs.iter().map(McpServerConfig::from).collect())
     }
 
     /// Get a config by ID
@@ -214,7 +214,7 @@ impl McpService for McpServiceImpl {
         configs
             .iter()
             .find(|c| c.server_uuid == id)
-            .map(|c| McpServerConfig::from(c))
+            .map(McpServerConfig::from)
             .ok_or_else(|| ServiceError::NotFound(format!("MCP server {id} not found")))
     }
 
@@ -243,11 +243,10 @@ impl McpService for McpServiceImpl {
         // Check if config exists and update enabled flag
         {
             let mut configs = self.configs.write().await;
-            let config = configs
-                .iter_mut()
-                .find(|c| c.server_uuid == id)
-                .ok_or_else(|| ServiceError::NotFound(format!("MCP server {id} not found")))?;
-            config.enabled = enabled;
+            let Some(index) = configs.iter().position(|c| c.server_uuid == id) else {
+                return Err(ServiceError::NotFound(format!("MCP server {id} not found")));
+            };
+            configs[index].enabled = enabled;
         }
 
         // Update status
@@ -257,6 +256,7 @@ impl McpService for McpServiceImpl {
         } else {
             status_map.insert(id, McpServerStatus::Disconnected);
         }
+        drop(status_map);
 
         Ok(())
     }
@@ -308,8 +308,7 @@ impl McpService for McpServiceImpl {
         self.save_config_to_disk(&stored)?;
 
         // Add to in-memory cache
-        let mut configs = self.configs.write().await;
-        configs.push(stored.clone());
+        self.configs.write().await.push(stored.clone());
 
         // Initialize status
         self.ensure_status(stored.server_uuid).await;
@@ -363,12 +362,15 @@ impl McpService for McpServiceImpl {
         self.save_config_to_disk(&stored_clone)?;
 
         // Now get updated config
-        let configs = self.configs.read().await;
-        let updated_stored = configs
+        let updated_stored = self
+            .configs
+            .read()
+            .await
             .iter()
             .find(|c| c.server_uuid == server_uuid)
+            .cloned()
             .unwrap();
-        Ok(McpServerConfig::from(&*updated_stored))
+        Ok(McpServerConfig::from(&updated_stored))
     }
 
     /// Resolve an MCP server UUID by display name.
@@ -405,12 +407,10 @@ impl McpService for McpServiceImpl {
         self.delete_config_from_disk(id)?;
 
         // Remove from in-memory cache
-        let mut configs = self.configs.write().await;
-        configs.retain(|c| c.server_uuid != id);
+        self.configs.write().await.retain(|c| c.server_uuid != id);
 
         // Remove status
-        let mut status_map = self.status_map.write().await;
-        status_map.remove(&id);
+        self.status_map.write().await.remove(&id);
 
         Ok(())
     }
@@ -448,7 +448,7 @@ impl McpService for McpServiceImpl {
         Ok(configs
             .iter()
             .filter(|c| c.enabled)
-            .map(|c| McpServerConfig::from(c))
+            .map(McpServerConfig::from)
             .collect())
     }
 

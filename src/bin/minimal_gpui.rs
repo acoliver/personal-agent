@@ -1,7 +1,13 @@
 //! Minimal GPUI button test - directly from GPUI window.rs example pattern
 //!
 
-use gpui::*;
+#![allow(clippy::unreadable_literal)]
+
+use gpui::{
+    div, px, rgb, size, App, AppContext, Application, Bounds, Context, InteractiveElement,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, WindowBounds,
+    WindowOptions,
+};
 
 struct MinimalDemo;
 
@@ -22,7 +28,7 @@ fn button(text: &'static str) -> impl IntoElement {
         .child(text)
         .on_click(move |_, window, _cx| {
             // Use window to print - this is how GPUI examples do it
-            println!(">>> BUTTON CLICKED: {} <<<", text);
+            println!(">>> BUTTON CLICKED: {text} <<<");
             // Force refresh
             window.refresh();
         })

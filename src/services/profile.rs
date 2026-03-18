@@ -14,6 +14,7 @@ use super::ServiceResult;
 /// Model profile service trait
 ///
 /// Implementation: [`super::profile_impl::ProfileServiceImpl`]
+#[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub trait ProfileService: Send + Sync {
     /// List all model profiles
@@ -30,7 +31,7 @@ pub trait ProfileService: Send + Sync {
     /// * `model` - Model identifier (e.g., "gpt-4", "claude-3-opus")
     /// * `base_url` - Optional base URL override (uses provider default when None/empty)
     /// * `auth` - Authentication configuration
-    /// * `parameters` - Model parameters (temperature, max_tokens, etc.)
+    /// * `parameters` - Model parameters (temperature, `max_tokens`, etc.)
     /// * `system_prompt` - Optional system prompt override
     async fn create(
         &self,

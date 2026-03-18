@@ -12,6 +12,7 @@ use reqwest::Client as HttpClient;
 use serdes_ai::core::messages::ModelResponseStreamEvent;
 use serdes_ai::models::ModelRequestParameters;
 use serdes_ai::prelude::*;
+use serdes_ai::ExtendedModelConfig;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -288,8 +289,6 @@ impl LlmClient {
             return self.build_openai_model_with_quirks(base_url);
         }
 
-        use serdes_ai::ExtendedModelConfig;
-
         let mut config = ExtendedModelConfig::new().with_api_key(&self.api_key);
 
         if let Some(url) = base_url {
@@ -322,7 +321,7 @@ impl LlmClient {
 
         let mut model = serdes_ai::OpenAIChatModel::new(&self.profile.model_id, &self.api_key)
             .with_client(http_client)
-            .with_timeout(self.request_timeout());
+            .with_timeout(Self::request_timeout());
 
         if let Some(url) = base_url {
             model = model.with_base_url(url);
@@ -331,7 +330,7 @@ impl LlmClient {
         Ok(std::sync::Arc::new(model))
     }
 
-    fn request_timeout(&self) -> Duration {
+    const fn request_timeout() -> Duration {
         Duration::from_secs(120)
     }
 

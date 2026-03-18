@@ -4,7 +4,7 @@
 //! validate behavior using runtime logs and persisted artifacts.
 //!
 //! Run with:
-//!   cargo test --test ui_automation_tests -- --ignored --test-threads=1
+//!   cargo test --test `ui_automation_tests` -- --ignored --test-threads=1
 //!
 //! Notes:
 //! - Requires Accessibility permissions for the test runner.
@@ -80,7 +80,7 @@ fn frontmost_and_type(message: &str, press_enter: bool) -> AppleScriptResult {
             "key up control",
             "key up option",
             "key up shift",
-            &format!("tell process \"{}\"", APP_PROCESS),
+            &format!("tell process \"{APP_PROCESS}\""),
             "set frontmost to true",
             "delay 0.1",
             &format!("keystroke \"{}\"", message.replace('"', "\\\"")),
@@ -95,7 +95,7 @@ fn frontmost_and_type(message: &str, press_enter: bool) -> AppleScriptResult {
             "key up control",
             "key up option",
             "key up shift",
-            &format!("tell process \"{}\"", APP_PROCESS),
+            &format!("tell process \"{APP_PROCESS}\""),
             "set frontmost to true",
             "delay 0.1",
             &format!("keystroke \"{}\"", message.replace('"', "\\\"")),
@@ -103,27 +103,6 @@ fn frontmost_and_type(message: &str, press_enter: bool) -> AppleScriptResult {
             "end tell",
         ])
     }
-}
-
-fn cmd_r_type_and_enter(new_name: &str) -> AppleScriptResult {
-    run_osascript(&[
-        "tell application \"System Events\"",
-        "key up command",
-        "key up control",
-        "key up option",
-        "key up shift",
-        &format!("tell process \"{}\"", APP_PROCESS),
-        "set frontmost to true",
-        "delay 0.1",
-        "key down command",
-        "keystroke \"r\"",
-        "key up command",
-        "delay 0.15",
-        &format!("keystroke \"{}\"", new_name.replace('"', "\\\"")),
-        "key code 36",
-        "end tell",
-        "end tell",
-    ])
 }
 
 fn count_occurrences(haystack: &str, needle: &str) -> usize {
@@ -183,7 +162,7 @@ fn wait_for_stream_to_finish_after(
 fn cmd_p_down_enter() -> AppleScriptResult {
     run_osascript(&[
         "tell application \"System Events\"",
-        &format!("tell process \"{}\"", APP_PROCESS),
+        &format!("tell process \"{APP_PROCESS}\""),
         "set frontmost to true",
         "key down command",
         "keystroke \"p\"",
@@ -242,7 +221,7 @@ fn ensure_test_default_profile() -> Option<ProfileRestoreGuard> {
 
     let current_default = read_default_profile_id();
     if let Some(existing_id) = current_default {
-        let existing_profile_path = profiles_dir().join(format!("{}.json", existing_id));
+        let existing_profile_path = profiles_dir().join(format!("{existing_id}.json"));
         if existing_profile_path.exists() {
             return Some(ProfileRestoreGuard {
                 path,
@@ -252,7 +231,7 @@ fn ensure_test_default_profile() -> Option<ProfileRestoreGuard> {
     }
 
     let synthetic_id = Uuid::new_v4().to_string();
-    let synthetic_profile_path = profiles_dir().join(format!("{}.json", synthetic_id));
+    let synthetic_profile_path = profiles_dir().join(format!("{synthetic_id}.json"));
 
     let synthetic_profile = serde_json::json!({
         "id": synthetic_id,
@@ -302,7 +281,7 @@ fn switch_default_profile_fields(
     name: &str,
 ) -> Option<ProfileRestoreGuard> {
     let default_id = read_default_profile_id()?;
-    let profile_path = profiles_dir().join(format!("{}.json", default_id));
+    let profile_path = profiles_dir().join(format!("{default_id}.json"));
     let original_content = fs::read_to_string(&profile_path).ok()?;
     let mut value: serde_json::Value = serde_json::from_str(&original_content).ok()?;
 
@@ -323,7 +302,7 @@ fn switch_default_profile_fields(
 }
 
 fn read_profile_json(profile_id: &str) -> Option<serde_json::Value> {
-    let path = profiles_dir().join(format!("{}.json", profile_id));
+    let path = profiles_dir().join(format!("{profile_id}.json"));
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str::<serde_json::Value>(&content).ok()
 }
@@ -332,7 +311,7 @@ fn newest_conversation_file() -> Option<PathBuf> {
     let dir = conversations_dir();
     let mut entries: Vec<_> = fs::read_dir(dir).ok()?.flatten().collect();
     entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
-    entries.last().map(|e| e.path())
+    entries.last().map(std::fs::DirEntry::path)
 }
 
 fn count_user_messages_in_conversation(path: &Path) -> usize {
@@ -341,12 +320,11 @@ fn count_user_messages_in_conversation(path: &Path) -> usize {
     value
         .get("messages")
         .and_then(|m| m.as_array())
-        .map(|msgs| {
+        .map_or(0, |msgs| {
             msgs.iter()
                 .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
                 .count()
         })
-        .unwrap_or(0)
 }
 
 fn assistant_mentions_orbit_731(path: &Path) -> bool {
@@ -356,17 +334,15 @@ fn assistant_mentions_orbit_731(path: &Path) -> bool {
     value
         .get("messages")
         .and_then(|m| m.as_array())
-        .map(|msgs| {
+        .is_some_and(|msgs| {
             msgs.iter()
                 .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
                 .any(|m| {
                     m.get("content")
                         .and_then(|c| c.as_str())
-                        .map(|text| text.to_ascii_lowercase().contains("orbit-731"))
-                        .unwrap_or(false)
+                        .is_some_and(|text| text.to_ascii_lowercase().contains("orbit-731"))
                 })
         })
-        .unwrap_or(false)
 }
 
 fn latest_conversation_by_updated_at() -> Option<PathBuf> {
@@ -378,9 +354,9 @@ fn latest_conversation_by_updated_at() -> Option<PathBuf> {
         value
             .get("updated_at")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
     });
-    entries.last().map(|e| e.path())
+    entries.last().map(std::fs::DirEntry::path)
 }
 
 fn newest_conversation_after(cutoff: SystemTime) -> Option<PathBuf> {
@@ -397,7 +373,7 @@ fn newest_conversation_after(cutoff: SystemTime) -> Option<PathBuf> {
         .collect();
 
     entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
-    entries.last().map(|e| e.path())
+    entries.last().map(std::fs::DirEntry::path)
 }
 
 #[test]
@@ -447,6 +423,7 @@ fn scn_002_keyboard_profile_switch_from_chat_emits_event_and_routes_model() {
 
 #[test]
 #[ignore = "Requires valid provider key in ~/.keys/.synthetic_key and local GPUI app launch"]
+#[allow(clippy::too_many_lines)]
 fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
     clear_log();
 
@@ -478,26 +455,22 @@ fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
     ];
 
     let mut stream_starts_seen = 0usize;
-    let mut stream_completed_seen = 0usize;
-    let mut stream_error_seen = 0usize;
     let mut stream_busy_errors_seen = 0usize;
 
     for prompt in prompts {
         if stream_starts_seen > 0 {
+            let log_now = read_log();
+            let prior_stream_completed_seen = count_occurrences(&log_now, "StreamCompleted");
+            let prior_stream_error_seen = count_occurrences(&log_now, "StreamError");
             assert!(
                 wait_for_stream_to_finish_after(
                     stream_starts_seen,
-                    stream_completed_seen,
-                    stream_error_seen,
+                    prior_stream_completed_seen,
+                    prior_stream_error_seen,
                     Duration::from_secs(90),
                 ),
-                "timed out waiting for prior stream to finish before prompt: {}",
-                prompt
+                "timed out waiting for prior stream to finish before prompt: {prompt}"
             );
-
-            let log_now = read_log();
-            stream_completed_seen = count_occurrences(&log_now, "StreamCompleted");
-            stream_error_seen = count_occurrences(&log_now, "StreamError");
         }
 
         let result = frontmost_and_type(prompt, true);
@@ -509,25 +482,23 @@ fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
                 stream_busy_errors_seen,
                 Duration::from_secs(20)
             ),
-            "expected stream start after prompt: {}",
-            prompt
+            "expected stream start after prompt: {prompt}"
         );
 
         let log_now = read_log();
         stream_starts_seen = count_occurrences(&log_now, "StreamStarted");
-        stream_completed_seen = count_occurrences(&log_now, "StreamCompleted");
-        stream_error_seen = count_occurrences(&log_now, "StreamError");
         stream_busy_errors_seen = count_occurrences(
             &log_now,
             "Failed to send message: Internal error: Stream already in progress",
         );
     }
 
+    let final_log = read_log();
     assert!(
         wait_for_stream_to_finish_after(
             stream_starts_seen,
-            stream_completed_seen,
-            stream_error_seen,
+            count_occurrences(&final_log, "StreamCompleted"),
+            count_occurrences(&final_log, "StreamError"),
             Duration::from_secs(120),
         ),
         "timed out waiting for final stream completion"
@@ -539,8 +510,7 @@ fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
     let stream_starts = count_occurrences(&log, "StreamStarted");
     assert!(
         stream_starts >= 5,
-        "expected >=5 stream starts, got {}",
-        stream_starts
+        "expected >=5 stream starts, got {stream_starts}"
     );
 
     let has_auth_error =
@@ -554,8 +524,7 @@ fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
         .or_else(newest_conversation_file);
     let user_message_count = conversation_file
         .as_ref()
-        .map(|p| count_user_messages_in_conversation(p))
-        .unwrap_or(0);
+        .map_or(0, |p| count_user_messages_in_conversation(p));
 
     if user_message_count < 5 {
         assertion_failures += 1;
@@ -564,8 +533,7 @@ fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
 
     let has_orbit_recall = conversation_file
         .as_ref()
-        .map(|p| assistant_mentions_orbit_731(p))
-        .unwrap_or(false);
+        .is_some_and(|p| assistant_mentions_orbit_731(p));
     if !has_orbit_recall {
         assertion_failures += 1;
         notes.push_str("- assistant responses did not include ORBIT-731 recall evidence\n");
@@ -599,8 +567,7 @@ fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
 
     if assertion_failures == 0 {
         println!(
-            "SCENARIO: SCN-003\nSTATUS: PASS\nSTEPS_RUN: 5\nASSERTIONS_PASSED: 4\nASSERTIONS_FAILED: 0\nARTIFACTS:\n  - /tmp/personal_agent_gpui.log\n  - {:?}\nNOTES:\n  - five-message conversation persisted with no auth errors",
-            conversation_file
+            "SCENARIO: SCN-003\nSTATUS: PASS\nSTEPS_RUN: 5\nASSERTIONS_PASSED: 4\nASSERTIONS_FAILED: 0\nARTIFACTS:\n  - /tmp/personal_agent_gpui.log\n  - {conversation_file:?}\nNOTES:\n  - five-message conversation persisted with no auth errors"
         );
     } else {
         println!(

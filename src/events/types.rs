@@ -172,7 +172,7 @@ pub enum UserEvent {
     /// Delete an API key from the OS keychain.
     DeleteApiKey { label: String },
 
-    /// Request the full list of stored API key labels (triggers ApiKeysListed command).
+    /// Request the full list of stored API key labels (triggers `ApiKeysListed` command).
     RefreshApiKeys,
 
     // ===== MCP Add Actions =====
@@ -209,7 +209,7 @@ pub enum ViewId {
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 /// @requirement REQ-019.2
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ChatEvent {
     /// Stream has started
     StreamStarted {
@@ -271,7 +271,7 @@ pub enum ChatEvent {
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 /// @requirement REQ-019.2
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum McpEvent {
     /// MCP server is starting
     Starting { id: Uuid, name: String },
@@ -334,7 +334,7 @@ pub enum McpEvent {
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 /// @requirement REQ-019.2
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ProfileEvent {
     /// Profile was created
     Created { id: Uuid, name: String },
@@ -367,7 +367,7 @@ pub enum ProfileEvent {
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 /// @requirement REQ-019.2
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ConversationEvent {
     /// Conversation was created
     Created { id: Uuid, title: String },
@@ -395,7 +395,7 @@ pub enum ConversationEvent {
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 /// @requirement REQ-019.2
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum NavigationEvent {
     /// Navigation to view started
     Navigating { from: ViewId, to: ViewId },
@@ -417,7 +417,7 @@ pub enum NavigationEvent {
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 /// @requirement REQ-019.2
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum SystemEvent {
     /// Application launched
     AppLaunched,
@@ -470,7 +470,7 @@ pub enum SystemEvent {
 // These will be replaced with actual types in later phases
 
 /// Lightweight profile auth payload for GPUI save flow
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ModelProfileAuth {
     /// API key stored in OS keychain, referenced by label.
     Keychain { label: String },
@@ -488,7 +488,7 @@ pub struct ModelProfileParameters {
     pub thinking_budget: Option<u32>,
 }
 
-/// Placeholder for ModelProfile
+/// Placeholder for `ModelProfile`
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -506,7 +506,7 @@ pub struct ModelProfile {
 /// Lightweight MCP config payload for GPUI save flow
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct McpConfig {
     pub id: Uuid,
     pub name: String,
@@ -515,18 +515,18 @@ pub struct McpConfig {
     pub env: Option<Vec<(String, String)>>,
 }
 
-/// Placeholder for McpRegistrySource
+/// Placeholder for `McpRegistrySource`
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct McpRegistrySource {
     pub name: String,
 }
 
-/// Placeholder for HotkeyConfig
+/// Placeholder for `HotkeyConfig`
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HotkeyConfig {
     pub key: String,
 }

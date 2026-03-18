@@ -17,8 +17,7 @@ pub struct ModelProfile {
     pub system_prompt: String,
 }
 
-pub const DEFAULT_SYSTEM_PROMPT: &str =
-    "Unless instructed otherwise, respond solely in English.";
+pub const DEFAULT_SYSTEM_PROMPT: &str = "Unless instructed otherwise, respond solely in English.";
 
 fn default_system_prompt() -> String {
     DEFAULT_SYSTEM_PROMPT.to_string()
@@ -36,7 +35,6 @@ impl<'de> serde::Deserialize<'de> for AuthConfig {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de;
         use std::collections::HashMap;
 
         let map = HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
@@ -47,10 +45,11 @@ impl<'de> serde::Deserialize<'de> for AuthConfig {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                Ok(AuthConfig::Keychain { label })
+                Ok(Self::Keychain { label })
             }
-            // Legacy formats: map to empty keychain label (key must be re-stored)
-            Some("key") | Some("keyfile") | _ => Ok(AuthConfig::Keychain {
+            // Legacy and unknown formats map to empty keychain labels so the secret
+            // must be re-stored before use.
+            _ => Ok(Self::Keychain {
                 label: String::new(),
             }),
         }
@@ -60,10 +59,7 @@ impl<'de> serde::Deserialize<'de> for AuthConfig {
 impl std::fmt::Debug for AuthConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Keychain { label } => f
-                .debug_struct("Keychain")
-                .field("label", label)
-                .finish(),
+            Self::Keychain { label } => f.debug_struct("Keychain").field("label", label).finish(),
         }
     }
 }

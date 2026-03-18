@@ -7,14 +7,17 @@ use gpui::{div, prelude::*, px, IntoElement, Styled};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+type OnSelectCallback = Rc<RefCell<dyn Fn(usize)>>;
+
 pub struct Dropdown {
     options: Vec<String>,
     selected_index: Rc<RefCell<usize>>,
     is_open: Rc<RefCell<bool>>,
-    on_select: Option<Rc<RefCell<dyn Fn(usize)>>>,
+    on_select: Option<OnSelectCallback>,
 }
 
 impl Dropdown {
+    #[must_use]
     pub fn new(options: Vec<String>) -> Self {
         Self {
             options,
@@ -24,19 +27,23 @@ impl Dropdown {
         }
     }
 
+    #[must_use]
     pub fn selected(self, index: usize) -> Self {
         *self.selected_index.borrow_mut() = index.min(self.options.len().saturating_sub(1));
         self
     }
 
+    #[must_use]
     pub fn selected_index(&self) -> usize {
         *self.selected_index.borrow()
     }
 
+    #[must_use]
     pub fn is_open(&self) -> bool {
         *self.is_open.borrow()
     }
 
+    #[must_use]
     pub fn on_select(mut self, callback: impl Fn(usize) + 'static) -> Self {
         self.on_select = Some(Rc::new(RefCell::new(callback)));
         self
@@ -65,7 +72,7 @@ impl IntoElement for Dropdown {
 
         let selected_idx = *self.selected_index.borrow();
         let is_open = *self.is_open.borrow();
-        let options = self.options.clone();
+        let options = self.options;
         let selected_text = options.get(selected_idx).cloned().unwrap_or_default();
 
         let mut dropdown = div().relative().w(px(200.0));

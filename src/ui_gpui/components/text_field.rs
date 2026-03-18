@@ -7,12 +7,14 @@ use gpui::{div, prelude::*, px, Context, FocusHandle, Focusable, Styled, Window}
 use std::cell::RefCell;
 use std::rc::Rc;
 
+type TextCallback<T> = Rc<RefCell<dyn Fn(&str, &mut Context<T>)>>;
+
 pub struct TextField {
     focus_handle: FocusHandle,
     text: Rc<RefCell<String>>,
     placeholder: String,
-    on_change: Option<Rc<RefCell<dyn Fn(&str, &mut Context<Self>)>>>,
-    on_submit: Option<Rc<RefCell<dyn Fn(&str, &mut Context<Self>)>>>,
+    on_change: Option<TextCallback<Self>>,
+    on_submit: Option<TextCallback<Self>>,
 }
 
 impl TextField {
@@ -26,39 +28,48 @@ impl TextField {
         }
     }
 
+    #[must_use]
     pub fn with_text(self, text: impl Into<String>) -> Self {
         *self.text.borrow_mut() = text.into();
         self
     }
 
+    #[must_use]
     pub fn text(&self) -> String {
         self.text.borrow().clone()
     }
 
-    pub fn set_text(&mut self, text: String, cx: &mut Context<Self>) {
-        *self.text.borrow_mut() = text.clone();
+    pub fn set_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        let mut current = self.text.borrow_mut();
+        current.clear();
+        current.push_str(text);
+        drop(current);
         if let Some(on_change) = &self.on_change {
-            (on_change.borrow())(&text, cx);
+            (on_change.borrow())(text, cx);
         }
         cx.notify();
     }
 
+    #[must_use]
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
         self
     }
 
+    #[must_use]
     pub fn on_change(mut self, callback: impl Fn(&str, &mut Context<Self>) + 'static) -> Self {
         self.on_change = Some(Rc::new(RefCell::new(callback)));
         self
     }
 
+    #[must_use]
     pub fn on_submit(mut self, callback: impl Fn(&str, &mut Context<Self>) + 'static) -> Self {
         self.on_submit = Some(Rc::new(RefCell::new(callback)));
         self
     }
 
-    pub fn focus_handle(&self) -> &FocusHandle {
+    #[must_use]
+    pub const fn focus_handle(&self) -> &FocusHandle {
         &self.focus_handle
     }
 }
@@ -85,14 +96,14 @@ impl Render for TextField {
                 div()
                     .text_color(Theme::text_primary())
                     .text_sm()
-                    .child(text.clone()),
+                    .child(text),
             );
         } else if !placeholder.is_empty() {
             content_div = content_div.child(
                 div()
                     .text_color(Theme::text_muted())
                     .text_sm()
-                    .child(placeholder.clone()),
+                    .child(placeholder),
             );
         }
 

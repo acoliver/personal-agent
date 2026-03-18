@@ -1,3 +1,4 @@
+use personal_agent::mcp::registry::McpRegistryRepository;
 use personal_agent::mcp::{
     McpPackageType, McpRegistry, McpRegistryRemote, McpRegistryServer, McpRegistryServerWrapper,
     McpSource, McpTransport,
@@ -8,8 +9,8 @@ fn entry_to_config_maps_remote_http() {
     let wrapper = McpRegistryServerWrapper {
         server: McpRegistryServer {
             name: "Remote".to_string(),
-            description: "".to_string(),
-            repository: Default::default(),
+            description: String::new(),
+            repository: McpRegistryRepository::default(),
             version: "1.0.0".to_string(),
             packages: vec![],
             remotes: vec![McpRegistryRemote {
@@ -89,8 +90,8 @@ fn entry_to_config_errors_on_unknown_remote_type() {
     let wrapper = McpRegistryServerWrapper {
         server: McpRegistryServer {
             name: "Remote".to_string(),
-            description: "".to_string(),
-            repository: Default::default(),
+            description: String::new(),
+            repository: McpRegistryRepository::default(),
             version: "1.0.0".to_string(),
             packages: vec![],
             remotes: vec![McpRegistryRemote {

@@ -10,11 +10,13 @@ pub struct Divider {
 }
 
 impl Divider {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self { color: None }
     }
 
-    pub fn color(mut self, color: gpui::Hsla) -> Self {
+    #[must_use]
+    pub const fn color(mut self, color: gpui::Hsla) -> Self {
         self.color = Some(color);
         self
     }
@@ -32,7 +34,7 @@ impl IntoElement for Divider {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
-        let color = self.color.unwrap_or(Theme::border());
+        let color = self.color.unwrap_or_else(Theme::border);
 
         div().w_full().h(px(1.0)).bg(color)
     }

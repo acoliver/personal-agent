@@ -1,6 +1,6 @@
-//! ModelSelectorPresenter - handles model selection UI
+//! `ModelSelectorPresenter` - handles model selection UI
 //!
-//! ModelSelectorPresenter subscribes to model selector events,
+//! `ModelSelectorPresenter` subscribes to model selector events,
 //! coordinates with models registry service, and emits view commands.
 //!
 //! @plan PLAN-20250125-REFACTOR.P10
@@ -16,12 +16,12 @@ use crate::events::{types::UserEvent, AppEvent, EventBus};
 use crate::registry::ModelInfo as RegistryModelInfo;
 use crate::services::ModelsRegistryService;
 
-/// ModelSelectorPresenter - handles model selection UI
+/// `ModelSelectorPresenter` - handles model selection UI
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
 /// @requirement REQ-025.1
 pub struct ModelSelectorPresenter {
-    /// Event receiver from EventBus
+    /// Event receiver from `EventBus`
     rx: broadcast::Receiver<AppEvent>,
 
     /// Reference to models registry service
@@ -35,7 +35,7 @@ pub struct ModelSelectorPresenter {
 }
 
 impl ModelSelectorPresenter {
-    /// Create a new ModelSelectorPresenter
+    /// Create a new `ModelSelectorPresenter`
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub fn new(
@@ -52,10 +52,10 @@ impl ModelSelectorPresenter {
         }
     }
 
-    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    /// Stub constructor using unified global `EventBus` (REQ-WIRE-006 unification path).
     ///
     /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
-    /// bus rather than a caller-supplied broadcast::Sender. Full wiring deferred to
+    /// bus rather than a caller-supplied `broadcast::Sender`. Full wiring deferred to
     /// later implementation phases.
     ///
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
@@ -64,7 +64,7 @@ impl ModelSelectorPresenter {
     #[allow(dead_code)]
     pub fn new_with_event_bus(
         models_registry_service: Arc<dyn ModelsRegistryService>,
-        event_bus: Arc<EventBus>,
+        event_bus: &Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
         let rx = event_bus.sender().subscribe();
@@ -77,6 +77,10 @@ impl ModelSelectorPresenter {
     }
 
     /// Start the presenter event loop
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn start(&mut self) -> Result<(), PresenterError> {
@@ -100,7 +104,6 @@ impl ModelSelectorPresenter {
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ModelSelectorPresenter lagged: {} events missed", n);
-                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::info!("ModelSelectorPresenter event stream closed");
@@ -116,6 +119,10 @@ impl ModelSelectorPresenter {
 
     /// Stop the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
@@ -126,6 +133,7 @@ impl ModelSelectorPresenter {
     /// Check if presenter is running
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -138,11 +146,8 @@ impl ModelSelectorPresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
     ) {
-        match event {
-            AppEvent::User(user_evt) => {
-                Self::handle_user_event(models_registry_service, view_tx, user_evt).await;
-            }
-            _ => {} // Ignore other events
+        if let AppEvent::User(user_evt) = event {
+            Self::handle_user_event(models_registry_service, view_tx, user_evt).await;
         }
     }
 
@@ -182,7 +187,10 @@ impl ModelSelectorPresenter {
                 model_id: m.id.clone(),
                 name: m.name.clone(),
                 provider_id: m.provider.as_deref().unwrap_or("unknown").to_string(),
-                context_length: m.limit.as_ref().map(|l| l.context as u32),
+                context_length: m
+                    .limit
+                    .as_ref()
+                    .map(|l| u32::try_from(l.context).unwrap_or(u32::MAX)),
             })
             .collect()
     }
@@ -219,7 +227,7 @@ impl ModelSelectorPresenter {
                         // Send error to view
                         let _ = view_tx.send(ViewCommand::ShowError {
                             title: "Failed to load models".to_string(),
-                            message: format!("Could not load models from registry: {:?}", e),
+                            message: format!("Could not load models from registry: {e:?}"),
                             severity: super::view_command::ErrorSeverity::Warning,
                         });
                         return;
@@ -236,7 +244,7 @@ impl ModelSelectorPresenter {
         });
     }
 
-    /// Search models by query and emit ModelSearchResults.
+    /// Search models by query and emit `ModelSearchResults`.
     async fn on_search_models(
         models_registry_service: &Arc<dyn ModelsRegistryService>,
         view_tx: &broadcast::Sender<ViewCommand>,
@@ -260,7 +268,7 @@ impl ModelSelectorPresenter {
         }
     }
 
-    /// Filter models by provider and emit ModelSearchResults.
+    /// Filter models by provider and emit `ModelSearchResults`.
     async fn on_filter_by_provider(
         models_registry_service: &Arc<dyn ModelsRegistryService>,
         view_tx: &broadcast::Sender<ViewCommand>,
@@ -317,10 +325,10 @@ impl ModelSelectorPresenter {
             .await
             .ok()
             .and_then(|models| {
-                models
-                    .into_iter()
-                    .find(|m| m.id == model_id)
-                    .and_then(|m| m.limit.map(|l| l.context as u32))
+                models.into_iter().find(|m| m.id == model_id).and_then(|m| {
+                    m.limit
+                        .map(|l| u32::try_from(l.context).unwrap_or(u32::MAX))
+                })
             });
 
         let _ = view_tx.send(ViewCommand::ModelSelected {

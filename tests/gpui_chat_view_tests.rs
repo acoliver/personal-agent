@@ -10,7 +10,7 @@
 // ============================================================================
 
 /// Represents a single message in the chat
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -26,14 +26,15 @@ impl ChatMessage {
         }
     }
 
-    pub fn with_timestamp(mut self, timestamp: u64) -> Self {
+    #[must_use]
+    pub const fn with_timestamp(mut self, timestamp: u64) -> Self {
         self.timestamp = Some(timestamp);
         self
     }
 }
 
 /// Streaming state for AI responses
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamingState {
     Idle,
     Streaming { content: String, done: bool },
@@ -61,20 +62,24 @@ impl Default for ChatState {
 }
 
 impl ChatState {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_messages(mut self, messages: Vec<ChatMessage>) -> Self {
         self.messages = messages;
         self
     }
 
+    #[must_use]
     pub fn with_streaming(mut self, state: StreamingState) -> Self {
         self.streaming = state;
         self
     }
 
+    #[must_use]
     pub fn with_thinking(mut self, enabled: bool, content: Option<String>) -> Self {
         self.show_thinking = enabled;
         self.thinking_content = content;
@@ -96,7 +101,7 @@ impl ChatState {
 }
 
 /// Commands for view manipulation
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ViewCommand {
     NoOp,
     SwitchTab(usize),
@@ -109,39 +114,27 @@ pub enum ViewCommand {
 }
 
 /// Available panel tabs
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PanelTab {
+    #[default]
     Chat,
     Work,
 }
 
-impl Default for PanelTab {
-    fn default() -> Self {
-        Self::Chat
-    }
-}
-
 /// Main panel state
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MainPanel {
     pub current_tab: PanelTab,
     pub chat_state: ChatState,
 }
 
-impl Default for MainPanel {
-    fn default() -> Self {
-        Self {
-            current_tab: PanelTab::default(),
-            chat_state: ChatState::default(),
-        }
-    }
-}
-
 impl MainPanel {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_chat_state(mut self, state: ChatState) -> Self {
         self.chat_state = state;
         self
@@ -154,7 +147,6 @@ impl MainPanel {
             }
             ViewCommand::SwitchTab(tab_index) => {
                 self.current_tab = match tab_index {
-                    0 => PanelTab::Chat,
                     1 => PanelTab::Work,
                     _ => PanelTab::Chat,
                 };
@@ -187,11 +179,12 @@ impl MainPanel {
         }
     }
 
-    pub fn switch_tab(&mut self, tab: PanelTab) {
+    pub const fn switch_tab(&mut self, tab: PanelTab) {
         self.current_tab = tab;
     }
 
-    pub fn current_tab(&self) -> PanelTab {
+    #[must_use]
+    pub const fn current_tab(&self) -> PanelTab {
         self.current_tab
     }
 }
@@ -230,7 +223,7 @@ fn test_chat_state_with_messages() {
         ChatMessage::new("assistant", "Hi there!"),
     ];
 
-    let state = ChatState::new().with_messages(messages.clone());
+    let state = ChatState::new().with_messages(messages);
 
     assert_eq!(state.messages.len(), 2, "Should have 2 messages");
     assert_eq!(

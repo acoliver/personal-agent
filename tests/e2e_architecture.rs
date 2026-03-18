@@ -1,7 +1,7 @@
 //! End-to-End Architecture Tests
 //!
 //! These tests verify core components work together correctly.
-//! They use real service implementations with temp directories and the real EventBus.
+//! They use real service implementations with temp directories and the real `EventBus`.
 //!
 //! @plan PLAN-20250125-REFACTOR.P16
 //! @requirement REQ-E2E.1, REQ-E2E.2, REQ-E2E.3, REQ-E2E.4
@@ -16,7 +16,7 @@ use personal_agent::services::{
 };
 
 /// ============================================================================
-/// Test 1: EventBus Round Trip
+/// Test 1: `EventBus` Round Trip
 /// ============================================================================
 /// @plan PLAN-20250125-REFACTOR.P16
 /// @requirement REQ-E2E.1

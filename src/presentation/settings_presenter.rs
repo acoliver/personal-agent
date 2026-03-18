@@ -1,6 +1,6 @@
-//! SettingsPresenter - handles settings and profile management UI
+//! `SettingsPresenter` - handles settings and profile management UI
 //!
-//! SettingsPresenter subscribes to settings and profile events,
+//! `SettingsPresenter` subscribes to settings and profile events,
 //! coordinates with profile and app settings services, and emits view commands.
 //!
 //! @plan PLAN-20250125-REFACTOR.P10
@@ -22,13 +22,13 @@ use crate::events::{
 };
 use crate::services::{AppSettingsService, ProfileService};
 
-/// SettingsPresenter - handles settings and profile management UI
+/// `SettingsPresenter` - handles settings and profile management UI
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
 /// @requirement REQ-025.4
 /// @pseudocode presenters.md lines 380-385
 pub struct SettingsPresenter {
-    /// Event receiver from EventBus
+    /// Event receiver from `EventBus`
     rx: broadcast::Receiver<AppEvent>,
 
     /// Reference to profile service
@@ -45,7 +45,7 @@ pub struct SettingsPresenter {
 }
 
 impl SettingsPresenter {
-    /// Create a new SettingsPresenter
+    /// Create a new `SettingsPresenter`
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     /// @requirement REQ-025.4
@@ -65,10 +65,10 @@ impl SettingsPresenter {
         }
     }
 
-    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    /// Stub constructor using unified global `EventBus` (REQ-WIRE-006 unification path).
     ///
     /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
-    /// bus rather than a caller-supplied broadcast::Sender. This resolves the split
+    /// bus rather than a caller-supplied `broadcast::Sender`. This resolves the split
     /// intake channel problem identified in the remediation plan. Full wiring of all
     /// callers deferred to later implementation phases.
     ///
@@ -79,7 +79,7 @@ impl SettingsPresenter {
     pub fn new_with_event_bus(
         profile_service: Arc<dyn ProfileService>,
         app_settings_service: Arc<dyn AppSettingsService>,
-        event_bus: Arc<EventBus>,
+        event_bus: &Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
         let rx = event_bus.sender().subscribe();
@@ -93,6 +93,10 @@ impl SettingsPresenter {
     }
 
     /// Start the presenter event loop
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     /// @requirement REQ-025.4
@@ -131,7 +135,6 @@ impl SettingsPresenter {
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("SettingsPresenter lagged: {} events missed", n);
-                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::info!("SettingsPresenter event stream closed");
@@ -147,6 +150,10 @@ impl SettingsPresenter {
 
     /// Stop the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P10
     /// @requirement REQ-025.4
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
@@ -159,11 +166,12 @@ impl SettingsPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     /// @requirement REQ-025.4
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Handle events from EventBus
+    /// Handle events from `EventBus`
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-025.4
@@ -305,7 +313,7 @@ impl SettingsPresenter {
                 });
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "MCP Server Unhealthy".to_string(),
-                    message: format!("{}: {}", name, error),
+                    message: format!("{name}: {error}"),
                     severity: super::view_command::ErrorSeverity::Warning,
                 });
             }
@@ -315,7 +323,7 @@ impl SettingsPresenter {
                     status: super::view_command::McpStatus::Running,
                 });
                 let _ = view_tx.send(ViewCommand::ShowNotification {
-                    message: format!("{} recovered", name),
+                    message: format!("{name} recovered"),
                 });
             }
             McpEvent::ConfigSaved { id } => {
@@ -339,11 +347,10 @@ impl SettingsPresenter {
                 error,
                 context,
             } => {
-                let message = if let Some(ctx) = context {
-                    format!("{}: {} (context: {})", source, error, ctx)
-                } else {
-                    format!("{}: {}", source, error)
-                };
+                let message = context.map_or_else(
+                    || format!("{source}: {error}"),
+                    |ctx| format!("{source}: {error} (context: {ctx})"),
+                );
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "System Error".to_string(),
                     message,
@@ -366,8 +373,7 @@ impl SettingsPresenter {
             } => {
                 let _ = view_tx.send(ViewCommand::ShowNotification {
                     message: format!(
-                        "Models refreshed: {} providers, {} models",
-                        provider_count, model_count
+                        "Models refreshed: {provider_count} providers, {model_count} models"
                     ),
                 });
             }
@@ -375,7 +381,7 @@ impl SettingsPresenter {
         }
     }
 
-    /// Handle SelectProfile user event
+    /// Handle `SelectProfile` user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-025.4
@@ -386,7 +392,7 @@ impl SettingsPresenter {
         id: Uuid,
     ) {
         match profile_service.set_default(id).await {
-            Ok(_) => {
+            Ok(()) => {
                 if let Err(e) = app_settings_service.set_default_profile_id(id).await {
                     tracing::warn!("Failed to persist default profile in app settings: {}", e);
                 }
@@ -399,14 +405,14 @@ impl SettingsPresenter {
                 tracing::error!("Failed to select profile: {}", e);
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "Error".to_string(),
-                    message: format!("Failed to select profile: {}", e),
+                    message: format!("Failed to select profile: {e}"),
                     severity: super::view_command::ErrorSeverity::Error,
                 });
             }
         }
     }
 
-    /// Handle EditProfile user event
+    /// Handle `EditProfile` user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-025.4
@@ -444,14 +450,14 @@ impl SettingsPresenter {
                 tracing::error!("Failed to load profile for edit: {}", e);
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "Edit Failed".to_string(),
-                    message: format!("Failed to load profile: {}", e),
+                    message: format!("Failed to load profile: {e}"),
                     severity: super::view_command::ErrorSeverity::Error,
                 });
             }
         }
     }
 
-    /// Handle DeleteProfile user event
+    /// Handle `DeleteProfile` user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-025.4
@@ -465,11 +471,10 @@ impl SettingsPresenter {
             .get(id)
             .await
             .ok()
-            .map(|profile| profile.name)
-            .unwrap_or_else(|| "Profile".to_string());
+            .map_or_else(|| "Profile".to_string(), |profile| profile.name);
 
         match profile_service.delete(id).await {
-            Ok(_) => {
+            Ok(()) => {
                 let _ = emit(AppEvent::Profile(ProfileEvent::Deleted {
                     id,
                     name: profile_name,
@@ -481,14 +486,14 @@ impl SettingsPresenter {
                 tracing::error!("Failed to delete profile: {}", e);
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "Delete Failed".to_string(),
-                    message: format!("Failed to delete profile: {}", e),
+                    message: format!("Failed to delete profile: {e}"),
                     severity: super::view_command::ErrorSeverity::Error,
                 });
             }
         }
     }
 
-    /// Handle ToggleMcp user event
+    /// Handle `ToggleMcp` user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-025.4
@@ -586,34 +591,5 @@ impl Presenter for SettingsPresenter {
 
     fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-/// @plan PLAN-20250125-REFACTOR.P12
-/// @requirement REQ-027.4
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Test handle select profile
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.4
-    #[tokio::test]
-    async fn test_handle_select_profile() {
-        let (_event_tx, _) = broadcast::channel::<AppEvent>(100);
-        let (_view_tx, _) = broadcast::channel::<ViewCommand>(100);
-
-        // Create presenter with mocks would go here
-        // For now, just verify the structure compiles
-        assert!(true);
-    }
-
-    /// Test handle toggle MCP
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.4
-    #[tokio::test]
-    async fn test_handle_toggle_mcp() {
-        // Test implementation would go here
-        assert!(true);
     }
 }

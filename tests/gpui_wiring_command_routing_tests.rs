@@ -1,11 +1,11 @@
-//! GPUI Wiring - ViewCommand Routing Tests
+//! GPUI Wiring - `ViewCommand` Routing Tests
 //!
-//! Tests that MainPanel routes all relevant ViewCommand variants to the
+//! Tests that `MainPanel` routes all relevant `ViewCommand` variants to the
 //! concrete view handlers that update observable view state.
 //!
 //! REQ-WIRE-002 requires that the presentation layer provides a
 //! `route_view_command` function (or equivalent) that dispatches each
-//! ViewCommand variant to the appropriate target view state.  This function
+//! `ViewCommand` variant to the appropriate target view state.  This function
 //! does not yet exist; the tests below fail to compile pre-implementation,
 //! which is the expected TDD outcome for this phase.
 //!
@@ -19,7 +19,6 @@
 
 use std::sync::Arc;
 
-use flume;
 use uuid::Uuid;
 
 use personal_agent::events::types::UserEvent;
@@ -83,11 +82,11 @@ fn make_bridge_and_sink() -> (GpuiBridge, ViewCommandSink<MockNotifier>) {
 // REQ-WIRE-002: Chat view routing
 // ============================================================
 
-/// REQ-WIRE-002: MessageAppended reaches ChatView observable state
+/// REQ-WIRE-002: `MessageAppended` reaches `ChatView` observable state
 ///
-/// GIVEN: a ViewCommand bridge + sink
-/// WHEN:  MessageAppended is sent and drained
-/// THEN:  route_view_command places it in CommandTargets.chat.messages
+/// GIVEN: a `ViewCommand` bridge + sink
+/// WHEN:  `MessageAppended` is sent and drained
+/// THEN:  `route_view_command` places it in CommandTargets.chat.messages
 ///
 /// Fails pre-implementation because `route_view_command` does not exist.
 ///
@@ -116,7 +115,7 @@ fn test_chat_view_message_appended_is_routed() {
     );
 }
 
-/// REQ-WIRE-002: AppendStream and FinalizeStream reach ChatView
+/// REQ-WIRE-002: `AppendStream` and `FinalizeStream` reach `ChatView`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -157,7 +156,7 @@ fn test_chat_view_stream_commands_are_routed() {
 // REQ-WIRE-002: History view routing
 // ============================================================
 
-/// REQ-WIRE-002: ConversationListRefreshed reaches HistoryView
+/// REQ-WIRE-002: `ConversationListRefreshed` reaches `HistoryView`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -189,7 +188,7 @@ fn test_history_view_conversation_list_refreshed_is_routed() {
     );
 }
 
-/// REQ-WIRE-002: ConversationActivated reaches HistoryView
+/// REQ-WIRE-002: `ConversationActivated` reaches `HistoryView`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -220,7 +219,7 @@ fn test_history_view_conversation_activated_is_routed() {
 // REQ-WIRE-002: Settings view routing
 // ============================================================
 
-/// REQ-WIRE-002: ProfileCreated reaches SettingsView
+/// REQ-WIRE-002: `ProfileCreated` reaches `SettingsView`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -246,7 +245,7 @@ fn test_settings_view_profile_created_is_routed() {
     );
 }
 
-/// REQ-WIRE-002: McpStatusChanged reaches SettingsView
+/// REQ-WIRE-002: `McpStatusChanged` reaches `SettingsView`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -272,7 +271,7 @@ fn test_settings_view_mcp_status_changed_is_routed() {
     );
 }
 
-/// REQ-WIRE-002: McpServerStarted and McpServerFailed reach SettingsView
+/// REQ-WIRE-002: `McpServerStarted` and `McpServerFailed` reach `SettingsView`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -302,7 +301,7 @@ fn test_settings_view_mcp_server_lifecycle_is_routed() {
     );
 }
 
-/// REQ-WIRE-002: McpConfigSaved and McpDeleted reach settings/configure routing targets
+/// REQ-WIRE-002: `McpConfigSaved` and `McpDeleted` reach settings/configure routing targets
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -332,7 +331,7 @@ fn test_mcp_config_saved_and_deleted_are_routed() {
     );
 }
 
-/// REQ-WIRE-002: ShowNotification reaches settings routing target
+/// REQ-WIRE-002: `ShowNotification` reaches settings routing target
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -355,7 +354,7 @@ fn test_show_notification_is_routed_to_settings_target() {
     );
 }
 
-/// REQ-WIRE-002: McpRegistrySearchResults reaches MCP Add routing target
+/// REQ-WIRE-002: `McpRegistrySearchResults` reaches MCP Add routing target
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -397,7 +396,7 @@ fn test_mcp_registry_search_results_are_routed() {
     );
 }
 
-/// REQ-WIRE-002: McpConfigureDraftLoaded reaches MCP configure routing target
+/// REQ-WIRE-002: `McpConfigureDraftLoaded` reaches MCP configure routing target
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -415,7 +414,7 @@ fn test_mcp_configure_draft_loaded_is_routed() {
             "-y".to_string(),
             "@modelcontextprotocol/server-fetch".to_string(),
         ],
-        env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
+        env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
     });
 
     let mut targets = CommandTargets::default();
@@ -429,7 +428,7 @@ fn test_mcp_configure_draft_loaded_is_routed() {
     );
 }
 
-/// REQ-WIRE-002: ShowError reaches MCP error routing target
+/// REQ-WIRE-002: `ShowError` reaches MCP error routing target
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -454,7 +453,7 @@ fn test_show_error_is_routed_to_mcp_error_target() {
     );
 }
 
-/// REQ-WIRE-002: McpConfigureDraftLoaded does not increment McpConfigSaved counter
+/// REQ-WIRE-002: `McpConfigureDraftLoaded` does not increment `McpConfigSaved` counter
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -466,7 +465,7 @@ fn test_mcp_configure_draft_loaded_does_not_count_as_mcp_config_saved() {
         id: "filesystem".to_string(),
         name: "Filesystem".to_string(),
         package: "filesystem".to_string(),
-        env_var_name: "".to_string(),
+        env_var_name: String::new(),
         command: "npx".to_string(),
         args: vec![
             "-y".to_string(),
@@ -494,9 +493,9 @@ fn test_mcp_configure_draft_loaded_does_not_count_as_mcp_config_saved() {
 // REQ-WIRE-002: Model selector routing
 // ============================================================
 
-/// REQ-WIRE-002: ModelSearchResults reaches ModelSelectorView
+/// REQ-WIRE-002: `ModelSearchResults` reaches `ModelSelectorView`
 ///
-/// NOTE: ModelSearchResults IS currently partially routed by MainPanel.
+/// NOTE: `ModelSearchResults` IS currently partially routed by `MainPanel`.
 /// This test asserts the routing is maintained through `route_view_command`.
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
@@ -533,7 +532,7 @@ fn test_model_selector_search_results_are_routed() {
     );
 }
 
-/// REQ-WIRE-002: ModelSelected reaches ProfileEditor routing target
+/// REQ-WIRE-002: `ModelSelected` reaches `ProfileEditor` routing target
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -563,7 +562,7 @@ fn test_model_selected_is_routed_to_profile_prefill_target() {
     );
 }
 
-/// REQ-WIRE-002: ProfileEditorLoad reaches ProfileEditor routing target
+/// REQ-WIRE-002: `ProfileEditorLoad` reaches `ProfileEditor` routing target
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-002
@@ -675,10 +674,10 @@ fn test_mixed_drain_routes_to_all_target_views() {
     );
 }
 
-/// REQ-WIRE-002: Ancillary ViewCommand variants do not mutate routing counters
+/// REQ-WIRE-002: Ancillary `ViewCommand` variants do not mutate routing counters
 ///
 /// Covers command variants that are currently handled directly by child views or
-/// navigation/modal layers and therefore should not increment route_view_command
+/// navigation/modal layers and therefore should not increment `route_view_command`
 /// observable counters.
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04

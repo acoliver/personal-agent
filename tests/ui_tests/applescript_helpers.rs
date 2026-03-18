@@ -1,13 +1,13 @@
 #![allow(dead_code)]
 
-//! AppleScript helpers for UI automation testing
+//! `AppleScript` helpers for UI automation testing
 //!
-//! This module provides utilities to run AppleScript commands from Rust tests
+//! This module provides utilities to run `AppleScript` commands from Rust tests
 //! to automate and verify macOS UI behavior.
 
 use std::process::Command;
 
-/// Result of running an AppleScript
+/// Result of running an `AppleScript`
 #[derive(Debug)]
 pub struct AppleScriptResult {
     pub success: bool,
@@ -15,7 +15,7 @@ pub struct AppleScriptResult {
     pub stderr: String,
 }
 
-/// Run an AppleScript and return the result
+/// Run an `AppleScript` and return the result
 pub fn run_applescript(script: &str) -> AppleScriptResult {
     let output = Command::new("osascript")
         .arg("-e")
@@ -30,7 +30,7 @@ pub fn run_applescript(script: &str) -> AppleScriptResult {
     }
 }
 
-/// Run a multi-line AppleScript (each line as separate -e argument)
+/// Run a multi-line `AppleScript` (each line as separate -e argument)
 pub fn run_applescript_lines(lines: &[&str]) -> AppleScriptResult {
     let mut cmd = Command::new("osascript");
     for line in lines {
@@ -48,10 +48,8 @@ pub fn run_applescript_lines(lines: &[&str]) -> AppleScriptResult {
 
 /// Check if an application is running
 pub fn is_app_running(app_name: &str) -> bool {
-    let script = format!(
-        r#"tell application "System Events" to (name of processes) contains "{}""#,
-        app_name
-    );
+    let script =
+        format!(r#"tell application "System Events" to (name of processes) contains "{app_name}""#);
     let result = run_applescript(&script);
     result.success && result.stdout == "true"
 }
@@ -60,15 +58,14 @@ pub fn is_app_running(app_name: &str) -> bool {
 pub fn get_window_title(app_name: &str) -> Option<String> {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
+            tell process "{app_name}"
                 if (count of windows) > 0 then
                     return name of front window
                 else
                     return ""
                 end if
             end tell
-        end tell"#,
-        app_name
+        end tell"#
     );
     let result = run_applescript(&script);
     if result.success && !result.stdout.is_empty() {
@@ -82,11 +79,10 @@ pub fn get_window_title(app_name: &str) -> Option<String> {
 pub fn click_element(app_name: &str, element_path: &str) -> bool {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
-                click {}
+            tell process "{app_name}"
+                click {element_path}
             end tell
-        end tell"#,
-        app_name, element_path
+        end tell"#
     );
     let result = run_applescript(&script);
     result.success
@@ -96,11 +92,10 @@ pub fn click_element(app_name: &str, element_path: &str) -> bool {
 pub fn get_text_field_value(app_name: &str, field_path: &str) -> Option<String> {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
-                return value of {}
+            tell process "{app_name}"
+                return value of {field_path}
             end tell
-        end tell"#,
-        app_name, field_path
+        end tell"#
     );
     let result = run_applescript(&script);
     if result.success {
@@ -114,11 +109,10 @@ pub fn get_text_field_value(app_name: &str, field_path: &str) -> Option<String> 
 pub fn set_text_field_value(app_name: &str, field_path: &str, value: &str) -> bool {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
-                set value of {} to "{}"
+            tell process "{app_name}"
+                set value of {field_path} to "{value}"
             end tell
-        end tell"#,
-        app_name, field_path, value
+        end tell"#
     );
     let result = run_applescript(&script);
     result.success
@@ -128,11 +122,10 @@ pub fn set_text_field_value(app_name: &str, field_path: &str, value: &str) -> bo
 pub fn count_elements(app_name: &str, element_type: &str, container_path: &str) -> usize {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
-                return count of {} of {}
+            tell process "{app_name}"
+                return count of {element_type} of {container_path}
             end tell
-        end tell"#,
-        app_name, element_type, container_path
+        end tell"#
     );
     let result = run_applescript(&script);
     if result.success {
@@ -146,11 +139,10 @@ pub fn count_elements(app_name: &str, element_type: &str, container_path: &str) 
 pub fn get_popup_value(app_name: &str, popup_path: &str) -> Option<String> {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
-                return value of {}
+            tell process "{app_name}"
+                return value of {popup_path}
             end tell
-        end tell"#,
-        app_name, popup_path
+        end tell"#
     );
     let result = run_applescript(&script);
     if result.success {
@@ -165,20 +157,23 @@ pub fn get_popup_items(app_name: &str, popup_path: &str) -> Vec<String> {
     // Click to open the popup, get menu items, then close
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
-                click {}
+            tell process "{app_name}"
+                click {popup_path}
                 delay 0.2
-                set menuItems to name of every menu item of menu 1 of {}
+                set menuItems to name of every menu item of menu 1 of {popup_path}
                 key code 53 -- Escape to close
                 return menuItems
             end tell
-        end tell"#,
-        app_name, popup_path, popup_path
+        end tell"#
     );
     let result = run_applescript(&script);
     if result.success && !result.stdout.is_empty() {
         // AppleScript returns items as comma-separated list
-        result.stdout.split(", ").map(|s| s.to_string()).collect()
+        result
+            .stdout
+            .split(", ")
+            .map(std::string::ToString::to_string)
+            .collect()
     } else {
         Vec::new()
     }
@@ -188,11 +183,10 @@ pub fn get_popup_items(app_name: &str, popup_path: &str) -> Vec<String> {
 pub fn element_exists(app_name: &str, element_path: &str) -> bool {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
-                return exists {}
+            tell process "{app_name}"
+                return exists {element_path}
             end tell
-        end tell"#,
-        app_name, element_path
+        end tell"#
     );
     let result = run_applescript(&script);
     result.success && result.stdout == "true"
@@ -202,11 +196,10 @@ pub fn element_exists(app_name: &str, element_path: &str) -> bool {
 pub fn get_ui_hierarchy(app_name: &str) -> String {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
+            tell process "{app_name}"
                 return entire contents of front window
             end tell
-        end tell"#,
-        app_name
+        end tell"#
     );
     let result = run_applescript(&script);
     if result.success {
@@ -220,19 +213,18 @@ pub fn get_ui_hierarchy(app_name: &str) -> String {
 pub fn wait_for_element(app_name: &str, element_path: &str, timeout_secs: u32) -> bool {
     let script = format!(
         r#"tell application "System Events"
-            tell process "{}"
-                set maxTime to {} 
+            tell process "{app_name}"
+                set maxTime to {timeout_secs} 
                 set startTime to current date
                 repeat while ((current date) - startTime) < maxTime
-                    if exists {} then
+                    if exists {element_path} then
                         return true
                     end if
                     delay 0.1
                 end repeat
                 return false
             end tell
-        end tell"#,
-        app_name, timeout_secs, element_path
+        end tell"#
     );
     let result = run_applescript(&script);
     result.success && result.stdout == "true"

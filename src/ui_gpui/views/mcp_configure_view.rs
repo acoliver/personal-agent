@@ -13,7 +13,7 @@ use crate::ui_gpui::theme::Theme;
 
 /// Auth method for MCP configuration
 /// @plan PLAN-20250130-GPUIREDUX.P10
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum McpAuthMethod {
     None,
     #[default]
@@ -23,19 +23,20 @@ pub enum McpAuthMethod {
 }
 
 impl McpAuthMethod {
-    pub fn display(&self) -> &'static str {
+    #[must_use]
+    pub const fn display(&self) -> &'static str {
         match self {
-            McpAuthMethod::None => "None",
-            McpAuthMethod::ApiKey => "API Key",
-            McpAuthMethod::Keyfile => "Key File",
-            McpAuthMethod::OAuth => "OAuth",
+            Self::None => "None",
+            Self::ApiKey => "API Key",
+            Self::Keyfile => "Key File",
+            Self::OAuth => "OAuth",
         }
     }
 }
 
 /// OAuth connection status
 /// @plan PLAN-20250130-GPUIREDUX.P10
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum OAuthStatus {
     #[default]
     NotConnected,
@@ -85,6 +86,7 @@ pub struct McpConfigureData {
 }
 
 impl McpConfigureData {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             env_var_name: "API_KEY".to_string(),
@@ -96,6 +98,7 @@ impl McpConfigureData {
     }
 
     /// Check if save should be enabled
+    #[must_use]
     pub fn can_save(&self) -> bool {
         if self.name.trim().is_empty() {
             return false;
@@ -125,6 +128,7 @@ pub struct McpConfigureState {
 }
 
 impl McpConfigureState {
+    #[must_use]
     pub fn new_mcp() -> Self {
         Self {
             data: McpConfigureData::new(),
@@ -133,7 +137,8 @@ impl McpConfigureState {
         }
     }
 
-    pub fn edit_mcp(data: McpConfigureData) -> Self {
+    #[must_use]
+    pub const fn edit_mcp(data: McpConfigureData) -> Self {
         Self {
             data,
             is_new: false,
@@ -180,7 +185,7 @@ impl McpConfigureView {
             .and_then(|s| uuid::Uuid::parse_str(&s).ok())
             .unwrap_or_else(uuid::Uuid::nil);
 
-        self.emit(UserEvent::SaveMcpConfig {
+        self.emit(&UserEvent::SaveMcpConfig {
             id,
             config: crate::events::types::McpConfig {
                 id,
@@ -192,9 +197,9 @@ impl McpConfigureView {
         });
     }
 
-    /// Emit a UserEvent through the bridge
+    /// Emit a `UserEvent` through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P10
-    fn emit(&self, event: UserEvent) {
+    fn emit(&self, event: &UserEvent) {
         if let Some(bridge) = &self.bridge {
             if !bridge.emit(event.clone()) {
                 tracing::error!("Failed to emit event {:?}", event);
@@ -204,13 +209,10 @@ impl McpConfigureView {
         }
     }
 
-    /// Handle ViewCommand from presenter
+    /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P10
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
-            ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
-                // Navigation handled by MainPanel
-            }
             ViewCommand::McpConfigureDraftLoaded {
                 id,
                 name,
@@ -233,7 +235,7 @@ impl McpConfigureView {
                     .id
                     .as_ref()
                     .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
-                    .map_or(true, |parsed| parsed.is_nil());
+                    .is_none_or(|parsed| parsed.is_nil());
             }
             ViewCommand::ShowNotification { message } => {
                 self.state.data.oauth_status = OAuthStatus::Connected { username: message };
@@ -341,7 +343,7 @@ impl McpConfigureView {
 
     /// Render a field label
     /// @plan PLAN-20250130-GPUIREDUX.P10
-    fn render_label(&self, text: &str) -> impl IntoElement {
+    fn render_label(text: &str) -> impl IntoElement {
         div()
             .text_size(px(11.0))
             .text_color(Theme::text_secondary())
@@ -355,7 +357,7 @@ impl McpConfigureView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("NAME"))
+            .child(Self::render_label("NAME"))
             .child(
                 div()
                     .id("field-name")
@@ -385,7 +387,7 @@ impl McpConfigureView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("PACKAGE"))
+            .child(Self::render_label("PACKAGE"))
             .child(
                 div()
                     .id("field-package")
@@ -411,7 +413,7 @@ impl McpConfigureView {
 
     /// Render section divider
     /// @plan PLAN-20250130-GPUIREDUX.P10
-    fn render_section_divider(&self, title: &str) -> impl IntoElement {
+    fn render_section_divider(title: &str) -> impl IntoElement {
         div()
             .w(px(360.0))
             .flex()
@@ -436,7 +438,7 @@ impl McpConfigureView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("AUTH METHOD"))
+            .child(Self::render_label("AUTH METHOD"))
             .child(
                 div()
                     .id("dropdown-auth-method")
@@ -553,7 +555,7 @@ impl McpConfigureView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("KEY FILE"))
+            .child(Self::render_label("KEY FILE"))
             .child(
                 div()
                     .w(px(360.0))
@@ -624,7 +626,7 @@ impl McpConfigureView {
             OAuthStatus::NotConnected => ("Not connected".to_string(), Theme::text_secondary()),
             OAuthStatus::Connecting => ("Connecting...".to_string(), Theme::text_secondary()),
             OAuthStatus::Connected { username } => {
-                (format!("Connected as @{}", username), Theme::success())
+                (format!("Connected as @{username}"), Theme::success())
             }
             OAuthStatus::Error(msg) => (msg.clone(), Theme::error()),
         };
@@ -648,7 +650,7 @@ impl McpConfigureView {
                     .hover(|s| s.bg(Theme::accent_hover()))
                     .text_size(px(12.0))
                     .text_color(gpui::white())
-                    .child(format!("Authorize with {}", provider))
+                    .child(format!("Authorize with {provider}"))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, _cx| {
@@ -660,7 +662,7 @@ impl McpConfigureView {
                                 .as_ref()
                                 .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
                                 .unwrap_or_else(uuid::Uuid::nil);
-                            this.emit(UserEvent::StartMcpOAuth {
+                            this.emit(&UserEvent::StartMcpOAuth {
                                 id: parsed_id,
                                 provider: this.state.data.oauth_provider.clone(),
                             });
@@ -678,7 +680,7 @@ impl McpConfigureView {
 
     /// Render no-auth message
     /// @plan PLAN-20250130-GPUIREDUX.P10
-    fn render_no_auth_section(&self) -> impl IntoElement {
+    fn render_no_auth_section() -> impl IntoElement {
         div()
             .text_size(px(11.0))
             .text_color(Theme::text_secondary())
@@ -687,36 +689,39 @@ impl McpConfigureView {
 
     /// Render a string config field
     /// @plan PLAN-20250130-GPUIREDUX.P10
-    fn render_string_field(&self, key: &str, value: &str, placeholder: &str) -> impl IntoElement {
-        div().flex().flex_col().child(self.render_label(key)).child(
-            div()
-                .id(SharedString::from(format!("config-{}", key)))
-                .w(px(360.0))
-                .h(px(24.0))
-                .px(px(8.0))
-                .bg(Theme::bg_dark())
-                .border_1()
-                .border_color(Theme::border())
-                .rounded(px(4.0))
-                .flex()
-                .items_center()
-                .text_size(px(12.0))
-                .child(if value.is_empty() {
-                    div()
-                        .text_color(Theme::text_muted())
-                        .child(placeholder.to_string())
-                } else {
-                    div()
-                        .text_color(Theme::text_primary())
-                        .child(value.to_string())
-                }),
-        )
+    fn render_string_field(key: &str, value: &str, placeholder: &str) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(Self::render_label(key))
+            .child(
+                div()
+                    .id(SharedString::from(format!("config-{key}")))
+                    .w(px(360.0))
+                    .h(px(24.0))
+                    .px(px(8.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .text_size(px(12.0))
+                    .child(if value.is_empty() {
+                        div()
+                            .text_color(Theme::text_muted())
+                            .child(placeholder.to_string())
+                    } else {
+                        div()
+                            .text_color(Theme::text_primary())
+                            .child(value.to_string())
+                    }),
+            )
     }
 
     /// Render a boolean config field
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn render_boolean_field(
-        &self,
         key: &str,
         value: bool,
         cx: &mut gpui::Context<Self>,
@@ -724,7 +729,7 @@ impl McpConfigureView {
         let key_clone = key.to_string();
 
         div()
-            .id(SharedString::from(format!("config-{}", key)))
+            .id(SharedString::from(format!("config-{key}")))
             .flex()
             .items_center()
             .gap(px(8.0))
@@ -764,59 +769,58 @@ impl McpConfigureView {
 
     /// Render an array config field
     /// @plan PLAN-20250130-GPUIREDUX.P10
-    fn render_array_field(&self, key: &str, values: &[String]) -> impl IntoElement {
-        div().flex().flex_col().child(self.render_label(key)).child(
-            div()
-                .id(SharedString::from(format!("config-{}", key)))
-                .w(px(360.0))
-                .min_h(px(48.0))
-                .bg(Theme::bg_dark())
-                .border_1()
-                .border_color(Theme::border())
-                .rounded(px(4.0))
-                .p(px(4.0))
-                .flex()
-                .flex_col()
-                .gap(px(4.0))
-                .children(
-                    values
-                        .iter()
-                        .map(|v| {
-                            div()
-                                .h(px(24.0))
-                                .px(px(8.0))
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .text_color(Theme::text_primary())
-                                        .child(v.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .cursor_pointer()
-                                        .text_size(px(12.0))
-                                        .text_color(Theme::text_muted())
-                                        .hover(|s| s.text_color(Theme::danger()))
-                                        .child("[-]"),
-                                )
-                                .into_any_element()
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .child(
-                    div()
-                        .h(px(24.0))
-                        .px(px(8.0))
-                        .cursor_pointer()
-                        .text_size(px(12.0))
-                        .text_color(Theme::text_secondary())
-                        .hover(|s| s.text_color(Theme::text_primary()))
-                        .child("[+ Add]"),
-                ),
-        )
+    fn render_array_field(key: &str, values: &[String]) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(Self::render_label(key))
+            .child(
+                div()
+                    .id(SharedString::from(format!("config-{key}")))
+                    .w(px(360.0))
+                    .min_h(px(48.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
+                    .p(px(4.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .children(values.iter().map(|v| {
+                        div()
+                            .h(px(24.0))
+                            .px(px(8.0))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(Theme::text_primary())
+                                    .child(v.clone()),
+                            )
+                            .child(
+                                div()
+                                    .cursor_pointer()
+                                    .text_size(px(12.0))
+                                    .text_color(Theme::text_muted())
+                                    .hover(|s| s.text_color(Theme::danger()))
+                                    .child("[-]"),
+                            )
+                            .into_any_element()
+                    }))
+                    .child(
+                        div()
+                            .h(px(24.0))
+                            .px(px(8.0))
+                            .cursor_pointer()
+                            .text_size(px(12.0))
+                            .text_color(Theme::text_secondary())
+                            .hover(|s| s.text_color(Theme::text_primary()))
+                            .child("[+ Add]"),
+                    ),
+            )
     }
 
     /// Render configuration fields from schema
@@ -831,7 +835,7 @@ impl McpConfigureView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_section_divider("CONFIGURATION"))
+            .child(Self::render_section_divider("CONFIGURATION"))
             .child(
                 div().mt(px(8.0)).flex().flex_col().gap(px(12.0)).children(
                     fields
@@ -841,14 +845,13 @@ impl McpConfigureView {
                                 key,
                                 value,
                                 placeholder,
-                            } => self
-                                .render_string_field(key, value, placeholder)
+                            } => Self::render_string_field(key, value, placeholder)
                                 .into_any_element(),
-                            ConfigField::Boolean { key, value } => self
-                                .render_boolean_field(key, *value, cx)
-                                .into_any_element(),
+                            ConfigField::Boolean { key, value } => {
+                                Self::render_boolean_field(key, *value, cx).into_any_element()
+                            }
                             ConfigField::Array { key, values } => {
-                                self.render_array_field(key, values).into_any_element()
+                                Self::render_array_field(key, values).into_any_element()
                             }
                         })
                         .collect::<Vec<_>>(),
@@ -877,7 +880,7 @@ impl McpConfigureView {
             // Package (read-only)
             .child(self.render_package_section())
             // Authentication section
-            .child(self.render_section_divider("AUTHENTICATION"))
+            .child(Self::render_section_divider("AUTHENTICATION"))
             .child(
                 div()
                     .mt(px(8.0))
@@ -895,7 +898,7 @@ impl McpConfigureView {
                         d.child(self.render_oauth_section(cx))
                     })
                     .when(*auth_method == McpAuthMethod::None, |d| {
-                        d.child(self.render_no_auth_section())
+                        d.child(Self::render_no_auth_section())
                     }),
             )
             // Configuration fields (if any)

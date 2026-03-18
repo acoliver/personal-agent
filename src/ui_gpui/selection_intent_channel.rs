@@ -18,15 +18,22 @@ pub struct SelectionIntentChannel {
 }
 
 impl SelectionIntentChannel {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             pending: Mutex::new(VecDeque::new()),
         }
     }
 
+    /// Queue a pending selection request.
+    ///
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
     /// @requirement REQ-ARCH-003.6
     /// @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-087
+    ///
+    /// # Panics
+    ///
+    /// Panics if the selection intent mutex is poisoned.
     pub fn request_select(&self, conversation_id: Uuid) {
         self.pending
             .lock()
@@ -34,9 +41,15 @@ impl SelectionIntentChannel {
             .push_back(conversation_id);
     }
 
+    /// Dequeue the next pending selection request.
+    ///
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
     /// @requirement REQ-ARCH-003.6
     /// @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-087
+    ///
+    /// # Panics
+    ///
+    /// Panics if the selection intent mutex is poisoned.
     pub fn take_pending(&self) -> Option<Uuid> {
         self.pending
             .lock()
@@ -54,6 +67,7 @@ impl Default for SelectionIntentChannel {
 static SELECTION_INTENT_CHANNEL: once_cell::sync::Lazy<SelectionIntentChannel> =
     once_cell::sync::Lazy::new(SelectionIntentChannel::new);
 
+#[must_use]
 pub fn selection_intent_channel() -> &'static SelectionIntentChannel {
     &SELECTION_INTENT_CHANNEL
 }

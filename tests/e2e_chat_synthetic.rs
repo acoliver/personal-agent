@@ -1,7 +1,7 @@
 //! E2E test using the real runtime-selected keychain-backed profile.
 //!
 //! This test hits the actual API - run with:
-//!   cargo test --test e2e_chat_synthetic -- --ignored --nocapture
+//!   cargo test --test `e2e_chat_synthetic` -- --ignored --nocapture
 //!
 //! Requires:
 //! - ~/Library/Application Support/PersonalAgent/profiles/default.json
@@ -18,8 +18,8 @@ fn load_runtime_default_profile() -> ModelProfile {
 
     let default_content = std::fs::read_to_string(&default_path)
         .expect("Failed to read runtime profiles/default.json");
-    let default_profile_id: String =
-        serde_json::from_str(&default_content).expect("Failed to parse runtime profiles/default.json");
+    let default_profile_id: String = serde_json::from_str(&default_content)
+        .expect("Failed to parse runtime profiles/default.json");
 
     let profile_path = profiles_dir.join(format!("{default_profile_id}.json"));
     let content = std::fs::read_to_string(&profile_path)
@@ -29,7 +29,7 @@ fn load_runtime_default_profile() -> ModelProfile {
 }
 
 #[tokio::test]
-#[ignore] // Run manually: cargo test --test e2e_chat_synthetic -- --ignored --nocapture
+#[ignore = "Run manually: cargo test --test e2e_chat_synthetic -- --ignored --nocapture"]
 async fn test_real_chat_with_synthetic_api() {
     println!("=== E2E Test: Real Chat with Runtime Default Profile ===\n");
 
@@ -42,11 +42,14 @@ async fn test_real_chat_with_synthetic_api() {
 
     let AuthConfig::Keychain { ref label } = profile.auth;
     assert!(!label.is_empty(), "Keychain label must not be empty");
-    println!("Keychain label: {} [OK]", label);
+    println!("Keychain label: {label} [OK]");
 
     let key_exists = personal_agent::services::secure_store::api_keys::exists(label)
         .expect("Keychain lookup should not fail");
-    assert!(key_exists, "Expected runtime profile keychain label to exist");
+    assert!(
+        key_exists,
+        "Expected runtime profile keychain label to exist"
+    );
 
     let client =
         LlmClient::from_profile(&profile).expect("Failed to create LlmClient from profile");
@@ -65,7 +68,7 @@ async fn test_real_chat_with_synthetic_api() {
         .request_stream_with_tools(&messages, &[], move |event| {
             events_clone.lock().unwrap().push(event.clone());
             if let personal_agent::StreamEvent::TextDelta(text) = event {
-                print!("{}", text);
+                print!("{text}");
                 std::io::Write::flush(&mut std::io::stdout()).ok();
             }
         })
@@ -75,11 +78,13 @@ async fn test_real_chat_with_synthetic_api() {
 
     // Verify we got a real response
     match result {
-        Ok(_) => {
-            let events = events.lock().unwrap();
-            for event in events.iter() {
-                if let personal_agent::StreamEvent::TextDelta(text) = event {
-                    response_text.push_str(text);
+        Ok(()) => {
+            {
+                let events = events.lock().unwrap();
+                for event in events.iter() {
+                    if let personal_agent::StreamEvent::TextDelta(text) = event {
+                        response_text.push_str(text);
+                    }
                 }
             }
 
@@ -88,7 +93,7 @@ async fn test_real_chat_with_synthetic_api() {
             println!("[OK] E2E test PASSED - Real LLM interaction works!");
         }
         Err(e) => {
-            panic!("E2E test FAILED: LLM request failed: {}", e);
+            panic!("E2E test FAILED: LLM request failed: {e}");
         }
     }
 }

@@ -1,18 +1,19 @@
 //! E2E test: Agent mode with MCP tool execution
 //!
 //! This test verifies that the Agent actually executes tools during streaming.
-//! It checks for ToolCallStarted and ToolCallCompleted events in the output.
+//! It checks for `ToolCallStarted` and `ToolCallCompleted` events in the output.
 //!
 //! Run with:
-//!   cargo test --test e2e_agent_tool_execution -- --ignored --nocapture
+//!   cargo test --test `e2e_agent_tool_execution` -- --ignored --nocapture
 //!
 //! Requires:
 //! - ~/.llxprt/profiles/synthetic.json (profile config)
-//! - ~/.synthetic_key (API key)
+//! - ~/.`synthetic_key` (API key)
 //! - An MCP server configured with search capability (e.g., Exa)
 //!   OR the test will gracefully skip tool verification if no MCPs configured
 
 use personal_agent::llm::AgentClientExt;
+use personal_agent::services::McpRegistryService;
 use personal_agent::{AuthConfig, LlmClient, ModelProfile, StreamEvent};
 
 /// Load synthetic profile from ~/.llxprt/profiles/synthetic.json
@@ -41,23 +42,24 @@ fn load_synthetic_profile() -> ModelProfile {
         .to_string();
 
     // Expand ~ to home directory
-    let keyfile_path = if keyfile_path.starts_with("~/") {
-        home.join(&keyfile_path[2..]).to_string_lossy().to_string()
-    } else {
-        keyfile_path
-    };
+    let keyfile_path = keyfile_path.strip_prefix("~/").map_or_else(
+        || keyfile_path.clone(),
+        |stripped| home.join(stripped).to_string_lossy().to_string(),
+    );
 
     ModelProfile::new(
         "Synthetic GLM".to_string(),
         provider,
         model,
         base_url,
-        AuthConfig::Keychain { label: keyfile_path },
+        AuthConfig::Keychain {
+            label: keyfile_path,
+        },
     )
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires synthetic profile and API key"]
 async fn test_agent_mode_basic() {
     println!("=== E2E Test: Agent Mode Basic ===\n");
 
@@ -85,7 +87,7 @@ async fn test_agent_mode_basic() {
     let result = client
         .run_agent_stream(&agent, &messages, |event| match &event {
             StreamEvent::TextDelta(text) => {
-                print!("{}", text);
+                print!("{text}");
                 std::io::Write::flush(&mut std::io::stdout()).ok();
                 response.push_str(text);
                 saw_text = true;
@@ -100,7 +102,7 @@ async fn test_agent_mode_basic() {
     println!("\n");
 
     match result {
-        Ok(_) => {
+        Ok(()) => {
             assert!(saw_text, "Should see TextDelta events");
             assert!(saw_done, "Should see Done event");
             assert!(!response.is_empty(), "Response should not be empty");
@@ -108,13 +110,13 @@ async fn test_agent_mode_basic() {
             println!("[OK] Response: {}", response.trim());
         }
         Err(e) => {
-            panic!("Agent stream failed: {}", e);
+            panic!("Agent stream failed: {e}");
         }
     }
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires synthetic profile and API key"]
 async fn test_agent_tool_events() {
     println!("=== E2E Test: Agent Tool Events ===\n");
 
@@ -127,7 +129,7 @@ async fn test_agent_tool_events() {
             println!("[OK] MCP service initialized");
         }
         Err(e) => {
-            println!("[SKIP] No MCPs configured: {}", e);
+            println!("[SKIP] No MCPs configured: {e}");
             println!("[SKIP] Tool event test skipped - configure MCPs and re-run");
             return;
         }
@@ -174,14 +176,14 @@ async fn test_agent_tool_events() {
     let result = client
         .run_agent_stream(&agent, &messages, |event| match &event {
             StreamEvent::TextDelta(text) => {
-                print!("{}", text);
+                print!("{text}");
                 std::io::Write::flush(&mut std::io::stdout()).ok();
             }
             StreamEvent::ToolCallStarted {
                 tool_name: name,
                 call_id,
             } => {
-                println!("\n[TOOL STARTED] {} ({})", name, call_id);
+                println!("\n[TOOL STARTED] {name} ({call_id})");
                 saw_tool_start = true;
                 tool_name = name.clone();
             }
@@ -191,10 +193,7 @@ async fn test_agent_tool_events() {
                 call_id,
                 ..
             } => {
-                println!(
-                    "[TOOL COMPLETED] {} success={} ({})",
-                    name, success, call_id
-                );
+                println!("[TOOL COMPLETED] {name} success={success} ({call_id})");
                 saw_tool_complete = true;
             }
             StreamEvent::Complete => {
@@ -207,10 +206,10 @@ async fn test_agent_tool_events() {
     println!("\n");
 
     match result {
-        Ok(_) => {
+        Ok(()) => {
             if saw_tool_start && saw_tool_complete {
                 println!("[OK] Tool events detected!");
-                println!("[OK] Tool '{}' was called and completed", tool_name);
+                println!("[OK] Tool '{tool_name}' was called and completed");
                 println!("[OK] Agent mode with tools WORKS!");
             } else if !saw_tool_start {
                 println!("[WARN] No tool was called - LLM may have answered directly");
@@ -218,13 +217,13 @@ async fn test_agent_tool_events() {
             }
         }
         Err(e) => {
-            panic!("Agent stream failed: {}", e);
+            panic!("Agent stream failed: {e}");
         }
     }
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires synthetic profile and API key"]
 async fn test_mcp_catalog_real() {
     println!("=== E2E Test: MCP Catalog Fetch ===\n");
 
@@ -233,12 +232,10 @@ async fn test_mcp_catalog_real() {
 
     println!("Fetching MCP catalog from Smithery...");
 
-    use personal_agent::services::McpRegistryService;
-
     match registry.refresh().await {
         Ok(()) => println!("[OK] Catalog refreshed"),
         Err(e) => {
-            println!("[WARN] Refresh failed: {}", e);
+            println!("[WARN] Refresh failed: {e}");
         }
     }
 

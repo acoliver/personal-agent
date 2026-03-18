@@ -22,16 +22,19 @@ impl IconButton {
         }
     }
 
-    pub fn active(mut self, active: bool) -> Self {
+    #[must_use]
+    pub const fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
     }
 
+    #[must_use]
     pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.tooltip = Some(tooltip.into());
         self
     }
 
+    #[must_use]
     pub fn on_click(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
         self.on_click = Some(Box::new(f));
         self

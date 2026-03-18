@@ -9,4 +9,5 @@ fn mcp_service_global_initializes_empty() {
     assert!(!guard.has_active_mcps());
     assert!(guard.get_tools().is_empty());
     assert!(guard.get_llm_tools().is_empty());
+    drop(guard);
 }

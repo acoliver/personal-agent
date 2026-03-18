@@ -26,10 +26,10 @@ fn create_config_with_profiles(dir: &TempDir, num_profiles: usize) -> Config {
         let profile = ModelProfile::new(
             format!("Profile {}", i + 1),
             "openai".to_string(),
-            format!("gpt-4-{}", i),
+            format!("gpt-4-{i}"),
             String::new(),
             AuthConfig::Keychain {
-                label: format!("key-{}", i),
+                label: format!("key-{i}"),
             },
         );
         config.profiles.push(profile);
@@ -52,11 +52,11 @@ fn create_config_with_mcps(dir: &TempDir, num_mcps: usize) -> Config {
             name: format!("MCP Tool {}", i + 1),
             enabled: true,
             source: McpSource::Manual {
-                url: format!("https://example.com/mcp/{}", i),
+                url: format!("https://example.com/mcp/{i}"),
             },
             package: McpPackage {
                 package_type: McpPackageType::Http,
-                identifier: format!("https://example.com/mcp/{}", i),
+                identifier: format!("https://example.com/mcp/{i}"),
                 runtime_hint: None,
             },
             transport: McpTransport::Http,

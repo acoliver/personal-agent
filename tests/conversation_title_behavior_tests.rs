@@ -29,15 +29,13 @@ fn new_conversation_has_readable_default_title() {
     assert_eq!(
         title.len(),
         17,
-        "Default title should be 17-char timestamp, got: {}",
-        title
+        "Default title should be 17-char timestamp, got: {title}"
     );
 
     // Title should be all digits (timestamp format)
     assert!(
         title.chars().all(|c| c.is_ascii_digit()),
-        "Default title should be numeric timestamp, got: {}",
-        title
+        "Default title should be numeric timestamp, got: {title}"
     );
 }
 
@@ -104,9 +102,7 @@ fn all_conversation_titles_available_for_selection() {
     for expected_title in &titles {
         assert!(
             loaded_titles.contains(&expected_title.to_string()),
-            "Expected title '{}' not found in {:?}",
-            expected_title,
-            loaded_titles
+            "Expected title '{expected_title}' not found in {loaded_titles:?}"
         );
     }
 }

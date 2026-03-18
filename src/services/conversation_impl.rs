@@ -14,9 +14,12 @@ pub struct ConversationServiceImpl {
 }
 
 impl ConversationServiceImpl {
+    /// # Errors
+    ///
+    /// Returns `ServiceError` if the conversation storage directory cannot be created.
     pub fn new(storage_dir: PathBuf) -> Result<Self, ServiceError> {
         fs::create_dir_all(&storage_dir).map_err(|e| {
-            ServiceError::Storage(format!("Failed to create storage directory: {}", e))
+            ServiceError::Storage(format!("Failed to create storage directory: {e}"))
         })?;
 
         Ok(Self {
@@ -26,18 +29,17 @@ impl ConversationServiceImpl {
     }
 
     fn get_conversation_path(&self, id: Uuid) -> PathBuf {
-        self.storage_dir.join(format!("{}.json", id))
+        self.storage_dir.join(format!("{id}.json"))
     }
 
     fn load_conversation(&self, id: Uuid) -> Result<Conversation, ServiceError> {
         let direct_path = self.get_conversation_path(id);
         if direct_path.exists() {
-            let content = fs::read_to_string(&direct_path).map_err(|e| {
-                ServiceError::NotFound(format!("Failed to read conversation: {}", e))
-            })?;
+            let content = fs::read_to_string(&direct_path)
+                .map_err(|e| ServiceError::NotFound(format!("Failed to read conversation: {e}")))?;
 
             let conversation: Conversation = serde_json::from_str(&content).map_err(|e| {
-                ServiceError::Serialization(format!("Failed to parse conversation JSON: {}", e))
+                ServiceError::Serialization(format!("Failed to parse conversation JSON: {e}"))
             })?;
 
             return Ok(conversation);
@@ -46,22 +48,20 @@ impl ConversationServiceImpl {
         // Compatibility path: older storage names files by timestamp (created_at),
         // while newer storage uses UUID filenames. Scan all conversation files and
         // match by in-file conversation.id so selection works across migrations.
-        let entries = fs::read_dir(&self.storage_dir).map_err(|e| {
-            ServiceError::Storage(format!("Failed to read storage directory: {}", e))
-        })?;
+        let entries = fs::read_dir(&self.storage_dir)
+            .map_err(|e| ServiceError::Storage(format!("Failed to read storage directory: {e}")))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                ServiceError::Storage(format!("Failed to read directory entry: {}", e))
+                ServiceError::Storage(format!("Failed to read directory entry: {e}"))
             })?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
 
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(_) => continue,
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
             };
             let conversation: Conversation = match serde_json::from_str(&content) {
                 Ok(conversation) => conversation,
@@ -74,21 +74,19 @@ impl ConversationServiceImpl {
         }
 
         Err(ServiceError::NotFound(format!(
-            "Failed to read conversation: Conversation not found: {}",
-            id
+            "Failed to read conversation: Conversation not found: {id}"
         )))
     }
 
     fn save_conversation(&self, conversation: &Conversation) -> Result<(), ServiceError> {
         // Remove any pre-migration timestamp-named file for this same conversation id
         // so we converge to UUID filenames and avoid stale duplicates.
-        let entries = fs::read_dir(&self.storage_dir).map_err(|e| {
-            ServiceError::Storage(format!("Failed to read storage directory: {}", e))
-        })?;
+        let entries = fs::read_dir(&self.storage_dir)
+            .map_err(|e| ServiceError::Storage(format!("Failed to read storage directory: {e}")))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                ServiceError::Storage(format!("Failed to read directory entry: {}", e))
+                ServiceError::Storage(format!("Failed to read directory entry: {e}"))
             })?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
@@ -104,9 +102,8 @@ impl ConversationServiceImpl {
                 continue;
             }
 
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(_) => continue,
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
             };
             let parsed: Conversation = match serde_json::from_str(&content) {
                 Ok(conversation) => conversation,
@@ -119,11 +116,11 @@ impl ConversationServiceImpl {
 
         let path = self.get_conversation_path(conversation.id);
         let content = serde_json::to_string_pretty(&conversation).map_err(|e| {
-            ServiceError::Serialization(format!("Failed to serialize conversation: {}", e))
+            ServiceError::Serialization(format!("Failed to serialize conversation: {e}"))
         })?;
 
         fs::write(&path, content)
-            .map_err(|e| ServiceError::Storage(format!("Failed to write conversation: {}", e)))
+            .map_err(|e| ServiceError::Storage(format!("Failed to write conversation: {e}")))
     }
 }
 
@@ -155,13 +152,12 @@ impl ConversationService for ConversationServiceImpl {
     ) -> ServiceResult<Vec<Conversation>> {
         let mut conversations = Vec::new();
 
-        let entries = fs::read_dir(&self.storage_dir).map_err(|e| {
-            ServiceError::Storage(format!("Failed to read storage directory: {}", e))
-        })?;
+        let entries = fs::read_dir(&self.storage_dir)
+            .map_err(|e| ServiceError::Storage(format!("Failed to read storage directory: {e}")))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                ServiceError::Storage(format!("Failed to read directory entry: {}", e))
+                ServiceError::Storage(format!("Failed to read directory entry: {e}"))
             })?;
             let path = entry.path();
 
@@ -170,11 +166,11 @@ impl ConversationService for ConversationServiceImpl {
             }
 
             let content = fs::read_to_string(&path).map_err(|e| {
-                ServiceError::Storage(format!("Failed to read conversation file: {}", e))
+                ServiceError::Storage(format!("Failed to read conversation file: {e}"))
             })?;
 
             let conversation: Conversation = serde_json::from_str(&content).map_err(|e| {
-                ServiceError::Serialization(format!("Failed to parse conversation JSON: {}", e))
+                ServiceError::Serialization(format!("Failed to parse conversation JSON: {e}"))
             })?;
 
             conversations.push(conversation);
@@ -233,28 +229,26 @@ impl ConversationService for ConversationServiceImpl {
 
         if direct_path.exists() {
             fs::remove_file(&direct_path).map_err(|e| {
-                ServiceError::Storage(format!("Failed to delete conversation: {}", e))
+                ServiceError::Storage(format!("Failed to delete conversation: {e}"))
             })?;
             return Ok(());
         }
 
         // Compatibility path for timestamp-named files.
-        let entries = fs::read_dir(&self.storage_dir).map_err(|e| {
-            ServiceError::Storage(format!("Failed to read storage directory: {}", e))
-        })?;
+        let entries = fs::read_dir(&self.storage_dir)
+            .map_err(|e| ServiceError::Storage(format!("Failed to read storage directory: {e}")))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                ServiceError::Storage(format!("Failed to read directory entry: {}", e))
+                ServiceError::Storage(format!("Failed to read directory entry: {e}"))
             })?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
 
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(_) => continue,
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
             };
             let conversation: Conversation = match serde_json::from_str(&content) {
                 Ok(conversation) => conversation,
@@ -263,26 +257,24 @@ impl ConversationService for ConversationServiceImpl {
 
             if conversation.id == id {
                 fs::remove_file(&path).map_err(|e| {
-                    ServiceError::Storage(format!("Failed to delete conversation: {}", e))
+                    ServiceError::Storage(format!("Failed to delete conversation: {e}"))
                 })?;
                 return Ok(());
             }
         }
 
         Err(ServiceError::NotFound(format!(
-            "Conversation not found: {}",
-            id
+            "Conversation not found: {id}"
         )))
     }
 
     async fn set_active(&self, id: Uuid) -> ServiceResult<()> {
         self.load_conversation(id)?;
 
-        let mut active = self
+        *self
             .active_id
             .lock()
-            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {}", e)))?;
-        *active = Some(id);
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = Some(id);
         Ok(())
     }
 
@@ -290,7 +282,7 @@ impl ConversationService for ConversationServiceImpl {
         let active = self
             .active_id
             .lock()
-            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {}", e)))?;
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))?;
         Ok(*active)
     }
 
@@ -327,7 +319,10 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn write_timestamp_named_conversation(storage_dir: &PathBuf, conversation: &Conversation) {
+    fn write_timestamp_named_conversation(
+        storage_dir: &std::path::Path,
+        conversation: &Conversation,
+    ) {
         let filename = format!("{}.json", conversation.created_at.format("%Y%m%d%H%M%S%3f"));
         let path = storage_dir.join(filename);
         let content = serde_json::to_string_pretty(conversation).unwrap();
@@ -348,7 +343,7 @@ mod tests {
         let loaded = service.load(id).await.unwrap();
         assert_eq!(loaded.id, id);
 
-        let direct_uuid_file = service.storage_dir.join(format!("{}.json", id));
+        let direct_uuid_file = service.storage_dir.join(format!("{id}.json"));
         assert!(
             !direct_uuid_file.exists(),
             "test precondition: only timestamp file should exist before migration save"
@@ -369,12 +364,12 @@ mod tests {
         conversation.set_title("Migrated".to_string());
         service.save_conversation(&conversation).unwrap();
 
-        let uuid_file = service.storage_dir.join(format!("{}.json", id));
+        let uuid_file = service.storage_dir.join(format!("{id}.json"));
         assert!(uuid_file.exists(), "uuid-named file should be written");
 
         let files = fs::read_dir(&service.storage_dir)
             .unwrap()
-            .filter_map(|entry| entry.ok())
+            .filter_map(std::result::Result::ok)
             .map(|entry| entry.path())
             .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
             .collect::<Vec<_>>();
@@ -401,7 +396,7 @@ mod tests {
 
         let remaining = fs::read_dir(&service.storage_dir)
             .unwrap()
-            .filter_map(|entry| entry.ok())
+            .filter_map(std::result::Result::ok)
             .map(|entry| entry.path())
             .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
             .count();

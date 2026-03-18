@@ -1,13 +1,13 @@
 //! Behavioral tests for conversation popup/selector
 //!
 //! The popup should show ALL saved conversations so the user can switch between them.
-//! Currently populate_title_popup() only shows the current title, which is incorrect.
+//! Currently `populate_title_popup()` only shows the current title, which is incorrect.
 
 use personal_agent::{Conversation, ConversationStorage};
 use tempfile::TempDir;
 use uuid::Uuid;
 
-/// Helper to simulate what populate_title_popup SHOULD return
+/// Helper to simulate what `populate_title_popup` SHOULD return
 /// This is the expected behavior - all conversation titles
 fn get_all_conversation_titles(storage: &ConversationStorage) -> Vec<String> {
     storage

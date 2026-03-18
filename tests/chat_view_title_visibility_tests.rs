@@ -3,6 +3,8 @@
 //! These tests verify the expected visibility states of the title popup
 //! and title edit field in different scenarios.
 
+#![allow(clippy::assertions_on_constants)]
+
 /// The title edit field should be hidden by default (on app start)
 /// Only the popup should be visible for selecting conversations
 #[test]

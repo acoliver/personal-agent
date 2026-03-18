@@ -46,7 +46,7 @@ fn replay_payload_preserves_thinking_and_timestamp_fidelity() {
     );
     assert!(
         presenter_source.contains("thinking_content: message.thinking_content")
-            && presenter_source.contains("timestamp: Some(message.timestamp.timestamp_millis() as u64)"),
+            && presenter_source.contains("timestamp: Some(message.timestamp.timestamp_millis()"),
         "ChatPresenter replay should include persisted thinking content and timestamps in the bulk transcript payload"
     );
     assert!(

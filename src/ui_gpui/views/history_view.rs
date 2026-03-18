@@ -19,7 +19,7 @@ use crate::ui_gpui::theme::Theme;
 
 /// Represents a conversation in the history list
 /// @plan PLAN-20250130-GPUIREDUX.P05
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConversationItem {
     pub id: Uuid,
     pub title: String,
@@ -39,17 +39,20 @@ impl ConversationItem {
         }
     }
 
+    #[must_use]
     pub fn with_date(mut self, date: impl Into<String>) -> Self {
         self.date_display = date.into();
         self
     }
 
-    pub fn with_message_count(mut self, count: usize) -> Self {
+    #[must_use]
+    pub const fn with_message_count(mut self, count: usize) -> Self {
         self.message_count = count;
         self
     }
 
-    pub fn with_selected(mut self, is_selected: bool) -> Self {
+    #[must_use]
+    pub const fn with_selected(mut self, is_selected: bool) -> Self {
         self.is_selected = is_selected;
         self
     }
@@ -64,16 +67,22 @@ pub struct HistoryState {
 }
 
 impl HistoryState {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_conversations(mut self, conversations: Vec<ConversationItem>) -> Self {
         self.conversations = conversations;
         self
     }
 
-    pub fn with_selected_conversation_id(mut self, selected_conversation_id: Option<Uuid>) -> Self {
+    #[must_use]
+    pub const fn with_selected_conversation_id(
+        mut self,
+        selected_conversation_id: Option<Uuid>,
+    ) -> Self {
         self.selected_conversation_id = selected_conversation_id;
         self
     }
@@ -110,12 +119,12 @@ impl HistoryView {
     /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:022-035
     pub fn apply_store_snapshot(
         &mut self,
-        snapshot: HistoryStoreSnapshot,
+        snapshot: &HistoryStoreSnapshot,
         cx: &mut gpui::Context<Self>,
     ) {
         self.state = HistoryState::new()
             .with_selected_conversation_id(snapshot.selected_conversation_id)
-            .with_conversations(Self::items_from_snapshot(&snapshot));
+            .with_conversations(Self::items_from_snapshot(snapshot));
         cx.notify();
     }
 
@@ -124,13 +133,14 @@ impl HistoryView {
         self.state.conversations = conversations;
     }
 
+    #[must_use]
     pub fn conversations(&self) -> &[ConversationItem] {
         &self.state.conversations
     }
 
-    /// Emit a UserEvent through the bridge
+    /// Emit a `UserEvent` through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P05
-    fn emit(&self, event: UserEvent) {
+    fn emit(&self, event: &UserEvent) {
         if let Some(bridge) = &self.bridge {
             if !bridge.emit(event.clone()) {
                 tracing::error!("Failed to emit event {:?}", event);
@@ -181,7 +191,7 @@ impl HistoryView {
         }
     }
 
-    /// Handle ViewCommand from presenter
+    /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P05
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
@@ -232,17 +242,14 @@ impl HistoryView {
             ViewCommand::ConversationDeleted { id } => {
                 self.state.conversations.retain(|c| c.id != id);
                 if self.state.selected_conversation_id == Some(id) {
-                    self.state.selected_conversation_id = self
-                        .state
-                        .conversations
-                        .first()
-                        .map(|c| c.id);
+                    self.state.selected_conversation_id =
+                        self.state.conversations.first().map(|c| c.id);
                     self.refresh_selection_flags();
                 }
                 cx.notify();
             }
             ViewCommand::ConversationCleared => {
-                self.emit(UserEvent::RefreshHistory);
+                self.emit(&UserEvent::RefreshHistory);
                 cx.notify();
             }
             ViewCommand::ConversationRenamed { id, new_title } => {
@@ -259,7 +266,7 @@ impl HistoryView {
 
     /// Render the top bar with back button and title
     /// @plan PLAN-20250130-GPUIREDUX.P05
-    fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("history-top-bar")
             .h(px(44.0))
@@ -304,8 +311,8 @@ impl HistoryView {
 
     /// Render a single conversation card
     /// @plan PLAN-20250130-GPUIREDUX.P05
+    #[allow(clippy::too_many_lines)]
     fn render_conversation_card(
-        &self,
         conv: &ConversationItem,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::AnyElement {
@@ -320,13 +327,13 @@ impl HistoryView {
         let msg_text = if msg_count == 1 {
             "1 message".to_string()
         } else {
-            format!("{} messages", msg_count)
+            format!("{msg_count} messages")
         };
 
         let is_selected = conv.is_selected;
 
         let mut card = div()
-            .id(gpui::SharedString::from(format!("conv-{}", conv_id)))
+            .id(gpui::SharedString::from(format!("conv-{conv_id}")))
             .w_full()
             .p(px(12.0))
             .rounded(px(8.0))
@@ -367,7 +374,7 @@ impl HistoryView {
             div()
                 .text_size(px(11.0))
                 .text_color(subtitle_color)
-                .child(format!("{} • {}", date, msg_text)),
+                .child(format!("{date} • {msg_text}")),
         )
         .child(
             div()
@@ -377,7 +384,7 @@ impl HistoryView {
                 .pt(px(4.0))
                 .child(
                     div()
-                        .id(gpui::SharedString::from(format!("load-{}", conv_id)))
+                        .id(gpui::SharedString::from(format!("load-{conv_id}")))
                         .px(px(12.0))
                         .py(px(6.0))
                         .rounded(px(6.0))
@@ -400,7 +407,7 @@ impl HistoryView {
                 )
                 .child(
                     div()
-                        .id(gpui::SharedString::from(format!("delete-{}", conv_id)))
+                        .id(gpui::SharedString::from(format!("delete-{conv_id}")))
                         .px(px(12.0))
                         .py(px(6.0))
                         .rounded(px(6.0))
@@ -414,7 +421,7 @@ impl HistoryView {
                             MouseButton::Left,
                             cx.listener(move |this, _, _window, _cx| {
                                 tracing::info!("Delete clicked for conversation: {}", conv_id);
-                                this.emit(UserEvent::DeleteConversation { id: conv_id });
+                                this.emit(&UserEvent::DeleteConversation { id: conv_id });
                             }),
                         ),
                 ),
@@ -441,7 +448,7 @@ impl gpui::Render for HistoryView {
             .bg(Theme::bg_dark())
             .flex()
             .flex_col()
-            .child(self.render_top_bar(cx))
+            .child(Self::render_top_bar(cx))
             .child(
                 div()
                     .id("history-scroll")
@@ -449,17 +456,12 @@ impl gpui::Render for HistoryView {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .child(
-                        div()
-                            .p(px(12.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.0))
-                            .children(
-                                self.state
-                                    .conversations
-                                    .iter()
-                                    .map(|conv| self.render_conversation_card(conv, cx)),
-                            ),
+                        div().p(px(12.0)).flex().flex_col().gap(px(8.0)).children(
+                            self.state
+                                .conversations
+                                .iter()
+                                .map(|conv| Self::render_conversation_card(conv, cx)),
+                        ),
                     ),
             )
     }

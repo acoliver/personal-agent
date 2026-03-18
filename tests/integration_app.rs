@@ -1,22 +1,23 @@
-//! Integration tests for App and AppContext
+//! Integration tests for App and `AppContext`
 //!
 //! Tests the full application bootstrap and initialization.
 //!
 //! @plan PLAN-20250125-REFACTOR.P13
 
+use personal_agent::events::types::{ChatEvent, SystemEvent};
 use personal_agent::events::{emit, subscribe};
 use personal_agent::{App, AppEvent};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 
-/// Test: Initialize AppContext and verify services are accessible
+/// Test: Initialize `AppContext` and verify services are accessible
 ///
 /// GIVEN: A valid base directory
-/// WHEN: App::new() is called
-/// THEN: AppContext is returned
+/// WHEN: `App::new()` is called
+/// THEN: `AppContext` is returned
 /// AND: All services are accessible
-/// AND: EventBus is initialized
+/// AND: `EventBus` is initialized
 ///
 /// @plan PLAN-20250125-REFACTOR.P13
 #[tokio::test]
@@ -98,7 +99,7 @@ async fn test_event_emission_and_reception() {
 
 /// Test: Service registry provides correct service types
 ///
-/// GIVEN: An initialized AppContext
+/// GIVEN: An initialized `AppContext`
 /// WHEN: Services are accessed through the registry
 /// THEN: Each service is the correct type
 ///
@@ -190,7 +191,6 @@ async fn test_multiple_events_in_order() {
     let mut rx = context.event_bus().subscribe();
 
     // Create test events
-    use personal_agent::events::types::{ChatEvent, SystemEvent};
     let events = vec![
         AppEvent::System(SystemEvent::AppLaunched),
         AppEvent::System(SystemEvent::AppBecameActive),
@@ -223,8 +223,8 @@ async fn test_multiple_events_in_order() {
 /// Test: Global emit and subscribe functions work
 ///
 /// GIVEN: A running App instance
-/// WHEN: Using global emit() function
-/// THEN: Global subscribe() receives the event
+/// WHEN: Using global `emit()` function
+/// THEN: Global `subscribe()` receives the event
 ///
 /// @plan PLAN-20250125-REFACTOR.P13
 #[tokio::test]
@@ -255,8 +255,8 @@ async fn test_global_emit_subscribe() {
 
 /// Test: Service registry is properly cloned
 ///
-/// GIVEN: An AppContext with service registry
-/// WHEN: ServiceRegistry is cloned
+/// GIVEN: An `AppContext` with service registry
+/// WHEN: `ServiceRegistry` is cloned
 /// THEN: Cloned registry provides same service instances
 ///
 /// @plan PLAN-20250125-REFACTOR.P13

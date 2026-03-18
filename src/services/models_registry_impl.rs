@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 const REGISTRY_URL: &str = "https://models.dev/api.json";
 const CACHE_EXPIRY_HOURS: i64 = 24;
 
-/// HTTP cache implementation of ModelsRegistryService
+/// HTTP cache implementation of `ModelsRegistryService`
 pub struct ModelsRegistryServiceImpl {
     cache: RegistryCache,
     cached_registry: Arc<RwLock<Option<ModelRegistry>>>,
@@ -17,7 +17,7 @@ pub struct ModelsRegistryServiceImpl {
 }
 
 impl ModelsRegistryServiceImpl {
-    /// Create a new ModelsRegistryServiceImpl with default cache path
+    /// Create a new `ModelsRegistryServiceImpl` with default cache path
     ///
     /// # Errors
     ///
@@ -29,7 +29,7 @@ impl ModelsRegistryServiceImpl {
         Ok(Self::with_cache_path(cache_path))
     }
 
-    /// Create a new ModelsRegistryServiceImpl with a specific cache path
+    /// Create a new `ModelsRegistryServiceImpl` with a specific cache path
     #[must_use]
     pub fn with_cache_path(cache_path: PathBuf) -> Self {
         Self {
@@ -117,12 +117,19 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
             }
         }
 
-        let registry = self.cached_registry.read().await;
-        let registry = registry.as_ref().ok_or_else(|| {
-            ServiceError::Internal("No cached data available. Call refresh() first.".to_string())
-        })?;
+        let registry = self
+            .cached_registry
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                ServiceError::Internal(
+                    "No cached data available. Call refresh() first.".to_string(),
+                )
+            })?;
 
-        Ok(registry.get_model(provider, model).map(|m| m.clone()))
+        Ok(registry.get_model(provider, model).cloned())
     }
 
     /// Get all models for a specific provider
@@ -134,10 +141,17 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
             }
         }
 
-        let registry = self.cached_registry.read().await;
-        let registry = registry.as_ref().ok_or_else(|| {
-            ServiceError::Internal("No cached data available. Call refresh() first.".to_string())
-        })?;
+        let registry = self
+            .cached_registry
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                ServiceError::Internal(
+                    "No cached data available. Call refresh() first.".to_string(),
+                )
+            })?;
 
         Ok(registry
             .get_models_for_provider(provider)
@@ -163,10 +177,17 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
             }
         }
 
-        let registry = self.cached_registry.read().await;
-        let registry = registry.as_ref().ok_or_else(|| {
-            ServiceError::Internal("No cached data available. Call refresh() first.".to_string())
-        })?;
+        let registry = self
+            .cached_registry
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                ServiceError::Internal(
+                    "No cached data available. Call refresh() first.".to_string(),
+                )
+            })?;
 
         Ok(registry
             .get_provider(provider)
@@ -182,10 +203,17 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
             }
         }
 
-        let registry = self.cached_registry.read().await;
-        let registry = registry.as_ref().ok_or_else(|| {
-            ServiceError::Internal("No cached data available. Call refresh() first.".to_string())
-        })?;
+        let registry = self
+            .cached_registry
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                ServiceError::Internal(
+                    "No cached data available. Call refresh() first.".to_string(),
+                )
+            })?;
 
         Ok(registry.get_provider_ids())
     }
@@ -199,10 +227,17 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
             }
         }
 
-        let registry = self.cached_registry.read().await;
-        let registry = registry.as_ref().ok_or_else(|| {
-            ServiceError::Internal("No cached data available. Call refresh() first.".to_string())
-        })?;
+        let registry = self
+            .cached_registry
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                ServiceError::Internal(
+                    "No cached data available. Call refresh() first.".to_string(),
+                )
+            })?;
 
         let mut all_models = Vec::new();
         for (provider_id, provider) in &registry.providers {
@@ -228,10 +263,17 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
             }
         }
 
-        let registry = self.cached_registry.read().await;
-        let registry = registry.as_ref().ok_or_else(|| {
-            ServiceError::Internal("No cached data available. Call refresh() first.".to_string())
-        })?;
+        let registry = self
+            .cached_registry
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                ServiceError::Internal(
+                    "No cached data available. Call refresh() first.".to_string(),
+                )
+            })?;
 
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
@@ -265,7 +307,7 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
             .metadata()
             .map_err(|e| ServiceError::Io(format!("Failed to read cache metadata: {e}")))?;
 
-        Ok(metadata.map_or(true, |m| m.is_expired))
+        Ok(metadata.is_none_or(|m| m.is_expired))
     }
 
     /// Get the last refresh timestamp
@@ -277,13 +319,11 @@ impl ModelsRegistryService for ModelsRegistryServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::{Modalities, ModelRegistry};
+    use crate::registry::{Modalities, ModelRegistry, Provider};
     use tempfile::TempDir;
 
     fn create_test_registry() -> ModelRegistry {
         let mut providers = std::collections::HashMap::new();
-
-        use crate::registry::Provider;
         let provider = Provider {
             id: "openai".to_string(),
             name: "OpenAI".to_string(),
@@ -432,16 +472,5 @@ mod tests {
 
         let api_url = service.get_provider_api_url("openai").await.unwrap();
         assert_eq!(api_url.as_deref(), Some("https://api.openai.com/v1"));
-    }
-
-    async fn test_cache_miss_without_refresh() {
-        let temp_dir = TempDir::new().unwrap();
-        let cache_path = temp_dir.path().join("test-cache.json");
-
-        let service = ModelsRegistryServiceImpl::with_cache_path(cache_path);
-
-        // Try to list providers without calling refresh first
-        let result = service.list_providers().await;
-        assert!(result.is_err());
     }
 }

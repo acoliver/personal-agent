@@ -11,13 +11,18 @@
 //! Bug 6: History view is empty (never receives conversation list)
 //! Bug 7: Profile editor model field should be editable as text override
 
+#![allow(
+    clippy::or_fun_call,
+    clippy::significant_drop_tightening,
+    clippy::field_reassign_with_default
+)]
+
 use std::sync::Arc;
 use uuid::Uuid;
 
-use personal_agent::models::{AuthConfig, Conversation, Message, ModelParameters, ModelProfile};
+use personal_agent::models::{Conversation, Message};
 use personal_agent::presentation::view_command::ConversationSummary;
 use personal_agent::services::conversation::ConversationService;
-use personal_agent::services::profile::ProfileService;
 use personal_agent::services::{ServiceError, ServiceResult};
 
 use async_trait::async_trait;
@@ -58,7 +63,7 @@ impl ConversationService for InMemoryConversationService {
             .iter()
             .find(|c| c.id == id)
             .cloned()
-            .ok_or(ServiceError::NotFound(format!("No conversation {}", id)))
+            .ok_or(ServiceError::NotFound(format!("No conversation {id}")))
     }
 
     async fn list(
@@ -162,85 +167,6 @@ impl ConversationService for InMemoryConversationService {
             conv.profile_id = pid;
         }
         Ok(conv.clone())
-    }
-}
-
-fn make_test_profile(id: Uuid) -> ModelProfile {
-    ModelProfile {
-        id,
-        name: "test-profile".to_string(),
-        provider_id: "anthropic".to_string(),
-        model_id: "claude-sonnet-4-20250514".to_string(),
-        base_url: "https://api.anthropic.com/v1".to_string(),
-        auth: AuthConfig::Keychain {
-            label: "test-key".to_string(),
-        },
-        parameters: ModelParameters::default(),
-        system_prompt: "You are a helpful assistant.".to_string(),
-    }
-}
-
-struct MockProfileService {
-    profile_id: Uuid,
-}
-
-impl MockProfileService {
-    fn new(id: Uuid) -> Self {
-        Self { profile_id: id }
-    }
-}
-
-#[async_trait]
-impl ProfileService for MockProfileService {
-    async fn list(&self) -> ServiceResult<Vec<ModelProfile>> {
-        Ok(vec![make_test_profile(self.profile_id)])
-    }
-
-    async fn get(&self, _id: Uuid) -> ServiceResult<ModelProfile> {
-        Ok(make_test_profile(self.profile_id))
-    }
-
-    async fn get_default(&self) -> ServiceResult<Option<ModelProfile>> {
-        Ok(Some(make_test_profile(self.profile_id)))
-    }
-
-    async fn set_default(&self, _id: Uuid) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn create(
-        &self,
-        _name: String,
-        _provider: String,
-        _model: String,
-        _base_url: Option<String>,
-        _auth: AuthConfig,
-        _params: ModelParameters,
-        _system_prompt: Option<String>,
-    ) -> ServiceResult<ModelProfile> {
-        Ok(make_test_profile(self.profile_id))
-    }
-
-    async fn update(
-        &self,
-        _id: Uuid,
-        _name: Option<String>,
-        _provider: Option<String>,
-        _model: Option<String>,
-        _base_url: Option<String>,
-        _auth: Option<AuthConfig>,
-        _params: Option<ModelParameters>,
-        _system_prompt: Option<String>,
-    ) -> ServiceResult<ModelProfile> {
-        Ok(make_test_profile(self.profile_id))
-    }
-
-    async fn delete(&self, _id: Uuid) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn test_connection(&self, _id: Uuid) -> ServiceResult<()> {
-        Ok(())
     }
 }
 
@@ -413,7 +339,7 @@ async fn bug4_conversation_preserves_full_history() {
     );
 }
 
-/// chat_impl adds the user message via add_user_message(), then loads
+/// `chat_impl` adds the user message via `add_user_message()`, then loads
 /// the conversation (which now includes it), then ALSO pushes a duplicate.
 #[tokio::test]
 async fn bug4_no_duplicate_user_message_after_add_and_load() {
@@ -439,9 +365,8 @@ async fn bug4_no_duplicate_user_message_after_add_and_load() {
 
     assert_eq!(
         hello_count, 1,
-        "BUG 4: Message appears {} times. chat_impl.rs pushes it again, \
-         so the LLM sees the user message twice.",
-        hello_count
+        "BUG 4: Message appears {hello_count} times. chat_impl.rs pushes it again, \
+         so the LLM sees the user message twice."
     );
 }
 
@@ -510,7 +435,7 @@ fn bug5_show_thinking_toggles() {
     assert!(!state.show_thinking);
 }
 
-/// FinalizeStream handler must attach thinking_content to the message.
+/// `FinalizeStream` handler must attach `thinking_content` to the message.
 #[test]
 fn bug5_finalize_stream_attaches_thinking_to_message() {
     let source = include_str!("../src/ui_gpui/views/chat_view.rs");
@@ -580,14 +505,10 @@ fn bug7_profile_editor_model_is_text_editable() {
     let has_model_active_field = source.contains("ActiveField::Model")
         || source.contains("active_field = Some(ActiveField::Model)");
 
-    let has_model_text_field = {
-        if let Some(start) = source.find("fn render_model_section") {
-            let section = &source[start..std::cmp::min(start + 800, source.len())];
-            section.contains("render_text_field")
-        } else {
-            false
-        }
-    };
+    let has_model_text_field = source.find("fn render_model_section").is_some_and(|start| {
+        let section = &source[start..std::cmp::min(start + 800, source.len())];
+        section.contains("render_text_field")
+    });
 
     assert!(
         has_model_active_field || has_model_text_field,

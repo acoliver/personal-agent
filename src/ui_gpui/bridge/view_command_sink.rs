@@ -1,4 +1,4 @@
-//! ViewCommandSink - wrapper for presenters to send ViewCommands
+//! `ViewCommandSink` - wrapper for presenters to send `ViewCommands`
 //!
 //! @plan PLAN-20250128-GPUI.P05
 //! @requirement REQ-GPUI-006.4
@@ -11,14 +11,14 @@ use flume::{Sender, TrySendError};
 ///
 /// @plan PLAN-20250128-GPUI.P05
 pub trait GpuiNotifier: Send + Sync + Clone {
-    /// Wake the GPUI thread to process ViewCommands
+    /// Wake the GPUI thread to process `ViewCommands`
     fn notify(&self);
 }
 
-/// Sink for presenters to send ViewCommands to GPUI
+/// Sink for presenters to send `ViewCommands` to GPUI
 ///
 /// Wraps a flume sender with a GPUI notifier.
-/// After sending a command, calls notify() to wake GPUI.
+/// After sending a command, calls `notify()` to wake GPUI.
 ///
 /// @plan PLAN-20250128-GPUI.P05
 /// @requirement REQ-GPUI-006.4
@@ -31,14 +31,14 @@ impl<N: GpuiNotifier> ViewCommandSink<N> {
     /// Create a new sink with the given sender and notifier
     ///
     /// @plan PLAN-20250128-GPUI.P05
-    pub fn new(tx: Sender<ViewCommand>, notifier: N) -> Self {
+    pub const fn new(tx: Sender<ViewCommand>, notifier: N) -> Self {
         Self { tx, notifier }
     }
 
-    /// Send a ViewCommand and wake GPUI (non-blocking)
+    /// Send a `ViewCommand` and wake GPUI (non-blocking)
     ///
     /// Uses `try_send` to avoid blocking the tokio task.
-    /// Always calls notify() to ensure GPUI wakes up.
+    /// Always calls `notify()` to ensure GPUI wakes up.
     ///
     /// @plan PLAN-20250128-GPUI.P05
     /// @requirement REQ-GPUI-006.5

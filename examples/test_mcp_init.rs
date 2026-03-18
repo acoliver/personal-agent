@@ -28,8 +28,8 @@ async fn main() {
 
     for (id, result) in results {
         match result {
-            Ok(()) => println!("  Started: {}", id),
-            Err(e) => println!("  Failed {}: {}", id, e),
+            Ok(()) => println!("  Started: {id}"),
+            Err(e) => println!("  Failed {id}: {e}"),
         }
     }
 

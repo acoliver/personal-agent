@@ -1,6 +1,6 @@
-//! ViewCommand enum - commands from presenters to UI layer
+//! `ViewCommand` enum - commands from presenters to UI layer
 //!
-//! ViewCommands are emitted by presenters to instruct the UI layer to update.
+//! `ViewCommands` are emitted by presenters to instruct the UI layer to update.
 //! This decouples presenters from any specific UI framework.
 //!
 //! @plan PLAN-20250125-REFACTOR.P10
@@ -141,7 +141,7 @@ pub enum ViewCommand {
     /// Profile was deleted
     ProfileDeleted { id: Uuid },
 
-    /// Full list of stored API key entries (response to RefreshApiKeys).
+    /// Full list of stored API key entries (response to `RefreshApiKeys`).
     ApiKeysListed { keys: Vec<ApiKeyInfo> },
 
     /// An API key was stored successfully.
@@ -269,7 +269,7 @@ pub enum MessageRole {
     Tool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationMessagePayload {
     pub role: MessageRole,
     pub content: String,
@@ -280,7 +280,7 @@ pub struct ConversationMessagePayload {
 /// Conversation summary for list display
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationSummary {
     pub id: Uuid,
     pub title: String,
@@ -289,7 +289,7 @@ pub struct ConversationSummary {
 }
 
 /// Summary of a stored API key for the key manager UI.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiKeyInfo {
     /// The keychain label (e.g. "anthropic").
     pub label: String,
@@ -302,7 +302,7 @@ pub struct ApiKeyInfo {
 /// Profile summary for settings display
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileSummary {
     pub id: Uuid,
     pub name: String,
@@ -314,7 +314,7 @@ pub struct ProfileSummary {
 /// MCP tool information
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInfo {
     pub name: String,
     pub description: String,
@@ -322,7 +322,7 @@ pub struct ToolInfo {
 }
 
 /// MCP registry search result information for MCP add flow
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpRegistryResult {
     pub id: String,
     pub name: String,
@@ -348,7 +348,7 @@ pub enum McpStatus {
 /// Model information for selector
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub provider_id: String,
     pub model_id: String,

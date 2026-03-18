@@ -1,6 +1,6 @@
-//! HistoryPresenter - handles conversation history UI events
+//! `HistoryPresenter` - handles conversation history UI events
 //!
-//! HistoryPresenter subscribes to conversation history events,
+//! `HistoryPresenter` subscribes to conversation history events,
 //! coordinates with conversation service, and emits view commands.
 //!
 //! @plan PLAN-20250125-REFACTOR.P10
@@ -18,7 +18,7 @@ use crate::events::{
 };
 use crate::services::ConversationService;
 
-/// HistoryPresenter - handles conversation history UI events
+/// `HistoryPresenter` - handles conversation history UI events
 ///
 /// @plan PLAN-20250128-PRESENTERS.P02
 /// @requirement REQ-025.1
@@ -37,7 +37,7 @@ pub struct HistoryPresenter {
 }
 
 impl HistoryPresenter {
-    /// Create a new HistoryPresenter
+    /// Create a new `HistoryPresenter`
     ///
     /// @plan PLAN-20250128-PRESENTERS.P02
     /// @requirement REQ-025.1
@@ -55,6 +55,10 @@ impl HistoryPresenter {
     }
 
     /// Start the presenter event loop
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250128-PRESENTERS.P02
     /// @requirement REQ-025.1
@@ -80,7 +84,6 @@ impl HistoryPresenter {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("HistoryPresenter lagged: {} events missed", n);
-                        continue;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         tracing::info!("HistoryPresenter event stream closed");
@@ -96,6 +99,10 @@ impl HistoryPresenter {
 
     /// Stop the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    ///
     /// @plan PLAN-20250128-PRESENTERS.P02
     /// @requirement REQ-025.1
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
@@ -107,11 +114,12 @@ impl HistoryPresenter {
     /// Check if presenter is running
     ///
     /// @plan PLAN-20250128-PRESENTERS.P02
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Handle events from EventBus
+    /// Handle events from `EventBus`
     ///
     /// @plan PLAN-20250128-PRESENTERS.P02
     /// @requirement REQ-025.1
@@ -140,21 +148,16 @@ impl HistoryPresenter {
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: UserEvent,
     ) {
-        match event {
-            UserEvent::DeleteConversation { id } => {
-                tracing::info!(%id, "HistoryPresenter: deleting conversation");
-                match conversation_service.delete(id).await {
-                    Ok(()) => {
-                        let _ = view_tx.send(ViewCommand::ConversationDeleted { id }).await;
-                    }
-                    Err(e) => {
-                        tracing::error!(%id, error = %e, "Failed to delete conversation");
-                    }
+        if let UserEvent::DeleteConversation { id } = event {
+            tracing::info!(%id, "HistoryPresenter: deleting conversation");
+            match conversation_service.delete(id).await {
+                Ok(()) => {
+                    let _ = view_tx.send(ViewCommand::ConversationDeleted { id }).await;
+                }
+                Err(e) => {
+                    tracing::error!(%id, error = %e, "Failed to delete conversation");
                 }
             }
-            // Conversation selection is handled by ChatPresenter so that activation
-            // and message loading are emitted in a single ordered command stream.
-            _ => {}
         }
     }
 
@@ -211,56 +214,5 @@ impl Presenter for HistoryPresenter {
 
     fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-/// @plan PLAN-20250128-PRESENTERS.P02
-/// @requirement REQ-025.1
-#[cfg(test)]
-mod tests {
-
-    /// Test handle select conversation
-    /// @plan PLAN-20250128-PRESENTERS.P02
-    /// @requirement REQ-025.1
-    #[tokio::test]
-    async fn test_handle_select_conversation() {
-        // Test implementation would go here
-        assert!(true);
-    }
-
-    /// Test handle conversation created event
-    /// @plan PLAN-20250128-PRESENTERS.P02
-    /// @requirement REQ-025.1
-    #[tokio::test]
-    async fn test_handle_conversation_created() {
-        // Test implementation would go here
-        assert!(true);
-    }
-
-    /// Test handle title updated event
-    /// @plan PLAN-20250128-PRESENTERS.P02
-    /// @requirement REQ-025.1
-    #[tokio::test]
-    async fn test_handle_title_updated() {
-        // Test implementation would go here
-        assert!(true);
-    }
-
-    /// Test handle conversation deleted event
-    /// @plan PLAN-20250128-PRESENTERS.P02
-    /// @requirement REQ-025.1
-    #[tokio::test]
-    async fn test_handle_conversation_deleted() {
-        // Test implementation would go here
-        assert!(true);
-    }
-
-    /// Test handle list refreshed event
-    /// @plan PLAN-20250128-PRESENTERS.P02
-    /// @requirement REQ-025.1
-    #[tokio::test]
-    async fn test_handle_list_refreshed() {
-        // Test implementation would go here
-        assert!(true);
     }
 }

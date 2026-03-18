@@ -1,6 +1,6 @@
-//! Profile Editor SaveProfile payload mapping tests
+//! Profile Editor `SaveProfile` payload mapping tests
 //!
-//! Ensures SaveProfile payload fields are mapped into ProfileService update/create
+//! Ensures `SaveProfile` payload fields are mapped into `ProfileService` update/create
 //! semantics so field edits persist through presenter boundaries.
 
 use std::sync::{Arc, Mutex};
@@ -124,12 +124,12 @@ impl ProfileService for RecordingProfileService {
                 parameters: parameters.clone(),
             });
 
-        if let Some(result) = self
+        let update_result = self
             .update_result
             .lock()
             .expect("update result lock poisoned")
-            .take()
-        {
+            .take();
+        if let Some(result) = update_result {
             return result;
         }
 
@@ -140,7 +140,7 @@ impl ProfileService for RecordingProfileService {
             model_id: model.unwrap_or_else(|| "gpt-4o".to_string()),
             base_url: "https://api.openai.com/v1".to_string(),
             auth: auth.unwrap_or(AuthConfig::Keychain {
-                label: "".to_string(),
+                label: String::new(),
             }),
             parameters: parameters.unwrap_or_default(),
             system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
@@ -226,8 +226,7 @@ async fn test_save_profile_payload_maps_fields_to_update_call() {
             cmd,
             personal_agent::presentation::ViewCommand::ProfileUpdated { .. }
         ),
-        "first command should be ProfileUpdated, got {:?}",
-        cmd
+        "first command should be ProfileUpdated, got {cmd:?}"
     );
 
     let update_calls = recording.update_calls();

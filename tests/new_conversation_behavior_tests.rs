@@ -46,7 +46,7 @@ fn new_conversation_saves_immediately() {
     assert!(found.is_some());
 }
 
-/// New conversation should appear in load_all after saving
+/// New conversation should appear in `load_all` after saving
 #[test]
 fn new_conversation_appears_in_load_all() {
     let (_temp_dir, storage) = create_test_storage();

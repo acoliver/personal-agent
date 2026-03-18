@@ -72,18 +72,15 @@ fn rename_appears_in_load_all() {
 
     assert!(
         titles.iter().any(|t| t == "First - Renamed"),
-        "Should have renamed title, got: {:?}",
-        titles
+        "Should have renamed title, got: {titles:?}"
     );
     assert!(
         titles.iter().any(|t| t == "Second"),
-        "Should have second title, got: {:?}",
-        titles
+        "Should have second title, got: {titles:?}"
     );
     assert!(
         !titles.iter().any(|t| t == "First"),
-        "Old title should be gone, got: {:?}",
-        titles
+        "Old title should be gone, got: {titles:?}"
     );
 }
 

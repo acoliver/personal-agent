@@ -10,22 +10,17 @@ fn test_mcp_config_saved_new_item_is_enabled_and_running() {
     let mut state = SettingsState::new();
 
     // Mirror SettingsView::handle_command MCP save branch for insertion path.
-    let name = Some("Fetch".to_string());
+    let name = "Fetch".to_string();
     state.selected_mcp_id = Some(id);
     if let Some(existing) = state.mcps.iter_mut().find(|m| m.id == id) {
-        if let Some(saved_name) = name {
-            existing.name = saved_name;
-        }
+        existing.name = name;
         existing.enabled = true;
         existing.status = McpStatus::Running;
     } else {
         state.mcps.push(
-            personal_agent::ui_gpui::views::settings_view::McpItem::new(
-                id,
-                name.unwrap_or_else(|| format!("MCP {}", id)),
-            )
-            .with_status(McpStatus::Running)
-            .with_enabled(true),
+            personal_agent::ui_gpui::views::settings_view::McpItem::new(id, name)
+                .with_status(McpStatus::Running)
+                .with_enabled(true),
         );
     }
 

@@ -1,6 +1,6 @@
-//! Global EventBus Singleton
+//! Global `EventBus` Singleton
 //!
-//! Provides global access to the EventBus using OnceLock.
+//! Provides global access to the `EventBus` using `OnceLock`.
 //!
 //! @plan PLAN-20250125-REFACTOR.P06
 //! @requirement REQ-021.4
@@ -10,7 +10,7 @@ use crate::events::{AppEvent, EventBus, EventBusError};
 use std::sync::OnceLock;
 use tokio::sync::broadcast;
 
-/// Global EventBus singleton
+/// Global `EventBus` singleton
 ///
 /// Lazily initialized on first access.
 ///
@@ -19,7 +19,7 @@ use tokio::sync::broadcast;
 /// @pseudocode event-bus.md lines 50-60
 static GLOBAL_BUS: OnceLock<EventBus> = OnceLock::new();
 
-/// Get or initialize the global EventBus
+/// Get or initialize the global `EventBus`
 ///
 /// Internal helper function.
 ///
@@ -30,10 +30,14 @@ fn get_or_init_event_bus() -> &'static EventBus {
     GLOBAL_BUS.get_or_init(|| EventBus::new(16))
 }
 
-/// Initialize the global EventBus
+/// Initialize the global `EventBus`
 ///
 /// Returns the existing instance if already initialized,
 /// otherwise creates a new one.
+///
+/// # Errors
+///
+/// Returns `EventBusError` if initialization becomes fallible in the future.
 ///
 /// @plan PLAN-20250125-REFACTOR.P06
 /// @requirement REQ-021.4
@@ -44,35 +48,38 @@ pub fn init_event_bus() -> Result<(), EventBusError> {
     Ok(())
 }
 
-/// Emit an event via the global EventBus
+/// Emit an event via the global `EventBus`
 ///
-/// Initializes the EventBus on first call if needed.
+/// Initializes the `EventBus` on first call if needed.
+///
+/// # Errors
+///
+/// Returns `EventBusError::NoSubscribers` when no subscribers are listening.
 ///
 /// @plan PLAN-20250125-REFACTOR.P06
 /// @pseudocode event-bus.md lines 65-69
 pub fn emit(event: AppEvent) -> Result<(), EventBusError> {
     let bus = get_or_init_event_bus();
-    match bus.publish(event) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e),
-    }
+    bus.publish(event).map(|_| ())
 }
 
-/// Subscribe to events via the global EventBus
+/// Subscribe to events via the global `EventBus`
 ///
-/// Initializes the EventBus on first call if needed.
+/// Initializes the `EventBus` on first call if needed.
 ///
 /// @plan PLAN-20250125-REFACTOR.P06
 /// @pseudocode event-bus.md lines 73-75
+#[must_use]
 pub fn subscribe() -> broadcast::Receiver<AppEvent> {
     let bus = get_or_init_event_bus();
     bus.subscribe()
 }
 
-/// Get a clone of the global EventBus for use in Arc
+/// Get a clone of the global `EventBus` for use in Arc
 ///
 /// This is used when you need to share the event bus across threads.
 /// The underlying broadcast channel is shared.
+#[must_use]
 pub fn get_event_bus_clone() -> EventBus {
     // Create a new EventBus that shares the same sender
     // We can't clone the static EventBus, so we subscribe to it

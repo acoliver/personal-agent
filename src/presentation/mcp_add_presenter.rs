@@ -1,6 +1,6 @@
-//! McpAddPresenter - handles MCP server addition UI
+//! `McpAddPresenter` - handles MCP server addition UI
 //!
-//! McpAddPresenter subscribes to MCP addition events,
+//! `McpAddPresenter` subscribes to MCP addition events,
 //! coordinates with MCP registry service, and emits view commands.
 //!
 //! @plan PLAN-20250125-REFACTOR.P10
@@ -16,12 +16,12 @@ use crate::events::{
 };
 use crate::services::McpRegistryService;
 
-/// McpAddPresenter - handles MCP server addition UI
+/// `McpAddPresenter` - handles MCP server addition UI
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
 /// @requirement REQ-025.1
 pub struct McpAddPresenter {
-    /// Event receiver from EventBus
+    /// Event receiver from `EventBus`
     rx: broadcast::Receiver<AppEvent>,
 
     /// Reference to MCP registry service
@@ -35,7 +35,7 @@ pub struct McpAddPresenter {
 }
 
 impl McpAddPresenter {
-    /// Create a new McpAddPresenter
+    /// Create a new `McpAddPresenter`
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub fn new(
@@ -52,10 +52,10 @@ impl McpAddPresenter {
         }
     }
 
-    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    /// Stub constructor using unified global `EventBus` (REQ-WIRE-006 unification path).
     ///
     /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
-    /// bus rather than a caller-supplied broadcast::Sender. Full wiring deferred to
+    /// bus rather than a caller-supplied `broadcast::Sender`. Full wiring deferred to
     /// later implementation phases.
     ///
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
@@ -64,7 +64,7 @@ impl McpAddPresenter {
     #[allow(dead_code)]
     pub fn new_with_event_bus(
         mcp_registry_service: Arc<dyn McpRegistryService>,
-        event_bus: Arc<EventBus>,
+        event_bus: &Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
         let rx = event_bus.sender().subscribe();
@@ -77,6 +77,10 @@ impl McpAddPresenter {
     }
 
     /// Start the presenter event loop
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn start(&mut self) -> Result<(), PresenterError> {
@@ -100,7 +104,6 @@ impl McpAddPresenter {
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("McpAddPresenter lagged: {} events missed", n);
-                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::info!("McpAddPresenter event stream closed");
@@ -116,6 +119,10 @@ impl McpAddPresenter {
 
     /// Stop the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
@@ -126,6 +133,7 @@ impl McpAddPresenter {
     /// Check if presenter is running
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -238,8 +246,8 @@ impl McpAddPresenter {
                 );
 
                 let source_name = source.name;
-                let (source_hint, requested_name) = source_name.split_once("::").map_or(
-                    ("official".to_string(), source_name.clone()),
+                let (source_hint, requested_name) = source_name.split_once("::").map_or_else(
+                    || ("official".to_string(), source_name.clone()),
                     |(source, name)| (source.to_string(), name.to_string()),
                 );
 
@@ -254,7 +262,7 @@ impl McpAddPresenter {
                     let configure_name = entry.display_name;
                     let package_name = entry.name;
                     let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
-                        id: format!("{}::{}", source_hint, package_name),
+                        id: format!("{source_hint}::{package_name}"),
                         name: configure_name,
                         package: package_name,
                         env_var_name,
@@ -268,7 +276,7 @@ impl McpAddPresenter {
                 } else {
                     let _ = view_tx.send(ViewCommand::ShowError {
                         title: "Selection Failed".to_string(),
-                        message: format!("MCP '{}' not found in registry", requested_name),
+                        message: format!("MCP '{requested_name}' not found in registry"),
                         severity: super::view_command::ErrorSeverity::Warning,
                     });
                 }
@@ -284,7 +292,7 @@ impl McpAddPresenter {
         }
     }
 
-    /// Handle McpAddNext: user advanced to next step in MCP add wizard
+    /// Handle `McpAddNext`: user advanced to next step in MCP add wizard
     ///
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
     /// @requirement REQ-WIRE-001

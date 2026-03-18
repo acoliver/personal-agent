@@ -1,7 +1,7 @@
 //! MCP Add View - Result Projection Regression Tests
 //!
 //! Validates that projected registry results retain source/transport metadata in the
-//! local McpAddView state, preventing source-context loss between search and selection.
+//! local `McpAddView` state, preventing source-context loss between search and selection.
 
 use personal_agent::ui_gpui::views::mcp_add_view::McpRegistry;
 
@@ -20,7 +20,7 @@ fn test_projected_search_results_preserve_source_args_and_env_metadata() {
         env: Some(vec![("FILESYSTEM_ROOT".to_string(), "/tmp".to_string())]),
     };
 
-    let mapped = vec![
+    let mapped = [
         personal_agent::ui_gpui::views::mcp_add_view::McpSearchResult::new(
             raw.id.clone(),
             raw.name.clone(),
@@ -59,16 +59,14 @@ fn test_projected_search_results_preserve_source_args_and_env_metadata() {
 fn test_draft_loaded_projection_uses_source_prefixed_id_to_set_registry_and_source() {
     let draft_id = "smithery::fetch".to_string();
 
-    let (source_hint, normalized_id) = draft_id
-        .split_once("::")
-        .map_or((None, draft_id.clone()), |(source, raw_id)| {
-            (Some(source.to_string()), raw_id.to_string())
-        });
+    let (source_hint, normalized_id) = draft_id.split_once("::").map_or_else(
+        || (None, draft_id.clone()),
+        |(source, raw_id)| (Some(source.to_string()), raw_id.to_string()),
+    );
 
     let registry = match source_hint.as_deref() {
         Some("smithery") => McpRegistry::Smithery,
         Some("official") => McpRegistry::Official,
-        Some("both") => McpRegistry::Both,
         _ => McpRegistry::Both,
     };
 
@@ -89,7 +87,7 @@ fn test_draft_loaded_projection_uses_source_prefixed_id_to_set_registry_and_sour
         "-y".to_string(),
         "@modelcontextprotocol/server-fetch".to_string(),
     ])
-    .with_env(Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]))
+    .with_env(Some(vec![("FETCH_API_KEY".to_string(), String::new())]))
     .with_source(inferred_source);
 
     assert_eq!(projected.id, "fetch");

@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::services::app_settings::AppSettingsService;
 use crate::services::{ServiceError, ServiceResult};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct AppSettingsStorage {
     #[serde(skip_serializing_if = "Option::is_none")]
     default_profile_id: Option<String>,
@@ -23,39 +23,30 @@ struct AppSettingsStorage {
     extra_settings: HashMap<String, String>,
 }
 
-impl Default for AppSettingsStorage {
-    fn default() -> Self {
-        Self {
-            default_profile_id: None,
-            current_conversation_id: None,
-            hotkey: None,
-            theme: None,
-            extra_settings: HashMap::new(),
-        }
-    }
-}
-
 pub struct AppSettingsServiceImpl {
     file_path: PathBuf,
     settings: Mutex<AppSettingsStorage>,
 }
 
 impl AppSettingsServiceImpl {
+    /// # Errors
+    ///
+    /// Returns `ServiceError` if the settings directory cannot be created,
+    /// the settings file cannot be read, or existing JSON cannot be parsed.
     pub fn new(file_path: PathBuf) -> Result<Self, ServiceError> {
         // Ensure parent directory exists
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                ServiceError::Storage(format!("Failed to create parent directory: {}", e))
+                ServiceError::Storage(format!("Failed to create parent directory: {e}"))
             })?;
         }
 
         let storage = if file_path.exists() {
-            let content = fs::read_to_string(&file_path).map_err(|e| {
-                ServiceError::Storage(format!("Failed to read settings file: {}", e))
-            })?;
+            let content = fs::read_to_string(&file_path)
+                .map_err(|e| ServiceError::Storage(format!("Failed to read settings file: {e}")))?;
 
             serde_json::from_str(&content).map_err(|e| {
-                ServiceError::Validation(format!("Failed to parse settings JSON: {}", e))
+                ServiceError::Validation(format!("Failed to parse settings JSON: {e}"))
             })?
         } else {
             AppSettingsStorage::default()
@@ -73,19 +64,19 @@ impl AppSettingsServiceImpl {
         }
 
         let content = fs::read_to_string(&self.file_path)
-            .map_err(|e| ServiceError::Storage(format!("Failed to read settings file: {}", e)))?;
+            .map_err(|e| ServiceError::Storage(format!("Failed to read settings file: {e}")))?;
 
         serde_json::from_str(&content)
-            .map_err(|e| ServiceError::Validation(format!("Failed to parse settings JSON: {}", e)))
+            .map_err(|e| ServiceError::Validation(format!("Failed to parse settings JSON: {e}")))
     }
 
     fn save(&self, storage: &AppSettingsStorage) -> Result<(), ServiceError> {
         let content = serde_json::to_string_pretty(storage).map_err(|e| {
-            ServiceError::Serialization(format!("Failed to serialize settings: {}", e))
+            ServiceError::Serialization(format!("Failed to serialize settings: {e}"))
         })?;
 
         fs::write(&self.file_path, content)
-            .map_err(|e| ServiceError::Storage(format!("Failed to write settings file: {}", e)))
+            .map_err(|e| ServiceError::Storage(format!("Failed to write settings file: {e}")))
     }
 }
 
@@ -108,11 +99,10 @@ impl AppSettingsService for AppSettingsServiceImpl {
         storage.default_profile_id = Some(id.to_string());
         self.save(&storage)?;
 
-        let mut current = self
+        *self
             .settings
             .lock()
-            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {}", e)))?;
-        *current = storage;
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = storage;
         Ok(())
     }
 
@@ -134,11 +124,10 @@ impl AppSettingsService for AppSettingsServiceImpl {
         storage.current_conversation_id = Some(id.to_string());
         self.save(&storage)?;
 
-        let mut current = self
+        *self
             .settings
             .lock()
-            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {}", e)))?;
-        *current = storage;
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = storage;
         Ok(())
     }
 
@@ -152,11 +141,10 @@ impl AppSettingsService for AppSettingsServiceImpl {
         storage.hotkey = Some(hotkey);
         self.save(&storage)?;
 
-        let mut current = self
+        *self
             .settings
             .lock()
-            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {}", e)))?;
-        *current = storage;
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = storage;
         Ok(())
     }
 
@@ -170,11 +158,10 @@ impl AppSettingsService for AppSettingsServiceImpl {
         storage.theme = Some(theme);
         self.save(&storage)?;
 
-        let mut current = self
+        *self
             .settings
             .lock()
-            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {}", e)))?;
-        *current = storage;
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = storage;
         Ok(())
     }
 
@@ -188,11 +175,10 @@ impl AppSettingsService for AppSettingsServiceImpl {
         storage.extra_settings.insert(key.to_string(), value);
         self.save(&storage)?;
 
-        let mut current = self
+        *self
             .settings
             .lock()
-            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {}", e)))?;
-        *current = storage;
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = storage;
         Ok(())
     }
 
@@ -200,11 +186,10 @@ impl AppSettingsService for AppSettingsServiceImpl {
         let storage = AppSettingsStorage::default();
         self.save(&storage)?;
 
-        let mut current = self
+        *self
             .settings
             .lock()
-            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {}", e)))?;
-        *current = storage;
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = storage;
         Ok(())
     }
 }

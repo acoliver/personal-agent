@@ -1,7 +1,7 @@
 //! GPUI Wiring - Event Flow Integrity Tests
 //!
 //! Tests that user events from GPUI views reach the responsible presenter
-//! through the global EventBus, with special focus on mismatch hotspot variants
+//! through the global `EventBus`, with special focus on mismatch hotspot variants
 //! that currently block profile/MCP flows end-to-end.
 //!
 //! @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
@@ -10,7 +10,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use flume;
 use tokio::sync::broadcast;
 
 use personal_agent::events::types::UserEvent;
@@ -133,6 +132,7 @@ struct NoopMcpRegistryService;
 #[derive(Clone, Default)]
 struct RecordingProfileService {
     created: Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
+    #[allow(clippy::type_complexity)]
     updated: Arc<std::sync::Mutex<Vec<(uuid::Uuid, Option<String>, Option<String>)>>>,
 }
 
@@ -370,11 +370,11 @@ impl personal_agent::services::McpRegistryService for RecordingMcpRegistryServic
 
 // ============================================================
 
-/// REQ-WIRE-001: spawn_user_event_forwarder delivers OpenModelSelector to EventBus
+/// REQ-WIRE-001: `spawn_user_event_forwarder` delivers `OpenModelSelector` to `EventBus`
 ///
-/// GIVEN: active runtime with forwarder and EventBus subscriber
-/// WHEN:  OpenModelSelector is emitted through the flume channel
-/// THEN:  EventBus subscriber receives AppEvent::User(OpenModelSelector)
+/// GIVEN: active runtime with forwarder and `EventBus` subscriber
+/// WHEN:  `OpenModelSelector` is emitted through the flume channel
+/// THEN:  `EventBus` subscriber receives `AppEvent::User(OpenModelSelector)`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -395,8 +395,7 @@ async fn test_forwarder_delivers_open_model_selector_to_event_bus() {
 
     assert!(
         matches!(received, AppEvent::User(UserEvent::OpenModelSelector)),
-        "EventBus must receive the forwarded OpenModelSelector event, got {:?}",
-        received
+        "EventBus must receive the forwarded OpenModelSelector event, got {received:?}"
     );
 }
 
@@ -404,14 +403,14 @@ async fn test_forwarder_delivers_open_model_selector_to_event_bus() {
 // Tests: Mismatch Hotspot – SaveProfileEditor
 // ============================================================
 
-/// REQ-WIRE-001: ProfileEditorPresenter handles SaveProfileEditor via EventBus
+/// REQ-WIRE-001: `ProfileEditorPresenter` handles `SaveProfileEditor` via `EventBus`
 ///
-/// GIVEN: ProfileEditorPresenter subscribed to EventBus with a view_tx receiver
-/// WHEN:  AppEvent::User(SaveProfileEditor) is published to EventBus
-/// THEN:  ProfileEditorPresenter emits at least one ViewCommand in response
+/// GIVEN: `ProfileEditorPresenter` subscribed to `EventBus` with a `view_tx` receiver
+/// WHEN:  `AppEvent::User(SaveProfileEditor)` is published to `EventBus`
+/// THEN:  `ProfileEditorPresenter` emits at least one `ViewCommand` in response
 ///        (indicating it reacted to the event rather than silently dropping it)
 ///
-/// This test exposes the mismatch: ProfileEditorPresenter currently handles
+/// This test exposes the mismatch: `ProfileEditorPresenter` currently handles
 /// `SaveProfile` but NOT `SaveProfileEditor`, so it silently drops the event.
 /// The test MUST FAIL pre-implementation.
 ///
@@ -461,13 +460,13 @@ async fn test_profile_editor_presenter_handles_save_profile_editor() {
 // Tests: Mismatch Hotspot – McpAddNext
 // ============================================================
 
-/// REQ-WIRE-001: McpAddPresenter handles McpAddNext via EventBus
+/// REQ-WIRE-001: `McpAddPresenter` handles `McpAddNext` via `EventBus`
 ///
-/// GIVEN: McpAddPresenter subscribed to EventBus with a view_tx receiver
-/// WHEN:  AppEvent::User(McpAddNext) is published to EventBus
-/// THEN:  McpAddPresenter emits at least one ViewCommand in response
+/// GIVEN: `McpAddPresenter` subscribed to `EventBus` with a `view_tx` receiver
+/// WHEN:  `AppEvent::User(McpAddNext)` is published to `EventBus`
+/// THEN:  `McpAddPresenter` emits at least one `ViewCommand` in response
 ///
-/// This test exposes the mismatch: McpAddPresenter currently handles
+/// This test exposes the mismatch: `McpAddPresenter` currently handles
 /// `SearchMcpRegistry` and `SelectMcpFromRegistry` but NOT `McpAddNext`.
 /// The test MUST FAIL pre-implementation.
 ///
@@ -511,11 +510,11 @@ async fn test_mcp_add_presenter_handles_mcp_add_next() {
 // Tests: End-to-end forwarder path for all three mismatch events
 // ============================================================
 
-/// REQ-WIRE-001: Full path – GPUI bridge emits SaveProfileEditor → EventBus receives it
+/// REQ-WIRE-001: Full path – GPUI bridge emits `SaveProfileEditor` → `EventBus` receives it
 ///
-/// GIVEN: active forwarder bridging flume → EventBus
-/// WHEN:  GpuiBridge emits UserEvent::SaveProfileEditor
-/// THEN:  EventBus subscriber receives AppEvent::User(SaveProfileEditor)
+/// GIVEN: active forwarder bridging flume → `EventBus`
+/// WHEN:  `GpuiBridge` emits `UserEvent::SaveProfileEditor`
+/// THEN:  `EventBus` subscriber receives `AppEvent::User(SaveProfileEditor)`
 ///
 /// This verifies the transport layer is intact regardless of presenter handling.
 ///
@@ -540,12 +539,11 @@ async fn test_full_path_save_profile_editor_reaches_event_bus() {
 
     assert!(
         matches!(received, AppEvent::User(UserEvent::SaveProfileEditor)),
-        "Expected SaveProfileEditor on EventBus, got {:?}",
-        received
+        "Expected SaveProfileEditor on EventBus, got {received:?}"
     );
 }
 
-/// REQ-WIRE-001: Full path – GPUI bridge emits McpAddNext → EventBus receives it
+/// REQ-WIRE-001: Full path – GPUI bridge emits `McpAddNext` → `EventBus` receives it
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -568,16 +566,15 @@ async fn test_full_path_mcp_add_next_reaches_event_bus() {
 
     assert!(
         matches!(received, AppEvent::User(UserEvent::McpAddNext)),
-        "Expected McpAddNext on EventBus, got {:?}",
-        received
+        "Expected McpAddNext on EventBus, got {received:?}"
     );
 }
 
-/// REQ-WIRE-001: SaveProfileEditor persists selected model from prior SelectModel event
+/// REQ-WIRE-001: `SaveProfileEditor` persists selected model from prior `SelectModel` event
 ///
-/// GIVEN: ProfileEditorPresenter subscribed to EventBus with a recording profile service
-/// WHEN:  SelectModel is published, followed by SaveProfileEditor
-/// THEN:  ProfileService::create is called with provider/model from SelectModel
+/// GIVEN: `ProfileEditorPresenter` subscribed to `EventBus` with a recording profile service
+/// WHEN:  `SelectModel` is published, followed by `SaveProfileEditor`
+/// THEN:  `ProfileService::create` is called with provider/model from `SelectModel`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -637,10 +634,10 @@ async fn test_profile_editor_save_uses_selected_model_context() {
     );
 }
 
-/// REQ-WIRE-001: SaveProfile payload attempts update first, then falls back to create
+/// REQ-WIRE-001: `SaveProfile` payload attempts update first, then falls back to create
 ///
-/// GIVEN: ProfileEditorPresenter with RecordingProfileService where update returns NotFound
-/// WHEN:  SaveProfile user event is published with explicit profile id/name
+/// GIVEN: `ProfileEditorPresenter` with `RecordingProfileService` where update returns `NotFound`
+/// WHEN:  `SaveProfile` user event is published with explicit profile id/name
 /// THEN:  presenter calls update once with payload id/name, then creates one profile fallback
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
@@ -718,11 +715,11 @@ async fn test_profile_editor_save_profile_attempts_update_then_falls_back_to_cre
     );
 }
 
-/// REQ-WIRE-001: ModelSelectorPresenter emits ModelSelected and NavigateTo(ProfileEditor)
+/// REQ-WIRE-001: `ModelSelectorPresenter` emits `ModelSelected` and NavigateTo(ProfileEditor)
 ///
-/// GIVEN: ModelSelectorPresenter subscribed to EventBus with view command receiver
-/// WHEN:  SelectModel user event is published to EventBus
-/// THEN:  presenter emits ModelSelected followed by NavigateTo(ProfileEditor)
+/// GIVEN: `ModelSelectorPresenter` subscribed to `EventBus` with view command receiver
+/// WHEN:  `SelectModel` user event is published to `EventBus`
+/// THEN:  presenter emits `ModelSelected` followed by NavigateTo(ProfileEditor)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -772,8 +769,7 @@ async fn test_model_selector_presenter_emits_prefill_and_navigation_on_select_mo
                 context_length: _
             } if provider_id == "anthropic" && model_id == "claude-3-5-sonnet"
         ),
-        "first command should be ModelSelected with selected provider/model, got {:?}",
-        first
+        "first command should be ModelSelected with selected provider/model, got {first:?}"
     );
 
     assert!(
@@ -783,16 +779,15 @@ async fn test_model_selector_presenter_emits_prefill_and_navigation_on_select_mo
                 view: personal_agent::presentation::view_command::ViewId::ProfileEditor
             }
         ),
-        "second command should navigate to ProfileEditor, got {:?}",
-        second
+        "second command should navigate to ProfileEditor, got {second:?}"
     );
 }
 
-/// REQ-WIRE-001: ModelSelectorPresenter emits ModelSearchResults for SearchModels input
+/// REQ-WIRE-001: `ModelSelectorPresenter` emits `ModelSearchResults` for `SearchModels` input
 ///
-/// GIVEN: ModelSelectorPresenter subscribed to EventBus with view command receiver
-/// WHEN:  SearchModels user event is published
-/// THEN:  presenter emits ModelSearchResults (possibly empty list)
+/// GIVEN: `ModelSelectorPresenter` subscribed to `EventBus` with view command receiver
+/// WHEN:  `SearchModels` user event is published
+/// THEN:  presenter emits `ModelSearchResults` (possibly empty list)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -829,16 +824,15 @@ async fn test_model_selector_presenter_handles_search_models() {
 
     assert!(
         matches!(cmd, ViewCommand::ModelSearchResults { .. }),
-        "SearchModels should emit ModelSearchResults, got {:?}",
-        cmd
+        "SearchModels should emit ModelSearchResults, got {cmd:?}"
     );
 }
 
-/// REQ-WIRE-001: ModelSelectorPresenter emits ModelSearchResults for provider filter input
+/// REQ-WIRE-001: `ModelSelectorPresenter` emits `ModelSearchResults` for provider filter input
 ///
-/// GIVEN: ModelSelectorPresenter subscribed to EventBus with view command receiver
-/// WHEN:  FilterModelsByProvider user event is published
-/// THEN:  presenter emits ModelSearchResults (possibly empty list)
+/// GIVEN: `ModelSelectorPresenter` subscribed to `EventBus` with view command receiver
+/// WHEN:  `FilterModelsByProvider` user event is published
+/// THEN:  presenter emits `ModelSearchResults` (possibly empty list)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -875,8 +869,7 @@ async fn test_model_selector_presenter_handles_filter_models_by_provider() {
 
     assert!(
         matches!(cmd, ViewCommand::ModelSearchResults { .. }),
-        "FilterModelsByProvider should emit ModelSearchResults, got {:?}",
-        cmd
+        "FilterModelsByProvider should emit ModelSearchResults, got {cmd:?}"
     );
 }
 
@@ -1039,11 +1032,11 @@ impl personal_agent::services::McpService for FailingMcpService {
     }
 }
 
-/// REQ-WIRE-001: McpAddPresenter search emits McpRegistrySearchResults payload
+/// REQ-WIRE-001: `McpAddPresenter` search emits `McpRegistrySearchResults` payload
 ///
-/// GIVEN: McpAddPresenter with registry service returning one entry
-/// WHEN:  SearchMcpRegistry event is published
-/// THEN:  presenter emits ViewCommand::McpRegistrySearchResults with mapped result
+/// GIVEN: `McpAddPresenter` with registry service returning one entry
+/// WHEN:  `SearchMcpRegistry` event is published
+/// THEN:  presenter emits `ViewCommand::McpRegistrySearchResults` with mapped result
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1107,16 +1100,15 @@ async fn test_mcp_add_presenter_search_emits_registry_results() {
 
     assert!(
         matches!(cmd, ViewCommand::McpRegistrySearchResults { ref results } if results == &expected),
-        "SearchMcpRegistry should emit mapped McpRegistrySearchResults, got {:?}",
-        cmd
+        "SearchMcpRegistry should emit mapped McpRegistrySearchResults, got {cmd:?}"
     );
 }
 
-/// REQ-WIRE-001: SearchMcpRegistry preserves requested registry source in projected results
+/// REQ-WIRE-001: `SearchMcpRegistry` preserves requested registry source in projected results
 ///
-/// GIVEN: McpAddPresenter with registry entries
-/// WHEN:  SearchMcpRegistry is published with source 'smithery'
-/// THEN:  presenter emits McpRegistrySearchResults where each result.source == 'smithery'
+/// GIVEN: `McpAddPresenter` with registry entries
+/// WHEN:  `SearchMcpRegistry` is published with source 'smithery'
+/// THEN:  presenter emits `McpRegistrySearchResults` where each result.source == 'smithery'
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1174,16 +1166,15 @@ async fn test_mcp_add_presenter_search_preserves_requested_source_in_results() {
             ViewCommand::McpRegistrySearchResults { ref results }
                 if results.len() == 1 && results[0].source == "smithery"
         ),
-        "SearchMcpRegistry should preserve requested source in projected results, got {:?}",
-        cmd
+        "SearchMcpRegistry should preserve requested source in projected results, got {cmd:?}"
     );
 }
 
-/// REQ-WIRE-001: SelectMcpFromRegistry emits configure draft + navigation
+/// REQ-WIRE-001: `SelectMcpFromRegistry` emits configure draft + navigation
 ///
-/// GIVEN: McpAddPresenter with registry containing the selected MCP entry
-/// WHEN:  SelectMcpFromRegistry is published for that entry id
-/// THEN:  presenter emits McpConfigureDraftLoaded followed by NavigateTo(McpConfigure)
+/// GIVEN: `McpAddPresenter` with registry containing the selected MCP entry
+/// WHEN:  `SelectMcpFromRegistry` is published for that entry id
+/// THEN:  presenter emits `McpConfigureDraftLoaded` followed by NavigateTo(McpConfigure)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1205,7 +1196,7 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
             "-y".to_string(),
             "@modelcontextprotocol/server-fetch".to_string(),
         ],
-        env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
+        env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
         tags: vec![],
     }];
 
@@ -1259,8 +1250,7 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
                 && command == "npx"
                 && args == &vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]
         ),
-        "first command should be a configure draft for selected MCP, got {:?}",
-        first
+        "first command should be a configure draft for selected MCP, got {first:?}"
     );
 
     assert!(
@@ -1269,16 +1259,15 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
             ViewCommand::NavigateTo { view }
                 if view == personal_agent::presentation::view_command::ViewId::McpConfigure
         ),
-        "second command should navigate to McpConfigure, got {:?}",
-        second
+        "second command should navigate to McpConfigure, got {second:?}"
     );
 }
 
-/// REQ-WIRE-001: SelectMcpFromRegistry preserves explicit source hint in configure draft id
+/// REQ-WIRE-001: `SelectMcpFromRegistry` preserves explicit source hint in configure draft id
 ///
-/// GIVEN: McpAddPresenter with registry containing selected MCP entry
-/// WHEN:  SelectMcpFromRegistry is published with source 'smithery::filesystem'
-/// THEN:  presenter emits McpConfigureDraftLoaded where id encodes source and package as 'smithery::filesystem'
+/// GIVEN: `McpAddPresenter` with registry containing selected MCP entry
+/// WHEN:  `SelectMcpFromRegistry` is published with source '`smithery::filesystem`'
+/// THEN:  presenter emits `McpConfigureDraftLoaded` where id encodes source and package as '`smithery::filesystem`'
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1341,16 +1330,15 @@ async fn test_mcp_add_presenter_select_preserves_source_hint_in_configure_draft_
                 ..
             } if id == "smithery::filesystem" && package == "filesystem"
         ),
-        "expected source-hinted configure draft id, got {:?}",
-        first
+        "expected source-hinted configure draft id, got {first:?}"
     );
 }
 
-/// REQ-WIRE-001: SelectMcpFromRegistry missing entry surfaces source name in ShowError
+/// REQ-WIRE-001: `SelectMcpFromRegistry` missing entry surfaces source name in `ShowError`
 ///
-/// GIVEN: McpAddPresenter with registry that does not include selected source
-/// WHEN:  SelectMcpFromRegistry is published for unknown source name
-/// THEN:  presenter emits ShowError containing the requested source name
+/// GIVEN: `McpAddPresenter` with registry that does not include selected source
+/// WHEN:  `SelectMcpFromRegistry` is published for unknown source name
+/// THEN:  presenter emits `ShowError` containing the requested source name
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1372,7 +1360,7 @@ async fn test_mcp_add_presenter_select_missing_entry_emits_show_error_with_sourc
             "-y".to_string(),
             "@modelcontextprotocol/server-fetch".to_string(),
         ],
-        env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
+        env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
         tags: vec![],
     }];
 
@@ -1410,16 +1398,15 @@ async fn test_mcp_add_presenter_select_missing_entry_emits_show_error_with_sourc
             ViewCommand::ShowError { ref message, .. }
                 if message.contains("missing-server")
         ),
-        "SelectMcpFromRegistry missing source should emit ShowError with source name, got {:?}",
-        cmd
+        "SelectMcpFromRegistry missing source should emit ShowError with source name, got {cmd:?}"
     );
 }
 
-/// REQ-WIRE-001: ConfigureMcp loads persisted MCP and emits configure draft + navigation
+/// REQ-WIRE-001: `ConfigureMcp` loads persisted MCP and emits configure draft + navigation
 ///
-/// GIVEN: McpConfigurePresenter with MCP service returning a stored config
-/// WHEN:  ConfigureMcp event is published
-/// THEN:  presenter emits McpConfigureDraftLoaded followed by NavigateTo(McpConfigure)
+/// GIVEN: `McpConfigurePresenter` with MCP service returning a stored config
+/// WHEN:  `ConfigureMcp` event is published
+/// THEN:  presenter emits `McpConfigureDraftLoaded` followed by NavigateTo(McpConfigure)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1469,8 +1456,7 @@ async fn test_mcp_configure_presenter_configure_mcp_loads_draft_and_navigates() 
                 ..
             } if id == &configured_id.to_string() && name == "noop" && command == "npx"
         ),
-        "first command should be MCP configure draft loaded from service, got {:?}",
-        first
+        "first command should be MCP configure draft loaded from service, got {first:?}"
     );
     assert!(
         matches!(
@@ -1478,16 +1464,15 @@ async fn test_mcp_configure_presenter_configure_mcp_loads_draft_and_navigates() 
             ViewCommand::NavigateTo { view }
                 if view == personal_agent::presentation::view_command::ViewId::McpConfigure
         ),
-        "second command should navigate to McpConfigure, got {:?}",
-        second
+        "second command should navigate to McpConfigure, got {second:?}"
     );
 }
 
-/// REQ-WIRE-001: ConfigureMcp load failure emits ShowError only
+/// REQ-WIRE-001: `ConfigureMcp` load failure emits `ShowError` only
 ///
-/// GIVEN: McpConfigurePresenter with MCP service failing get(id)
-/// WHEN:  ConfigureMcp event is published
-/// THEN:  presenter emits ShowError and does not navigate
+/// GIVEN: `McpConfigurePresenter` with MCP service failing get(id)
+/// WHEN:  `ConfigureMcp` event is published
+/// THEN:  presenter emits `ShowError` and does not navigate
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1523,8 +1508,7 @@ async fn test_mcp_configure_presenter_configure_mcp_failure_emits_error_only() {
 
     assert!(
         matches!(first, ViewCommand::ShowError { .. }),
-        "first command should be ShowError when ConfigureMcp load fails, got {:?}",
-        first
+        "first command should be ShowError when ConfigureMcp load fails, got {first:?}"
     );
 
     let no_second = tokio::time::timeout(Duration::from_millis(120), view_rx.recv()).await;
@@ -1534,11 +1518,11 @@ async fn test_mcp_configure_presenter_configure_mcp_failure_emits_error_only() {
     );
 }
 
-/// REQ-WIRE-001: SaveMcpConfig persists MCP fields and emits McpConfigSaved + NavigateBack
+/// REQ-WIRE-001: `SaveMcpConfig` persists MCP fields and emits `McpConfigSaved` + `NavigateBack`
 ///
-/// GIVEN: McpConfigurePresenter with MCP service update path available
-/// WHEN:  SaveMcpConfig event is published
-/// THEN:  presenter emits McpConfigSaved then NavigateBack
+/// GIVEN: `McpConfigurePresenter` with MCP service update path available
+/// WHEN:  `SaveMcpConfig` event is published
+/// THEN:  presenter emits `McpConfigSaved` then `NavigateBack`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1574,7 +1558,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
                     "-y".to_string(),
                     "@modelcontextprotocol/server-fetch".to_string(),
                 ],
-                env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
+                env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
             },
         }))
         .ok();
@@ -1596,21 +1580,19 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
                 name: Some(_),
             } if saved_id == id
         ),
-        "first command should be McpConfigSaved with name payload, got {:?}",
-        first
+        "first command should be McpConfigSaved with name payload, got {first:?}"
     );
     assert!(
         matches!(second, ViewCommand::NavigateBack),
-        "second command should be NavigateBack, got {:?}",
-        second
+        "second command should be NavigateBack, got {second:?}"
     );
 }
 
-/// REQ-WIRE-001: SaveMcpConfig create path (nil id) emits McpConfigSaved with name and NavigateBack
+/// REQ-WIRE-001: `SaveMcpConfig` create path (nil id) emits `McpConfigSaved` with name and `NavigateBack`
 ///
-/// GIVEN: McpConfigurePresenter and SaveMcpConfig payload with nil id
-/// WHEN:  SaveMcpConfig event is published
-/// THEN:  presenter uses create path and emits McpConfigSaved(name) then NavigateBack
+/// GIVEN: `McpConfigurePresenter` and `SaveMcpConfig` payload with nil id
+/// WHEN:  `SaveMcpConfig` event is published
+/// THEN:  presenter uses create path and emits McpConfigSaved(name) then `NavigateBack`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1646,7 +1628,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
                     "-y".to_string(),
                     "@modelcontextprotocol/server-fetch".to_string(),
                 ],
-                env: Some(vec![("FETCH_API_KEY".to_string(), "".to_string())]),
+                env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
             },
         }))
         .ok();
@@ -1668,21 +1650,19 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
                 name: Some(ref n),
             } if saved_id != uuid::Uuid::nil() && n == "Registry Fetch"
         ),
-        "first command should be McpConfigSaved with non-nil id and saved name, got {:?}",
-        first
+        "first command should be McpConfigSaved with non-nil id and saved name, got {first:?}"
     );
     assert!(
         matches!(second, ViewCommand::NavigateBack),
-        "second command should be NavigateBack, got {:?}",
-        second
+        "second command should be NavigateBack, got {second:?}"
     );
 }
 
-/// REQ-WIRE-001: SaveMcpConfig failure emits ShowError and does not navigate back
+/// REQ-WIRE-001: `SaveMcpConfig` failure emits `ShowError` and does not navigate back
 ///
-/// GIVEN: McpConfigurePresenter with update path failing
-/// WHEN:  SaveMcpConfig event is published for non-nil id
-/// THEN:  presenter emits ShowError and does not emit NavigateBack
+/// GIVEN: `McpConfigurePresenter` with update path failing
+/// WHEN:  `SaveMcpConfig` event is published for non-nil id
+/// THEN:  presenter emits `ShowError` and does not emit `NavigateBack`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1729,8 +1709,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
 
     assert!(
         matches!(first, ViewCommand::ShowError { .. }),
-        "first command should be ShowError for failed SaveMcpConfig, got {:?}",
-        first
+        "first command should be ShowError for failed SaveMcpConfig, got {first:?}"
     );
 
     let maybe_second = tokio::time::timeout(Duration::from_millis(120), view_rx.recv()).await;
@@ -1740,11 +1719,11 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
     );
 }
 
-/// REQ-WIRE-001: SaveMcpConfig create path keeps command payload from configure draft
+/// REQ-WIRE-001: `SaveMcpConfig` create path keeps command payload from configure draft
 ///
-/// GIVEN: McpConfigurePresenter with nil-id create save request
-/// WHEN:  SaveMcpConfig is published with command/args payload
-/// THEN:  presenter emits McpConfigSaved + NavigateBack (create flow accepts payload)
+/// GIVEN: `McpConfigurePresenter` with nil-id create save request
+/// WHEN:  `SaveMcpConfig` is published with command/args payload
+/// THEN:  presenter emits `McpConfigSaved` + `NavigateBack` (create flow accepts payload)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
@@ -1802,25 +1781,24 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payloa
                 name: Some(ref n),
             } if saved_id != uuid::Uuid::nil() && n == "Filesystem"
         ),
-        "first command should be McpConfigSaved with non-nil id and preserved name, got {:?}",
-        first
+        "first command should be McpConfigSaved with non-nil id and preserved name, got {first:?}"
     );
     assert!(
         matches!(second, ViewCommand::NavigateBack),
-        "second command should be NavigateBack, got {:?}",
-        second
+        "second command should be NavigateBack, got {second:?}"
     );
 }
 
-/// REQ-WIRE-001: ConfigureMcp maps SSE transport URL into configure draft command field
+/// REQ-WIRE-001: `ConfigureMcp` maps SSE transport URL into configure draft command field
 ///
-/// GIVEN: McpConfigurePresenter and MCP service returning SSE transport
-/// WHEN:  ConfigureMcp event is published
-/// THEN:  presenter emits draft with command=url and empty args, then NavigateTo
+/// GIVEN: `McpConfigurePresenter` and MCP service returning SSE transport
+/// WHEN:  `ConfigureMcp` event is published
+/// THEN:  presenter emits draft with command=url and empty args, then `NavigateTo`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn test_mcp_configure_presenter_configure_mcp_maps_sse_transport_to_command() {
     struct SseMcpService;
 
@@ -1936,8 +1914,7 @@ async fn test_mcp_configure_presenter_configure_mcp_maps_sse_transport_to_comman
                 && command == "https://mcp.example.com/sse"
                 && args.is_empty()
         ),
-        "first command should map SSE transport into configure draft command/url, got {:?}",
-        first
+        "first command should map SSE transport into configure draft command/url, got {first:?}"
     );
     assert!(
         matches!(
@@ -1945,7 +1922,6 @@ async fn test_mcp_configure_presenter_configure_mcp_maps_sse_transport_to_comman
             ViewCommand::NavigateTo { view }
                 if view == personal_agent::presentation::view_command::ViewId::McpConfigure
         ),
-        "second command should navigate to McpConfigure, got {:?}",
-        second
+        "second command should navigate to McpConfigure, got {second:?}"
     );
 }

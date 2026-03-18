@@ -370,8 +370,7 @@ impl ProfileEditorDemoViewController {
     }
 
     fn current_auth_config(&self) -> AuthConfig {
-        let auth = if let Some(popup) = &*self.ivars().auth_type_popup.borrow() {
-            let index = popup.indexOfSelectedItem();
+        let auth = if self.ivars().auth_type_popup.borrow().is_some() {
             let value = if let Some(field) = &*self.ivars().auth_value_input.borrow() {
                 field.stringValue().to_string().trim().to_string()
             } else {

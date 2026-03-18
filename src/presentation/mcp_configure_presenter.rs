@@ -1,6 +1,6 @@
-//! McpConfigurePresenter - handles MCP server configuration UI
+//! `McpConfigurePresenter` - handles MCP server configuration UI
 //!
-//! McpConfigurePresenter subscribes to MCP configuration events,
+//! `McpConfigurePresenter` subscribes to MCP configuration events,
 //! coordinates with MCP service, and emits view commands.
 //!
 //! @plan PLAN-20250125-REFACTOR.P10
@@ -17,12 +17,12 @@ use crate::events::{
 };
 use crate::services::McpService;
 
-/// McpConfigurePresenter - handles MCP server configuration UI
+/// `McpConfigurePresenter` - handles MCP server configuration UI
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
 /// @requirement REQ-025.1
 pub struct McpConfigurePresenter {
-    /// Event receiver from EventBus
+    /// Event receiver from `EventBus`
     rx: broadcast::Receiver<AppEvent>,
 
     /// Reference to MCP service
@@ -36,7 +36,7 @@ pub struct McpConfigurePresenter {
 }
 
 impl McpConfigurePresenter {
-    /// Create a new McpConfigurePresenter
+    /// Create a new `McpConfigurePresenter`
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub fn new(
@@ -53,10 +53,10 @@ impl McpConfigurePresenter {
         }
     }
 
-    /// Stub constructor using unified global EventBus (REQ-WIRE-006 unification path).
+    /// Stub constructor using unified global `EventBus` (REQ-WIRE-006 unification path).
     ///
     /// This constructor accepts Arc<EventBus> directly, subscribing to the global event
-    /// bus rather than a caller-supplied broadcast::Sender. Full wiring deferred to
+    /// bus rather than a caller-supplied `broadcast::Sender`. Full wiring deferred to
     /// later implementation phases.
     ///
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
@@ -65,7 +65,7 @@ impl McpConfigurePresenter {
     #[allow(dead_code)]
     pub fn new_with_event_bus(
         mcp_service: Arc<dyn McpService>,
-        event_bus: Arc<EventBus>,
+        event_bus: &Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
         let rx = event_bus.sender().subscribe();
@@ -78,6 +78,10 @@ impl McpConfigurePresenter {
     }
 
     /// Start the presenter event loop
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn start(&mut self) -> Result<(), PresenterError> {
@@ -101,7 +105,6 @@ impl McpConfigurePresenter {
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("McpConfigurePresenter lagged: {} events missed", n);
-                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::info!("McpConfigurePresenter event stream closed");
@@ -117,6 +120,10 @@ impl McpConfigurePresenter {
 
     /// Stop the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P10
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
@@ -127,6 +134,7 @@ impl McpConfigurePresenter {
     /// Check if presenter is running
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -177,7 +185,6 @@ impl McpConfigurePresenter {
     /// Handle save MCP config event (full config payload)
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
-
     /// Handle configure MCP event
     ///
     /// Loads persisted MCP data and projects it into MCP configure draft payload.
@@ -309,7 +316,7 @@ impl McpConfigurePresenter {
     ) {
         tracing::info!("Starting OAuth flow for provider: {}", provider);
         let _ = view_tx.send(ViewCommand::ShowNotification {
-            message: format!("Starting OAuth for {}", provider),
+            message: format!("Starting OAuth for {provider}"),
         });
     }
 
@@ -317,11 +324,8 @@ impl McpConfigurePresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     async fn handle_mcp_event(view_tx: &broadcast::Sender<ViewCommand>, event: McpEvent) {
-        match event {
-            McpEvent::ConfigSaved { id } => {
-                let _ = view_tx.send(ViewCommand::McpConfigSaved { id, name: None });
-            }
-            _ => {} // Ignore other MCP events
+        if let McpEvent::ConfigSaved { id } = event {
+            let _ = view_tx.send(ViewCommand::McpConfigSaved { id, name: None });
         }
     }
 }

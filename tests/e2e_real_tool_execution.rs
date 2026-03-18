@@ -6,11 +6,11 @@
 //! 3. Verifies tool was called and returned real results
 //!
 //! Run with:
-//!   cargo test --test e2e_real_tool_execution -- --ignored --nocapture
+//!   cargo test --test `e2e_real_tool_execution` -- --ignored --nocapture
 //!
 //! Requires:
 //! - ~/.llxprt/profiles/synthetic.json (profile config)
-//! - ~/.synthetic_key (API key)
+//! - ~/.`synthetic_key` (API key)
 
 use personal_agent::llm::AgentClientExt;
 use personal_agent::mcp::McpService;
@@ -42,23 +42,25 @@ fn load_synthetic_profile() -> ModelProfile {
         .unwrap_or("~/.synthetic_key")
         .to_string();
 
-    let keyfile_path = if keyfile_path.starts_with("~/") {
-        home.join(&keyfile_path[2..]).to_string_lossy().to_string()
-    } else {
-        keyfile_path
-    };
+    let keyfile_path = keyfile_path.strip_prefix("~/").map_or_else(
+        || keyfile_path.clone(),
+        |stripped| home.join(stripped).to_string_lossy().to_string(),
+    );
 
     ModelProfile::new(
         "Synthetic GLM".to_string(),
         provider,
         model,
         base_url,
-        AuthConfig::Keychain { label: keyfile_path },
+        AuthConfig::Keychain {
+            label: keyfile_path,
+        },
     )
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires synthetic profile, API key, and Exa MCP"]
+#[allow(clippy::too_many_lines)]
 async fn test_real_exa_search() {
     println!("=== E2E Test: REAL Exa Search ===\n");
 
@@ -87,7 +89,7 @@ async fn test_real_exa_search() {
     // Try to initialize - this loads configured MCPs
     match mcp.initialize().await {
         Ok(()) => println!("MCP service initialized"),
-        Err(e) => println!("MCP init note: {}", e),
+        Err(e) => println!("MCP init note: {e}"),
     }
 
     let tools = mcp.get_llm_tools();
@@ -113,12 +115,10 @@ async fn test_real_exa_search() {
             "What is 2 + 2? Reply with just the number.",
         )];
 
-        let mut response = String::new();
         client
             .run_agent_stream(&agent, &messages, |event| {
                 if let StreamEvent::TextDelta(text) = event {
-                    print!("{}", text);
-                    response.push_str(&text);
+                    print!("{text}");
                 }
             })
             .await
@@ -164,7 +164,7 @@ async fn test_real_exa_search() {
     let result = client
         .run_agent_stream(&agent, &messages, |event| match &event {
             StreamEvent::TextDelta(text) => {
-                print!("{}", text);
+                print!("{text}");
                 std::io::Write::flush(&mut std::io::stdout()).ok();
                 response.push_str(text);
             }
@@ -172,7 +172,7 @@ async fn test_real_exa_search() {
                 tool_name: name,
                 call_id,
             } => {
-                println!("\n\n[TOOL STARTED] {} ({})", name, call_id);
+                println!("\n\n[TOOL STARTED] {name} ({call_id})");
                 saw_tool_start = true;
                 tool_name = name.clone();
             }
@@ -183,13 +183,10 @@ async fn test_real_exa_search() {
                 call_id,
                 ..
             } => {
-                println!(
-                    "[TOOL COMPLETED] {} success={} ({})",
-                    name, success, call_id
-                );
+                println!("[TOOL COMPLETED] {name} success={success} ({call_id})");
                 if let Some(r) = result {
                     let preview = if r.len() > 200 { &r[..200] } else { r };
-                    println!("[RESULT PREVIEW] {}...", preview);
+                    println!("[RESULT PREVIEW] {preview}...");
                 }
                 saw_tool_complete = true;
             }
@@ -203,21 +200,21 @@ async fn test_real_exa_search() {
     println!("\n");
 
     match result {
-        Ok(_) => {
+        Ok(()) => {
             if saw_tool_start && saw_tool_complete {
                 println!("========================================");
                 println!("E2E TEST PASSED - REAL TOOL EXECUTION!");
                 println!("========================================");
-                println!("Tool '{}' was called and completed", tool_name);
+                println!("Tool '{tool_name}' was called and completed");
                 println!("Response length: {} chars", response.len());
             } else {
                 println!("[WARN] LLM responded without using tools");
                 println!("[WARN] This may happen if the model chose not to search");
-                println!("Response: {}", response);
+                println!("Response: {response}");
             }
         }
         Err(e) => {
-            panic!("Agent stream failed: {}", e);
+            panic!("Agent stream failed: {e}");
         }
     }
 }

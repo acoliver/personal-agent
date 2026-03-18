@@ -14,7 +14,7 @@ use crate::ui_gpui::theme::Theme;
 
 /// Represents a profile in the settings list
 /// @plan PLAN-20250130-GPUIREDUX.P06
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileItem {
     pub id: Uuid,
     pub name: String,
@@ -34,18 +34,21 @@ impl ProfileItem {
         }
     }
 
+    #[must_use]
     pub fn with_model(mut self, provider: impl Into<String>, model: impl Into<String>) -> Self {
         self.provider = provider.into();
         self.model = model.into();
         self
     }
 
-    pub fn with_default(mut self, is_default: bool) -> Self {
+    #[must_use]
+    pub const fn with_default(mut self, is_default: bool) -> Self {
         self.is_default = is_default;
         self
     }
 
     /// Format display string: "name (provider:model)"
+    #[must_use]
     pub fn display_text(&self) -> String {
         if self.provider.is_empty() && self.model.is_empty() {
             self.name.clone()
@@ -66,7 +69,7 @@ pub enum McpStatus {
 
 /// Represents an MCP in the settings list
 /// @plan PLAN-20250130-GPUIREDUX.P06
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct McpItem {
     pub id: Uuid,
     pub name: String,
@@ -84,7 +87,8 @@ impl McpItem {
         }
     }
 
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self.status = if enabled {
             McpStatus::Running
@@ -94,7 +98,8 @@ impl McpItem {
         self
     }
 
-    pub fn with_status(mut self, status: McpStatus) -> Self {
+    #[must_use]
+    pub const fn with_status(mut self, status: McpStatus) -> Self {
         self.status = status;
         self
     }
@@ -112,6 +117,7 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             hotkey: "Cmd+Shift+P".to_string(),
@@ -207,24 +213,12 @@ impl SettingsView {
         })
     }
 
-    fn selected_mcp_index(&self) -> Option<usize> {
-        self.state
-            .selected_mcp_id
-            .and_then(|id| self.state.mcps.iter().position(|mcp| mcp.id == id))
-    }
-
     fn select_profile_by_index(&mut self, index: usize, emit_event: bool) {
         if let Some(profile) = self.state.profiles.get(index) {
             self.state.selected_profile_id = Some(profile.id);
             if emit_event {
-                self.emit(UserEvent::SelectProfile { id: profile.id });
+                self.emit(&UserEvent::SelectProfile { id: profile.id });
             }
-        }
-    }
-
-    fn select_mcp_by_index(&mut self, index: usize) {
-        if let Some(mcp) = self.state.mcps.get(index) {
-            self.state.selected_mcp_id = Some(mcp.id);
         }
     }
 
@@ -234,25 +228,21 @@ impl SettingsView {
         }
 
         let current = self.selected_profile_index().unwrap_or(0);
-        let max_index = self.state.profiles.len().saturating_sub(1) as i32;
-        let next = (current as i32 + delta_steps).clamp(0, max_index) as usize;
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_possible_wrap,
+            clippy::cast_sign_loss
+        )]
+        let next = {
+            let max_index = self.state.profiles.len().saturating_sub(1) as i32;
+            (current as i32 + delta_steps).clamp(0, max_index) as usize
+        };
         self.select_profile_by_index(next, true);
     }
 
-    fn scroll_mcps(&mut self, delta_steps: i32) {
-        if self.state.mcps.is_empty() || delta_steps == 0 {
-            return;
-        }
-
-        let current = self.selected_mcp_index().unwrap_or(0);
-        let max_index = self.state.mcps.len().saturating_sub(1) as i32;
-        let next = (current as i32 + delta_steps).clamp(0, max_index) as usize;
-        self.select_mcp_by_index(next);
-    }
-
-    /// Emit a UserEvent through the bridge
+    /// Emit a `UserEvent` through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P06
-    fn emit(&self, event: UserEvent) {
+    fn emit(&self, event: &UserEvent) {
         if let Some(bridge) = &self.bridge {
             if !bridge.emit(event.clone()) {
                 tracing::error!("Failed to emit event {:?}", event);
@@ -262,13 +252,10 @@ impl SettingsView {
         }
     }
 
-    /// Handle ViewCommand from presenter
+    /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P06
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
-            ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
-                // Navigation handled by MainPanel
-            }
             ViewCommand::ShowSettings {
                 profiles,
                 selected_profile_id,
@@ -317,7 +304,7 @@ impl SettingsView {
                 } else {
                     self.state
                         .mcps
-                        .push(McpItem::new(id, format!("MCP {}", id)).with_status(mapped));
+                        .push(McpItem::new(id, format!("MCP {id}")).with_status(mapped));
                 }
             }
             ViewCommand::McpServerStarted { id, .. } => {
@@ -327,7 +314,7 @@ impl SettingsView {
                 } else {
                     self.state
                         .mcps
-                        .push(McpItem::new(id, format!("MCP {}", id)).with_enabled(true));
+                        .push(McpItem::new(id, format!("MCP {id}")).with_enabled(true));
                 }
             }
             ViewCommand::McpServerFailed { id, .. } => {
@@ -335,9 +322,9 @@ impl SettingsView {
                     existing.status = McpStatus::Error;
                     existing.enabled = false;
                 } else {
-                    self.state.mcps.push(
-                        McpItem::new(id, format!("MCP {}", id)).with_status(McpStatus::Error),
-                    );
+                    self.state
+                        .mcps
+                        .push(McpItem::new(id, format!("MCP {id}")).with_status(McpStatus::Error));
                 }
             }
             ViewCommand::McpConfigSaved { id, name } => {
@@ -350,7 +337,7 @@ impl SettingsView {
                     existing.status = McpStatus::Running;
                 } else {
                     self.state.mcps.push(
-                        McpItem::new(id, name.unwrap_or_else(|| format!("MCP {}", id)))
+                        McpItem::new(id, name.unwrap_or_else(|| format!("MCP {id}")))
                             .with_status(McpStatus::Running)
                             .with_enabled(true),
                     );
@@ -371,7 +358,7 @@ impl SettingsView {
 
     /// Render the top bar with back button and title
     /// @plan PLAN-20250130-GPUIREDUX.P06
-    fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("settings-top-bar")
             .h(px(44.0))
@@ -438,7 +425,7 @@ impl SettingsView {
                         MouseButton::Left,
                         cx.listener(|this, _, _window, _cx| {
                             tracing::info!("Refresh Models clicked");
-                            this.emit(UserEvent::RefreshModelsRegistry);
+                            this.emit(&UserEvent::RefreshModelsRegistry);
                         }),
                     ),
             )
@@ -456,7 +443,7 @@ impl SettingsView {
         let display_text = profile.display_text();
 
         div()
-            .id(SharedString::from(format!("profile-{}", profile_id)))
+            .id(SharedString::from(format!("profile-{profile_id}")))
             .w_full()
             .h(px(24.0))
             .px(px(8.0))
@@ -477,7 +464,7 @@ impl SettingsView {
                 cx.listener(move |this, _, _window, cx| {
                     tracing::info!("Profile selected: {}", profile_id);
                     this.state.selected_profile_id = Some(profile_id);
-                    this.emit(UserEvent::SelectProfile { id: profile_id });
+                    this.emit(&UserEvent::SelectProfile { id: profile_id });
                     cx.notify();
                 }),
             )
@@ -486,6 +473,7 @@ impl SettingsView {
 
     /// Render the profiles section
     /// @plan PLAN-20250130-GPUIREDUX.P06
+    #[allow(clippy::too_many_lines)]
     fn render_profiles_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let profiles = &self.state.profiles;
         let has_selection = self.state.selected_profile_id.is_some();
@@ -532,7 +520,7 @@ impl SettingsView {
                                 .pb(px(2.0))
                                 .text_size(px(10.0))
                                 .text_color(Theme::text_muted())
-                                .child(format!("{} profiles", total_profiles)),
+                                .child(format!("{total_profiles} profiles")),
                         )
                     }),
             )
@@ -567,7 +555,7 @@ impl SettingsView {
                                 cx.listener(|this, _, _window, _cx| {
                                     if let Some(id) = this.state.selected_profile_id {
                                         tracing::info!("Delete profile clicked: {}", id);
-                                        this.emit(UserEvent::DeleteProfile { id });
+                                        this.emit(&UserEvent::DeleteProfile { id });
                                     }
                                 }),
                             ),
@@ -625,7 +613,7 @@ impl SettingsView {
                                 cx.listener(|this, _, _window, _cx| {
                                     if let Some(id) = this.state.selected_profile_id {
                                         tracing::info!("Edit profile clicked: {}", id);
-                                        this.emit(UserEvent::EditProfile { id });
+                                        this.emit(&UserEvent::EditProfile { id });
                                     }
                                 }),
                             ),
@@ -650,7 +638,7 @@ impl SettingsView {
         };
 
         div()
-            .id(SharedString::from(format!("mcp-{}", mcp_id)))
+            .id(SharedString::from(format!("mcp-{mcp_id}")))
             .w_full()
             .h(px(28.0))
             .px(px(8.0))
@@ -684,7 +672,7 @@ impl SettingsView {
             // Toggle switch
             .child(
                 div()
-                    .id(SharedString::from(format!("toggle-{}", mcp_id)))
+                    .id(SharedString::from(format!("toggle-{mcp_id}")))
                     .px(px(8.0))
                     .py(px(2.0))
                     .rounded(px(4.0))
@@ -704,7 +692,7 @@ impl SettingsView {
                         MouseButton::Left,
                         cx.listener(move |this, _, _window, cx| {
                             tracing::info!("MCP toggle clicked: {} -> {}", mcp_id, !enabled);
-                            this.emit(UserEvent::ToggleMcp {
+                            this.emit(&UserEvent::ToggleMcp {
                                 id: mcp_id,
                                 enabled: !enabled,
                             });
@@ -734,6 +722,7 @@ impl SettingsView {
 
     /// Render the MCP tools section
     /// @plan PLAN-20250130-GPUIREDUX.P06
+    #[allow(clippy::too_many_lines)]
     fn render_mcp_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let mcps = &self.state.mcps;
         let has_selection = self.state.selected_mcp_id.is_some();
@@ -780,7 +769,7 @@ impl SettingsView {
                                 .pb(px(2.0))
                                 .text_size(px(10.0))
                                 .text_color(Theme::text_muted())
-                                .child(format!("{} MCP tools", total_mcps)),
+                                .child(format!("{total_mcps} MCP tools")),
                         )
                     }),
             )
@@ -814,7 +803,7 @@ impl SettingsView {
                                 cx.listener(|this, _, _window, _cx| {
                                     if let Some(id) = this.state.selected_mcp_id {
                                         tracing::info!("Delete MCP clicked: {}", id);
-                                        this.emit(UserEvent::DeleteMcp { id });
+                                        this.emit(&UserEvent::DeleteMcp { id });
                                     }
                                 }),
                             ),
@@ -869,7 +858,7 @@ impl SettingsView {
                                 cx.listener(|this, _, _window, _cx| {
                                     if let Some(id) = this.state.selected_mcp_id {
                                         tracing::info!("Edit MCP clicked: {}", id);
-                                        this.emit(UserEvent::ConfigureMcp { id });
+                                        this.emit(&UserEvent::ConfigureMcp { id });
                                         crate::ui_gpui::navigation_channel().request_navigate(
                                             crate::presentation::view_command::ViewId::McpConfigure,
                                         );
@@ -961,8 +950,8 @@ impl gpui::Render for SettingsView {
                     // "e" key: Edit selected profile
                     else if key == "e" && !modifiers.platform {
                         if let Some(id) = this.state.selected_profile_id {
-                            println!(">>> e pressed - Edit Profile {:?} <<<", id);
-                            this.emit(UserEvent::EditProfile { id });
+                            println!(">>> e pressed - Edit Profile {id:?} <<<");
+                            this.emit(&UserEvent::EditProfile { id });
                         }
                     }
                     // "m" key: Add MCP
@@ -982,7 +971,7 @@ impl gpui::Render for SettingsView {
                 }),
             )
             // Top bar (44px)
-            .child(self.render_top_bar(cx))
+            .child(Self::render_top_bar(cx))
             // Content scroll area
             .child(
                 div()

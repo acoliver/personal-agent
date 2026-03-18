@@ -5,7 +5,7 @@ use tempfile::TempDir;
 fn registry_cache_round_trip_and_metadata() -> personal_agent::Result<()> {
     let temp_dir = TempDir::new().unwrap();
     let cache_path = temp_dir.path().join("models.json");
-    let cache = RegistryCache::new(cache_path.clone(), 24);
+    let cache = RegistryCache::new(cache_path, 24);
 
     let mut providers = std::collections::HashMap::new();
     providers.insert(

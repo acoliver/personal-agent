@@ -24,6 +24,7 @@ use objc2_foundation::{MainThreadMarker, NSString};
 
 /// Create the application menu with keyboard shortcuts
 #[allow(dead_code)]
+#[allow(clippy::too_many_lines)]
 pub fn create_app_menu_with_shortcuts(mtm: MainThreadMarker) -> Retained<NSMenu> {
     let menu = NSMenu::initWithTitle(mtm.alloc(), &NSString::from_str("PersonalAgent"));
 

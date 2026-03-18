@@ -52,7 +52,7 @@ mod tests {
     use super::*;
     use futures::StreamExt;
 
-    /// Test ChatStreamEvent variants
+    /// Test `ChatStreamEvent` variants
     #[tokio::test]
     async fn test_stream_event_token() {
         let event = ChatStreamEvent::Token("test token".to_string());
@@ -64,7 +64,7 @@ mod tests {
         }
     }
 
-    /// Test ChatStreamEvent Complete
+    /// Test `ChatStreamEvent` Complete
     #[tokio::test]
     async fn test_stream_event_complete() {
         let event = ChatStreamEvent::Complete;
@@ -76,11 +76,11 @@ mod tests {
         }
     }
 
-    /// Test ChatStreamEvent Error
+    /// Test `ChatStreamEvent` Error
     #[tokio::test]
     async fn test_stream_event_error() {
         let error = ServiceError::NotFound("test error".to_string());
-        let event = ChatStreamEvent::Error(error.clone());
+        let event = ChatStreamEvent::Error(error);
         match event {
             ChatStreamEvent::Error(err) => {
                 assert!(err.to_string().contains("test error"));
@@ -89,21 +89,21 @@ mod tests {
         }
     }
 
-    /// Test ServiceError variants work correctly
+    /// Test `ServiceError` variants work correctly
     #[tokio::test]
     async fn test_service_error_not_found() {
         let error = ServiceError::NotFound("Conversation not found".to_string());
         assert!(error.to_string().contains("Not found"));
     }
 
-    /// Test ServiceError validation
+    /// Test `ServiceError` validation
     #[tokio::test]
     async fn test_service_error_validation() {
         let error = ServiceError::Validation("Invalid input".to_string());
         assert!(error.to_string().contains("Validation error"));
     }
 
-    /// Test ServiceResult type alias
+    /// Test `ServiceResult` type alias
     #[tokio::test]
     async fn test_service_result_type() {
         // Verify ServiceResult<T> works correctly
@@ -139,18 +139,18 @@ mod tests {
         }
     }
 
-    /// Test that ChatStreamEvent is Clone and Debug
+    /// Test that `ChatStreamEvent` is Clone and Debug
     #[tokio::test]
     async fn test_stream_event_traits() {
         let event1 = ChatStreamEvent::Token("test".to_string());
         let event2 = event1.clone();
 
         // Verify Clone works
-        assert_eq!(matches!(event1, ChatStreamEvent::Token(_)), true);
-        assert_eq!(matches!(event2, ChatStreamEvent::Token(_)), true);
+        assert!(matches!(event1, ChatStreamEvent::Token(_)));
+        assert!(matches!(event2, ChatStreamEvent::Token(_)));
 
         // Verify Debug works (called implicitly in assertions)
-        let debug_str = format!("{:?}", event1);
+        let debug_str = format!("{event1:?}");
         assert!(debug_str.contains("Token") || debug_str.contains("test"));
     }
 }

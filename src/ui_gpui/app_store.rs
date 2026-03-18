@@ -24,6 +24,8 @@ use crate::presentation::view_command::{
     ConversationMessagePayload, ConversationSummary, MessageRole, ProfileSummary, ViewCommand,
 };
 
+/// Startup hydration inputs.
+///
 /// @plan PLAN-20260304-GPUIREMEDIATE.P06
 /// @requirement REQ-ARCH-002.1
 /// @requirement REQ-ARCH-002.2
@@ -38,6 +40,8 @@ pub struct StartupInputs {
     pub selected_conversation: Option<StartupSelectedConversation>,
 }
 
+/// Startup-selected conversation metadata.
+///
 /// @plan PLAN-20260304-GPUIREMEDIATE.P06
 /// @requirement REQ-ARCH-002.1
 /// @requirement REQ-ARCH-002.2
@@ -50,6 +54,8 @@ pub struct StartupSelectedConversation {
     pub mode: StartupMode,
 }
 
+/// Startup hydration mode.
+///
 /// @plan PLAN-20260304-GPUIREMEDIATE.P06
 /// @requirement REQ-ARCH-002.1
 /// @requirement REQ-ARCH-002.2
@@ -63,6 +69,8 @@ pub enum StartupMode {
     },
 }
 
+/// Startup transcript load result.
+///
 /// @plan PLAN-20260304-GPUIREMEDIATE.P06
 /// @requirement REQ-ARCH-002.1
 /// @requirement REQ-ARCH-002.2
@@ -75,8 +83,9 @@ pub enum StartupTranscriptResult {
     Failure(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum ConversationLoadState {
+    #[default]
     Idle,
     Loading {
         conversation_id: Uuid,
@@ -91,12 +100,6 @@ pub enum ConversationLoadState {
         generation: u64,
         message: String,
     },
-}
-
-impl Default for ConversationLoadState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -114,9 +117,10 @@ struct FinalizedStreamGuard {
     transcript_len_after_finalize: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 enum SelectedTitleProvenance {
     HistoryBacked,
+    #[default]
     LiteralFallback,
 }
 
@@ -213,12 +217,6 @@ struct AppStoreInner {
     last_finalized_stream_guard: Option<FinalizedStreamGuard>,
 }
 
-impl Default for SelectedTitleProvenance {
-    fn default() -> Self {
-        Self::LiteralFallback
-    }
-}
-
 /// Process-lifetime authoritative store handle.
 ///
 /// @plan PLAN-20260304-GPUIREMEDIATE.P05
@@ -238,6 +236,7 @@ impl GpuiAppStore {
     /// @requirement REQ-ARCH-002.5
     /// @requirement REQ-ARCH-006.3
     /// @pseudocode analysis/pseudocode/01-app-store.md:133-195
+    #[must_use]
     pub fn from_startup_inputs(inputs: StartupInputs) -> Self {
         let mut inner = AppStoreInner::default();
         let _ = reduce_startup_batch(&mut inner, inputs);
@@ -247,9 +246,15 @@ impl GpuiAppStore {
         }
     }
 
+    /// Return the latest published app snapshot.
+    ///
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
     /// @requirement REQ-ARCH-001.3
     /// @pseudocode analysis/pseudocode/01-app-store.md:075-088
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
     pub fn current_snapshot(&self) -> GpuiAppSnapshot {
         self.inner
             .lock()
@@ -258,9 +263,15 @@ impl GpuiAppStore {
             .clone()
     }
 
+    /// Subscribe to snapshot publications.
+    ///
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
     /// @requirement REQ-ARCH-004.1
     /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:022-031
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
     pub fn subscribe(&self) -> flume::Receiver<GpuiAppSnapshot> {
         let (tx, rx) = flume::unbounded();
         self.inner
@@ -271,9 +282,15 @@ impl GpuiAppStore {
         rx
     }
 
+    /// Count connected snapshot subscribers.
+    ///
     /// @plan PLAN-20260304-GPUIREMEDIATE.P07
     /// @requirement REQ-ARCH-004.1
     /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:057-061
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
     pub fn subscriber_count(&self) -> usize {
         self.inner
             .lock()
@@ -284,17 +301,29 @@ impl GpuiAppStore {
             .count()
     }
 
+    /// Remove disconnected subscribers from the publication list.
+    ///
     /// @plan PLAN-20260304-GPUIREMEDIATE.P07
     /// @requirement REQ-ARCH-004.1
     /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:057-061
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
     pub fn prune_disconnected_subscribers(&self) {
         let mut inner = self.inner.lock().expect("gpui app store mutex poisoned");
         prune_disconnected_subscribers_locked(&mut inner);
     }
 
+    /// Begin a generation-tracked conversation selection.
+    ///
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
     /// @requirement REQ-ARCH-003.6
     /// @pseudocode analysis/pseudocode/01-app-store.md:099-123
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
     pub fn begin_selection(
         &self,
         conversation_id: Uuid,
@@ -304,12 +333,18 @@ impl GpuiAppStore {
         begin_selection_locked(&mut inner, conversation_id, mode)
     }
 
+    /// Reduce a batch of runtime commands into the store snapshot.
+    ///
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
     /// @requirement REQ-ARCH-003.4
     /// @requirement REQ-ARCH-003.6
     /// @requirement REQ-ARCH-006.6
     /// @requirement REQ-ARCH-006.7
     /// @pseudocode analysis/pseudocode/01-app-store.md:217-405
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
     pub fn reduce_batch(&self, commands: Vec<ViewCommand>) -> bool {
         if commands.is_empty() {
             return false;
@@ -341,15 +376,14 @@ impl GpuiAppStore {
 /// @requirement REQ-ARCH-006.3
 /// @pseudocode analysis/pseudocode/01-app-store.md:133-195
 fn reduce_startup_batch(inner: &mut AppStoreInner, inputs: StartupInputs) -> bool {
-    let mut changed = mutate_profiles_snapshot(inner, inputs.profiles, inputs.selected_profile_id);
-    if inner.snapshot.history.conversations != inputs.conversations {
+    let mut changed = if inner.snapshot.history.conversations == inputs.conversations {
+        mutate_profiles_snapshot(inner, inputs.profiles, inputs.selected_profile_id)
+    } else {
         inner.snapshot.history.conversations = inputs.conversations.clone();
         inner.snapshot.chat.conversations = inputs.conversations;
-        changed = true;
-    }
-    if maybe_sync_selected_title(inner) {
-        changed = true;
-    }
+        true
+    };
+    changed |= maybe_sync_selected_title(inner);
 
     if let Some(selection) = inputs.selected_conversation {
         if matches!(
@@ -445,6 +479,7 @@ fn begin_selection_locked(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewCommand) -> bool {
     match command {
         ViewCommand::ConversationListRefreshed { conversations } => {
@@ -581,12 +616,12 @@ fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewC
         } => append_thinking_buffer_if_target_matches_selected_or_nil(
             inner,
             conversation_id,
-            content,
+            &content,
         ),
         ViewCommand::AppendStream {
             conversation_id,
             chunk,
-        } => append_stream_buffer_if_target_matches_selected_or_nil(inner, conversation_id, chunk),
+        } => append_stream_buffer_if_target_matches_selected_or_nil(inner, conversation_id, &chunk),
         ViewCommand::FinalizeStream {
             conversation_id,
             tokens: _,
@@ -600,7 +635,6 @@ fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewC
             error,
             recoverable: _,
         } => clear_streaming_ephemera_for_target(inner, conversation_id, Some(error)),
-        ViewCommand::ShowToolCall { .. } | ViewCommand::UpdateToolCall { .. } => false,
         ViewCommand::ChatProfilesUpdated {
             profiles,
             selected_profile_id,
@@ -609,18 +643,18 @@ fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewC
             profiles,
             selected_profile_id,
         } => {
-            let mut changed = mutate_profiles_snapshot(inner, profiles, selected_profile_id);
-            if !inner.snapshot.settings.settings_visible {
+            if inner.snapshot.settings.settings_visible {
+                mutate_profiles_snapshot(inner, profiles, selected_profile_id)
+            } else {
                 inner.snapshot.settings.settings_visible = true;
-                changed = true;
+                true
             }
-            changed
         }
         ViewCommand::ConversationRenamed { id, new_title } => {
-            mutate_history_and_selected_title_if_targeted(inner, id, new_title)
+            mutate_history_and_selected_title_if_targeted(inner, id, &new_title)
         }
         ViewCommand::ConversationTitleUpdated { id, title } => {
-            mutate_history_and_selected_title_if_targeted(inner, id, title)
+            mutate_history_and_selected_title_if_targeted(inner, id, &title)
         }
         ViewCommand::ConversationDeleted { id } => {
             mutate_history_and_selected_selection_if_targeted(inner, id)
@@ -658,7 +692,6 @@ fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewC
             inner.snapshot.chat.selected_conversation_title = "New Conversation".to_string();
             true
         }
-        ViewCommand::ConversationCleared => false,
         _ => false,
     }
 }
@@ -811,15 +844,18 @@ fn show_thinking_if_target_matches_selected_or_nil(
     if inner.snapshot.chat.selected_conversation_id != Some(target) {
         return false;
     }
-    let mut changed = false;
-    if !inner.snapshot.chat.streaming.thinking_visible {
+    let mut changed = if inner.snapshot.chat.streaming.thinking_visible {
+        false
+    } else {
         inner.snapshot.chat.streaming.thinking_visible = true;
-        changed = true;
-    }
-    if inner.snapshot.chat.streaming.active_target != Some(target) {
+        true
+    };
+    changed |= if inner.snapshot.chat.streaming.active_target == Some(target) {
+        false
+    } else {
         inner.snapshot.chat.streaming.active_target = Some(target);
-        changed = true;
-    }
+        true
+    };
     if inner.snapshot.chat.streaming.stream_buffer.is_empty()
         && inner.snapshot.chat.streaming.thinking_buffer.is_empty()
         && inner.snapshot.chat.streaming.last_error.is_none()
@@ -849,7 +885,7 @@ fn hide_thinking_if_target_matches_selected_or_nil(
 fn append_thinking_buffer_if_target_matches_selected_or_nil(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
-    content: String,
+    content: &str,
 ) -> bool {
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
@@ -864,14 +900,14 @@ fn append_thinking_buffer_if_target_matches_selected_or_nil(
         .chat
         .streaming
         .thinking_buffer
-        .push_str(&content);
+        .push_str(content);
     true
 }
 
 fn append_stream_buffer_if_target_matches_selected_or_nil(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
-    chunk: String,
+    chunk: &str,
 ) -> bool {
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
@@ -880,7 +916,7 @@ fn append_stream_buffer_if_target_matches_selected_or_nil(
         return false;
     }
     inner.snapshot.chat.streaming.active_target = Some(target);
-    inner.snapshot.chat.streaming.stream_buffer.push_str(&chunk);
+    inner.snapshot.chat.streaming.stream_buffer.push_str(chunk);
     true
 }
 
@@ -968,9 +1004,9 @@ fn mutate_profiles_snapshot(
 fn mutate_history_and_selected_title_if_targeted(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
-    title: String,
+    title: &str,
 ) -> bool {
-    update_conversation_title(inner, conversation_id, &title)
+    update_conversation_title(inner, conversation_id, title)
 }
 
 fn mutate_history_and_selected_selection_if_targeted(
@@ -990,10 +1026,7 @@ fn mutate_history_and_selected_selection_if_targeted(
         .conversations
         .retain(|conversation| conversation.id != conversation_id);
 
-    let mut changed = inner.snapshot.history.conversations.len() != previous_history_len
-        || inner.snapshot.chat.conversations.len() != previous_chat_len;
-
-    if inner.snapshot.chat.selected_conversation_id == Some(conversation_id) {
+    let changed = if inner.snapshot.chat.selected_conversation_id == Some(conversation_id) {
         inner.snapshot.chat.selected_conversation_id = inner
             .snapshot
             .history
@@ -1010,8 +1043,11 @@ fn mutate_history_and_selected_selection_if_targeted(
             inner.snapshot.chat.transcript.clear();
             clear_streaming_ephemera_only(inner);
         }
-        changed = true;
-    }
+        true
+    } else {
+        inner.snapshot.history.conversations.len() != previous_history_len
+            || inner.snapshot.chat.conversations.len() != previous_chat_len
+    };
 
     changed
 }
@@ -1032,7 +1068,7 @@ fn update_conversation_title(
         .find(|conversation| conversation.id == conversation_id)
     {
         if conversation.title != normalized {
-            conversation.title = normalized.clone();
+            conversation.title.clone_from(&normalized);
             changed = true;
         }
     }
@@ -1045,7 +1081,7 @@ fn update_conversation_title(
         .find(|conversation| conversation.id == conversation_id)
     {
         if conversation.title != normalized {
-            conversation.title = normalized.clone();
+            conversation.title.clone_from(&normalized);
             changed = true;
         }
     }

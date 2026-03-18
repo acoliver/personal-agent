@@ -11,16 +11,24 @@ use crate::ui_gpui::navigation::NavigationState;
 use crate::ui_gpui::GpuiAppStore;
 
 use gpui::{
-    actions, div, prelude::*, Entity, Focusable, FocusHandle, Global, MouseButton, Subscription,
-    Task,
+    div, prelude::*, Entity, FocusHandle, Focusable, Global, MouseButton, Subscription, Task,
 };
 use std::sync::Arc;
 
 // Global navigation actions bound to keyboard shortcuts (registered in main_gpui.rs)
-actions!(
-    main_panel,
-    [NavigateToHistory, NavigateToSettings, NewConversation, NavigateBack]
-);
+#[allow(clippy::derive_partial_eq_without_eq)]
+mod _actions {
+    gpui::actions!(
+        main_panel,
+        [
+            NavigateToHistory,
+            NavigateToSettings,
+            NewConversation,
+            NavigateBack
+        ]
+    );
+}
+pub use _actions::*;
 
 // ============================================================
 // REQ-WIRE-002: ViewCommand routing infrastructure
@@ -28,8 +36,8 @@ actions!(
 // and tested directly in gpui_wiring_command_routing_tests.
 // ============================================================
 
-/// Observable state updated by route_view_command, used in tests
-/// to verify each ViewCommand variant reaches its target view.
+/// Observable state updated by `route_view_command`, used in tests
+/// to verify each `ViewCommand` variant reaches its target view.
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
 /// @requirement REQ-WIRE-002
@@ -64,9 +72,9 @@ pub struct CommandTargets {
     pub profile_prefill_selected_count: usize,
 }
 
-/// Route a single ViewCommand to the correct target view state.
+/// Route a single `ViewCommand` to the correct target view state.
 ///
-/// This function forms the core of the MainPanel command dispatch matrix
+/// This function forms the core of the `MainPanel` command dispatch matrix
 /// (REQ-WIRE-002). In the live GPUI render loop it is called inline;
 /// in tests it drives `CommandTargets` observable state directly.
 ///
@@ -109,13 +117,9 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         | ViewCommand::DefaultProfileChanged { .. } => {
             targets.settings_profile_commands += 1;
         }
-        ViewCommand::McpStatusChanged { .. } => {
-            targets.settings_mcp_status_updates += 1;
-        }
-        ViewCommand::McpServerStarted { .. } => {
-            targets.settings_mcp_status_updates += 1;
-        }
-        ViewCommand::McpServerFailed { .. } => {
+        ViewCommand::McpStatusChanged { .. }
+        | ViewCommand::McpServerStarted { .. }
+        | ViewCommand::McpServerFailed { .. } => {
             targets.settings_mcp_status_updates += 1;
         }
         ViewCommand::McpConfigSaved { .. } => {
@@ -143,10 +147,7 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         }
 
         // ── Profile prefill ────────────────────────────────────────────────
-        ViewCommand::ModelSelected { .. } => {
-            targets.profile_prefill_selected_count += 1;
-        }
-        ViewCommand::ProfileEditorLoad { .. } => {
+        ViewCommand::ModelSelected { .. } | ViewCommand::ProfileEditorLoad { .. } => {
             targets.profile_prefill_selected_count += 1;
         }
 
@@ -156,16 +157,18 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
 }
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::views::api_key_manager_view::ApiKeyManagerView;
 use crate::ui_gpui::views::chat_view::{ChatState, ChatView};
 use crate::ui_gpui::views::history_view::HistoryView;
-use crate::ui_gpui::views::api_key_manager_view::ApiKeyManagerView;
 use crate::ui_gpui::views::mcp_add_view::McpAddView;
 use crate::ui_gpui::views::mcp_configure_view::McpConfigureView;
 use crate::ui_gpui::views::model_selector_view::ModelSelectorView;
 use crate::ui_gpui::views::profile_editor_view::ProfileEditorView;
 use crate::ui_gpui::views::settings_view::SettingsView;
 
-/// Global app state containing the bridge - used by MainPanel to receive ViewCommands
+/// Global app state containing the bridge.
+///
+/// Used by `MainPanel` to receive `ViewCommands`.
 /// @plan PLAN-20250130-GPUIREDUX.P11
 /// @plan PLAN-20260304-GPUIREMEDIATE.P04
 /// @requirement REQ-ARCH-001.1
@@ -198,11 +201,11 @@ pub struct MainPanel {
     runtime_started: bool,
     store_snapshot_revision: u64,
 
-    _store_subscription_task: Option<Task<()>>,
+    store_subscription_task: Option<Task<()>>,
 
-    _bridge_poll_task: Option<Task<()>>,
-    _test_conversation_switch_task: Option<Task<()>>,
-    _child_observations: Vec<Subscription>,
+    bridge_poll_task: Option<Task<()>>,
+    test_conversation_switch_task: Option<Task<()>>,
+    child_observations: Vec<Subscription>,
 }
 
 impl MainPanel {
@@ -220,11 +223,11 @@ impl MainPanel {
             api_key_manager_view: None,
             runtime_started: false,
             store_snapshot_revision: 0,
-            _store_subscription_task: None,
+            store_subscription_task: None,
 
-            _bridge_poll_task: None,
-            _test_conversation_switch_task: None,
-            _child_observations: Vec::new(),
+            bridge_poll_task: None,
+            test_conversation_switch_task: None,
+            child_observations: Vec::new(),
         }
     }
 
@@ -252,9 +255,9 @@ impl MainPanel {
         }
 
         if let Some(ref history_view) = self.history_view {
-            let history_snapshot = snapshot.history.clone();
+            let history_snapshot = snapshot.history;
             history_view.update(cx, |view, cx| {
-                view.apply_store_snapshot(history_snapshot, cx);
+                view.apply_store_snapshot(&history_snapshot, cx);
             });
         }
 
@@ -266,7 +269,7 @@ impl MainPanel {
     /// @requirement REQ-ARCH-004.1
     /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:022-035
     fn ensure_store_subscription(&mut self, cx: &mut gpui::Context<Self>) {
-        if self._store_subscription_task.is_some() {
+        if self.store_subscription_task.is_some() {
             return;
         }
 
@@ -277,9 +280,9 @@ impl MainPanel {
 
         let store_rx = app_state.app_store.subscribe();
         let entity = cx.entity();
-        self._store_subscription_task = Some(cx.spawn(async move |_, cx| {
+        self.store_subscription_task = Some(cx.spawn(async move |_, cx| {
             while let Ok(snapshot) = store_rx.recv_async().await {
-                let _ = entity.update(cx, |this, cx| {
+                let () = entity.update(cx, |this, cx| {
                     this.apply_store_snapshot(snapshot, cx);
                 });
             }
@@ -287,8 +290,7 @@ impl MainPanel {
     }
 
     /// Initialize all child views with bridge
-
-    fn request_runtime_snapshots(&self, cx: &mut gpui::Context<Self>) {
+    fn request_runtime_snapshots(cx: &mut gpui::Context<Self>) {
         if let Some(app_state) = cx.try_global::<MainPanelAppState>() {
             let bridge = app_state.gpui_bridge.clone();
             let _ = bridge.emit(UserEvent::RefreshProfiles);
@@ -402,7 +404,7 @@ impl MainPanel {
     /// @requirement REQ-ARCH-004.1
     /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:079-088
     fn ensure_bridge_polling(&mut self, _cx: &mut gpui::Context<Self>) {
-        if self._bridge_poll_task.is_none() {
+        if self.bridge_poll_task.is_none() {
             tracing::debug!(
                 "MainPanel: bridge polling retained as no-op; app-root pump owns bridge draining"
             );
@@ -410,7 +412,7 @@ impl MainPanel {
     }
 
     fn maybe_start_test_conversation_switch(&mut self, cx: &mut gpui::Context<Self>) {
-        if self._test_conversation_switch_task.is_some() {
+        if self.test_conversation_switch_task.is_some() {
             return;
         }
 
@@ -419,7 +421,7 @@ impl MainPanel {
             return;
         }
 
-        self._test_conversation_switch_task = Some(cx.spawn(async move |this, cx| {
+        self.test_conversation_switch_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(1200))
                 .await;
@@ -502,7 +504,7 @@ impl MainPanel {
     }
 
     /// Check if all views are initialized
-    fn is_initialized(&self) -> bool {
+    const fn is_initialized(&self) -> bool {
         self.chat_view.is_some()
             && self.history_view.is_some()
             && self.settings_view.is_some()
@@ -513,7 +515,8 @@ impl MainPanel {
             && self.api_key_manager_view.is_some()
     }
 
-    pub fn is_runtime_started(&self) -> bool {
+    #[must_use]
+    pub const fn is_runtime_started(&self) -> bool {
         self.runtime_started
     }
 
@@ -535,21 +538,23 @@ impl MainPanel {
 
         self.runtime_started = true;
         self.ensure_bridge_polling(cx);
-        self.request_runtime_snapshots(cx);
+        Self::request_runtime_snapshots(cx);
         self.maybe_start_test_conversation_switch(cx);
         cx.notify();
     }
 
     /// Get the current view ID
+    #[must_use]
     pub fn current_view(&self) -> ViewId {
         self.navigation.current()
     }
 
-    /// Handle ViewCommand from the presentation layer
+    /// Handle `ViewCommand` from the presentation layer
     ///
     /// @plan PLAN-20250130-GPUIREDUX.P11
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
     /// @requirement REQ-WIRE-002
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     pub fn handle_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
             ViewCommand::NavigateTo { view } => {
@@ -1136,24 +1141,21 @@ impl MainPanel {
                 }
             }
             ViewCommand::ApiKeysListed { ref keys } => {
-                tracing::info!(key_count = keys.len(), "MainPanel: forwarding ApiKeysListed to GPUI views");
+                tracing::info!(
+                    key_count = keys.len(),
+                    "MainPanel: forwarding ApiKeysListed to GPUI views"
+                );
                 if let Some(ref akm) = self.api_key_manager_view {
                     let keys_clone = keys.clone();
                     akm.update(cx, |view, cx| {
-                        view.handle_command(
-                            ViewCommand::ApiKeysListed { keys: keys_clone },
-                            cx,
-                        );
+                        view.handle_command(ViewCommand::ApiKeysListed { keys: keys_clone }, cx);
                     });
                 }
                 // Also forward to profile editor so its key dropdown refreshes
                 if let Some(ref pe) = self.profile_editor_view {
                     let keys_clone = keys.clone();
                     pe.update(cx, |view, cx| {
-                        view.handle_command(
-                            ViewCommand::ApiKeysListed { keys: keys_clone },
-                            cx,
-                        );
+                        view.handle_command(ViewCommand::ApiKeysListed { keys: keys_clone }, cx);
                     });
                 }
             }
@@ -1187,6 +1189,7 @@ impl gpui::Focusable for MainPanel {
 }
 
 impl gpui::Render for MainPanel {
+    #[allow(clippy::too_many_lines, clippy::derive_partial_eq_without_eq)]
     fn render(
         &mut self,
         window: &mut gpui::Window,
@@ -1196,8 +1199,8 @@ impl gpui::Render for MainPanel {
             main_panel_entity_id = ?cx.entity_id(),
             current_view = ?self.navigation.current(),
             runtime_started = self.runtime_started,
-            chat_view_entity_id = ?self.chat_view.as_ref().map(|view| view.entity_id()),
-            child_observation_count = self._child_observations.len(),
+            chat_view_entity_id = ?self.chat_view.as_ref().map(gpui::Entity::entity_id),
+            child_observation_count = self.child_observations.len(),
             "MainPanel::render state snapshot"
         );
 
@@ -1213,9 +1216,9 @@ impl gpui::Render for MainPanel {
             self.start_runtime(cx);
         }
 
-        if self._child_observations.is_empty() {
+        if self.child_observations.is_empty() {
             if let Some(ref chat_view) = self.chat_view {
-                self._child_observations.push(cx.observe_in(
+                self.child_observations.push(cx.observe_in(
                     chat_view,
                     window,
                     |_, _, _window, cx| cx.notify(),
@@ -1227,10 +1230,7 @@ impl gpui::Render for MainPanel {
         // Poll frequently since we can't get async notify from the channel
         if crate::ui_gpui::navigation_channel().has_pending() {
             if let Some(view_id) = crate::ui_gpui::navigation_channel().take_pending() {
-                println!(
-                    ">>> MainPanel::render - Processing navigation to {:?} <<<",
-                    view_id
-                );
+                println!(">>> MainPanel::render - Processing navigation to {view_id:?} <<<");
                 tracing::info!("MainPanel: Processing navigation request to {:?}", view_id);
 
                 // Special handling: when navigating to ModelSelector, request models
@@ -1258,25 +1258,25 @@ impl gpui::Render for MainPanel {
         match current_view {
             ViewId::Chat => {
                 if let Some(chat_view) = &self.chat_view {
-                    let focus = chat_view.read(cx).focus_handle(cx).clone();
+                    let focus = chat_view.read(cx).focus_handle(cx);
                     window.focus(&focus, cx);
                 }
             }
             ViewId::ProfileEditor => {
                 if let Some(pe_view) = &self.profile_editor_view {
-                    let focus = pe_view.read(cx).focus_handle(cx).clone();
+                    let focus = pe_view.read(cx).focus_handle(cx);
                     window.focus(&focus, cx);
                 }
             }
             ViewId::McpAdd => {
                 if let Some(mcp_view) = &self.mcp_add_view {
-                    let focus = mcp_view.read(cx).focus_handle(cx).clone();
+                    let focus = mcp_view.read(cx).focus_handle(cx);
                     window.focus(&focus, cx);
                 }
             }
             ViewId::ModelSelector => {
                 if let Some(ms_view) = &self.model_selector_view {
-                    let focus = ms_view.read(cx).focus_handle(cx).clone();
+                    let focus = ms_view.read(cx).focus_handle(cx);
                     window.focus(&focus, cx);
                 }
             }
@@ -1317,28 +1317,20 @@ impl gpui::Render for MainPanel {
                 }),
             )
             // Global navigation actions (keybindings registered in main_gpui.rs)
-            .on_action(
-                cx.listener(|_this, _: &NavigateToHistory, _window, _cx| {
-                    crate::ui_gpui::navigation_channel().request_navigate(ViewId::History);
-                }),
-            )
-            .on_action(
-                cx.listener(|_this, _: &NavigateToSettings, _window, _cx| {
-                    crate::ui_gpui::navigation_channel().request_navigate(ViewId::Settings);
-                }),
-            )
-            .on_action(
-                cx.listener(|_this, _: &NewConversation, _window, _cx| {
-                    crate::ui_gpui::navigation_channel().request_navigate(ViewId::Chat);
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &NavigateBack, _window, _cx| {
-                    if this.navigation.current() != ViewId::Chat {
-                        this.navigation.navigate_back();
-                    }
-                }),
-            )
+            .on_action(cx.listener(|_this, _: &NavigateToHistory, _window, _cx| {
+                crate::ui_gpui::navigation_channel().request_navigate(ViewId::History);
+            }))
+            .on_action(cx.listener(|_this, _: &NavigateToSettings, _window, _cx| {
+                crate::ui_gpui::navigation_channel().request_navigate(ViewId::Settings);
+            }))
+            .on_action(cx.listener(|_this, _: &NewConversation, _window, _cx| {
+                crate::ui_gpui::navigation_channel().request_navigate(ViewId::Chat);
+            }))
+            .on_action(cx.listener(|this, _: &NavigateBack, _window, _cx| {
+                if this.navigation.current() != ViewId::Chat {
+                    this.navigation.navigate_back();
+                }
+            }))
             // View-specific bare-key shortcuts (escape, +, m) that can't be global
             // bindings because they'd conflict with text input in other views
             .on_key_down(
@@ -1351,7 +1343,9 @@ impl gpui::Render for MainPanel {
                     let current = this.navigation.current();
                     match current {
                         ViewId::Settings => match key.as_str() {
-                            "escape" => { this.navigation.navigate_back(); }
+                            "escape" => {
+                                this.navigation.navigate_back();
+                            }
                             "+" => crate::ui_gpui::navigation_channel()
                                 .request_navigate(ViewId::ProfileEditor),
                             "=" if modifiers.shift => crate::ui_gpui::navigation_channel()

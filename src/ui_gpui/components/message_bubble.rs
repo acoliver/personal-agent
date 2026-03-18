@@ -55,22 +55,26 @@ impl AssistantBubble {
         }
     }
 
+    #[must_use]
     pub fn model_id(mut self, id: impl Into<String>) -> Self {
         self.model_id = Some(id.into());
         self
     }
 
+    #[must_use]
     pub fn thinking(mut self, thinking: impl Into<String>) -> Self {
         self.thinking = Some(thinking.into());
         self
     }
 
-    pub fn show_thinking(mut self, show: bool) -> Self {
+    #[must_use]
+    pub const fn show_thinking(mut self, show: bool) -> Self {
         self.show_thinking = show;
         self
     }
 
-    pub fn streaming(mut self, is_streaming: bool) -> Self {
+    #[must_use]
+    pub const fn streaming(mut self, is_streaming: bool) -> Self {
         self.is_streaming = is_streaming;
         self
     }
@@ -101,7 +105,7 @@ impl IntoElement for AssistantBubble {
                         .bg(Theme::bg_darker())
                         .text_color(Theme::text_secondary())
                         .text_sm()
-                        .child(format!("Thinking: {}", thinking_content)),
+                        .child(format!("Thinking: {thinking_content}")),
                 );
             }
         }
@@ -130,7 +134,7 @@ impl IntoElement for AssistantBubble {
                 div()
                     .text_sm()
                     .text_color(Theme::text_muted())
-                    .child(format!("via {}", model_id)),
+                    .child(format!("via {model_id}")),
             );
         }
 

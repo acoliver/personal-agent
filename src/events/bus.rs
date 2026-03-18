@@ -1,6 +1,6 @@
-//! EventBus Core Implementation
+//! `EventBus` Core Implementation
 //!
-//! Provides the central event bus using tokio::sync::broadcast.
+//! Provides the central event bus using `tokio::sync::broadcast`.
 //!
 //! @plan PLAN-20250125-REFACTOR.P04
 //! @requirement REQ-019.1
@@ -9,9 +9,9 @@
 use crate::events::{AppEvent, EventBusError};
 use tokio::sync::broadcast;
 
-/// EventBus stub implementation
+/// `EventBus` stub implementation
 ///
-/// Central event distribution system using tokio::sync::broadcast.
+/// Central event distribution system using `tokio::sync::broadcast`.
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 /// @requirement REQ-019.1
@@ -23,11 +23,12 @@ pub struct EventBus {
 }
 
 impl EventBus {
-    /// Create a new EventBus with the specified channel capacity
+    /// Create a new `EventBus` with the specified channel capacity
     ///
     /// @plan PLAN-20250125-REFACTOR.P06
     /// @requirement REQ-021.1
     /// @pseudocode event-bus.md lines 20-23
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity);
         Self { sender }
@@ -36,6 +37,10 @@ impl EventBus {
     /// Publish an event to all subscribers
     ///
     /// Returns the number of subscribers who received the event.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EventBusError::NoSubscribers` when no subscribers are listening.
     ///
     /// @plan PLAN-20250125-REFACTOR.P06
     /// @requirement REQ-021.2
@@ -54,6 +59,7 @@ impl EventBus {
     /// @plan PLAN-20250125-REFACTOR.P06
     /// @requirement REQ-021.3
     /// @pseudocode event-bus.md lines 40-41
+    #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
         self.sender.subscribe()
     }
@@ -62,18 +68,21 @@ impl EventBus {
     ///
     /// @plan PLAN-20250125-REFACTOR.P06
     /// @pseudocode event-bus.md lines 45-46
+    #[must_use]
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
     }
 
     /// Get a reference to the internal sender for presenter creation
-    pub fn sender(&self) -> &broadcast::Sender<AppEvent> {
+    #[must_use]
+    pub const fn sender(&self) -> &broadcast::Sender<AppEvent> {
         &self.sender
     }
 
-    /// Create an EventBus from an existing sender
+    /// Create an `EventBus` from an existing sender
     /// Used to share the same channel across different instances
-    pub fn from_sender(sender: broadcast::Sender<AppEvent>) -> Self {
+    #[must_use]
+    pub const fn from_sender(sender: broadcast::Sender<AppEvent>) -> Self {
         Self { sender }
     }
 }
@@ -87,11 +96,11 @@ mod tests {
     };
     use tokio::time::Duration;
 
-    /// EventBus creation test
+    /// `EventBus` creation test
     ///
-    /// GIVEN: No EventBus exists
-    /// WHEN: EventBus::new(capacity) is called with capacity=16
-    /// THEN: EventBus instance is returned
+    /// GIVEN: No `EventBus` exists
+    /// WHEN: `EventBus::new(capacity)` is called with capacity=16
+    /// THEN: `EventBus` instance is returned
     /// AND: Channel capacity is 16
     ///
     /// @plan PLAN-20250125-REFACTOR.P05
@@ -110,10 +119,10 @@ mod tests {
 
     /// Single subscription test
     ///
-    /// GIVEN: EventBus instance
-    /// WHEN: subscribe() is called once
+    /// GIVEN: `EventBus` instance
+    /// WHEN: `subscribe()` is called once
     /// THEN: Receiver is returned
-    /// AND: subscriber_count() returns 1
+    /// AND: `subscriber_count()` returns 1
     ///
     /// @plan PLAN-20250125-REFACTOR.P05
     /// @requirement REQ-020.4
@@ -131,10 +140,10 @@ mod tests {
 
     /// Multiple subscriptions test
     ///
-    /// GIVEN: EventBus instance
-    /// WHEN: subscribe() is called 3 times
+    /// GIVEN: `EventBus` instance
+    /// WHEN: `subscribe()` is called 3 times
     /// THEN: 3 unique Receivers are returned
-    /// AND: subscriber_count() returns 3
+    /// AND: `subscriber_count()` returns 3
     ///
     /// @plan PLAN-20250125-REFACTOR.P05
     /// @requirement REQ-020.4
@@ -154,10 +163,10 @@ mod tests {
 
     /// Publish to single subscriber test
     ///
-    /// GIVEN: EventBus with 1 subscriber
+    /// GIVEN: `EventBus` with 1 subscriber
     /// WHEN: publish(event) is called
     /// THEN: Subscriber receives event
-    /// AND: publish() returns Ok(1)
+    /// AND: `publish()` returns Ok(1)
     ///
     /// @plan PLAN-20250125-REFACTOR.P05
     /// @requirement REQ-020.2
@@ -183,12 +192,12 @@ mod tests {
         assert_eq!(received.unwrap(), event, "Received event matches published");
     }
 
-    /// EV-T1: EventBus delivers events to all subscribers
+    /// EV-T1: `EventBus` delivers events to all subscribers
     ///
-    /// GIVEN: EventBus with 3 subscribers
+    /// GIVEN: `EventBus` with 3 subscribers
     /// WHEN: publish(event) is called
     /// THEN: All 3 subscribers receive event
-    /// AND: publish() returns Ok(3)
+    /// AND: `publish()` returns Ok(3)
     ///
     /// @plan PLAN-20250125-REFACTOR.P05
     /// @requirement REQ-020.2
@@ -224,9 +233,9 @@ mod tests {
 
     /// Publish with no subscribers error test
     ///
-    /// GIVEN: EventBus with 0 subscribers
+    /// GIVEN: `EventBus` with 0 subscribers
     /// WHEN: publish(event) is called
-    /// THEN: publish() returns Err(EventBusError::NoSubscribers)
+    /// THEN: `publish()` returns `Err(EventBusError::NoSubscribers)`
     /// AND: Event is not delivered anywhere
     ///
     /// @plan PLAN-20250125-REFACTOR.P05
@@ -250,7 +259,7 @@ mod tests {
 
     /// EV-T2: Events are delivered in order
     ///
-    /// GIVEN: EventBus with 1 subscriber
+    /// GIVEN: `EventBus` with 1 subscriber
     /// WHEN: 5 events are emitted in sequence
     /// THEN: Events are received in the same order
     ///
@@ -295,7 +304,7 @@ mod tests {
 
     /// EV-T3: Slow subscriber doesn't block fast subscribers
     ///
-    /// GIVEN: EventBus with 2 subscribers (one slow, one fast)
+    /// GIVEN: `EventBus` with 2 subscribers (one slow, one fast)
     /// WHEN: Events are published rapidly
     /// THEN: Fast subscriber receives events normally
     /// AND: Slow subscriber may lag but doesn't block fast subscriber
@@ -337,7 +346,7 @@ mod tests {
 
     /// EV-T5: Multiple event types can be emitted and received
     ///
-    /// GIVEN: EventBus with subscriber
+    /// GIVEN: `EventBus` with subscriber
     /// WHEN: Each event type is published
     /// THEN: All events are received successfully
     ///
@@ -407,9 +416,9 @@ mod tests {
 
     /// EV-T6: Full send message flow emits correct event sequence
     ///
-    /// GIVEN: EventBus with subscriber
-    /// WHEN: User sends a message (UserEvent::SendMessage)
-    /// THEN: ChatService responds with appropriate ChatEvents
+    /// GIVEN: `EventBus` with subscriber
+    /// WHEN: User sends a message (`UserEvent::SendMessage`)
+    /// THEN: `ChatService` responds with appropriate `ChatEvents`
     ///
     /// @plan PLAN-20250125-REFACTOR.P05
     /// @requirement EV-T6
@@ -476,9 +485,9 @@ mod tests {
 
     /// EV-T7: MCP toggle flow emits correct event sequence
     ///
-    /// GIVEN: EventBus with subscriber
+    /// GIVEN: `EventBus` with subscriber
     /// WHEN: User toggles MCP enabled
-    /// THEN: McpService emits Starting -> Started events
+    /// THEN: `McpService` emits Starting -> Started events
     ///
     /// @plan PLAN-20250125-REFACTOR.P05
     /// @requirement EV-T7
@@ -529,7 +538,7 @@ mod tests {
 
     /// EV-T8: Error events work correctly
     ///
-    /// GIVEN: EventBus with subscriber
+    /// GIVEN: `EventBus` with subscriber
     /// WHEN: Error events are emitted
     /// THEN: Error events are received with correct structure
     ///

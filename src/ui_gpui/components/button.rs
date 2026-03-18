@@ -22,16 +22,19 @@ impl Button {
         }
     }
 
-    pub fn active(mut self, active: bool) -> Self {
+    #[must_use]
+    pub const fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
     }
 
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    #[must_use]
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    #[must_use]
     pub fn on_click(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
         self.on_click = Some(Box::new(f));
         self

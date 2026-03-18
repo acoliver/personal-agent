@@ -57,13 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example: Search for multimodal models (accept multiple input types)
     println!("\n--- Multimodal Models ---");
-    let multimodal = registry.search_models(|model| {
-        model
-            .modalities
-            .as_ref()
-            .map(|m| m.input.len() > 1)
-            .unwrap_or(false)
-    });
+    let multimodal = registry
+        .search_models(|model| model.modalities.as_ref().is_some_and(|m| m.input.len() > 1));
     println!("Found {} multimodal models", multimodal.len());
     for (provider_id, model) in multimodal.iter().take(5) {
         if let Some(modalities) = &model.modalities {
@@ -78,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example: Get models from a specific provider
     if let Some(provider_id) = provider_ids.first() {
-        println!("\n--- Models from {} ---", provider_id);
+        println!("\n--- Models from {provider_id} ---");
         if let Some(models) = registry.get_models_for_provider(provider_id) {
             println!("Found {} models", models.len());
             for model in models.iter().take(5) {

@@ -1,4 +1,4 @@
-//! ApiKeyManagerPresenter — handles API key CRUD via the OS keychain.
+//! `ApiKeyManagerPresenter` — handles API key CRUD via the OS keychain.
 //!
 //! Listens for `StoreApiKey`, `DeleteApiKey`, and `RefreshApiKeys` user events
 //! and emits `ApiKeysListed`, `ApiKeyStored`, `ApiKeyDeleted` view commands.
@@ -8,10 +8,7 @@ use tokio::sync::broadcast;
 
 use super::view_command::{ApiKeyInfo, ErrorSeverity};
 use super::{PresenterError, ViewCommand};
-use crate::events::{
-    types::UserEvent,
-    AppEvent, EventBus,
-};
+use crate::events::{types::UserEvent, AppEvent, EventBus};
 use crate::models::profile::AuthConfig;
 use crate::services::{secure_store, ProfileService};
 
@@ -40,7 +37,7 @@ impl ApiKeyManagerPresenter {
     #[allow(dead_code)]
     pub fn new_with_event_bus(
         profile_service: Arc<dyn ProfileService>,
-        event_bus: Arc<EventBus>,
+        event_bus: &Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
         let rx = event_bus.subscribe();
@@ -52,6 +49,9 @@ impl ApiKeyManagerPresenter {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     pub async fn start(&mut self) -> Result<(), PresenterError> {
         if self.running.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -74,7 +74,6 @@ impl ApiKeyManagerPresenter {
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ApiKeyManagerPresenter lagged: {n} events missed");
-                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::info!("ApiKeyManagerPresenter event stream closed");
@@ -88,12 +87,16 @@ impl ApiKeyManagerPresenter {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -177,7 +180,10 @@ impl ApiKeyManagerPresenter {
 
         // Build profile cross-reference map: label → [profile names]
         let profiles = profile_service.list().await.unwrap_or_default();
-        tracing::info!(profile_count = profiles.len(), "ApiKeyManagerPresenter: loaded profiles for key usage cross-reference");
+        tracing::info!(
+            profile_count = profiles.len(),
+            "ApiKeyManagerPresenter: loaded profiles for key usage cross-reference"
+        );
         let mut used_by_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for p in &profiles {
@@ -210,7 +216,10 @@ impl ApiKeyManagerPresenter {
             })
             .collect();
 
-        tracing::info!(key_count = keys.len(), "ApiKeyManagerPresenter: sending ApiKeysListed");
+        tracing::info!(
+            key_count = keys.len(),
+            "ApiKeyManagerPresenter: sending ApiKeysListed"
+        );
         let _ = view_tx.send(ViewCommand::ApiKeysListed { keys });
     }
 }

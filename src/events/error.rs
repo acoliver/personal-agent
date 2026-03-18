@@ -7,7 +7,7 @@
 
 use thiserror::Error;
 
-/// EventBus error types
+/// `EventBus` error types
 ///
 /// @plan PLAN-20250125-REFACTOR.P04
 /// @pseudocode event-bus.md lines 160-162

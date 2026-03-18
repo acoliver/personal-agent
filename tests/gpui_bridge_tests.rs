@@ -3,7 +3,6 @@
 //! @plan PLAN-20250128-GPUI.P04
 //! @requirement REQ-GPUI-006
 
-use flume;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -17,7 +16,7 @@ use personal_agent::ui_gpui::bridge::{
 
 // === Mock Notifier ===
 
-/// Mock notifier that counts notify() calls
+/// Mock notifier that counts `notify()` calls
 #[derive(Clone)]
 struct MockNotifier {
     count: Arc<AtomicUsize>,
@@ -45,7 +44,7 @@ impl GpuiNotifier for MockNotifier {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.1
-/// @scenario GpuiBridge can be created with flume channels
+/// @scenario `GpuiBridge` can be created with flume channels
 #[test]
 fn test_gpui_bridge_creation() {
     let (user_tx, _user_rx) = flume::bounded::<UserEvent>(16);
@@ -59,7 +58,7 @@ fn test_gpui_bridge_creation() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.2
-/// @scenario emit() sends UserEvent through channel
+/// @scenario `emit()` sends `UserEvent` through channel
 #[test]
 fn test_gpui_bridge_emit_user_event() {
     let (user_tx, user_rx) = flume::bounded::<UserEvent>(16);
@@ -85,7 +84,7 @@ fn test_gpui_bridge_emit_user_event() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.2
-/// @scenario emit() returns false when channel is full (non-blocking)
+/// @scenario `emit()` returns false when channel is full (non-blocking)
 #[test]
 fn test_gpui_bridge_emit_non_blocking_when_full() {
     let (user_tx, _user_rx) = flume::bounded::<UserEvent>(1); // Tiny buffer
@@ -107,7 +106,7 @@ fn test_gpui_bridge_emit_non_blocking_when_full() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.3
-/// @scenario drain_commands() returns pending ViewCommands
+/// @scenario `drain_commands()` returns pending `ViewCommands`
 #[test]
 fn test_gpui_bridge_drain_commands() {
     let (user_tx, _user_rx) = flume::bounded::<UserEvent>(16);
@@ -134,7 +133,7 @@ fn test_gpui_bridge_drain_commands() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.3
-/// @scenario drain_commands() is non-blocking when empty
+/// @scenario `drain_commands()` is non-blocking when empty
 #[test]
 fn test_gpui_bridge_drain_non_blocking_when_empty() {
     let (user_tx, _user_rx) = flume::bounded::<UserEvent>(16);
@@ -153,7 +152,7 @@ fn test_gpui_bridge_drain_non_blocking_when_empty() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.3
-/// @scenario has_pending_commands() returns correct state
+/// @scenario `has_pending_commands()` returns correct state
 #[test]
 fn test_gpui_bridge_has_pending_commands() {
     let (user_tx, _user_rx) = flume::bounded::<UserEvent>(16);
@@ -179,13 +178,13 @@ fn test_gpui_bridge_has_pending_commands() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.4
-/// @scenario ViewCommandSink sends commands through channel
+/// @scenario `ViewCommandSink` sends commands through channel
 #[test]
 fn test_view_command_sink_send() {
     let (view_tx, view_rx) = flume::bounded::<ViewCommand>(16);
     let notifier = MockNotifier::new();
 
-    let sink = ViewCommandSink::new(view_tx, notifier.clone());
+    let sink = ViewCommandSink::new(view_tx, notifier);
 
     sink.send(ViewCommand::ClearError);
 
@@ -196,7 +195,7 @@ fn test_view_command_sink_send() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.5
-/// @scenario ViewCommandSink calls notifier after sending
+/// @scenario `ViewCommandSink` calls notifier after sending
 #[test]
 fn test_view_command_sink_notifies() {
     let (view_tx, _view_rx) = flume::bounded::<ViewCommand>(16);
@@ -215,7 +214,7 @@ fn test_view_command_sink_notifies() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.5
-/// @scenario ViewCommandSink still notifies when channel full
+/// @scenario `ViewCommandSink` still notifies when channel full
 #[test]
 fn test_view_command_sink_notifies_when_full() {
     let (view_tx, _view_rx) = flume::bounded::<ViewCommand>(1);
@@ -234,7 +233,7 @@ fn test_view_command_sink_notifies_when_full() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.4
-/// @scenario ViewCommandSink can be cloned for multiple presenters
+/// @scenario `ViewCommandSink` can be cloned for multiple presenters
 #[test]
 fn test_view_command_sink_clone() {
     let (view_tx, view_rx) = flume::bounded::<ViewCommand>(16);
@@ -256,7 +255,7 @@ fn test_view_command_sink_clone() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006.1
-/// @scenario Forwarder publishes UserEvents to EventBus
+/// @scenario Forwarder publishes `UserEvents` to `EventBus`
 #[tokio::test]
 async fn test_user_event_forwarder_publishes() {
     let event_bus = Arc::new(EventBus::new(16));
@@ -280,7 +279,7 @@ async fn test_user_event_forwarder_publishes() {
 
     match received.unwrap() {
         AppEvent::User(UserEvent::NewConversation) => {}
-        other => panic!("Expected NewConversation, got {:?}", other),
+        other => panic!("Expected NewConversation, got {other:?}"),
     }
 }
 
@@ -307,7 +306,7 @@ async fn test_user_event_forwarder_exits_on_disconnect() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006
-/// @scenario Full round-trip: GPUI emits UserEvent, presenter sends ViewCommand
+/// @scenario Full round-trip: GPUI emits `UserEvent`, presenter sends `ViewCommand`
 #[tokio::test]
 async fn test_full_bridge_round_trip() {
     let event_bus = Arc::new(EventBus::new(16));
@@ -356,7 +355,7 @@ async fn test_full_bridge_round_trip() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006
-/// @scenario End-to-end: UserEvent -> EventBus -> Presenter -> ViewCommand -> UI state update
+/// @scenario End-to-end: `UserEvent` -> `EventBus` -> Presenter -> `ViewCommand` -> UI state update
 #[tokio::test]
 async fn test_e2e_with_state_application() {
     let event_bus = Arc::new(EventBus::new(16));
@@ -442,7 +441,7 @@ async fn test_e2e_with_state_application() {
 
 /// @plan PLAN-20250128-GPUI.P04
 /// @requirement REQ-GPUI-006
-/// @scenario ViewCommand channel overflow triggers notify but doesn't block
+/// @scenario `ViewCommand` channel overflow triggers notify but doesn't block
 #[tokio::test]
 async fn test_view_command_overflow_behavior() {
     let (view_tx, view_rx) = flume::bounded::<ViewCommand>(2); // Tiny buffer

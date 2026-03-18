@@ -17,7 +17,7 @@ use crate::ui_gpui::theme::Theme;
 
 /// Registry source for MCP search
 /// @plan PLAN-20250130-GPUIREDUX.P09
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum McpRegistry {
     Official,
     Smithery,
@@ -26,18 +26,19 @@ pub enum McpRegistry {
 }
 
 impl McpRegistry {
-    pub fn display(&self) -> &'static str {
+    #[must_use]
+    pub const fn display(&self) -> &'static str {
         match self {
-            McpRegistry::Official => "Official",
-            McpRegistry::Smithery => "Smithery",
-            McpRegistry::Both => "Both",
+            Self::Official => "Official",
+            Self::Smithery => "Smithery",
+            Self::Both => "Both",
         }
     }
 }
 
 /// MCP search result item
 /// @plan PLAN-20250130-GPUIREDUX.P09
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct McpSearchResult {
     pub id: String,
     pub name: String,
@@ -67,26 +68,31 @@ impl McpSearchResult {
         }
     }
 
-    pub fn with_registry(mut self, registry: McpRegistry) -> Self {
+    #[must_use]
+    pub const fn with_registry(mut self, registry: McpRegistry) -> Self {
         self.registry = registry;
         self
     }
 
+    #[must_use]
     pub fn with_command(mut self, command: impl Into<String>) -> Self {
         self.command = command.into();
         self
     }
 
+    #[must_use]
     pub fn with_args(mut self, args: Vec<String>) -> Self {
         self.args = args;
         self
     }
 
+    #[must_use]
     pub fn with_env(mut self, env: Option<Vec<(String, String)>>) -> Self {
         self.env = env;
         self
     }
 
+    #[must_use]
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
         self.source = source.into();
         self
@@ -95,7 +101,7 @@ impl McpSearchResult {
 
 /// Loading state for search
 /// @plan PLAN-20250130-GPUIREDUX.P09
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum SearchState {
     #[default]
     Idle,
@@ -118,11 +124,13 @@ pub struct McpAddState {
 }
 
 impl McpAddState {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Check if Next should be enabled
+    #[must_use]
     pub fn can_proceed(&self) -> bool {
         !self.manual_entry.trim().is_empty() || self.selected_result_id.is_some()
     }
@@ -186,11 +194,12 @@ impl McpAddView {
     }
 
     /// Get current state for testing/forwarded key handling
-    pub fn get_state(&self) -> &McpAddState {
+    #[must_use]
+    pub const fn get_state(&self) -> &McpAddState {
         &self.state
     }
 
-    /// Emit SearchMcpRegistry for current search query and selected registry.
+    /// Emit `SearchMcpRegistry` for current search query and selected registry.
     pub fn emit_search_registry(&mut self) {
         let query = self.state.search_query.trim().to_string();
         if query.is_empty() {
@@ -207,15 +216,15 @@ impl McpAddView {
         }
         .to_string();
 
-        self.emit(UserEvent::SearchMcpRegistry {
+        self.emit(&UserEvent::SearchMcpRegistry {
             query,
             source: crate::events::types::McpRegistrySource { name: source_name },
         });
     }
 
-    /// Emit a UserEvent through the bridge
+    /// Emit a `UserEvent` through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn emit(&self, event: UserEvent) {
+    fn emit(&self, event: &UserEvent) {
         if let Some(bridge) = &self.bridge {
             if !bridge.emit(event.clone()) {
                 tracing::error!("Failed to emit event {:?}", event);
@@ -225,13 +234,10 @@ impl McpAddView {
         }
     }
 
-    /// Handle ViewCommand from presenter
+    /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P09
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
-            ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
-                // Navigation handled by MainPanel
-            }
             ViewCommand::McpConfigureDraftLoaded {
                 id,
                 name,
@@ -245,11 +251,10 @@ impl McpAddView {
                 self.state.manual_entry =
                     format!("{} {}", command, args.join(" ")).trim().to_string();
 
-                let (source_hint, normalized_id) = id
-                    .split_once("::")
-                    .map_or((None, id.clone()), |(source, raw_id)| {
-                        (Some(source.to_string()), raw_id.to_string())
-                    });
+                let (source_hint, normalized_id) = id.split_once("::").map_or_else(
+                    || (None, id.clone()),
+                    |(source, raw_id)| (Some(source.to_string()), raw_id.to_string()),
+                );
                 self.state.selected_result_id = Some(normalized_id.clone());
 
                 let registry = match source_hint.as_deref() {
@@ -374,14 +379,14 @@ impl McpAddView {
                                             "Next clicked - selected MCP {}",
                                             selected_id
                                         );
-                                        this.emit(UserEvent::SelectMcpFromRegistry {
+                                        this.emit(&UserEvent::SelectMcpFromRegistry {
                                             source: crate::events::types::McpRegistrySource {
                                                 name: selected_id,
                                             },
                                         });
                                     } else {
                                         tracing::info!("Next clicked - proceeding via McpAddNext");
-                                        this.emit(UserEvent::McpAddNext);
+                                        this.emit(&UserEvent::McpAddNext);
                                     }
                                 }),
                             )
@@ -395,7 +400,7 @@ impl McpAddView {
 
     /// Render a field label
     /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_label(&self, text: &str) -> impl IntoElement {
+    fn render_label(text: &str) -> impl IntoElement {
         div()
             .text_size(px(11.0))
             .text_color(Theme::text_secondary())
@@ -409,7 +414,7 @@ impl McpAddView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("MANUAL ENTRY"))
+            .child(Self::render_label("MANUAL ENTRY"))
             .child(
                 div()
                     .id("field-manual-entry")
@@ -437,7 +442,7 @@ impl McpAddView {
 
     /// Render the "or search registry" divider
     /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_divider(&self) -> impl IntoElement {
+    fn render_divider() -> impl IntoElement {
         div()
             .w(px(360.0))
             .my(px(16.0))
@@ -462,7 +467,7 @@ impl McpAddView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("REGISTRY"))
+            .child(Self::render_label("REGISTRY"))
             .child(
                 div()
                     .id("dropdown-registry")
@@ -490,7 +495,7 @@ impl McpAddView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("SEARCH"))
+            .child(Self::render_label("SEARCH"))
             .child(
                 div()
                     .id("field-search")
@@ -532,7 +537,7 @@ impl McpAddView {
         let source = result.source.clone();
 
         div()
-            .id(SharedString::from(format!("result-{}", id)))
+            .id(SharedString::from(format!("result-{id}")))
             .w_full()
             .h(px(48.0))
             .px(px(8.0))
@@ -618,7 +623,7 @@ impl McpAddView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("RESULTS"))
+            .child(Self::render_label("RESULTS"))
             .child(
                 div()
                     .id("results-list")
@@ -718,7 +723,7 @@ impl McpAddView {
             // Manual entry
             .child(self.render_manual_entry())
             // Divider
-            .child(self.render_divider())
+            .child(Self::render_divider())
             // Registry dropdown
             .child(self.render_registry_dropdown())
             // Search field
@@ -778,11 +783,7 @@ impl gpui::EntityInputHandler for McpAddView {
         }
     }
 
-    fn unmark_text(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) {
+    fn unmark_text(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) {
         self.ime_marked_byte_count = 0;
     }
 
@@ -795,7 +796,9 @@ impl gpui::EntityInputHandler for McpAddView {
     ) {
         if self.ime_marked_byte_count > 0 {
             let len = self.state.search_query.len();
-            self.state.search_query.truncate(len.saturating_sub(self.ime_marked_byte_count));
+            self.state
+                .search_query
+                .truncate(len.saturating_sub(self.ime_marked_byte_count));
             self.ime_marked_byte_count = 0;
         }
         if !text.is_empty() {
@@ -815,7 +818,9 @@ impl gpui::EntityInputHandler for McpAddView {
     ) {
         if self.ime_marked_byte_count > 0 {
             let len = self.state.search_query.len();
-            self.state.search_query.truncate(len.saturating_sub(self.ime_marked_byte_count));
+            self.state
+                .search_query
+                .truncate(len.saturating_sub(self.ime_marked_byte_count));
             self.ime_marked_byte_count = 0;
         }
         if !new_text.is_empty() {
@@ -864,10 +869,17 @@ impl gpui::Render for McpAddView {
                 canvas(
                     |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
                     {
-                        let entity = cx.entity().clone();
+                        let entity = cx.entity();
                         let focus = self.focus_handle.clone();
-                        move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
-                            window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+                        move |bounds: Bounds<Pixels>,
+                              _,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::App| {
+                            window.handle_input(
+                                &focus,
+                                ElementInputHandler::new(bounds, entity),
+                                cx,
+                            );
                         }
                     },
                 )
@@ -901,7 +913,6 @@ impl gpui::Render for McpAddView {
                     if key == "enter" {
                         this.emit_search_registry();
                         cx.notify();
-                        return;
                     }
 
                     // All other keys (printable chars) fall through to EntityInputHandler

@@ -1,9 +1,11 @@
-//! E2E test for SettingsPresenter MCP event wiring
+//! E2E test for `SettingsPresenter` MCP event wiring
 //!
 //! @plan PLAN-20250128-PRESENTERS.P05
 //! @requirement REQ-019.2
 //!
-//! This test proves SettingsPresenter receives MCP events and emits ViewCommands.
+
+#![allow(clippy::assertions_on_constants)]
+//! This test proves `SettingsPresenter` receives MCP events and emits `ViewCommands`.
 //! No real MCP server needed - we manually publish events to test the presenter.
 
 use personal_agent::{
@@ -24,7 +26,7 @@ async fn setup_test_environment() -> (broadcast::Sender<AppEvent>, mpsc::Receive
     let thread_id = format!("{:?}", std::thread::current().id());
     let temp_dir = std::env::temp_dir().join(format!(
         "mcp_test_{}",
-        thread_id.replace("ThreadId(", "").replace(")", "")
+        thread_id.replace("ThreadId(", "").replace(')', "")
     ));
     let profiles_dir = temp_dir.join("profiles");
     let settings_file = temp_dir.join("settings.json");
@@ -66,7 +68,7 @@ async fn setup_test_environment() -> (broadcast::Sender<AppEvent>, mpsc::Receive
     (event_tx, view_mpsc_rx)
 }
 
-/// Collect ViewCommands with timeout
+/// Collect `ViewCommands` with timeout
 async fn collect_commands(
     rx: &mut mpsc::Receiver<ViewCommand>,
     timeout_ms: u64,
@@ -82,8 +84,7 @@ async fn collect_commands(
 
         match tokio::time::timeout(remaining, rx.recv()).await {
             Ok(Some(cmd)) => commands.push(cmd),
-            Ok(None) => break,
-            Err(_) => break,
+            Ok(None) | Err(_) => break,
         }
     }
 
@@ -224,7 +225,7 @@ async fn test_mcp_full_lifecycle() {
 
     println!("Full lifecycle - received {} commands:", commands.len());
     for (i, cmd) in commands.iter().enumerate() {
-        println!("  [{}] {:?}", i, cmd);
+        println!("  [{i}] {cmd:?}");
     }
 
     // Just verify we processed the events without panic

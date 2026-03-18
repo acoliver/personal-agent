@@ -1,6 +1,6 @@
-//! ChatPresenter - handles user chat events and service coordination
+//! `ChatPresenter` - handles user chat events and service coordination
 //!
-//! ChatPresenter subscribes to user chat events and chat domain events,
+//! `ChatPresenter` subscribes to user chat events and chat domain events,
 //! coordinates with chat and conversation services, and emits view commands.
 //!
 //! @plan PLAN-20250125-REFACTOR.P12
@@ -22,7 +22,7 @@ use crate::events::{
 };
 use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
 
-/// ChatPresenter - handles chat UI events and service coordination
+/// `ChatPresenter` - handles chat UI events and service coordination
 ///
 /// @plan PLAN-20250125-REFACTOR.P12
 /// @requirement REQ-027.1
@@ -48,7 +48,7 @@ pub struct ChatPresenter {
 }
 
 impl ChatPresenter {
-    /// Create a new ChatPresenter
+    /// Create a new `ChatPresenter`
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
@@ -72,6 +72,10 @@ impl ChatPresenter {
 
     /// Start the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
     /// @pseudocode presenters.md lines 50-69
@@ -88,8 +92,8 @@ impl ChatPresenter {
         match Self::emit_conversation_list(&self.conversation_service, &mut self.view_tx.clone())
             .await
         {
-            Ok(_) => {
-                tracing::info!("ChatPresenter: initial conversation list emitted successfully")
+            Ok(()) => {
+                tracing::info!("ChatPresenter: initial conversation list emitted successfully");
             }
             Err(e) => tracing::error!(
                 "ChatPresenter: failed to emit initial conversation list: {}",
@@ -170,7 +174,6 @@ impl ChatPresenter {
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ChatPresenter lagged: {} events missed", n);
-                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::info!("ChatPresenter event stream closed");
@@ -186,6 +189,10 @@ impl ChatPresenter {
 
     /// Stop the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
     /// @pseudocode presenters.md lines 250-253
@@ -198,11 +205,12 @@ impl ChatPresenter {
     /// Check if presenter is running
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Handle events from EventBus
+    /// Handle events from `EventBus`
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
@@ -337,7 +345,7 @@ impl ChatPresenter {
                     role,
                     content: message.content,
                     thinking_content: message.thinking_content,
-                    timestamp: Some(message.timestamp.timestamp_millis() as u64),
+                    timestamp: Some(message.timestamp.timestamp_millis().cast_unsigned()),
                 })
             })
             .collect::<Vec<_>>();
@@ -357,6 +365,7 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
+    #[allow(clippy::too_many_lines)]
     async fn handle_chat_event(view_tx: &mut mpsc::Sender<ViewCommand>, event: ChatEvent) {
         match event {
             ChatEvent::StreamStarted {
@@ -426,7 +435,7 @@ impl ChatPresenter {
                 let _ = view_tx
                     .send(ViewCommand::FinalizeStream {
                         conversation_id,
-                        tokens: total_tokens.unwrap_or(0) as u64,
+                        tokens: u64::from(total_tokens.unwrap_or(0)),
                     })
                     .await;
                 let _ = view_tx
@@ -483,7 +492,7 @@ impl ChatPresenter {
         }
     }
 
-    /// Handle SendMessage user event
+    /// Handle `SendMessage` user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
@@ -508,7 +517,7 @@ impl ChatPresenter {
                 Ok(id) => id,
                 Err(e) => {
                     tracing::error!("Failed to get/create conversation: {}", e);
-                    let error_msg = format!("Failed to create conversation: {}", e);
+                    let error_msg = format!("Failed to create conversation: {e}");
                     let _ = view_tx
                         .send(ViewCommand::ShowError {
                             title: "Conversation Error".to_string(),
@@ -559,7 +568,7 @@ impl ChatPresenter {
         }
     }
 
-    /// Handle ToggleThinking user event
+    /// Handle `ToggleThinking` user event
     ///
     /// @plan PLAN-20250128-PRESENTERS.P01
     /// @requirement REQ-027.1
@@ -567,7 +576,7 @@ impl ChatPresenter {
         let _ = view_tx.send(ViewCommand::ToggleThinkingVisibility).await;
     }
 
-    /// Handle ConfirmRenameConversation user event
+    /// Handle `ConfirmRenameConversation` user event
     ///
     /// @plan PLAN-20250128-PRESENTERS.P01
     /// @requirement REQ-027.1
@@ -578,7 +587,7 @@ impl ChatPresenter {
         title: String,
     ) {
         match conversation_service.rename(id, title.clone()).await {
-            Ok(_) => {
+            Ok(()) => {
                 let _ = view_tx
                     .send(ViewCommand::ConversationRenamed {
                         id,
@@ -588,7 +597,7 @@ impl ChatPresenter {
                 let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             Err(e) => {
-                let error_msg = format!("Failed to rename conversation: {}", e);
+                let error_msg = format!("Failed to rename conversation: {e}");
                 tracing::error!("{}", error_msg);
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
@@ -626,7 +635,7 @@ impl ChatPresenter {
             ConversationEvent::Deleted { id } => {
                 let _ = view_tx.send(ViewCommand::ConversationDeleted { id }).await;
             }
-            ConversationEvent::Activated { id } => {
+            ConversationEvent::Activated { id } | ConversationEvent::Loaded { id } => {
                 let _ = view_tx
                     .send(ViewCommand::ConversationActivated {
                         id,
@@ -642,18 +651,10 @@ impl ChatPresenter {
                     .send(ViewCommand::HistoryUpdated { count: Some(count) })
                     .await;
             }
-            ConversationEvent::Loaded { id } => {
-                let _ = view_tx
-                    .send(ViewCommand::ConversationActivated {
-                        id,
-                        selection_generation: 0,
-                    })
-                    .await;
-            }
         }
     }
 
-    /// Handle StopStreaming user event
+    /// Handle `StopStreaming` user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
@@ -665,7 +666,7 @@ impl ChatPresenter {
         // StreamCancelled event will be emitted by the service
     }
 
-    /// Handle NewConversation user event
+    /// Handle `NewConversation` user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
@@ -712,7 +713,7 @@ impl ChatPresenter {
                 let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             Err(e) => {
-                let error_msg = format!("Failed to create conversation: {}", e);
+                let error_msg = format!("Failed to create conversation: {e}");
                 tracing::error!("{}", error_msg);
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
@@ -725,7 +726,7 @@ impl ChatPresenter {
         }
     }
 
-    /// Handle SelectConversation user event
+    /// Handle `SelectConversation` user event
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
@@ -737,7 +738,7 @@ impl ChatPresenter {
     ) {
         let result = conversation_service.set_active(id).await;
         match result {
-            Ok(_) => {
+            Ok(()) => {
                 let _ = view_tx
                     .send(ViewCommand::ConversationActivated {
                         id,
@@ -762,7 +763,7 @@ impl ChatPresenter {
                     }
                     Err(e) => {
                         let error_msg =
-                            format!("Failed to load messages for selected conversation: {}", e);
+                            format!("Failed to load messages for selected conversation: {e}");
                         tracing::warn!(
                             "Failed to load messages for selected conversation {}: {}",
                             id,
@@ -788,7 +789,7 @@ impl ChatPresenter {
                 let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             Err(e) => {
-                let error_msg = format!("Failed to select conversation: {}", e);
+                let error_msg = format!("Failed to select conversation: {e}");
                 tracing::error!("{}", error_msg);
                 let _ = view_tx
                     .send(ViewCommand::ConversationLoadFailed {
@@ -825,7 +826,7 @@ impl ChatPresenter {
 
         let default_profile = Self::resolve_default_profile_id(profile_service)
             .await
-            .map_err(|msg| Box::<dyn std::error::Error + Send + Sync>::from(msg))?;
+            .map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
 
         let conversation_result = conversation_service
             .create(Some("New Conversation".to_string()), default_profile)
@@ -862,7 +863,7 @@ impl ChatPresenter {
         if let Some(default_profile) = profile_service
             .get_default()
             .await
-            .map_err(|e| format!("Failed to load default profile: {}", e))?
+            .map_err(|e| format!("Failed to load default profile: {e}"))?
         {
             tracing::info!(
                 profile_id = %default_profile.id,
@@ -876,7 +877,7 @@ impl ChatPresenter {
         let profiles = profile_service
             .list()
             .await
-            .map_err(|e| format!("Failed to list profiles: {}", e))?;
+            .map_err(|e| format!("Failed to list profiles: {e}"))?;
 
         tracing::info!(
             count = profiles.len(),
@@ -926,7 +927,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{broadcast, mpsc};
 
-    /// Mock ConversationService for testing
+    /// Mock `ConversationService` for testing
     struct MockConversationService;
 
     #[async_trait::async_trait]
@@ -1022,7 +1023,7 @@ mod tests {
         }
     }
 
-    /// Mock ChatService for testing
+    /// Mock `ChatService` for testing
     struct MockChatService;
 
     #[async_trait::async_trait]
@@ -1065,8 +1066,7 @@ mod tests {
             id: Uuid,
         ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
             Err(crate::services::ServiceError::NotFound(format!(
-                "profile {} not found",
-                id
+                "profile {id} not found"
             )))
         }
 

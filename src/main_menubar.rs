@@ -142,6 +142,7 @@ fn store_app_state(
     MCP_CONFIGURE_VIEW_CONTROLLER.set(Some(controllers.mcp_configure));
 }
 
+#[allow(clippy::too_many_lines)]
 fn register_view_notifications(self_ref: &AppDelegate) {
     use objc2_foundation::NSNotificationCenter;
 
@@ -660,6 +661,7 @@ impl AppDelegate {
 // ============================================================================
 
 /// Create the application's main menu with Edit menu for copy/paste
+#[allow(clippy::too_many_lines)]
 fn setup_main_menu(mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
 

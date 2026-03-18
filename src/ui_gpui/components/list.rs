@@ -7,14 +7,18 @@ use gpui::{div, prelude::*, px, IntoElement, Styled};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+type RenderItemFn<T> = Box<dyn Fn(&T, bool) -> gpui::Div + 'static>;
+type OnSelectCallback = Rc<RefCell<dyn Fn(usize)>>;
+
 pub struct List<T: Clone> {
     items: Vec<T>,
     selected_index: Rc<RefCell<Option<usize>>>,
-    render_item: Option<Box<dyn Fn(&T, bool) -> gpui::Div + 'static>>,
-    on_select: Option<Rc<RefCell<dyn Fn(usize)>>>,
+    render_item: Option<RenderItemFn<T>>,
+    on_select: Option<OnSelectCallback>,
 }
 
 impl<T: Clone + 'static> List<T> {
+    #[must_use]
     pub fn new(items: Vec<T>) -> Self {
         Self {
             items,
@@ -24,20 +28,24 @@ impl<T: Clone + 'static> List<T> {
         }
     }
 
+    #[must_use]
     pub fn selected(self, index: usize) -> Self {
         *self.selected_index.borrow_mut() = Some(index);
         self
     }
 
+    #[must_use]
     pub fn selected_index(&self) -> Option<usize> {
         *self.selected_index.borrow()
     }
 
+    #[must_use]
     pub fn render_item(mut self, f: impl Fn(&T, bool) -> gpui::Div + 'static) -> Self {
         self.render_item = Some(Box::new(f));
         self
     }
 
+    #[must_use]
     pub fn on_select(mut self, callback: impl Fn(usize) + 'static) -> Self {
         self.on_select = Some(Rc::new(RefCell::new(callback)));
         self
@@ -69,24 +77,25 @@ impl<T: Clone + 'static> IntoElement for List<T> {
             .children(items.iter().enumerate().map(|(idx, item)| {
                 let is_selected = selected_idx == Some(idx);
 
-                if let Some(ref render_fn) = render_fn {
-                    render_fn(item, is_selected)
-                } else {
-                    div()
-                        .flex()
-                        .items_center()
-                        .px(px(Theme::SPACING_MD))
-                        .py(px(Theme::SPACING_SM))
-                        .w_full()
-                        .cursor_pointer()
-                        .when(is_selected, |d| d.bg(Theme::bg_dark()))
-                        .child(
-                            div()
-                                .text_color(Theme::text_primary())
-                                .text_sm()
-                                .child(format!("Item {}", idx)),
-                        )
-                }
+                render_fn.as_ref().map_or_else(
+                    || {
+                        div()
+                            .flex()
+                            .items_center()
+                            .px(px(Theme::SPACING_MD))
+                            .py(px(Theme::SPACING_SM))
+                            .w_full()
+                            .cursor_pointer()
+                            .when(is_selected, |d| d.bg(Theme::bg_dark()))
+                            .child(
+                                div()
+                                    .text_color(Theme::text_primary())
+                                    .text_sm()
+                                    .child(format!("Item {idx}")),
+                            )
+                    },
+                    |render_fn| render_fn(item, is_selected),
+                )
             }))
     }
 }

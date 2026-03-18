@@ -18,6 +18,7 @@ pub struct NavigationChannel {
 }
 
 impl NavigationChannel {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             pending_navigation: Mutex::new(None),
@@ -35,9 +36,9 @@ impl NavigationChannel {
 
     /// Request navigation to a view
     pub fn request_navigate(&self, to: ViewId) {
-        println!(">>> NavigationChannel::request_navigate({:?}) <<<", to);
+        println!(">>> NavigationChannel::request_navigate({to:?}) <<<");
         if let Ok(mut guard) = self.pending_navigation.lock() {
-            *guard = Some(to.clone());
+            *guard = Some(to);
             self.has_request.store(true, Ordering::SeqCst);
             println!(">>> Navigation stored, has_request=true <<<");
         }
@@ -53,7 +54,7 @@ impl NavigationChannel {
     }
 
     /// Request navigation back
-    pub fn request_navigate_back(&self) {
+    pub const fn request_navigate_back(&self) {
         // Use Chat as sentinel for "back" (we'll handle this specially)
         // Actually, let's just not support back for now
     }
@@ -66,11 +67,9 @@ impl NavigationChannel {
     /// Take the pending navigation request (clears it)
     pub fn take_pending(&self) -> Option<ViewId> {
         if self.has_request.swap(false, Ordering::SeqCst) {
-            if let Ok(mut guard) = self.pending_navigation.lock() {
-                guard.take()
-            } else {
-                None
-            }
+            self.pending_navigation
+                .lock()
+                .map_or(None, |mut guard| guard.take())
         } else {
             None
         }
@@ -88,6 +87,7 @@ static NAVIGATION_CHANNEL: once_cell::sync::Lazy<NavigationChannel> =
     once_cell::sync::Lazy::new(NavigationChannel::new);
 
 /// Get the global navigation channel
+#[must_use]
 pub fn navigation_channel() -> &'static NavigationChannel {
     &NAVIGATION_CHANNEL
 }

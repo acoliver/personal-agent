@@ -79,7 +79,8 @@ static TRAY_CLICKED: AtomicBool = AtomicBool::new(false);
 // Global application state
 // ============================================================================
 
-/// Global application state (full version with all fields)
+/// Global application state (full version with all fields).
+///
 /// @plan PLAN-20260304-GPUIREMEDIATE.P04
 /// @requirement REQ-ARCH-001.1
 /// @requirement REQ-ARCH-001.3
@@ -381,6 +382,7 @@ fn forward_runtime_commands_to_main_panel(commands: Vec<ViewCommand>, cx: &mut A
 /// @requirement REQ-ARCH-003.4
 /// @requirement REQ-ARCH-004.1
 /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-036
+#[allow(clippy::needless_pass_by_ref_mut)]
 fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
     cx.spawn(async move |cx| loop {
         cx.background_executor()
@@ -590,6 +592,7 @@ impl SystemTray {
     }
 
     /// Start polling for clicks on status item
+    #[allow(clippy::option_if_let_else)]
     pub fn start_click_listener(&self, cx: &mut App) {
         cx.spawn(async move |cx| {
             let mut last_buttons: usize = 0;
@@ -648,7 +651,7 @@ impl SystemTray {
                             mouse_y = mouse_loc.y,
                             "Tray click detected on status item"
                         );
-                        let _ = cx.update_global::<SystemTray, _>(|tray, cx| {
+                        let _ = cx.update_global::<Self, _>(|tray, cx| {
                             tray.toggle_popup(cx);
                         });
                     }
@@ -672,6 +675,7 @@ impl SystemTray {
     }
 
     /// Open the popup window
+    #[allow(clippy::option_if_let_else)]
     fn open_popup(&mut self, cx: &mut App) {
         self.close_popup(cx);
 
@@ -743,6 +747,7 @@ impl SystemTray {
     }
 
     /// Get position for popup window (below status item)
+    #[allow(clippy::option_if_let_else)]
     fn get_popup_position(&self, menu_width: f32, menu_height: f32) -> (f32, f32) {
         if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
             // Keep automation popup visible near the top-right on the main screen.
@@ -1099,33 +1104,33 @@ fn main() {
                 let mut settings_presenter = SettingsPresenter::new_with_event_bus(
                     profile_service.clone(),
                     app_settings.clone(),
-                    Arc::clone(&event_bus_for_tokio),
+                    &event_bus_for_tokio,
                     settings_view_tx,
                 );
 
                 let mut model_selector_presenter = ModelSelectorPresenter::new_with_event_bus(
                     models_registry_service.clone(),
-                    Arc::clone(&event_bus_for_tokio),
+                    &event_bus_for_tokio,
                     model_selector_view_tx,
                 );
                 let mut profile_editor_presenter = ProfileEditorPresenter::new_with_event_bus(
                     profile_service.clone(),
-                    Arc::clone(&event_bus_for_tokio),
+                    &event_bus_for_tokio,
                     profile_editor_view_tx,
                 );
                 let mut mcp_add_presenter = McpAddPresenter::new_with_event_bus(
                     mcp_registry_service.clone(),
-                    Arc::clone(&event_bus_for_tokio),
+                    &event_bus_for_tokio,
                     mcp_add_view_tx,
                 );
                 let mut mcp_configure_presenter = McpConfigurePresenter::new_with_event_bus(
                     mcp_service.clone(),
-                    Arc::clone(&event_bus_for_tokio),
+                    &event_bus_for_tokio,
                     mcp_configure_view_tx,
                 );
                 let mut api_key_manager_presenter = ApiKeyManagerPresenter::new_with_event_bus(
                     profile_service.clone(),
-                    Arc::clone(&event_bus_for_tokio),
+                    &event_bus_for_tokio,
                     api_key_manager_view_tx,
                 );
 

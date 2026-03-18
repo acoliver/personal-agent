@@ -7,7 +7,8 @@ fn api_key_manager_registers_entity_input_handler_for_text_entry() {
         "API Key Manager must register an ElementInputHandler so the label and value fields are actually editable"
     );
     assert!(
-        source.contains("window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx)"),
+        source.contains("window.handle_input(")
+            && source.contains("ElementInputHandler::new(bounds, entity)"),
         "API Key Manager must wire window.handle_input to the focused entity"
     );
 }
@@ -42,8 +43,7 @@ fn api_key_manager_keeps_label_non_editable_during_edit_mode_tabbing() {
     let source = include_str!("../src/ui_gpui/views/api_key_manager_view.rs");
 
     assert!(
-        source.contains("(EditMode::Editing { .. }, Some(ActiveField::Value))")
-            && source.contains("(EditMode::Editing { .. }, Some(ActiveField::Label))")
+        source.contains("(EditMode::Editing { .. }, Some(ActiveField::Value | ActiveField::Label))")
             && source.contains("self.state.active_field = Some(ActiveField::Value);"),
         "API Key Manager should keep focus on the value field while editing an existing key so the fixed label cannot become editable via Tab"
     );
@@ -55,7 +55,7 @@ fn profile_editor_requests_key_refresh_when_bridge_is_attached() {
 
     assert!(
         source.contains("fn request_api_key_refresh(&self)")
-            && source.contains("self.emit(UserEvent::RefreshApiKeys);")
+            && source.contains("self.emit(&UserEvent::RefreshApiKeys);")
             && source.contains("self.request_api_key_refresh();"),
         "Profile editor should refresh key labels when its bridge is attached so the dropdown is populated"
     );
@@ -96,7 +96,9 @@ fn profile_editor_empty_key_dropdown_requests_refresh_instead_of_silent_no_op() 
 
 use async_trait::async_trait;
 use personal_agent::models::{AuthConfig, ModelParameters, ModelProfile};
-use personal_agent::presentation::{api_key_manager_presenter::ApiKeyManagerPresenter, ViewCommand};
+use personal_agent::presentation::{
+    api_key_manager_presenter::ApiKeyManagerPresenter, ViewCommand,
+};
 use personal_agent::services::{secure_store, ProfileService, ServiceError, ServiceResult};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -172,10 +174,8 @@ async fn api_key_manager_presenter_start_emits_initial_key_list() {
     secure_store::use_mock_backend();
     let _ = secure_store::api_keys::delete("alpha");
     let _ = secure_store::api_keys::delete("beta");
-    secure_store::api_keys::store("alpha", "sk-alpha-1234")
-        .expect("store alpha in mock backend");
-    secure_store::api_keys::store("beta", "sk-beta-9876")
-        .expect("store beta in mock backend");
+    secure_store::api_keys::store("alpha", "sk-alpha-1234").expect("store alpha in mock backend");
+    secure_store::api_keys::store("beta", "sk-beta-9876").expect("store beta in mock backend");
 
     let profile_service = Arc::new(ApiKeyManagerTestProfileService {
         profiles: vec![ModelProfile {
@@ -203,10 +203,19 @@ async fn api_key_manager_presenter_start_emits_initial_key_list() {
         panic!("expected ApiKeysListed on startup");
     };
 
-    let alpha = keys.iter().find(|key| key.label == "alpha").expect("alpha listed");
+    let alpha = keys
+        .iter()
+        .find(|key| key.label == "alpha")
+        .expect("alpha listed");
     assert_eq!(alpha.used_by, vec!["Profile Alpha".to_string()]);
     assert_eq!(alpha.masked_value, "••••••••");
 
-    let beta = keys.iter().find(|key| key.label == "beta").expect("beta listed");
-    assert!(beta.used_by.is_empty(), "unused keys should still be listed");
+    let beta = keys
+        .iter()
+        .find(|key| key.label == "beta")
+        .expect("beta listed");
+    assert!(
+        beta.used_by.is_empty(),
+        "unused keys should still be listed"
+    );
 }

@@ -13,12 +13,10 @@ async fn start_mcp_requires_package_args() {
         id: Uuid::new_v4(),
         name: "Args".to_string(),
         enabled: true,
-        source: McpSource::Manual {
-            url: "".to_string(),
-        },
+        source: McpSource::Manual { url: String::new() },
         package: McpPackage {
             package_type: McpPackageType::Http,
-            identifier: "".to_string(),
+            identifier: String::new(),
             runtime_hint: None,
         },
         transport: McpTransport::Http,

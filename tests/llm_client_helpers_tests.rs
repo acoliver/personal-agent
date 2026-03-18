@@ -90,7 +90,12 @@ fn llm_client_trims_label_whitespace() {
 fn llm_client_model_spec_uses_openai_transport_for_kimi_quirk() {
     store_test_key("_test_helpers_kimi", "sk-kimi-test");
 
-    let profile = profile_with_label("kimi-for-coding", "kimi-for-coding", "", "_test_helpers_kimi");
+    let profile = profile_with_label(
+        "kimi-for-coding",
+        "kimi-for-coding",
+        "",
+        "_test_helpers_kimi",
+    );
     let client = LlmClient::from_profile(&profile).expect("client");
     assert_eq!(client.model_spec(), "openai:kimi-for-coding");
 

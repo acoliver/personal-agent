@@ -16,8 +16,15 @@ pub struct NavigationState {
     stack: Vec<ViewId>,
 }
 
+impl Default for NavigationState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NavigationState {
     /// Create a new navigation state with Chat as the root view
+    #[must_use]
     pub fn new() -> Self {
         Self {
             stack: vec![ViewId::Chat],
@@ -25,17 +32,20 @@ impl NavigationState {
     }
 
     /// Get the current (top) view from the navigation stack
+    #[must_use]
     pub fn current(&self) -> ViewId {
         self.stack.last().copied().unwrap_or(ViewId::Chat)
     }
 
     /// Get the current depth of the navigation stack
-    pub fn stack_depth(&self) -> usize {
+    #[must_use]
+    pub const fn stack_depth(&self) -> usize {
         self.stack.len()
     }
 
     /// Check if we can navigate back (stack has more than one view)
-    pub fn can_go_back(&self) -> bool {
+    #[must_use]
+    pub const fn can_go_back(&self) -> bool {
         self.stack.len() > 1
     }
 

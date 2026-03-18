@@ -12,7 +12,14 @@ pub struct InputBar {
     on_stop: Option<Box<dyn Fn() + Send + Sync + 'static>>,
 }
 
+impl Default for InputBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InputBar {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             text: String::new(),
@@ -22,21 +29,25 @@ impl InputBar {
         }
     }
 
+    #[must_use]
     pub fn text(mut self, text: impl Into<String>) -> Self {
         self.text = text.into();
         self
     }
 
-    pub fn is_streaming(mut self, streaming: bool) -> Self {
+    #[must_use]
+    pub const fn is_streaming(mut self, streaming: bool) -> Self {
         self.is_streaming = streaming;
         self
     }
 
+    #[must_use]
     pub fn on_send(mut self, f: impl Fn(String) + Send + Sync + 'static) -> Self {
         self.on_send = Some(Box::new(f));
         self
     }
 
+    #[must_use]
     pub fn on_stop(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
         self.on_stop = Some(Box::new(f));
         self
@@ -72,7 +83,7 @@ impl IntoElement for InputBar {
             div()
                 .flex_1()
                 .text_color(Theme::text_primary())
-                .child(self.text.clone())
+                .child(self.text)
         };
 
         input_div = input_div.child(text_display);

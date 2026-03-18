@@ -1,14 +1,14 @@
 //! E2E test: Install Exa MCP and do a real search
 //!
 //! This test:
-//! 1. Installs Exa MCP from registry using install()
+//! 1. Installs Exa MCP from registry using `install()`
 //! 2. Initializes the MCP service
 //! 3. Creates an agent with the Exa tool
 //! 4. Asks it to search for something
 //! 5. Verifies tool execution
 //!
 //! Run with:
-//!   cargo test --test e2e_install_and_search -- --ignored --nocapture
+//!   cargo test --test `e2e_install_and_search` -- --ignored --nocapture
 
 use personal_agent::llm::AgentClientExt;
 use personal_agent::mcp::McpService;
@@ -36,23 +36,25 @@ fn load_synthetic_profile() -> ModelProfile {
         .unwrap_or("~/.synthetic_key")
         .to_string();
 
-    let keyfile_path = if keyfile_path.starts_with("~/") {
-        home.join(&keyfile_path[2..]).to_string_lossy().to_string()
-    } else {
-        keyfile_path
-    };
+    let keyfile_path = keyfile_path.strip_prefix("~/").map_or_else(
+        || keyfile_path.clone(),
+        |stripped| home.join(stripped).to_string_lossy().to_string(),
+    );
 
     ModelProfile::new(
         "Synthetic GLM".to_string(),
         provider,
         model,
         base_url,
-        AuthConfig::Keychain { label: keyfile_path },
+        AuthConfig::Keychain {
+            label: keyfile_path,
+        },
     )
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires synthetic profile, API key, and Exa MCP"]
+#[allow(clippy::too_many_lines)]
 async fn test_install_exa_and_search() {
     println!("=== E2E Test: Install Exa and Search ===\n");
 
@@ -73,11 +75,11 @@ async fn test_install_exa_and_search() {
     {
         Ok(()) => println!("[OK] Exa installed successfully!"),
         Err(e) => {
-            let err_str = format!("{:?}", e);
+            let err_str = format!("{e:?}");
             if err_str.contains("already exists") {
                 println!("[OK] Exa already installed");
             } else {
-                println!("[ERROR] Failed to install Exa: {:?}", e);
+                println!("[ERROR] Failed to install Exa: {e:?}");
                 println!("[INFO] Continuing anyway to check if it's already configured...");
             }
         }
@@ -90,12 +92,12 @@ async fn test_install_exa_and_search() {
 
     match mcp.reload().await {
         Ok(()) => println!("[OK] MCP service reloaded"),
-        Err(e) => println!("[WARN] MCP reload: {}", e),
+        Err(e) => println!("[WARN] MCP reload: {e}"),
     }
 
     match mcp.initialize().await {
         Ok(()) => println!("[OK] MCP service initialized"),
-        Err(e) => println!("[WARN] MCP init: {}", e),
+        Err(e) => println!("[WARN] MCP init: {e}"),
     }
 
     let tools = mcp.get_llm_tools();
@@ -152,11 +154,11 @@ async fn test_install_exa_and_search() {
     let result = client
         .run_agent_stream(&agent, &messages, |event| match &event {
             StreamEvent::TextDelta(text) => {
-                print!("{}", text);
+                print!("{text}");
                 std::io::Write::flush(&mut std::io::stdout()).ok();
             }
             StreamEvent::ToolCallStarted { tool_name, call_id } => {
-                println!("\n\n>>> [TOOL STARTED] {} ({})", tool_name, call_id);
+                println!("\n\n>>> [TOOL STARTED] {tool_name} ({call_id})");
                 saw_tool_start = true;
             }
             StreamEvent::ToolCallCompleted {
@@ -166,17 +168,14 @@ async fn test_install_exa_and_search() {
                 call_id,
                 ..
             } => {
-                println!(
-                    ">>> [TOOL COMPLETED] {} success={} ({})",
-                    tool_name, success, call_id
-                );
+                println!(">>> [TOOL COMPLETED] {tool_name} success={success} ({call_id})");
                 if let Some(r) = result {
                     tool_result_preview = if r.len() > 500 {
                         format!("{}...", &r[..500])
                     } else {
                         r.clone()
                     };
-                    println!(">>> [RESULT] {}", tool_result_preview);
+                    println!(">>> [RESULT] {tool_result_preview}");
                 }
                 saw_tool_complete = true;
             }
@@ -184,7 +183,7 @@ async fn test_install_exa_and_search() {
                 println!("\n\n>>> [STREAM COMPLETE]");
             }
             StreamEvent::Error(e) => {
-                println!("\n>>> [ERROR] {}", e);
+                println!("\n>>> [ERROR] {e}");
             }
             _ => {}
         })
@@ -193,7 +192,7 @@ async fn test_install_exa_and_search() {
     println!("\n");
 
     match result {
-        Ok(_) => {
+        Ok(()) => {
             println!("==========================================");
             if saw_tool_start && saw_tool_complete {
                 println!("E2E TEST PASSED - REAL TOOL EXECUTION!");
@@ -206,15 +205,15 @@ async fn test_install_exa_and_search() {
             } else {
                 println!("E2E TEST PARTIAL - Agent responded but no tool call");
                 println!("==========================================");
-                println!("- Tool was called: {}", saw_tool_start);
-                println!("- Tool completed: {}", saw_tool_complete);
+                println!("- Tool was called: {saw_tool_start}");
+                println!("- Tool completed: {saw_tool_complete}");
                 println!("\nThe LLM may have chosen not to use the tool.");
             }
         }
         Err(e) => {
             println!("E2E TEST FAILED");
             println!("==========================================");
-            println!("Error: {}", e);
+            println!("Error: {e}");
         }
     }
 }

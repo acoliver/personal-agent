@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-/// File-based implementation of ProfileService
+/// File-based implementation of `ProfileService`
 pub struct ProfileServiceImpl {
     profiles_dir: PathBuf,
     profiles: Arc<RwLock<Vec<ModelProfile>>>,
@@ -20,11 +20,10 @@ pub struct ProfileServiceImpl {
 
 impl ProfileServiceImpl {
     fn legacy_profile_id_for_path(path: &Path) -> Uuid {
-        let identifier = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| format!("legacy-profile:{name}"))
-            .unwrap_or_else(|| format!("legacy-profile:{}", path.to_string_lossy()));
+        let identifier = path.file_name().and_then(|name| name.to_str()).map_or_else(
+            || format!("legacy-profile:{}", path.to_string_lossy()),
+            |name| format!("legacy-profile:{name}"),
+        );
 
         Uuid::new_v5(&Uuid::NAMESPACE_URL, identifier.as_bytes())
     }
@@ -43,7 +42,7 @@ impl ProfileServiceImpl {
         }
     }
 
-    /// Create a new ProfileServiceImpl
+    /// Create a new `ProfileServiceImpl`
     ///
     /// # Errors
     ///
@@ -79,12 +78,11 @@ impl ProfileServiceImpl {
         for p in &profiles {
             tracing::info!("  Profile: {} ({}) id={}", p.name, p.model_id, p.id);
         }
-        let mut profiles_lock = self.profiles.write().await;
-        *profiles_lock = profiles;
+        *self.profiles.write().await = profiles;
         Ok(())
     }
 
-    /// Parse legacy auth config JSON into the keychain-only AuthConfig.
+    /// Parse legacy auth config JSON into the keychain-only `AuthConfig`.
     ///
     /// Legacy profiles stored inline keys or keyfile paths. Since we no longer
     /// store secrets in config, legacy profiles get an empty keychain label —
@@ -127,11 +125,11 @@ impl ProfileServiceImpl {
 
             for key_name in key_names {
                 let candidates = [
-                    home.join(".keys").join(format!(".{}_key", key_name)),
+                    home.join(".keys").join(format!(".{key_name}_key")),
                     home.join(".keys").join(&key_name),
                     home.join(".llxprt")
                         .join("keys")
-                        .join(format!(".{}_key", key_name)),
+                        .join(format!(".{key_name}_key")),
                     home.join(".llxprt").join("keys").join(&key_name),
                 ];
 
@@ -176,7 +174,8 @@ impl ProfileServiceImpl {
                 obj.get("max_tokens").or_else(|| obj.get("maxOutputTokens"))
             {
                 if let Some(v) = n.as_u64() {
-                    params.max_tokens = v.min(u32::MAX as u64) as u32;
+                    params.max_tokens =
+                        u32::try_from(v.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
                 }
             }
             if let Some(Value::Bool(v)) = obj
@@ -192,7 +191,9 @@ impl ProfileServiceImpl {
                 params.show_thinking = *v;
             }
             if let Some(Value::Number(n)) = obj.get("thinking_budget") {
-                params.thinking_budget = n.as_u64().map(|v| v.min(u32::MAX as u64) as u32);
+                params.thinking_budget = n
+                    .as_u64()
+                    .map(|v| u32::try_from(v.min(u64::from(u32::MAX))).unwrap_or(u32::MAX));
             }
         }
 
@@ -201,7 +202,8 @@ impl ProfileServiceImpl {
                 obj.get("maxOutputTokens").or_else(|| obj.get("max_tokens"))
             {
                 if let Some(v) = n.as_u64() {
-                    params.max_tokens = v.min(u32::MAX as u64) as u32;
+                    params.max_tokens =
+                        u32::try_from(v.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
                 }
             }
             if let Some(Value::Bool(v)) = obj.get("reasoning.enabled") {
@@ -220,33 +222,32 @@ impl ProfileServiceImpl {
 
         // Already in modern schema but missing / invalid id
         if obj.contains_key("provider_id") || obj.contains_key("model_id") {
-            let name = obj
-                .get("name")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| {
+            let name = obj.get("name").and_then(Value::as_str).map_or_else(
+                || {
                     path.file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or("Legacy Profile")
                         .to_string()
-                });
+                },
+                ToOwned::to_owned,
+            );
             let provider_id = obj
                 .get("provider_id")
                 .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| "openai".to_string());
+                .map_or_else(|| "openai".to_string(), ToOwned::to_owned);
             let model_id = obj
                 .get("model_id")
                 .or_else(|| obj.get("model"))
                 .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| "gpt-4".to_string());
+                .map_or_else(|| "gpt-4".to_string(), ToOwned::to_owned);
             let base_url = obj
                 .get("base_url")
                 .or_else(|| obj.get("api_base_url"))
                 .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+                .map_or_else(
+                    || "https://api.openai.com/v1".to_string(),
+                    ToOwned::to_owned,
+                );
             let ephemeral = obj.get("ephemeralSettings");
             let keyfile_hint = ephemeral
                 .and_then(Value::as_object)
@@ -286,7 +287,7 @@ impl ProfileServiceImpl {
                 .and_then(Value::as_str)
                 .unwrap_or("gpt-4")
                 .to_string();
-            let name = format!("{}:{}", provider_id, model_id);
+            let name = format!("{provider_id}:{model_id}");
 
             let ephemeral = obj.get("ephemeralSettings");
             let base_url = ephemeral
@@ -367,32 +368,26 @@ impl ProfileServiceImpl {
                 Ok(p) => p,
                 Err(e) => {
                     // Try legacy compatibility parse before skipping.
-                    let value = match serde_json::from_str::<Value>(&content) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            tracing::warn!("Skipping invalid profile {}: {}", path.display(), e);
-                            continue;
-                        }
+                    let Ok(value) = serde_json::from_str::<Value>(&content) else {
+                        tracing::warn!("Skipping invalid profile {}: {}", path.display(), e);
+                        continue;
                     };
 
-                    match Self::parse_legacy_profile(&value, &path) {
-                        Some(p) => {
-                            tracing::info!(
-                                "Loaded legacy profile {} as {} ({}) auth={}",
-                                path.display(),
-                                p.name,
-                                p.model_id,
-                                match &p.auth {
-                                    AuthConfig::Keychain { label } if label.is_empty() => "none",
-                                    AuthConfig::Keychain { label } => label.as_str(),
-                                }
-                            );
-                            p
-                        }
-                        None => {
-                            tracing::warn!("Skipping invalid profile {}: {}", path.display(), e);
-                            continue;
-                        }
+                    if let Some(p) = Self::parse_legacy_profile(&value, &path) {
+                        tracing::info!(
+                            "Loaded legacy profile {} as {} ({}) auth={}",
+                            path.display(),
+                            p.name,
+                            p.model_id,
+                            match &p.auth {
+                                AuthConfig::Keychain { label } if label.is_empty() => "none",
+                                AuthConfig::Keychain { label } => label.as_str(),
+                            }
+                        );
+                        p
+                    } else {
+                        tracing::warn!("Skipping invalid profile {}: {}", path.display(), e);
+                        continue;
                     }
                 }
             };
@@ -450,7 +445,7 @@ impl ProfileServiceImpl {
 
     /// Delete a profile from disk
     fn delete_profile_from_disk(&self, id: Uuid) -> Result<(), super::ServiceError> {
-        let filename = format!("{}.json", id);
+        let filename = format!("{id}.json");
         let path = self.profiles_dir.join(filename);
 
         if path.exists() {
@@ -687,8 +682,7 @@ impl ProfileService for ProfileServiceImpl {
         self.delete_profile_from_disk(id)?;
 
         // Remove from in-memory cache
-        let mut profiles = self.profiles.write().await;
-        profiles.retain(|p| p.id != id);
+        self.profiles.write().await.retain(|p| p.id != id);
 
         Ok(())
     }

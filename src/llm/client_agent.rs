@@ -111,29 +111,32 @@ impl crate::llm::LlmClient {
         builder
     }
 
-    fn split_prompt_and_history<'a>(messages: &'a [Message]) -> (String, &'a [Message]) {
-        if let Some(last_user_idx) = messages
+    fn split_prompt_and_history(messages: &[Message]) -> (String, &[Message]) {
+        messages
             .iter()
             .rposition(|message| matches!(message.role, Role::User))
-        {
-            let fallback_prompt = messages
-                .last()
-                .map(|message| message.content.clone())
-                .unwrap_or_default();
-            let prompt = messages[last_user_idx].content.clone();
-            let prompt = if prompt.is_empty() {
-                fallback_prompt
-            } else {
-                prompt
-            };
-            (prompt, &messages[..last_user_idx])
-        } else {
-            let prompt = messages
-                .last()
-                .map(|message| message.content.clone())
-                .unwrap_or_default();
-            (prompt, messages)
-        }
+            .map_or_else(
+                || {
+                    let prompt = messages
+                        .last()
+                        .map(|message| message.content.clone())
+                        .unwrap_or_default();
+                    (prompt, messages)
+                },
+                |last_user_idx| {
+                    let fallback_prompt = messages
+                        .last()
+                        .map(|message| message.content.clone())
+                        .unwrap_or_default();
+                    let prompt = messages[last_user_idx].content.clone();
+                    let prompt = if prompt.is_empty() {
+                        fallback_prompt
+                    } else {
+                        prompt
+                    };
+                    (prompt, &messages[..last_user_idx])
+                },
+            )
     }
 
     fn message_to_agent_history_request(message: &Message) -> Option<ModelRequest> {

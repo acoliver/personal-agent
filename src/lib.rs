@@ -3,6 +3,13 @@
 //! This library provides the core functionality for the `PersonalAgent` application,
 //! including configuration management, model profiles, conversation storage, and more.
 
+// GPUI render methods require `&mut Context<Self>` by convention even when
+// the function body does not mutate through it.
+#![allow(clippy::needless_pass_by_ref_mut)]
+// Presenter start/stop/handler methods use async signatures for consistency
+// with the async runtime even when individual implementations have no awaits.
+#![allow(clippy::unused_async)]
+
 pub mod agent;
 pub mod app;
 pub mod app_context;

@@ -9,7 +9,7 @@ use uuid::Uuid;
 fn config_get_enabled_mcps_filters_disabled() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.json");
-    let mut config = Config::load(config_path.clone()).unwrap();
+    let mut config = Config::load(config_path).unwrap();
 
     let mut mcp = McpConfig {
         id: Uuid::new_v4(),

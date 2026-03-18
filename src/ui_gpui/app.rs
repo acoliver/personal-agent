@@ -24,7 +24,11 @@ pub struct GpuiApp {
 }
 
 impl GpuiApp {
-    /// Create a new GPUI application
+    /// Create a new GPUI application.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any bridge initialization step fails.
     pub fn new(event_bus: Arc<EventBus>) -> anyhow::Result<Self> {
         // Create channels for GPUI bridge
         let (user_tx, user_rx) = flume::unbounded();
@@ -43,7 +47,11 @@ impl GpuiApp {
         })
     }
 
-    /// Initialize the application components
+    /// Initialize the application components.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the popup window or tray bridge cannot be created.
     pub fn initialize(&mut self) -> anyhow::Result<()> {
         // Create the popup window
         let popup_window = PopupWindow::new(Arc::clone(&self.gpui_bridge))?;
@@ -64,16 +72,17 @@ impl GpuiApp {
     }
 
     /// Get the GPUI bridge
+    #[must_use]
     pub fn gpui_bridge(&self) -> Arc<GpuiBridge> {
         Arc::clone(&self.gpui_bridge)
     }
 
     /// Check if the popup is currently visible
+    #[must_use]
     pub fn is_popup_visible(&self) -> bool {
         self.tray_bridge
             .as_ref()
-            .map(|tray| tray.is_popup_visible())
-            .unwrap_or(false)
+            .is_some_and(super::tray_bridge::TrayBridge::is_popup_visible)
     }
 
     /// Toggle the popup window visibility
@@ -97,10 +106,14 @@ impl GpuiApp {
         }
     }
 
-    /// Start the event forwarding task
+    /// Start the event forwarding task.
     ///
-    /// This task listens for ViewCommands from the command sink and forwards them
+    /// This task listens for `ViewCommands` from the command sink and forwards them
     /// to the appropriate GPUI views.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if event forwarding setup fails.
     pub fn start_event_forwarding(&mut self) -> anyhow::Result<()> {
         // The event forwarding is handled by the existing user_event_forwarder
         // This method is kept for compatibility but the actual forwarding
@@ -111,7 +124,12 @@ impl GpuiApp {
         Ok(())
     }
 
-    /// Run the application main loop
+    /// Run the application main loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if initialization or event-forwarding startup fails.
+    #[allow(clippy::future_not_send)]
     pub async fn run(&mut self) -> anyhow::Result<()> {
         tracing::info!("Starting GPUI application main loop");
 

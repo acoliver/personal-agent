@@ -4,8 +4,8 @@
 //! Allows adding new keys, editing existing ones, and deleting keys.
 
 use gpui::{
-    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight,
-    MouseButton, Pixels, SharedString,
+    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
+    Pixels, SharedString,
 };
 use std::ops::Range;
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub struct ApiKeyManagerState {
 }
 
 impl ApiKeyManagerState {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             keys: Vec::new(),
             edit_mode: EditMode::Idle,
@@ -112,10 +112,10 @@ impl ApiKeyManagerView {
 
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
-        self.emit(UserEvent::RefreshApiKeys);
+        self.emit(&UserEvent::RefreshApiKeys);
     }
 
-    fn emit(&self, event: UserEvent) {
+    fn emit(&self, event: &UserEvent) {
         if let Some(bridge) = &self.bridge {
             if !bridge.emit(event.clone()) {
                 tracing::error!("Failed to emit event {:?}", event);
@@ -154,11 +154,11 @@ impl ApiKeyManagerView {
             return;
         }
 
-        self.emit(UserEvent::StoreApiKey { label, value });
+        self.emit(&UserEvent::StoreApiKey { label, value });
     }
 
     fn delete_key(&mut self, label: &str) {
-        self.emit(UserEvent::DeleteApiKey {
+        self.emit(&UserEvent::DeleteApiKey {
             label: label.to_string(),
         });
     }
@@ -203,10 +203,9 @@ impl ApiKeyManagerView {
         text.trim_matches(|c| c == '\r' || c == '\n').to_string()
     }
 
-
     // ── render helpers ──────────────────────────────────────────────
 
-    fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .items_center()
@@ -259,7 +258,6 @@ impl ApiKeyManagerView {
     }
 
     fn render_key_row(
-        &self,
         info: &ApiKeyInfo,
         index: usize,
         cx: &mut gpui::Context<Self>,
@@ -341,7 +339,7 @@ impl ApiKeyManagerView {
                     .py(px(2.0))
                     .rounded(px(4.0))
                     .text_size(px(11.0))
-                    .text_color(gpui::rgb(0xEF4444))
+                    .text_color(gpui::rgb(0x00EF_4444))
                     .hover(|s| s.bg(Theme::bg_dark()))
                     .child("Delete")
                     .on_mouse_down(
@@ -408,13 +406,14 @@ impl ApiKeyManagerView {
             );
         } else {
             for (i, key) in self.state.keys.iter().enumerate() {
-                list = list.child(self.render_key_row(key, i, cx));
+                list = list.child(Self::render_key_row(key, i, cx));
             }
         }
 
         list
     }
 
+    #[allow(clippy::too_many_lines)]
     fn render_edit_form(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let is_adding = self.state.edit_mode == EditMode::Adding;
         let title = if is_adding {
@@ -568,13 +567,11 @@ impl ApiKeyManagerView {
                             .px(px(8.0))
                             .bg(Theme::bg_dark())
                             .border_1()
-                            .border_color(
-                                if self.state.active_field == Some(ActiveField::Value) {
-                                    Theme::accent()
-                                } else {
-                                    Theme::border()
-                                },
-                            )
+                            .border_color(if self.state.active_field == Some(ActiveField::Value) {
+                                Theme::accent()
+                            } else {
+                                Theme::border()
+                            })
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
@@ -601,7 +598,7 @@ impl ApiKeyManagerView {
                 d.child(
                     div()
                         .text_size(px(11.0))
-                        .text_color(gpui::rgb(0xEF4444))
+                        .text_color(gpui::rgb(0x00EF_4444))
                         .child(self.state.error.clone().unwrap_or_default()),
                 )
             })
@@ -672,7 +669,7 @@ impl ApiKeyManagerView {
             .child(self.render_key_list(cx))
     }
 
-    pub fn focus_handle(&self, _cx: &gpui::App) -> &FocusHandle {
+    pub const fn focus_handle(&self, _cx: &gpui::App) -> &FocusHandle {
         &self.focus_handle
     }
 }
@@ -723,11 +720,7 @@ impl gpui::EntityInputHandler for ApiKeyManagerView {
         }
     }
 
-    fn unmark_text(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) {
+    fn unmark_text(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) {
         self.ime_marked_byte_count = 0;
     }
 
@@ -836,9 +829,7 @@ impl ApiKeyManagerView {
                 if self.state.active_field.is_some() {
                     if self.ime_marked_byte_count > 0 {
                         let len = self.active_text_len();
-                        self.truncate_active_text(
-                            len.saturating_sub(self.ime_marked_byte_count),
-                        );
+                        self.truncate_active_text(len.saturating_sub(self.ime_marked_byte_count));
                         self.ime_marked_byte_count = 0;
                     } else {
                         let text = self.active_text().to_string();
@@ -852,13 +843,8 @@ impl ApiKeyManagerView {
             }
             "tab" => {
                 match (&self.state.edit_mode, self.state.active_field) {
-                    (EditMode::Editing { .. }, Some(ActiveField::Value)) => {
-                        self.state.active_field = Some(ActiveField::Value);
-                    }
-                    (EditMode::Editing { .. }, Some(ActiveField::Label)) => {
-                        self.state.active_field = Some(ActiveField::Value);
-                    }
-                    (_, Some(ActiveField::Label)) => {
+                    (EditMode::Editing { .. }, Some(ActiveField::Value | ActiveField::Label))
+                    | (_, Some(ActiveField::Label)) => {
                         self.state.active_field = Some(ActiveField::Value);
                     }
                     (_, Some(ActiveField::Value)) => {
@@ -875,12 +861,11 @@ impl ApiKeyManagerView {
                 }
             }
             "escape" => {
-                if self.state.edit_mode != EditMode::Idle {
+                if self.state.edit_mode == EditMode::Idle {
+                    crate::ui_gpui::navigation_channel().request_navigate(ViewId::ProfileEditor);
+                } else {
                     self.state.cancel_edit();
                     cx.notify();
-                } else {
-                    crate::ui_gpui::navigation_channel()
-                        .request_navigate(ViewId::ProfileEditor);
                 }
             }
             _ => {}
@@ -908,17 +893,24 @@ impl gpui::Render for ApiKeyManagerView {
                 canvas(
                     |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
                     {
-                        let entity = cx.entity().clone();
+                        let entity = cx.entity();
                         let focus = self.focus_handle.clone();
-                        move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
-                            window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+                        move |bounds: Bounds<Pixels>,
+                              _,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::App| {
+                            window.handle_input(
+                                &focus,
+                                ElementInputHandler::new(bounds, entity),
+                                cx,
+                            );
                         }
                     },
                 )
                 .size_0(),
             )
             .on_key_down(cx.listener(Self::handle_key_down))
-            .child(self.render_top_bar(cx))
+            .child(Self::render_top_bar(cx))
             .child(self.render_content(cx))
     }
 }

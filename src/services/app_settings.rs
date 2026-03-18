@@ -68,7 +68,7 @@ struct Settings {
     /// Theme preference
     theme: Option<String>,
     /// Generic settings storage
-    settings: std::collections::HashMap<String, String>,
+    values: std::collections::HashMap<String, String>,
 }
 
 impl Default for Settings {
@@ -79,13 +79,13 @@ impl Default for Settings {
             current_conversation_id: None,
             hotkey: Some("Cmd+Shift+Space".to_string()),
             theme: Some("dark".to_string()),
-            settings: std::collections::HashMap::new(),
+            values: std::collections::HashMap::new(),
         }
     }
 }
 
 /// @plan PLAN-20250125-REFACTOR.P09
-/// Application settings service implementation stub (replaced by app_settings_impl)
+/// Application settings service implementation stub (replaced by `app_settings_impl`)
 #[deprecated(note = "Use app_settings_impl::AppSettingsServiceImpl instead")]
 pub struct AppSettingsServiceImplStub;
 
@@ -211,7 +211,7 @@ mod tests {
         let _ = service.get_setting("nonexistent_key").await;
 
         // Set with invalid hotkey format
-        let _ = service.set_hotkey("".to_string()).await;
+        let _ = service.set_hotkey(String::new()).await;
 
         // Set with invalid theme
         let _ = service.set_theme("invalid_theme".to_string()).await;

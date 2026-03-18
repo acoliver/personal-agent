@@ -1,4 +1,4 @@
-//! GpuiBridge - main bridge struct for GPUI side
+//! `GpuiBridge` - main bridge struct for GPUI side
 //!
 //! @plan PLAN-20250128-GPUI.P05
 //! @requirement REQ-GPUI-006.1
@@ -25,11 +25,12 @@ impl GpuiBridge {
     /// Create a new bridge with the given channels
     ///
     /// @plan PLAN-20250128-GPUI.P05
-    pub fn new(user_tx: Sender<UserEvent>, view_rx: Receiver<ViewCommand>) -> Self {
+    #[must_use]
+    pub const fn new(user_tx: Sender<UserEvent>, view_rx: Receiver<ViewCommand>) -> Self {
         Self { user_tx, view_rx }
     }
 
-    /// Emit a UserEvent to the tokio runtime (non-blocking)
+    /// Emit a `UserEvent` to the tokio runtime (non-blocking)
     ///
     /// Uses `try_send` to avoid blocking the GPUI thread.
     /// Returns true if sent, false if channel full or disconnected.
@@ -50,13 +51,14 @@ impl GpuiBridge {
         }
     }
 
-    /// Drain all pending ViewCommands (non-blocking)
+    /// Drain all pending `ViewCommands` (non-blocking)
     ///
     /// Uses `try_recv` in a loop to collect all available commands.
     /// Returns empty vec if no commands pending.
     ///
     /// @plan PLAN-20250128-GPUI.P05
     /// @requirement REQ-GPUI-006.3
+    #[must_use]
     pub fn drain_commands(&self) -> Vec<ViewCommand> {
         let mut commands = Vec::new();
         while let Ok(cmd) = self.view_rx.try_recv() {
@@ -65,9 +67,10 @@ impl GpuiBridge {
         commands
     }
 
-    /// Check if there are pending ViewCommands
+    /// Check if there are pending `ViewCommands`
     ///
     /// @plan PLAN-20250128-GPUI.P05
+    #[must_use]
     pub fn has_pending_commands(&self) -> bool {
         !self.view_rx.is_empty()
     }

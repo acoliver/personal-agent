@@ -71,9 +71,7 @@ pub fn derive_profile_defaults(
     );
 
     let default_system_prompt = editing_profile.as_ref().map_or_else(
-        || {
-            "Unless instructed otherwise, respond solely in English.".to_string()
-        },
+        || "Unless instructed otherwise, respond solely in English.".to_string(),
         |profile| profile.system_prompt.clone(),
     );
 

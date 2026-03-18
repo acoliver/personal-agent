@@ -71,9 +71,17 @@ pub enum PresenterError {
 /// @plan PLAN-20250125-REFACTOR.P10
 pub trait Presenter: Send + Sync {
     /// Start the presenter (subscribe to events, initialize state)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup fails.
     fn start(&mut self) -> Result<(), PresenterError>;
 
     /// Stop the presenter (unsubscribe from events)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown fails.
     fn stop(&mut self) -> Result<(), PresenterError>;
 
     /// Check if presenter is running

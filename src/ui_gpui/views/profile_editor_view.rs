@@ -19,49 +19,46 @@ use crate::ui_gpui::theme::Theme;
 
 /// Auth method enum for display
 /// @plan PLAN-20250130-GPUIREDUX.P08
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum AuthMethod {
     #[default]
     Keychain,
 }
 
 impl AuthMethod {
-    pub fn display(&self) -> &'static str {
+    #[must_use]
+    pub const fn display(&self) -> &'static str {
         match self {
-            AuthMethod::Keychain => "Keychain",
+            Self::Keychain => "Keychain",
         }
     }
 }
 
 /// API type enum
 /// @plan PLAN-20250130-GPUIREDUX.P08
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum ApiType {
+    #[default]
     Anthropic,
     OpenAI,
     Custom(String),
 }
 
-impl Default for ApiType {
-    fn default() -> Self {
-        Self::Anthropic
-    }
-}
-
 impl ApiType {
+    #[must_use]
     pub fn display(&self) -> String {
         match self {
-            ApiType::Anthropic => "Anthropic".to_string(),
-            ApiType::OpenAI => "OpenAI".to_string(),
-            ApiType::Custom(provider) => provider.clone(),
+            Self::Anthropic => "Anthropic".to_string(),
+            Self::OpenAI => "OpenAI".to_string(),
+            Self::Custom(provider) => provider.clone(),
         }
     }
 
     fn provider_id(&self) -> String {
         match self {
-            ApiType::Anthropic => "anthropic".to_string(),
-            ApiType::OpenAI => "openai".to_string(),
-            ApiType::Custom(provider) => provider.clone(),
+            Self::Anthropic => "anthropic".to_string(),
+            Self::OpenAI => "openai".to_string(),
+            Self::Custom(provider) => provider.clone(),
         }
     }
 }
@@ -100,11 +97,12 @@ pub struct ProfileEditorData {
 }
 
 impl ProfileEditorData {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             temperature: 1.0,
             max_tokens: 4096,
-            context_limit: 128000,
+            context_limit: 128_000,
             show_thinking: true,
             thinking_budget: 10000,
             system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
@@ -113,6 +111,7 @@ impl ProfileEditorData {
     }
 
     /// Check if save should be enabled
+    #[must_use]
     pub fn can_save(&self) -> bool {
         if self.name.trim().is_empty() {
             return false;
@@ -137,6 +136,7 @@ pub struct ProfileEditorState {
 }
 
 impl ProfileEditorState {
+    #[must_use]
     pub fn new_profile() -> Self {
         Self {
             data: ProfileEditorData::new(),
@@ -145,7 +145,8 @@ impl ProfileEditorState {
         }
     }
 
-    pub fn edit_profile(data: ProfileEditorData) -> Self {
+    #[must_use]
+    pub const fn edit_profile(data: ProfileEditorData) -> Self {
         Self {
             data,
             is_new: false,
@@ -163,11 +164,6 @@ pub struct ProfileEditorView {
     /// Number of bytes inserted by IME marked text (dead key composition).
     /// When composition completes, these bytes are removed before inserting the final text.
     ime_marked_byte_count: usize,
-}
-
-fn sanitized_clipboard_text(text: &str) -> String {
-    text.trim_matches(|c| c == '\r' || c == '\n' || c == ' ' || c == '\t')
-        .to_string()
 }
 
 impl ProfileEditorView {
@@ -188,7 +184,7 @@ impl ProfileEditorView {
     }
 
     fn request_api_key_refresh(&self) {
-        self.emit(UserEvent::RefreshApiKeys);
+        self.emit(&UserEvent::RefreshApiKeys);
     }
 
     /// Set profile data from presenter
@@ -310,14 +306,11 @@ impl ProfileEditorView {
             .state
             .active_field
             .and_then(|f| fields.iter().position(|&x| x == f));
-        let next = match current_idx {
-            Some(i) => fields[(i + 1) % fields.len()],
-            None => fields[0],
-        };
+        let next = current_idx.map_or_else(|| fields[0], |i| fields[(i + 1) % fields.len()]);
         self.state.active_field = Some(next);
     }
 
-    /// Active field text content for InputHandler
+    /// Active field text content for `InputHandler`
     fn remove_trailing_bytes_from_active_field(&mut self, byte_count: usize) {
         if byte_count == 0 {
             return;
@@ -325,19 +318,31 @@ impl ProfileEditorView {
         match self.state.active_field {
             Some(ActiveField::Name) => {
                 let len = self.state.data.name.len();
-                self.state.data.name.truncate(len.saturating_sub(byte_count));
+                self.state
+                    .data
+                    .name
+                    .truncate(len.saturating_sub(byte_count));
             }
             Some(ActiveField::Model) => {
                 let len = self.state.data.model_id.len();
-                self.state.data.model_id.truncate(len.saturating_sub(byte_count));
+                self.state
+                    .data
+                    .model_id
+                    .truncate(len.saturating_sub(byte_count));
             }
             Some(ActiveField::BaseUrl) => {
                 let len = self.state.data.base_url.len();
-                self.state.data.base_url.truncate(len.saturating_sub(byte_count));
+                self.state
+                    .data
+                    .base_url
+                    .truncate(len.saturating_sub(byte_count));
             }
             Some(ActiveField::SystemPrompt) => {
                 let len = self.state.data.system_prompt.len();
-                self.state.data.system_prompt.truncate(len.saturating_sub(byte_count));
+                self.state
+                    .data
+                    .system_prompt
+                    .truncate(len.saturating_sub(byte_count));
             }
             _ => {}
         }
@@ -348,16 +353,17 @@ impl ProfileEditorView {
             Some(ActiveField::Name) => &self.state.data.name,
             Some(ActiveField::Model) => &self.state.data.model_id,
             Some(ActiveField::BaseUrl) => &self.state.data.base_url,
-            Some(ActiveField::MaxTokens) | Some(ActiveField::ContextLimit)
-            | Some(ActiveField::ThinkingBudget) => "",
+            Some(
+                ActiveField::MaxTokens | ActiveField::ContextLimit | ActiveField::ThinkingBudget,
+            )
+            | None => "",
             Some(ActiveField::SystemPrompt) => &self.state.data.system_prompt,
-            None => "",
         }
     }
 
-    /// Emit a UserEvent through the bridge
+    /// Emit a `UserEvent` through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn emit(&self, event: UserEvent) {
+    fn emit(&self, event: &UserEvent) {
         if let Some(bridge) = &self.bridge {
             if !bridge.emit(event.clone()) {
                 tracing::error!("Failed to emit event {:?}", event);
@@ -383,7 +389,7 @@ impl ProfileEditorView {
         });
 
         let parameters = Some(ModelProfileParameters {
-            temperature: Some(self.state.data.temperature as f64),
+            temperature: Some(f64::from(self.state.data.temperature)),
             max_tokens: Some(self.state.data.max_tokens),
             show_thinking: Some(self.state.data.show_thinking),
             enable_thinking: Some(self.state.data.enable_extended_thinking),
@@ -394,7 +400,7 @@ impl ProfileEditorView {
             },
         });
 
-        self.emit(UserEvent::SaveProfile {
+        self.emit(&UserEvent::SaveProfile {
             profile: crate::events::types::ModelProfile {
                 id,
                 name: self.state.data.name.clone(),
@@ -408,15 +414,12 @@ impl ProfileEditorView {
         });
     }
 
-    /// Handle ViewCommand from presenter
+    /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P08
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
     /// @requirement REQ-WIRE-002
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
-            ViewCommand::NavigateTo { .. } | ViewCommand::NavigateBack => {
-                // Navigation handled by MainPanel
-            }
             ViewCommand::ModelSelected {
                 provider_id,
                 model_id,
@@ -425,7 +428,7 @@ impl ProfileEditorView {
             } => {
                 // Prefill profile editor from model selection flow.
                 self.state.is_new = true;
-                self.state.data.model_id = model_id.clone();
+                self.state.data.model_id.clone_from(&model_id);
                 self.state.data.api_type = match provider_id.as_str() {
                     "anthropic" => ApiType::Anthropic,
                     "openai" => ApiType::OpenAI,
@@ -470,7 +473,10 @@ impl ProfileEditorView {
                     _ => ApiType::Custom(provider_id.clone()),
                 };
                 self.state.data.key_label = api_key_label;
-                self.state.data.temperature = temperature as f32;
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    self.state.data.temperature = temperature as f32;
+                }
                 self.state.data.max_tokens = max_tokens;
                 if let Some(limit) = context_limit {
                     self.state.data.context_limit = limit;
@@ -483,8 +489,7 @@ impl ProfileEditorView {
             }
 
             ViewCommand::ApiKeysListed { keys } => {
-                self.state.data.available_keys =
-                    keys.iter().map(|k| k.label.clone()).collect();
+                self.state.data.available_keys = keys.iter().map(|k| k.label.clone()).collect();
             }
 
             _ => {}
@@ -577,7 +582,7 @@ impl ProfileEditorView {
 
     /// Render a field label
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_label(&self, text: &str) -> impl IntoElement {
+    fn render_label(text: &str) -> impl IntoElement {
         div()
             .text_size(px(11.0))
             .text_color(Theme::text_secondary())
@@ -588,7 +593,6 @@ impl ProfileEditorView {
     /// Render a text input field
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_text_field(
-        &self,
         id: &str,
         value: &str,
         placeholder: &str,
@@ -629,52 +633,6 @@ impl ProfileEditorView {
             })
     }
 
-    /// Render a secure (masked) text field
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_secure_field(
-        &self,
-        id: &str,
-        value: &str,
-        masked: bool,
-        active: bool,
-    ) -> Stateful<gpui::Div> {
-        let display = if masked && !value.is_empty() {
-            "•".repeat(value.len().min(40))
-        } else {
-            value.to_string()
-        };
-
-        div()
-            .id(SharedString::from(id.to_string()))
-            .w(px(360.0))
-            .h(px(24.0))
-            .px(px(8.0))
-            .bg(Theme::bg_dark())
-            .border_1()
-            .border_color(if active {
-                Theme::accent()
-            } else {
-                Theme::border()
-            })
-            .rounded(px(4.0))
-            .flex()
-            .items_center()
-            .text_size(px(12.0))
-            .child(if display.is_empty() {
-                div().text_color(Theme::text_muted()).child("sk-...")
-            } else {
-                div().text_color(Theme::text_primary()).child(display)
-            })
-            .when(active, |d| {
-                d.child(
-                    div()
-                        .ml(px(2.0))
-                        .text_color(Theme::text_primary())
-                        .child("|"),
-                )
-            })
-    }
-
     /// Render the name field
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_name_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -683,16 +641,21 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("NAME"))
+            .child(Self::render_label("NAME"))
             .child(
-                self.render_text_field("field-name", &self.state.data.name, "Profile name", active)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.active_field = Some(ActiveField::Name);
-                            cx.notify();
-                        }),
-                    ),
+                Self::render_text_field(
+                    "field-name",
+                    &self.state.data.name,
+                    "Profile name",
+                    active,
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _window, cx| {
+                        this.state.active_field = Some(ActiveField::Name);
+                        cx.notify();
+                    }),
+                ),
             )
     }
 
@@ -704,7 +667,7 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("MODEL"))
+            .child(Self::render_label("MODEL"))
             .child(
                 div()
                     .w(px(360.0))
@@ -712,7 +675,7 @@ impl ProfileEditorView {
                     .items_center()
                     .gap(px(8.0))
                     .child(
-                        self.render_text_field(
+                        Self::render_text_field(
                             "field-model-id",
                             &self.state.data.model_id,
                             "e.g. claude-sonnet-4-20250514",
@@ -771,7 +734,7 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("API TYPE"))
+            .child(Self::render_label("API TYPE"))
             .child(
                 div()
                     .id("dropdown-api-type")
@@ -793,8 +756,7 @@ impl ProfileEditorView {
                         cx.listener(|this, _, _window, cx| {
                             this.state.data.api_type = match this.state.data.api_type {
                                 ApiType::Anthropic => ApiType::OpenAI,
-                                ApiType::OpenAI => ApiType::Anthropic,
-                                ApiType::Custom(_) => ApiType::Anthropic,
+                                ApiType::OpenAI | ApiType::Custom(_) => ApiType::Anthropic,
                             };
 
                             if this.state.data.base_url.trim().is_empty() {
@@ -819,9 +781,9 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("BASE URL"))
+            .child(Self::render_label("BASE URL"))
             .child(
-                self.render_text_field(
+                Self::render_text_field(
                     "field-base-url",
                     &self.state.data.base_url,
                     "https://api.example.com/v1",
@@ -851,7 +813,7 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("API KEY"))
+            .child(Self::render_label("API KEY"))
             .child(
                 div()
                     .flex()
@@ -893,9 +855,9 @@ impl ProfileEditorView {
                                         .available_keys
                                         .iter()
                                         .position(|k| k == &this.state.data.key_label)
-                                        .map(|i| i + 1)
-                                        .unwrap_or(0);
-                                    let next_idx = current_idx % this.state.data.available_keys.len();
+                                        .map_or(0, |i| i + 1);
+                                    let next_idx =
+                                        current_idx % this.state.data.available_keys.len();
                                     this.state.data.key_label =
                                         this.state.data.available_keys[next_idx].clone();
                                     cx.notify();
@@ -936,7 +898,7 @@ impl ProfileEditorView {
 
     /// Render section divider
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_section_divider(&self, title: &str) -> impl IntoElement {
+    fn render_section_divider(title: &str) -> impl IntoElement {
         div()
             .w(px(360.0))
             .flex()
@@ -961,7 +923,7 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("TEMPERATURE"))
+            .child(Self::render_label("TEMPERATURE"))
             .child(
                 div()
                     .flex()
@@ -1052,9 +1014,9 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("MAX TOKENS"))
+            .child(Self::render_label("MAX TOKENS"))
             .child(
-                self.render_text_field(
+                Self::render_text_field(
                     "field-max-tokens",
                     &self.state.data.max_tokens.to_string(),
                     "4096",
@@ -1078,9 +1040,9 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_label("CONTEXT LIMIT"))
+            .child(Self::render_label("CONTEXT LIMIT"))
             .child(
-                self.render_text_field(
+                Self::render_text_field(
                     "field-context-limit",
                     &self.state.data.context_limit.to_string(),
                     "128000",
@@ -1195,9 +1157,9 @@ impl ProfileEditorView {
                     div()
                         .flex()
                         .flex_col()
-                        .child(self.render_label("THINKING BUDGET"))
+                        .child(Self::render_label("THINKING BUDGET"))
                         .child(
-                            self.render_text_field(
+                            Self::render_text_field(
                                 "field-thinking-budget",
                                 &self.state.data.thinking_budget.to_string(),
                                 "10000",
@@ -1223,7 +1185,7 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_section_divider("SYSTEM PROMPT"))
+            .child(Self::render_section_divider("SYSTEM PROMPT"))
             .child(
                 div()
                     .id("field-system-prompt")
@@ -1284,7 +1246,7 @@ impl ProfileEditorView {
             // API Key (keychain label dropdown + manage button)
             .child(self.render_key_label_section(cx))
             // Parameters section
-            .child(self.render_section_divider("PARAMETERS"))
+            .child(Self::render_section_divider("PARAMETERS"))
             .child(
                 div()
                     .mt(px(8.0))
@@ -1354,11 +1316,7 @@ impl gpui::EntityInputHandler for ProfileEditorView {
         }
     }
 
-    fn unmark_text(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) {
+    fn unmark_text(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) {
         self.ime_marked_byte_count = 0;
     }
 
@@ -1438,10 +1396,17 @@ impl gpui::Render for ProfileEditorView {
                 canvas(
                     |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
                     {
-                        let entity = cx.entity().clone();
+                        let entity = cx.entity();
                         let focus = self.focus_handle.clone();
-                        move |bounds: Bounds<Pixels>, _, window: &mut gpui::Window, cx: &mut gpui::App| {
-                            window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+                        move |bounds: Bounds<Pixels>,
+                              _,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::App| {
+                            window.handle_input(
+                                &focus,
+                                ElementInputHandler::new(bounds, entity),
+                                cx,
+                            );
                         }
                     },
                 )
@@ -1485,8 +1450,10 @@ impl gpui::Render for ProfileEditorView {
 
                     if key == "enter" {
                         if this.state.active_field == Some(ActiveField::SystemPrompt) {
-                            this.append_to_active_field("
-");
+                            this.append_to_active_field(
+                                "
+",
+                            );
                             cx.notify();
                         }
                         return;
@@ -1495,7 +1462,6 @@ impl gpui::Render for ProfileEditorView {
                     if key == "tab" {
                         this.cycle_active_field();
                         cx.notify();
-                        return;
                     }
 
                     // All other keys (printable chars) fall through to EntityInputHandler

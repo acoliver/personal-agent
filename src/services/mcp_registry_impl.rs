@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 
 const CACHE_FILENAME: &str = "mcp_registry.json";
 
-/// HTTP cache implementation of McpRegistryService
+/// HTTP cache implementation of `McpRegistryService`
 pub struct McpRegistryServiceImpl {
     cache_dir: PathBuf,
     cached_results: Arc<RwLock<Vec<McpRegistryServerWrapper>>>,
@@ -25,7 +25,7 @@ struct McpRegistryServerWrapper {
 }
 
 impl McpRegistryServiceImpl {
-    /// Create a new McpRegistryServiceImpl with default cache directory
+    /// Create a new `McpRegistryServiceImpl` with default cache directory
     ///
     /// # Errors
     ///
@@ -43,7 +43,7 @@ impl McpRegistryServiceImpl {
         Ok(Self::with_cache_dir(cache_dir))
     }
 
-    /// Create a new McpRegistryServiceImpl with a specific cache directory
+    /// Create a new `McpRegistryServiceImpl` with a specific cache directory
     #[must_use]
     pub fn with_cache_dir(cache_dir: PathBuf) -> Self {
         Self {
@@ -102,21 +102,9 @@ impl McpRegistryServiceImpl {
             display_name: wrapper.server.name.clone(),
             description: wrapper.server.description.clone(),
             version: wrapper.server.version.clone(),
-            author: wrapper
-                .server
-                .repository
-                .url
-                .as_ref()
-                .map(|u| u.clone())
-                .unwrap_or_default(),
+            author: wrapper.server.repository.url.clone().unwrap_or_default(),
             license: "Unknown".to_string(),
-            repository: wrapper
-                .server
-                .repository
-                .url
-                .as_ref()
-                .map(|u| u.clone())
-                .unwrap_or_default(),
+            repository: wrapper.server.repository.url.clone().unwrap_or_default(),
             command: wrapper
                 .server
                 .packages
@@ -137,7 +125,7 @@ impl McpRegistryService for McpRegistryServiceImpl {
         // Try to load from cache first
         let cached = self.load_from_disk()?;
         if !cached.is_empty() {
-            *self.cached_results.write().await = cached.clone();
+            self.cached_results.write().await.clone_from(&cached);
         }
 
         // Perform search using the McpRegistry client
@@ -161,7 +149,7 @@ impl McpRegistryService for McpRegistryServiceImpl {
         self.save_to_disk(&wrappers)?;
 
         // Update in-memory cache
-        *self.cached_results.write().await = wrappers.clone();
+        self.cached_results.write().await.clone_from(&wrappers);
 
         // Convert to output format
         let results: Vec<McpRegistryEntry> = wrappers.iter().map(Self::wrapper_to_entry).collect();
@@ -177,11 +165,15 @@ impl McpRegistryService for McpRegistryServiceImpl {
             *self.cached_results.write().await = cached;
         }
 
-        let results = self.cached_results.read().await;
+        let wrapper = self
+            .cached_results
+            .read()
+            .await
+            .iter()
+            .find(|w| w.server.name == name)
+            .cloned();
 
-        let wrapper = results.iter().find(|w| w.server.name == name);
-
-        Ok(wrapper.map(Self::wrapper_to_entry))
+        Ok(wrapper.as_ref().map(Self::wrapper_to_entry))
     }
 
     /// List all MCP servers in the registry
@@ -255,7 +247,7 @@ impl McpRegistryService for McpRegistryServiceImpl {
         self.save_to_disk(&wrappers)?;
 
         // Update in-memory cache
-        *self.cached_results.write().await = wrappers.clone();
+        self.cached_results.write().await.clone_from(&wrappers);
 
         // Update last refresh time
         *self.last_refresh.write().await = Some(chrono::Utc::now());
@@ -292,7 +284,7 @@ impl McpRegistryService for McpRegistryServiceImpl {
             meta: wrapper.meta.clone(),
         };
         let mut mcp_config = McpRegistry::entry_to_config(&registry_wrapper).map_err(|e| {
-            ServiceError::Internal(format!("Failed to convert server to config: {}", e))
+            ServiceError::Internal(format!("Failed to convert server to config: {e}"))
         })?;
 
         // Override name if provided
@@ -302,10 +294,10 @@ impl McpRegistryService for McpRegistryServiceImpl {
 
         // Load current app config
         let config_path = crate::config::Config::default_path()
-            .map_err(|e| ServiceError::Internal(format!("Failed to get config path: {}", e)))?;
+            .map_err(|e| ServiceError::Internal(format!("Failed to get config path: {e}")))?;
 
         let mut config = crate::config::Config::load(&config_path)
-            .map_err(|e| ServiceError::Internal(format!("Failed to load config: {}", e)))?;
+            .map_err(|e| ServiceError::Internal(format!("Failed to load config: {e}")))?;
 
         // Check if MCP with same name already exists
         if config.mcps.iter().any(|m| m.name == mcp_config.name) {
@@ -321,14 +313,15 @@ impl McpRegistryService for McpRegistryServiceImpl {
         // Save config
         config
             .save(&config_path)
-            .map_err(|e| ServiceError::Internal(format!("Failed to save config: {}", e)))?;
+            .map_err(|e| ServiceError::Internal(format!("Failed to save config: {e}")))?;
 
         // Reload MCP service to pick up new config
-        let mcp_service = crate::mcp::McpService::global();
-        let mut mcp = mcp_service.lock().await;
-        mcp.reload()
+        crate::mcp::McpService::global()
+            .lock()
             .await
-            .map_err(|e| ServiceError::Internal(format!("Failed to reload MCP service: {}", e)))?;
+            .reload()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("Failed to reload MCP service: {e}")))?;
 
         Ok(())
     }
@@ -347,7 +340,7 @@ mod tests {
                 description: format!("Test description for {name}"),
                 version: "1.0.0".to_string(),
                 repository: McpRegistryRepository {
-                    url: Some(format!("https://github.com/example/{}", name)),
+                    url: Some(format!("https://github.com/example/{name}")),
                     source: None,
                 },
                 packages: vec![],

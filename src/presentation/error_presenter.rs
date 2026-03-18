@@ -1,6 +1,6 @@
-//! ErrorPresenter - handles error display and logging
+//! `ErrorPresenter` - handles error display and logging
 //!
-//! ErrorPresenter subscribes to error events and emits view commands
+//! `ErrorPresenter` subscribes to error events and emits view commands
 //! to display user-friendly error messages.
 //!
 //! @plan PLAN-20250125-REFACTOR.P12
@@ -17,13 +17,13 @@ use crate::events::{
     AppEvent,
 };
 
-/// ErrorPresenter - handles error display and logging
+/// `ErrorPresenter` - handles error display and logging
 ///
 /// @plan PLAN-20250125-REFACTOR.P12
 /// @requirement REQ-027.4
 /// @pseudocode presenters.md lines 450-453
 pub struct ErrorPresenter {
-    /// Event receiver from EventBus
+    /// Event receiver from `EventBus`
     rx: broadcast::Receiver<AppEvent>,
 
     /// View command sender
@@ -34,10 +34,11 @@ pub struct ErrorPresenter {
 }
 
 impl ErrorPresenter {
-    /// Create a new ErrorPresenter
+    /// Create a new `ErrorPresenter`
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
+    #[must_use]
     pub fn new(
         event_bus: &broadcast::Sender<AppEvent>,
         view_tx: mpsc::Sender<ViewCommand>,
@@ -51,6 +52,10 @@ impl ErrorPresenter {
     }
 
     /// Start the presenter event loop
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
@@ -74,7 +79,6 @@ impl ErrorPresenter {
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ErrorPresenter lagged: {} events missed", n);
-                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::info!("ErrorPresenter event stream closed");
@@ -90,6 +94,10 @@ impl ErrorPresenter {
 
     /// Stop the presenter event loop
     ///
+    /// # Errors
+    ///
+    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
@@ -101,11 +109,12 @@ impl ErrorPresenter {
     /// Check if presenter is running
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Handle events from EventBus
+    /// Handle events from `EventBus`
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
@@ -129,32 +138,24 @@ impl ErrorPresenter {
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
     async fn handle_system_event(view_tx: &mut mpsc::Sender<ViewCommand>, event: SystemEvent) {
-        match event {
-            SystemEvent::Error {
-                source,
-                error,
-                context,
-            } => {
-                let message = if let Some(ctx) = context {
-                    format!(
-                        "{}: {}
+        if let SystemEvent::Error {
+            source,
+            error,
+            context,
+        } = event
+        {
+            let message = context.map_or_else(
+                || format!("{source}: {error}"),
+                |ctx| format!("{source}: {error}\n\nContext: {ctx}"),
+            );
 
-Context: {}",
-                        source, error, ctx
-                    )
-                } else {
-                    format!("{}: {}", source, error)
-                };
-
-                let _ = view_tx
-                    .send(ViewCommand::ShowError {
-                        title: format!("{} Error", source),
-                        message,
-                        severity: ErrorSeverity::Critical,
-                    })
-                    .await;
-            }
-            _ => {} // Ignore other system events
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: format!("{source} Error"),
+                    message,
+                    severity: ErrorSeverity::Critical,
+                })
+                .await;
         }
     }
 
@@ -163,25 +164,23 @@ Context: {}",
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.4
     async fn handle_chat_error(view_tx: &mut mpsc::Sender<ViewCommand>, event: ChatEvent) {
-        match event {
-            ChatEvent::StreamError {
-                conversation_id: _,
-                error,
-                recoverable,
-            } => {
-                let _ = view_tx
-                    .send(ViewCommand::ShowError {
-                        title: "Chat Error".to_string(),
-                        message: error.clone(),
-                        severity: if recoverable {
-                            ErrorSeverity::Warning
-                        } else {
-                            ErrorSeverity::Error
-                        },
-                    })
-                    .await;
-            }
-            _ => {} // Ignore other chat events
+        if let ChatEvent::StreamError {
+            conversation_id: _,
+            error,
+            recoverable,
+        } = event
+        {
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Chat Error".to_string(),
+                    message: error.clone(),
+                    severity: if recoverable {
+                        ErrorSeverity::Warning
+                    } else {
+                        ErrorSeverity::Error
+                    },
+                })
+                .await;
         }
     }
 
@@ -195,7 +194,7 @@ Context: {}",
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
                         title: "MCP Server Error".to_string(),
-                        message: format!("Failed to start MCP server '{}': {}", name, error),
+                        message: format!("Failed to start MCP server '{name}': {error}"),
                         severity: ErrorSeverity::Error,
                     })
                     .await;
@@ -204,7 +203,7 @@ Context: {}",
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
                         title: "MCP Server Unhealthy".to_string(),
-                        message: format!("MCP server '{}' is unhealthy: {}", name, error),
+                        message: format!("MCP server '{name}' is unhealthy: {error}"),
                         severity: ErrorSeverity::Warning,
                     })
                     .await;

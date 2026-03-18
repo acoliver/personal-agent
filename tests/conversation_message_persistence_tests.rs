@@ -197,7 +197,7 @@ fn conversation_saved_incrementally() {
 // Tests that simulate the ACTUAL UI flow - these document expected behavior
 // ============================================================================
 
-/// This test documents what SHOULD happen in send_message:
+/// This test documents what SHOULD happen in `send_message`:
 /// 1. User types message and hits enter
 /// 2. Message is added to conversation
 /// 3. Conversation is SAVED to storage  <-- This is what's missing!
