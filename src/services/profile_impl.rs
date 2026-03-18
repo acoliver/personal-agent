@@ -1,6 +1,6 @@
 //! Profile service implementation
 
-use super::{ProfileService, ServiceResult};
+use super::{profile_migration, ProfileService, ServiceResult};
 use crate::config::default_api_base_url_for_provider;
 use crate::models::{AuthConfig, ModelParameters, ModelProfile};
 use serde_json::Value;
@@ -218,107 +218,14 @@ impl ProfileServiceImpl {
     }
 
     fn parse_legacy_profile(value: &Value, path: &std::path::Path) -> Option<ModelProfile> {
-        let obj = value.as_object()?;
-
-        // Already in modern schema but missing / invalid id
-        if obj.contains_key("provider_id") || obj.contains_key("model_id") {
-            let name = obj.get("name").and_then(Value::as_str).map_or_else(
-                || {
-                    path.file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("Legacy Profile")
-                        .to_string()
-                },
-                ToOwned::to_owned,
-            );
-            let provider_id = obj
-                .get("provider_id")
-                .and_then(Value::as_str)
-                .map_or_else(|| "openai".to_string(), ToOwned::to_owned);
-            let model_id = obj
-                .get("model_id")
-                .or_else(|| obj.get("model"))
-                .and_then(Value::as_str)
-                .map_or_else(|| "gpt-4".to_string(), ToOwned::to_owned);
-            let base_url = obj
-                .get("base_url")
-                .or_else(|| obj.get("api_base_url"))
-                .and_then(Value::as_str)
-                .map_or_else(
-                    || "https://api.openai.com/v1".to_string(),
-                    ToOwned::to_owned,
-                );
-            let ephemeral = obj.get("ephemeralSettings");
-            let keyfile_hint = ephemeral
-                .and_then(Value::as_object)
-                .and_then(|e| e.get("auth-keyfile"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .or_else(|| Self::parse_legacy_auth_key_name(ephemeral));
-            let auth = Self::parse_auth_from_legacy(obj.get("auth"), keyfile_hint);
-            let parameters = Self::parse_parameters_from_legacy(obj.get("parameters"), ephemeral);
-            let system_prompt = obj
-                .get("system_prompt")
-                .and_then(Value::as_str)
-                .unwrap_or(crate::models::profile::DEFAULT_SYSTEM_PROMPT)
-                .to_string();
-
-            return Some(ModelProfile {
-                id: Self::legacy_profile_id_for_path(path),
-                name,
-                provider_id,
-                model_id,
-                base_url,
-                auth,
-                parameters,
-                system_prompt,
-            });
-        }
-
-        // Legacy schema: { provider, model, modelParams, ephemeralSettings, auth? }
-        if obj.contains_key("provider") && obj.contains_key("model") {
-            let provider_id = obj
-                .get("provider")
-                .and_then(Value::as_str)
-                .unwrap_or("openai")
-                .to_string();
-            let model_id = obj
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("gpt-4")
-                .to_string();
-            let name = format!("{provider_id}:{model_id}");
-
-            let ephemeral = obj.get("ephemeralSettings");
-            let base_url = ephemeral
-                .and_then(Value::as_object)
-                .and_then(|e| e.get("base-url"))
-                .and_then(Value::as_str)
-                .unwrap_or("https://api.openai.com/v1")
-                .to_string();
-            let keyfile_hint = ephemeral
-                .and_then(Value::as_object)
-                .and_then(|e| e.get("auth-keyfile"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .or_else(|| Self::parse_legacy_auth_key_name(ephemeral));
-
-            let auth = Self::parse_auth_from_legacy(obj.get("auth"), keyfile_hint);
-            let parameters = Self::parse_parameters_from_legacy(obj.get("modelParams"), ephemeral);
-
-            return Some(ModelProfile {
-                id: Self::legacy_profile_id_for_path(path),
-                name,
-                provider_id,
-                model_id,
-                base_url,
-                auth,
-                parameters,
-                system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
-            });
-        }
-
-        None
+        profile_migration::parse_legacy_profile(
+            value,
+            path,
+            Self::legacy_profile_id_for_path,
+            Self::parse_legacy_auth_key_name,
+            Self::parse_auth_from_legacy,
+            Self::parse_parameters_from_legacy,
+        )
     }
 
     /// Load all profiles from disk, with compatibility support for legacy schemas.

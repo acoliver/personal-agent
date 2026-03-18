@@ -27,6 +27,7 @@ pub mod models_registry;
 pub mod models_registry_impl;
 pub mod profile;
 pub mod profile_impl;
+pub mod profile_migration;
 pub mod secrets;
 pub mod secrets_impl;
 pub mod secure_store;

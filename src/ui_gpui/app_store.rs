@@ -24,6 +24,16 @@ use crate::presentation::view_command::{
     ConversationMessagePayload, ConversationSummary, MessageRole, ProfileSummary, ViewCommand,
 };
 
+pub use crate::ui_gpui::app_store_types::*;
+
+use crate::ui_gpui::app_store_streaming::{
+    append_stream_buffer_if_target_matches_selected_or_nil,
+    append_thinking_buffer_if_target_matches_selected_or_nil, clear_streaming_ephemera_for_target,
+    finalize_stream_if_target_matches_selected_or_nil,
+    hide_thinking_if_target_matches_selected_or_nil,
+    show_thinking_if_target_matches_selected_or_nil,
+};
+
 /// Startup hydration inputs.
 ///
 /// @plan PLAN-20260304-GPUIREMEDIATE.P06
@@ -83,118 +93,17 @@ pub enum StartupTranscriptResult {
     Failure(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub enum ConversationLoadState {
-    #[default]
-    Idle,
-    Loading {
-        conversation_id: Uuid,
-        generation: u64,
-    },
-    Ready {
-        conversation_id: Uuid,
-        generation: u64,
-    },
-    Error {
-        conversation_id: Uuid,
-        generation: u64,
-        message: String,
-    },
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct StreamingStoreSnapshot {
-    pub thinking_visible: bool,
-    pub thinking_buffer: String,
-    pub stream_buffer: String,
-    pub last_error: Option<String>,
-    pub active_target: Option<Uuid>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct FinalizedStreamGuard {
-    conversation_id: Uuid,
-    transcript_len_after_finalize: usize,
+pub(super) struct FinalizedStreamGuard {
+    pub(super) conversation_id: Uuid,
+    pub(super) transcript_len_after_finalize: usize,
 }
 
 #[derive(Clone, Debug, Default)]
-enum SelectedTitleProvenance {
+pub(super) enum SelectedTitleProvenance {
     HistoryBacked,
     #[default]
     LiteralFallback,
-}
-
-/// Store-owned chat snapshot slice used by mounted GPUI views.
-///
-/// @plan PLAN-20260304-GPUIREMEDIATE.P05
-/// @requirement REQ-ARCH-001.1
-/// @requirement REQ-ARCH-003.2
-/// @requirement REQ-ARCH-003.4
-/// @requirement REQ-ARCH-003.6
-/// @requirement REQ-ARCH-006.6
-/// @pseudocode analysis/pseudocode/01-app-store.md:001-405
-#[derive(Clone, Debug)]
-pub struct ChatStoreSnapshot {
-    pub selected_conversation_id: Option<Uuid>,
-    pub selected_conversation_title: String,
-    pub selection_generation: u64,
-    pub load_state: ConversationLoadState,
-    pub transcript: Vec<ConversationMessagePayload>,
-    pub streaming: StreamingStoreSnapshot,
-    pub conversations: Vec<ConversationSummary>,
-}
-
-impl Default for ChatStoreSnapshot {
-    fn default() -> Self {
-        Self {
-            selected_conversation_id: None,
-            selected_conversation_title: "New Conversation".to_string(),
-            selection_generation: 0,
-            load_state: ConversationLoadState::Idle,
-            transcript: Vec::new(),
-            streaming: StreamingStoreSnapshot::default(),
-            conversations: Vec::new(),
-        }
-    }
-}
-
-/// Store-owned history snapshot slice used by mounted GPUI views.
-///
-/// @plan PLAN-20260304-GPUIREMEDIATE.P05
-/// @requirement REQ-ARCH-001.1
-/// @requirement REQ-ARCH-004.1
-/// @pseudocode analysis/pseudocode/01-app-store.md:001-405
-#[derive(Clone, Debug, Default)]
-pub struct HistoryStoreSnapshot {
-    pub conversations: Vec<ConversationSummary>,
-    pub selected_conversation_id: Option<Uuid>,
-}
-
-/// Store-owned settings/profile snapshot slice.
-///
-/// @plan PLAN-20260304-GPUIREMEDIATE.P05
-/// @requirement REQ-ARCH-001.1
-/// @requirement REQ-ARCH-004.1
-/// @pseudocode analysis/pseudocode/01-app-store.md:001-405
-#[derive(Clone, Debug, Default)]
-pub struct SettingsStoreSnapshot {
-    pub profiles: Vec<ProfileSummary>,
-    pub selected_profile_id: Option<Uuid>,
-    pub settings_visible: bool,
-}
-
-/// Published GPUI app snapshot.
-///
-/// @plan PLAN-20260304-GPUIREMEDIATE.P05
-/// @requirement REQ-ARCH-001.1
-/// @requirement REQ-ARCH-004.1
-/// @pseudocode analysis/pseudocode/01-app-store.md:001-405
-#[derive(Clone, Debug, Default)]
-pub struct GpuiAppSnapshot {
-    pub revision: u64,
-    pub chat: ChatStoreSnapshot,
-    pub history: HistoryStoreSnapshot,
-    pub settings: SettingsStoreSnapshot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,11 +119,11 @@ pub enum BeginSelectionResult {
 }
 
 #[derive(Default)]
-struct AppStoreInner {
-    snapshot: GpuiAppSnapshot,
-    subscribers: Vec<flume::Sender<GpuiAppSnapshot>>,
-    title_provenance: SelectedTitleProvenance,
-    last_finalized_stream_guard: Option<FinalizedStreamGuard>,
+pub(super) struct AppStoreInner {
+    pub(super) snapshot: GpuiAppSnapshot,
+    pub(super) subscribers: Vec<flume::Sender<GpuiAppSnapshot>>,
+    pub(super) title_provenance: SelectedTitleProvenance,
+    pub(super) last_finalized_stream_guard: Option<FinalizedStreamGuard>,
 }
 
 /// Process-lifetime authoritative store handle.
@@ -479,221 +388,290 @@ fn begin_selection_locked(
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewCommand) -> bool {
     match command {
         ViewCommand::ConversationListRefreshed { conversations } => {
-            if inner.snapshot.history.conversations == conversations {
-                return false;
-            }
-            inner.snapshot.history.conversations = conversations.clone();
-            inner.snapshot.chat.conversations = conversations;
-            maybe_sync_selected_title(inner)
+            reduce_conversation_list_refreshed(inner, conversations)
         }
         ViewCommand::ConversationActivated {
             id,
             selection_generation,
-        } => {
-            if inner.snapshot.chat.selected_conversation_id == Some(id)
-                && inner.snapshot.chat.selection_generation == selection_generation
-                && matches!(
-                    inner.snapshot.chat.load_state,
-                    ConversationLoadState::Loading {
-                        conversation_id,
-                        generation,
-                    } if conversation_id == id && generation == selection_generation
-                )
-            {
-                return false;
-            }
-            if inner.snapshot.chat.selected_conversation_id == Some(id)
-                && inner.snapshot.chat.selection_generation == selection_generation
-            {
-                return maybe_upgrade_selected_title_from_history(inner, id);
-            }
-            false
-        }
+        } => reduce_conversation_activated(inner, id, selection_generation),
         ViewCommand::ConversationMessagesLoaded {
             conversation_id,
             selection_generation,
             messages,
-        } => {
-            if inner.snapshot.chat.selected_conversation_id != Some(conversation_id) {
-                return false;
-            }
-            if selection_generation != inner.snapshot.chat.selection_generation {
-                return false;
-            }
-            if load_state_targets_different_conversation(
-                &inner.snapshot.chat.load_state,
-                conversation_id,
-            ) {
-                return false;
-            }
-            if inner.snapshot.chat.transcript == messages
-                && inner.snapshot.chat.load_state
-                    == (ConversationLoadState::Ready {
-                        conversation_id,
-                        generation: selection_generation,
-                    })
-            {
-                return false;
-            }
-            inner.snapshot.chat.transcript = messages;
-            inner.snapshot.chat.load_state = ConversationLoadState::Ready {
-                conversation_id,
-                generation: selection_generation,
-            };
-            clear_streaming_ephemera_only(inner);
-            inner.last_finalized_stream_guard = None;
-            true
-        }
+        } => reduce_messages_loaded(inner, conversation_id, selection_generation, messages),
         ViewCommand::ConversationLoadFailed {
             conversation_id,
             selection_generation,
             message,
-        } => {
-            if inner.snapshot.chat.selected_conversation_id != Some(conversation_id) {
-                return false;
-            }
-            if selection_generation != inner.snapshot.chat.selection_generation {
-                return false;
-            }
-            if load_state_targets_different_conversation(
-                &inner.snapshot.chat.load_state,
-                conversation_id,
-            ) {
-                return false;
-            }
-            let next_state = ConversationLoadState::Error {
-                conversation_id,
-                generation: selection_generation,
-                message,
-            };
-            if inner.snapshot.chat.load_state == next_state {
-                return false;
-            }
-            inner.snapshot.chat.load_state = next_state;
-            clear_streaming_ephemera_only(inner);
-            true
-        }
+        } => reduce_conversation_load_failed(inner, conversation_id, selection_generation, message),
         ViewCommand::MessageAppended {
             conversation_id,
             role,
             content,
-        } => {
-            if role == MessageRole::Assistant
-                && inner
-                    .last_finalized_stream_guard
-                    .as_ref()
-                    .is_some_and(|guard| {
-                        conversation_id == guard.conversation_id
-                            && inner.snapshot.chat.transcript.len()
-                                == guard.transcript_len_after_finalize
-                            && inner.snapshot.chat.transcript.last().is_some_and(|tail| {
-                                tail.role == MessageRole::Assistant && tail.content == content
-                            })
-                    })
-            {
-                return false;
-            }
-            append_persisted_message_if_target_matches_selected(
-                inner,
-                conversation_id,
-                role,
-                content,
-            )
-        }
+        } => reduce_message_appended(inner, conversation_id, role, content),
         ViewCommand::ShowThinking { conversation_id } => {
-            show_thinking_if_target_matches_selected_or_nil(inner, conversation_id)
+            reduce_show_thinking(inner, conversation_id)
         }
         ViewCommand::HideThinking { conversation_id } => {
-            hide_thinking_if_target_matches_selected_or_nil(inner, conversation_id)
+            reduce_hide_thinking(inner, conversation_id)
         }
         ViewCommand::AppendThinking {
             conversation_id,
             content,
-        } => append_thinking_buffer_if_target_matches_selected_or_nil(
-            inner,
-            conversation_id,
-            &content,
-        ),
+        } => reduce_append_thinking(inner, conversation_id, &content),
         ViewCommand::AppendStream {
             conversation_id,
             chunk,
-        } => append_stream_buffer_if_target_matches_selected_or_nil(inner, conversation_id, &chunk),
+        } => reduce_append_stream(inner, conversation_id, &chunk),
         ViewCommand::FinalizeStream {
             conversation_id,
             tokens: _,
-        } => finalize_stream_if_target_matches_selected_or_nil(inner, conversation_id),
+        } => reduce_finalize_stream(inner, conversation_id),
         ViewCommand::StreamCancelled {
             conversation_id,
             partial_content: _,
-        } => clear_streaming_ephemera_for_target(inner, conversation_id, None),
+        } => reduce_stream_cancelled(inner, conversation_id),
         ViewCommand::StreamError {
             conversation_id,
             error,
             recoverable: _,
-        } => clear_streaming_ephemera_for_target(inner, conversation_id, Some(error)),
+        } => reduce_stream_error(inner, conversation_id, error),
         ViewCommand::ChatProfilesUpdated {
             profiles,
             selected_profile_id,
-        } => mutate_profiles_snapshot(inner, profiles, selected_profile_id),
+        } => reduce_chat_profiles_updated(inner, profiles, selected_profile_id),
         ViewCommand::ShowSettings {
             profiles,
             selected_profile_id,
-        } => {
-            if inner.snapshot.settings.settings_visible {
-                mutate_profiles_snapshot(inner, profiles, selected_profile_id)
-            } else {
-                inner.snapshot.settings.settings_visible = true;
-                true
-            }
-        }
+        } => reduce_show_settings(inner, profiles, selected_profile_id),
         ViewCommand::ConversationRenamed { id, new_title } => {
-            mutate_history_and_selected_title_if_targeted(inner, id, &new_title)
+            reduce_conversation_renamed(inner, id, &new_title)
         }
         ViewCommand::ConversationTitleUpdated { id, title } => {
-            mutate_history_and_selected_title_if_targeted(inner, id, &title)
+            reduce_conversation_title_updated(inner, id, &title)
         }
-        ViewCommand::ConversationDeleted { id } => {
-            mutate_history_and_selected_selection_if_targeted(inner, id)
-        }
-        ViewCommand::ConversationCreated { id, .. } => {
-            let already_listed = inner
-                .snapshot
-                .history
-                .conversations
-                .iter()
-                .any(|conversation| conversation.id == id);
-            if !already_listed {
-                let conversation = ConversationSummary {
-                    id,
-                    title: "New Conversation".to_string(),
-                    updated_at: chrono::Utc::now(),
-                    message_count: 0,
-                };
-                inner
-                    .snapshot
-                    .history
-                    .conversations
-                    .insert(0, conversation.clone());
-                inner.snapshot.chat.conversations.insert(0, conversation);
-            }
-            // Activate the new conversation through the proper selection path
-            begin_selection_locked(inner, id, BeginSelectionMode::BatchNoPublish);
-            // Immediately mark it Ready with empty transcript (new conversation has no messages)
-            let gen = inner.snapshot.chat.selection_generation;
-            inner.snapshot.chat.transcript.clear();
-            inner.snapshot.chat.load_state = ConversationLoadState::Ready {
-                conversation_id: id,
-                generation: gen,
-            };
-            inner.snapshot.chat.selected_conversation_title = "New Conversation".to_string();
-            true
-        }
+        ViewCommand::ConversationDeleted { id } => reduce_conversation_deleted(inner, id),
+        ViewCommand::ConversationCreated { id, .. } => reduce_conversation_created(inner, id),
         _ => false,
     }
+}
+
+fn reduce_conversation_list_refreshed(
+    inner: &mut AppStoreInner,
+    conversations: Vec<ConversationSummary>,
+) -> bool {
+    if inner.snapshot.history.conversations == conversations {
+        return false;
+    }
+    inner.snapshot.history.conversations = conversations.clone();
+    inner.snapshot.chat.conversations = conversations;
+    maybe_sync_selected_title(inner)
+}
+
+fn reduce_conversation_activated(
+    inner: &mut AppStoreInner,
+    id: Uuid,
+    selection_generation: u64,
+) -> bool {
+    if inner.snapshot.chat.selected_conversation_id == Some(id)
+        && inner.snapshot.chat.selection_generation == selection_generation
+        && matches!(
+            inner.snapshot.chat.load_state,
+            ConversationLoadState::Loading {
+                conversation_id,
+                generation,
+            } if conversation_id == id && generation == selection_generation
+        )
+    {
+        return false;
+    }
+    if inner.snapshot.chat.selected_conversation_id == Some(id)
+        && inner.snapshot.chat.selection_generation == selection_generation
+    {
+        return maybe_upgrade_selected_title_from_history(inner, id);
+    }
+    false
+}
+
+fn reduce_messages_loaded(
+    inner: &mut AppStoreInner,
+    conversation_id: Uuid,
+    selection_generation: u64,
+    messages: Vec<ConversationMessagePayload>,
+) -> bool {
+    if inner.snapshot.chat.selected_conversation_id != Some(conversation_id) {
+        return false;
+    }
+    if selection_generation != inner.snapshot.chat.selection_generation {
+        return false;
+    }
+    if load_state_targets_different_conversation(&inner.snapshot.chat.load_state, conversation_id) {
+        return false;
+    }
+    if inner.snapshot.chat.transcript == messages
+        && inner.snapshot.chat.load_state
+            == (ConversationLoadState::Ready {
+                conversation_id,
+                generation: selection_generation,
+            })
+    {
+        return false;
+    }
+    inner.snapshot.chat.transcript = messages;
+    inner.snapshot.chat.load_state = ConversationLoadState::Ready {
+        conversation_id,
+        generation: selection_generation,
+    };
+    clear_streaming_ephemera_only(inner);
+    inner.last_finalized_stream_guard = None;
+    true
+}
+
+fn reduce_conversation_load_failed(
+    inner: &mut AppStoreInner,
+    conversation_id: Uuid,
+    selection_generation: u64,
+    message: String,
+) -> bool {
+    if inner.snapshot.chat.selected_conversation_id != Some(conversation_id) {
+        return false;
+    }
+    if selection_generation != inner.snapshot.chat.selection_generation {
+        return false;
+    }
+    if load_state_targets_different_conversation(&inner.snapshot.chat.load_state, conversation_id) {
+        return false;
+    }
+    let next_state = ConversationLoadState::Error {
+        conversation_id,
+        generation: selection_generation,
+        message,
+    };
+    if inner.snapshot.chat.load_state == next_state {
+        return false;
+    }
+    inner.snapshot.chat.load_state = next_state;
+    clear_streaming_ephemera_only(inner);
+    true
+}
+
+fn reduce_message_appended(
+    inner: &mut AppStoreInner,
+    conversation_id: Uuid,
+    role: MessageRole,
+    content: String,
+) -> bool {
+    if role == MessageRole::Assistant
+        && inner
+            .last_finalized_stream_guard
+            .as_ref()
+            .is_some_and(|guard| {
+                conversation_id == guard.conversation_id
+                    && inner.snapshot.chat.transcript.len() == guard.transcript_len_after_finalize
+                    && inner.snapshot.chat.transcript.last().is_some_and(|tail| {
+                        tail.role == MessageRole::Assistant && tail.content == content
+                    })
+            })
+    {
+        return false;
+    }
+    append_persisted_message_if_target_matches_selected(inner, conversation_id, role, content)
+}
+
+fn reduce_show_thinking(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
+    show_thinking_if_target_matches_selected_or_nil(inner, conversation_id)
+}
+
+fn reduce_hide_thinking(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
+    hide_thinking_if_target_matches_selected_or_nil(inner, conversation_id)
+}
+
+fn reduce_append_thinking(inner: &mut AppStoreInner, conversation_id: Uuid, content: &str) -> bool {
+    append_thinking_buffer_if_target_matches_selected_or_nil(inner, conversation_id, content)
+}
+
+fn reduce_append_stream(inner: &mut AppStoreInner, conversation_id: Uuid, chunk: &str) -> bool {
+    append_stream_buffer_if_target_matches_selected_or_nil(inner, conversation_id, chunk)
+}
+
+fn reduce_finalize_stream(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
+    finalize_stream_if_target_matches_selected_or_nil(inner, conversation_id)
+}
+
+fn reduce_stream_cancelled(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
+    clear_streaming_ephemera_for_target(inner, conversation_id, None)
+}
+
+fn reduce_stream_error(inner: &mut AppStoreInner, conversation_id: Uuid, error: String) -> bool {
+    clear_streaming_ephemera_for_target(inner, conversation_id, Some(error))
+}
+
+fn reduce_chat_profiles_updated(
+    inner: &mut AppStoreInner,
+    profiles: Vec<ProfileSummary>,
+    selected_profile_id: Option<Uuid>,
+) -> bool {
+    mutate_profiles_snapshot(inner, profiles, selected_profile_id)
+}
+
+fn reduce_show_settings(
+    inner: &mut AppStoreInner,
+    profiles: Vec<ProfileSummary>,
+    selected_profile_id: Option<Uuid>,
+) -> bool {
+    if inner.snapshot.settings.settings_visible {
+        mutate_profiles_snapshot(inner, profiles, selected_profile_id)
+    } else {
+        inner.snapshot.settings.settings_visible = true;
+        true
+    }
+}
+
+fn reduce_conversation_renamed(inner: &mut AppStoreInner, id: Uuid, new_title: &str) -> bool {
+    mutate_history_and_selected_title_if_targeted(inner, id, new_title)
+}
+
+fn reduce_conversation_title_updated(inner: &mut AppStoreInner, id: Uuid, title: &str) -> bool {
+    mutate_history_and_selected_title_if_targeted(inner, id, title)
+}
+
+fn reduce_conversation_deleted(inner: &mut AppStoreInner, id: Uuid) -> bool {
+    mutate_history_and_selected_selection_if_targeted(inner, id)
+}
+
+fn reduce_conversation_created(inner: &mut AppStoreInner, id: Uuid) -> bool {
+    let already_listed = inner
+        .snapshot
+        .history
+        .conversations
+        .iter()
+        .any(|conversation| conversation.id == id);
+    if !already_listed {
+        let conversation = ConversationSummary {
+            id,
+            title: "New Conversation".to_string(),
+            updated_at: chrono::Utc::now(),
+            message_count: 0,
+        };
+        inner
+            .snapshot
+            .history
+            .conversations
+            .insert(0, conversation.clone());
+        inner.snapshot.chat.conversations.insert(0, conversation);
+    }
+    begin_selection_locked(inner, id, BeginSelectionMode::BatchNoPublish);
+    let generation = inner.snapshot.chat.selection_generation;
+    inner.snapshot.chat.transcript.clear();
+    inner.snapshot.chat.load_state = ConversationLoadState::Ready {
+        conversation_id: id,
+        generation,
+    };
+    inner.snapshot.chat.selected_conversation_title = "New Conversation".to_string();
+    true
 }
 
 fn bump_revision_and_publish(inner: &mut AppStoreInner) {
@@ -718,7 +696,7 @@ fn prune_disconnected_subscribers_locked(inner: &mut AppStoreInner) {
         .retain(|subscriber| !subscriber.is_disconnected());
 }
 
-fn clear_streaming_ephemera_only(inner: &mut AppStoreInner) {
+pub(super) fn clear_streaming_ephemera_only(inner: &mut AppStoreInner) {
     inner.snapshot.chat.streaming = StreamingStoreSnapshot::default();
 }
 
@@ -818,171 +796,6 @@ fn append_persisted_message_if_target_matches_selected(
             thinking_content: None,
             timestamp: None,
         });
-    true
-}
-
-fn resolve_nil_or_explicit_target(inner: &AppStoreInner, conversation_id: Uuid) -> Option<Uuid> {
-    if conversation_id == Uuid::nil() {
-        inner
-            .snapshot
-            .chat
-            .streaming
-            .active_target
-            .or(inner.snapshot.chat.selected_conversation_id)
-    } else {
-        Some(conversation_id)
-    }
-}
-
-fn show_thinking_if_target_matches_selected_or_nil(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-) -> bool {
-    let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
-        return false;
-    };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
-        return false;
-    }
-    let mut changed = if inner.snapshot.chat.streaming.thinking_visible {
-        false
-    } else {
-        inner.snapshot.chat.streaming.thinking_visible = true;
-        true
-    };
-    changed |= if inner.snapshot.chat.streaming.active_target == Some(target) {
-        false
-    } else {
-        inner.snapshot.chat.streaming.active_target = Some(target);
-        true
-    };
-    if inner.snapshot.chat.streaming.stream_buffer.is_empty()
-        && inner.snapshot.chat.streaming.thinking_buffer.is_empty()
-        && inner.snapshot.chat.streaming.last_error.is_none()
-    {
-        changed = true;
-    }
-    changed
-}
-
-fn hide_thinking_if_target_matches_selected_or_nil(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-) -> bool {
-    let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
-        return false;
-    };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
-        return false;
-    }
-    if !inner.snapshot.chat.streaming.thinking_visible {
-        return false;
-    }
-    inner.snapshot.chat.streaming.thinking_visible = false;
-    true
-}
-
-fn append_thinking_buffer_if_target_matches_selected_or_nil(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-    content: &str,
-) -> bool {
-    let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
-        return false;
-    };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) || content.is_empty() {
-        return false;
-    }
-    inner.snapshot.chat.streaming.active_target = Some(target);
-    inner.snapshot.chat.streaming.thinking_visible = true;
-    inner
-        .snapshot
-        .chat
-        .streaming
-        .thinking_buffer
-        .push_str(content);
-    true
-}
-
-fn append_stream_buffer_if_target_matches_selected_or_nil(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-    chunk: &str,
-) -> bool {
-    let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
-        return false;
-    };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) || chunk.is_empty() {
-        return false;
-    }
-    inner.snapshot.chat.streaming.active_target = Some(target);
-    inner.snapshot.chat.streaming.stream_buffer.push_str(chunk);
-    true
-}
-
-fn finalize_stream_if_target_matches_selected_or_nil(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-) -> bool {
-    let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
-        return false;
-    };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
-        return false;
-    }
-    if inner.snapshot.chat.streaming.active_target != Some(target) {
-        return false;
-    }
-    if inner.snapshot.chat.streaming.stream_buffer.is_empty() {
-        return false;
-    }
-
-    let assistant_payload = ConversationMessagePayload {
-        role: MessageRole::Assistant,
-        content: inner.snapshot.chat.streaming.stream_buffer.clone(),
-        thinking_content: non_empty_or_none(&inner.snapshot.chat.streaming.thinking_buffer),
-        timestamp: None,
-    };
-    inner.snapshot.chat.transcript.push(assistant_payload);
-    inner.last_finalized_stream_guard = Some(FinalizedStreamGuard {
-        conversation_id: target,
-        transcript_len_after_finalize: inner.snapshot.chat.transcript.len(),
-    });
-    clear_streaming_ephemera_only(inner);
-    true
-}
-
-fn clear_streaming_ephemera_for_target(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-    error: Option<String>,
-) -> bool {
-    let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
-        return false;
-    };
-    clear_streaming_ephemera_if_selected_target_matches(inner, target, error)
-}
-
-fn clear_streaming_ephemera_if_selected_target_matches(
-    inner: &mut AppStoreInner,
-    target: Uuid,
-    error: Option<String>,
-) -> bool {
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
-        return false;
-    }
-
-    let previous = inner.snapshot.chat.streaming.clone();
-    let mut next = previous.clone();
-    next.active_target = None;
-    next.stream_buffer.clear();
-    next.thinking_buffer.clear();
-    next.thinking_visible = false;
-    next.last_error = error;
-    if previous == next {
-        return false;
-    }
-    inner.snapshot.chat.streaming = next;
     true
 }
 
@@ -1097,7 +910,7 @@ fn update_conversation_title(
     changed
 }
 
-fn non_empty_or_none(value: &str) -> Option<String> {
+pub(super) fn non_empty_or_none(value: &str) -> Option<String> {
     if value.is_empty() {
         None
     } else {

@@ -17,7 +17,7 @@ use super::view_command::{
 use super::{Presenter, PresenterError, ViewCommand};
 use crate::events::bus::EventBus;
 use crate::events::{
-    types::{ChatEvent, ConversationEvent, UserEvent},
+    types::{ConversationEvent, UserEvent},
     AppEvent,
 };
 use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
@@ -87,102 +87,9 @@ impl ChatPresenter {
         self.running
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        // Emit initial conversation list so the dropdown is populated on startup
-        tracing::info!("ChatPresenter: emitting initial conversation list");
-        match Self::emit_conversation_list(&self.conversation_service, &mut self.view_tx.clone())
-            .await
-        {
-            Ok(()) => {
-                tracing::info!("ChatPresenter: initial conversation list emitted successfully");
-            }
-            Err(e) => tracing::error!(
-                "ChatPresenter: failed to emit initial conversation list: {}",
-                e
-            ),
-        }
-
-        // On startup, always activate and replay the newest conversation when available.
-        // This guarantees the selected conversation and visible transcript are consistent,
-        // even when persisted active-id metadata is absent.
-        match self.conversation_service.list(Some(1), Some(0)).await {
-            Ok(conversations) => {
-                if let Some(conversation) = conversations.first() {
-                    let startup_id = conversation.id;
-                    tracing::info!(
-                        conversation_id = %startup_id,
-                        "ChatPresenter: startup selecting newest conversation"
-                    );
-                    let _ = self.conversation_service.set_active(startup_id).await;
-
-                    let mut startup_view_tx = self.view_tx.clone();
-                    let _ = startup_view_tx
-                        .send(ViewCommand::ConversationActivated {
-                            id: startup_id,
-                            selection_generation: 1,
-                        })
-                        .await;
-
-                    match Self::replay_conversation_messages(
-                        &self.conversation_service,
-                        &mut startup_view_tx,
-                        startup_id,
-                        1,
-                    )
-                    .await
-                    {
-                        Ok(count) => tracing::info!(
-                            conversation_id = %startup_id,
-                            count,
-                            "ChatPresenter: replayed startup conversation messages"
-                        ),
-                        Err(e) => tracing::warn!(
-                            "ChatPresenter: failed to replay startup conversation {}: {}",
-                            startup_id,
-                            e
-                        ),
-                    }
-                } else {
-                    tracing::info!("ChatPresenter: no conversations at startup");
-                }
-            }
-            Err(e) => tracing::warn!(
-                "ChatPresenter: failed to list conversations at startup: {}",
-                e
-            ),
-        }
-
-        // Subscribe to events from EventBus
-        let mut rx = self.event_bus.subscribe();
-        let running = self.running.clone();
-        let conversation_service = self.conversation_service.clone();
-        let chat_service = self.chat_service.clone();
-        let profile_service = self.profile_service.clone();
-        let mut view_tx = self.view_tx.clone();
-
-        tokio::spawn(async move {
-            while running.load(std::sync::atomic::Ordering::Relaxed) {
-                match rx.recv().await {
-                    Ok(event) => {
-                        Self::handle_event(
-                            &conversation_service,
-                            &chat_service,
-                            &profile_service,
-                            &mut view_tx,
-                            event,
-                        )
-                        .await;
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("ChatPresenter lagged: {} events missed", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("ChatPresenter event stream closed");
-                        break;
-                    }
-                }
-            }
-            tracing::info!("ChatPresenter event loop ended");
-        });
+        Self::emit_initial_conversation_list(&self.conversation_service, &self.view_tx).await;
+        Self::restore_startup_conversation(&self.conversation_service, &self.view_tx).await;
+        self.spawn_event_loop();
 
         Ok(())
     }
@@ -297,6 +204,120 @@ impl ChatPresenter {
         }
     }
 
+    async fn emit_initial_conversation_list(
+        conversation_service: &Arc<dyn ConversationService>,
+        view_tx: &mpsc::Sender<ViewCommand>,
+    ) {
+        tracing::info!("ChatPresenter: emitting initial conversation list");
+        match Self::emit_conversation_list(conversation_service, &mut view_tx.clone()).await {
+            Ok(()) => {
+                tracing::info!("ChatPresenter: initial conversation list emitted successfully");
+            }
+            Err(e) => tracing::error!(
+                "ChatPresenter: failed to emit initial conversation list: {}",
+                e
+            ),
+        }
+    }
+
+    async fn restore_startup_conversation(
+        conversation_service: &Arc<dyn ConversationService>,
+        view_tx: &mpsc::Sender<ViewCommand>,
+    ) {
+        match conversation_service.list(Some(1), Some(0)).await {
+            Ok(conversations) => {
+                if let Some(conversation) = conversations.first() {
+                    Self::activate_startup_conversation(
+                        conversation_service,
+                        view_tx,
+                        conversation.id,
+                    )
+                    .await;
+                } else {
+                    tracing::info!("ChatPresenter: no conversations at startup");
+                }
+            }
+            Err(e) => tracing::warn!(
+                "ChatPresenter: failed to list conversations at startup: {}",
+                e
+            ),
+        }
+    }
+
+    async fn activate_startup_conversation(
+        conversation_service: &Arc<dyn ConversationService>,
+        view_tx: &mpsc::Sender<ViewCommand>,
+        startup_id: Uuid,
+    ) {
+        tracing::info!(
+            conversation_id = %startup_id,
+            "ChatPresenter: startup selecting newest conversation"
+        );
+        let _ = conversation_service.set_active(startup_id).await;
+
+        let mut startup_view_tx = view_tx.clone();
+        let _ = startup_view_tx
+            .send(ViewCommand::ConversationActivated {
+                id: startup_id,
+                selection_generation: 1,
+            })
+            .await;
+
+        match Self::replay_conversation_messages(
+            conversation_service,
+            &mut startup_view_tx,
+            startup_id,
+            1,
+        )
+        .await
+        {
+            Ok(count) => tracing::info!(
+                conversation_id = %startup_id,
+                count,
+                "ChatPresenter: replayed startup conversation messages"
+            ),
+            Err(e) => tracing::warn!(
+                "ChatPresenter: failed to replay startup conversation {}: {}",
+                startup_id,
+                e
+            ),
+        }
+    }
+
+    fn spawn_event_loop(&self) {
+        let mut rx = self.event_bus.subscribe();
+        let running = self.running.clone();
+        let conversation_service = self.conversation_service.clone();
+        let chat_service = self.chat_service.clone();
+        let profile_service = self.profile_service.clone();
+        let mut view_tx = self.view_tx.clone();
+
+        tokio::spawn(async move {
+            while running.load(std::sync::atomic::Ordering::Relaxed) {
+                match rx.recv().await {
+                    Ok(event) => {
+                        Self::handle_event(
+                            &conversation_service,
+                            &chat_service,
+                            &profile_service,
+                            &mut view_tx,
+                            event,
+                        )
+                        .await;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("ChatPresenter lagged: {} events missed", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::info!("ChatPresenter event stream closed");
+                        break;
+                    }
+                }
+            }
+            tracing::info!("ChatPresenter event loop ended");
+        });
+    }
+
     async fn emit_conversation_list(
         conversation_service: &Arc<dyn ConversationService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
@@ -359,137 +380,6 @@ impl ChatPresenter {
             .await;
 
         Ok(replay_count)
-    }
-
-    /// Handle chat events
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    #[allow(clippy::too_many_lines)]
-    async fn handle_chat_event(view_tx: &mut mpsc::Sender<ViewCommand>, event: ChatEvent) {
-        match event {
-            ChatEvent::StreamStarted {
-                conversation_id,
-                message_id: _,
-                model_id: _,
-            } => {
-                let _ = view_tx
-                    .send(ViewCommand::ShowThinking { conversation_id })
-                    .await;
-            }
-            ChatEvent::TextDelta { text } => {
-                let _ = view_tx
-                    .send(ViewCommand::AppendStream {
-                        conversation_id: Uuid::nil(),
-                        chunk: text,
-                    })
-                    .await;
-            }
-            ChatEvent::ThinkingDelta { text } => {
-                let _ = view_tx
-                    .send(ViewCommand::AppendThinking {
-                        conversation_id: Uuid::nil(),
-                        content: text,
-                    })
-                    .await;
-            }
-            ChatEvent::ToolCallStarted {
-                tool_call_id: _,
-                tool_name,
-            } => {
-                let _ = view_tx
-                    .send(ViewCommand::ShowToolCall {
-                        conversation_id: Uuid::nil(),
-                        tool_name,
-                        status: "running".to_string(),
-                    })
-                    .await;
-            }
-            ChatEvent::ToolCallCompleted {
-                tool_call_id: _,
-                tool_name,
-                success,
-                result,
-                duration_ms,
-            } => {
-                let status = if success {
-                    "completed".to_string()
-                } else {
-                    "failed".to_string()
-                };
-                let _ = view_tx
-                    .send(ViewCommand::UpdateToolCall {
-                        conversation_id: Uuid::nil(),
-                        tool_name,
-                        status,
-                        result: Some(result),
-                        duration: Some(duration_ms),
-                    })
-                    .await;
-            }
-            ChatEvent::StreamCompleted {
-                conversation_id,
-                message_id: _,
-                total_tokens,
-            } => {
-                let _ = view_tx
-                    .send(ViewCommand::FinalizeStream {
-                        conversation_id,
-                        tokens: u64::from(total_tokens.unwrap_or(0)),
-                    })
-                    .await;
-                let _ = view_tx
-                    .send(ViewCommand::HideThinking { conversation_id })
-                    .await;
-            }
-            ChatEvent::StreamCancelled {
-                conversation_id,
-                message_id: _,
-                partial_content,
-            } => {
-                let _ = view_tx
-                    .send(ViewCommand::StreamCancelled {
-                        conversation_id,
-                        partial_content,
-                    })
-                    .await;
-                let _ = view_tx
-                    .send(ViewCommand::HideThinking { conversation_id })
-                    .await;
-            }
-            ChatEvent::StreamError {
-                conversation_id,
-                error,
-                recoverable,
-            } => {
-                let _ = view_tx
-                    .send(ViewCommand::StreamError {
-                        conversation_id,
-                        error: error.clone(),
-                        recoverable,
-                    })
-                    .await;
-                let _ = view_tx
-                    .send(ViewCommand::ShowError {
-                        title: "Stream Error".to_string(),
-                        message: error,
-                        severity: if recoverable {
-                            ErrorSeverity::Warning
-                        } else {
-                            ErrorSeverity::Error
-                        },
-                    })
-                    .await;
-            }
-            ChatEvent::MessageSaved {
-                conversation_id,
-                message_id: _,
-            } => {
-                let _ = view_tx
-                    .send(ViewCommand::MessageSaved { conversation_id })
-                    .await;
-            }
-        }
     }
 
     /// Handle `SendMessage` user event
@@ -922,386 +812,5 @@ impl Presenter for ChatPresenter {
 /// @plan PLAN-20250125-REFACTOR.P12
 /// @requirement REQ-027.1
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use tokio::sync::{broadcast, mpsc};
-
-    /// Mock `ConversationService` for testing
-    struct MockConversationService;
-
-    #[async_trait::async_trait]
-    impl ConversationService for MockConversationService {
-        async fn create(
-            &self,
-            _title: Option<String>,
-            _model_profile_id: Uuid,
-        ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-            Ok(crate::models::Conversation {
-                id: Uuid::new_v4(),
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-                title: Some("Test Conversation".to_string()),
-                profile_id: _model_profile_id,
-                messages: vec![],
-            })
-        }
-
-        async fn load(
-            &self,
-            _id: Uuid,
-        ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound(
-                "Not implemented".to_string(),
-            ))
-        }
-
-        async fn list(
-            &self,
-            _limit: Option<usize>,
-            _offset: Option<usize>,
-        ) -> Result<Vec<crate::models::Conversation>, crate::services::ServiceError> {
-            Ok(vec![])
-        }
-
-        async fn add_user_message(
-            &self,
-            _conversation_id: Uuid,
-            _content: String,
-        ) -> Result<crate::models::Message, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound(
-                "Not implemented".to_string(),
-            ))
-        }
-
-        async fn add_assistant_message(
-            &self,
-            _conversation_id: Uuid,
-            _content: String,
-        ) -> Result<crate::models::Message, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound(
-                "Not implemented".to_string(),
-            ))
-        }
-
-        async fn rename(
-            &self,
-            _id: Uuid,
-            _new_title: String,
-        ) -> Result<(), crate::services::ServiceError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-            Ok(())
-        }
-
-        async fn set_active(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-            Ok(())
-        }
-
-        async fn get_active(&self) -> Result<Option<Uuid>, crate::services::ServiceError> {
-            Ok(None)
-        }
-
-        async fn get_messages(
-            &self,
-            _conversation_id: Uuid,
-        ) -> Result<Vec<crate::models::Message>, crate::services::ServiceError> {
-            Ok(vec![])
-        }
-
-        async fn update(
-            &self,
-            _id: Uuid,
-            _title: Option<String>,
-            _model_profile_id: Option<Uuid>,
-        ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound(
-                "Not implemented".to_string(),
-            ))
-        }
-    }
-
-    /// Mock `ChatService` for testing
-    struct MockChatService;
-
-    #[async_trait::async_trait]
-    impl ChatService for MockChatService {
-        async fn send_message(
-            &self,
-            _conversation_id: Uuid,
-            _content: String,
-        ) -> Result<
-            Box<dyn futures::Stream<Item = crate::services::ChatStreamEvent> + Send + Unpin>,
-            crate::services::ServiceError,
-        > {
-            // Return empty stream
-
-            let stream = futures::stream::empty::<crate::services::ChatStreamEvent>();
-            Ok(Box::new(stream))
-        }
-
-        fn cancel(&self) {
-            // Mock cancel does nothing
-        }
-
-        fn is_streaming(&self) -> bool {
-            false
-        }
-    }
-
-    struct MockProfileService;
-
-    #[async_trait::async_trait]
-    impl ProfileService for MockProfileService {
-        async fn list(
-            &self,
-        ) -> Result<Vec<crate::models::ModelProfile>, crate::services::ServiceError> {
-            Ok(vec![])
-        }
-
-        async fn get(
-            &self,
-            id: Uuid,
-        ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound(format!(
-                "profile {id} not found"
-            )))
-        }
-
-        async fn create(
-            &self,
-            _name: String,
-            _provider: String,
-            _model: String,
-            _base_url: Option<String>,
-            _auth: crate::models::AuthConfig,
-            _parameters: crate::models::ModelParameters,
-            _system_prompt: Option<String>,
-        ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound(
-                "not implemented".to_string(),
-            ))
-        }
-
-        async fn update(
-            &self,
-            _id: Uuid,
-            _name: Option<String>,
-            _provider: Option<String>,
-            _model: Option<String>,
-            _base_url: Option<String>,
-            _auth: Option<crate::models::AuthConfig>,
-            _parameters: Option<crate::models::ModelParameters>,
-            _system_prompt: Option<String>,
-        ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound(
-                "not implemented".to_string(),
-            ))
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-            Ok(())
-        }
-
-        async fn test_connection(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-            Ok(())
-        }
-
-        async fn get_default(
-            &self,
-        ) -> Result<Option<crate::models::ModelProfile>, crate::services::ServiceError> {
-            Ok(Some(crate::models::ModelProfile {
-                id: Uuid::new_v4(),
-                name: "Default".to_string(),
-                provider_id: "openai".to_string(),
-                model_id: "gpt-4".to_string(),
-                base_url: "https://api.openai.com/v1".to_string(),
-                auth: crate::models::AuthConfig::Keychain {
-                    label: "test-key".to_string(),
-                },
-                parameters: crate::models::ModelParameters::default(),
-                system_prompt: "test".to_string(),
-            }))
-        }
-
-        async fn set_default(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-            Ok(())
-        }
-    }
-
-    /// Test presenter creation
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    #[tokio::test]
-    async fn test_handle_send_message_emits_events() {
-        let (_event_tx, _) = broadcast::channel::<AppEvent>(100);
-        let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
-
-        let conversation_service =
-            Arc::new(MockConversationService) as Arc<dyn ConversationService>;
-        let chat_service = Arc::new(MockChatService) as Arc<dyn ChatService>;
-        let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
-
-        // Simulate sending a message
-        let content = "Hello, world!".to_string();
-        let mut tx = view_tx.clone();
-        let conv_service = conversation_service.clone();
-        let chat_svc = chat_service.clone();
-        let profile_svc = profile_service.clone();
-
-        tokio::spawn(async move {
-            ChatPresenter::handle_send_message(
-                &conv_service,
-                &chat_svc,
-                &profile_svc,
-                &mut tx,
-                content,
-            )
-            .await;
-        });
-
-        // Wait for async processing
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        // Verify ViewCommands were sent
-        let mut found_message = false;
-        let mut found_thinking = false;
-
-        while let Ok(cmd) = view_rx.try_recv() {
-            match cmd {
-                ViewCommand::MessageAppended { role, .. } => {
-                    if matches!(role, MessageRole::User) {
-                        found_message = true;
-                    }
-                }
-                ViewCommand::ShowThinking { .. } => {
-                    found_thinking = true;
-                }
-                _ => {}
-            }
-        }
-
-        assert!(found_message, "Should have user message appended");
-        assert!(found_thinking, "Should show thinking indicator");
-    }
-
-    /// Test handle stop streaming
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    #[tokio::test]
-    async fn test_handle_stop_streaming() {
-        let chat_service = Arc::new(MockChatService) as Arc<dyn ChatService>;
-        let (view_tx, _) = mpsc::channel::<ViewCommand>(100);
-
-        // Stop should call cancel on chat service
-        ChatPresenter::handle_stop_streaming(&chat_service, &mut view_tx.clone()).await;
-
-        // If we get here without panic, test passes
-        assert!(!chat_service.is_streaming());
-    }
-
-    /// Test handle text delta produces view command
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    #[tokio::test]
-    async fn test_handle_text_delta_produces_view_command() {
-        let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
-
-        let event = ChatEvent::TextDelta {
-            text: "Hello".to_string(),
-        };
-
-        ChatPresenter::handle_chat_event(&mut view_tx.clone(), event).await;
-
-        // Verify AppendStream command was sent
-        if let Ok(cmd) = view_rx.try_recv() {
-            match cmd {
-                ViewCommand::AppendStream { chunk, .. } => {
-                    assert_eq!(chunk, "Hello");
-                }
-                _ => panic!("Expected AppendStream command"),
-            }
-        } else {
-            panic!("Should have received a ViewCommand");
-        }
-    }
-
-    /// Test handle stream completed
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    #[tokio::test]
-    async fn test_handle_stream_completed() {
-        let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
-        let conversation_id = Uuid::new_v4();
-
-        let event = ChatEvent::StreamCompleted {
-            conversation_id,
-            message_id: Uuid::new_v4(),
-            total_tokens: Some(100),
-        };
-
-        ChatPresenter::handle_chat_event(&mut view_tx.clone(), event).await;
-
-        // Verify FinalizeStream and HideThinking commands
-        let mut found_finalize = false;
-        let mut found_hide = false;
-
-        while let Ok(cmd) = view_rx.try_recv() {
-            match cmd {
-                ViewCommand::FinalizeStream { tokens, .. } => {
-                    assert_eq!(tokens, 100);
-                    found_finalize = true;
-                }
-                ViewCommand::HideThinking { .. } => {
-                    found_hide = true;
-                }
-                _ => {}
-            }
-        }
-
-        assert!(found_finalize, "Should finalize stream");
-        assert!(found_hide, "Should hide thinking");
-    }
-
-    /// Test handle new conversation
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    #[tokio::test]
-    async fn test_handle_new_conversation() {
-        let conversation_service =
-            Arc::new(MockConversationService) as Arc<dyn ConversationService>;
-        let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
-        let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
-
-        ChatPresenter::handle_new_conversation(
-            &conversation_service,
-            &profile_service,
-            &mut view_tx.clone(),
-        )
-        .await;
-
-        // Verify conversation created and activated
-        let mut found_created = false;
-        let mut found_activated = false;
-
-        // Allow time for async processing
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        while let Ok(cmd) = view_rx.try_recv() {
-            match cmd {
-                ViewCommand::ConversationCreated { .. } => {
-                    found_created = true;
-                }
-                ViewCommand::ConversationActivated { .. } => {
-                    found_activated = true;
-                }
-                _ => {}
-            }
-        }
-
-        assert!(found_created, "Should create conversation");
-        assert!(found_activated, "Should activate conversation");
-    }
-}
+#[path = "chat_presenter_tests.rs"]
+mod tests;

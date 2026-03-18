@@ -5,6 +5,8 @@
 
 pub mod app;
 pub mod app_store;
+mod app_store_streaming;
+pub mod app_store_types;
 
 pub mod bridge;
 pub mod components;

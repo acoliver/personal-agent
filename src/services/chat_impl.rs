@@ -39,18 +39,8 @@ impl ChatServiceImpl {
             current_conversation_id: Arc::new(RwLock::new(None)),
         }
     }
-}
 
-#[allow(clippy::too_many_lines)]
-#[async_trait::async_trait]
-impl ChatService for ChatServiceImpl {
-    /// Send a message and get a streaming response
-    async fn send_message(
-        &self,
-        conversation_id: Uuid,
-        content: String,
-    ) -> ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> {
-        // Check if already streaming
+    async fn begin_stream(&self, conversation_id: Uuid) -> ServiceResult<()> {
         if self
             .is_streaming
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
@@ -61,62 +51,69 @@ impl ChatService for ChatServiceImpl {
             ));
         }
 
-        // Store conversation ID
         *self.current_conversation_id.write().await = Some(conversation_id);
+        Ok(())
+    }
 
-        // Get or create conversation
-        let _conversation = if let Ok(conv) = self.conversation_service.load(conversation_id).await
-        {
-            conv
-        } else {
-            // Create new conversation if it doesn't exist
-            // Use default profile for now
-            let default_profile = self
-                .profile_service
-                .get_default()
-                .await
-                .map_err(|_| ServiceError::Internal("No default profile available".to_string()))?
-                .ok_or_else(|| {
-                    ServiceError::Internal("No default profile available".to_string())
-                })?;
+    async fn prepare_message_context(
+        &self,
+        conversation_id: Uuid,
+        content: String,
+    ) -> ServiceResult<PreparedMessageContext> {
+        let _conversation =
+            if let Ok(conversation) = self.conversation_service.load(conversation_id).await {
+                conversation
+            } else {
+                let default_profile = self.default_profile("No default profile available").await?;
+                self.conversation_service
+                    .create(None, default_profile.id)
+                    .await?
+            };
 
-            self.conversation_service
-                .create(None, default_profile.id)
-                .await?
-        };
-
-        // Add user message
         self.conversation_service
-            .add_user_message(conversation_id, content.clone())
+            .add_user_message(conversation_id, content)
             .await?;
 
-        // Get default profile
-        let profile = self
-            .profile_service
-            .get_default()
-            .await
-            .map_err(|_| ServiceError::Internal("No active profile".to_string()))?
-            .ok_or_else(|| ServiceError::Internal("No active profile".to_string()))?;
-
-        // Load conversation to get message history
+        let profile = self.default_profile("No active profile").await?;
         let conversation = self
             .conversation_service
             .load(conversation_id)
             .await
             .map_err(|e| ServiceError::Internal(format!("Failed to load conversation: {e}")))?;
-
-        // Create LLM client from profile
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
+        let messages = Self::build_llm_messages(&conversation, &profile);
+        let system_prompt =
+            Self::system_prompt_for_conversation(&conversation, &profile).to_string();
 
+        Ok(PreparedMessageContext {
+            profile,
+            client,
+            messages,
+            system_prompt,
+        })
+    }
+
+    async fn default_profile(
+        &self,
+        missing_message: &str,
+    ) -> ServiceResult<crate::models::ModelProfile> {
+        self.profile_service
+            .get_default()
+            .await
+            .map_err(|_| ServiceError::Internal(missing_message.to_string()))?
+            .ok_or_else(|| ServiceError::Internal(missing_message.to_string()))
+    }
+
+    fn build_llm_messages(
+        conversation: &crate::models::Conversation,
+        profile: &crate::models::ModelProfile,
+    ) -> Vec<LlmMessage> {
         let has_system_message = conversation
             .messages
             .iter()
             .any(|msg| msg.role == MessageRole::System && !msg.content.trim().is_empty());
 
-        // Convert conversation messages to LlmClient Message format.
-        // The new user message is already persisted above via add_user_message()
-        // and included in the loaded conversation, so do not push it again.
         let mut messages: Vec<LlmMessage> = conversation
             .messages
             .iter()
@@ -131,133 +128,173 @@ impl ChatService for ChatServiceImpl {
             messages.insert(0, LlmMessage::system(profile.system_prompt.clone()));
         }
 
-        // Generate message ID for this response
-        let message_id = Uuid::new_v4();
-        let model_id = profile.model_id.clone();
+        messages
+    }
 
-        // Emit stream started event
+    fn system_prompt_for_conversation<'a>(
+        conversation: &'a crate::models::Conversation,
+        profile: &'a crate::models::ModelProfile,
+    ) -> &'a str {
+        conversation
+            .messages
+            .iter()
+            .find(|message| {
+                message.role == MessageRole::System && !message.content.trim().is_empty()
+            })
+            .map(|message| message.content.as_str())
+            .filter(|prompt| !prompt.trim().is_empty())
+            .unwrap_or(profile.system_prompt.as_str())
+    }
+
+    async fn load_mcp_tools(&self) -> Vec<crate::llm::tools::Tool> {
+        let mcp_service = McpService::global();
+        let mcp_guard = mcp_service.lock().await;
+        mcp_guard.get_llm_tools()
+    }
+
+    fn emit_stream_started(conversation_id: Uuid, model_id: String) {
         let _ = emit(AppEvent::Chat(ChatEvent::StreamStarted {
             conversation_id,
-            message_id,
-            model_id: model_id.clone(),
+            message_id: Uuid::new_v4(),
+            model_id,
         }));
+    }
 
-        // Get MCP tools for tool use support (REM-004)
-        // @requirement REM-004, REM-007
-        let mcp_tools = {
-            let mcp_service = McpService::global();
-            let mcp_guard = mcp_service.lock().await;
-            mcp_guard.get_llm_tools()
-        };
-
-        // Track the assistant response as it streams
+    fn spawn_stream_task(
+        &self,
+        conversation_id: Uuid,
+        prepared: PreparedMessageContext,
+        mcp_tools: Vec<crate::llm::tools::Tool>,
+        tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    ) {
         let is_streaming = self.is_streaming.clone();
         let conversation_service = self.conversation_service.clone();
-        let event_conversation_id = conversation_id;
 
-        // Use a channel to bridge the callback-based API to a stream
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ChatStreamEvent>();
-
-        // Spawn a task to call the LLM with MCP tools using Agent
         tokio::spawn(async move {
-            let mut response_text = String::new();
-            let mut thinking_text = String::new();
+            run_stream_task(
+                prepared,
+                mcp_tools,
+                tx,
+                is_streaming,
+                conversation_service,
+                conversation_id,
+            )
+            .await;
+        });
+    }
+}
 
-            // Get system prompt from conversation, falling back to profile-level system prompt
-            // when the conversation has no explicit system message.
-            let system_prompt = conversation
-                .messages
-                .iter()
-                .find(|m| m.role == MessageRole::System && !m.content.trim().is_empty())
-                .map(|m| m.content.as_str())
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or(profile.system_prompt.as_str());
+struct PreparedMessageContext {
+    profile: crate::models::ModelProfile,
+    client: LlmClient,
+    messages: Vec<LlmMessage>,
+    system_prompt: String,
+}
 
-            // Create Agent with MCP tools (uses existing AgentClientExt)
-            // @requirement AGENT-001, AGENT-003
-            let agent = match client.create_agent(mcp_tools, system_prompt).await {
-                Ok(a) => a,
-                Err(e) => {
-                    let err_msg = format!("Failed to create agent: {e}");
-                    let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
-                        conversation_id: event_conversation_id,
-                        error: err_msg.clone(),
-                        recoverable: false,
-                    }));
-                    let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err_msg)));
-                    is_streaming.store(false, Ordering::Release);
-                    return;
-                }
-            };
+async fn run_stream_task(
+    prepared: PreparedMessageContext,
+    mcp_tools: Vec<crate::llm::tools::Tool>,
+    tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    is_streaming: Arc<AtomicBool>,
+    conversation_service: Arc<dyn ConversationService>,
+    conversation_id: Uuid,
+) {
+    let PreparedMessageContext {
+        profile: _,
+        client,
+        messages,
+        system_prompt,
+    } = prepared;
+    let mut response_text = String::new();
+    let mut thinking_text = String::new();
 
-            // Run Agent stream (Agent executes tools internally)
-            // @requirement AGENT-005, AGENT-006
-            if let Err(e) = client
-                .run_agent_stream(&agent, &messages, |event| {
-                    match event {
-                        LlmStreamEvent::TextDelta(text) => {
-                            // Emit ChatEvent via EventBus for real-time UI updates
-                            tracing::info!("ChatService emitting TextDelta: '{}'", text);
-                            let _ =
-                                emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
-                            // Also send to stream for caller
-                            let _ = tx.send(ChatStreamEvent::Token(text.clone()));
-                            response_text.push_str(&text);
-                        }
-                        LlmStreamEvent::ThinkingDelta(text) => {
-                            let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
-                                text: text.clone(),
-                            }));
-                            thinking_text.push_str(&text);
-                        }
-                        LlmStreamEvent::Complete => {
-                            let _ = tx.send(ChatStreamEvent::Complete);
-                        }
-                        LlmStreamEvent::Error(err) => {
-                            let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
-                                conversation_id: event_conversation_id,
-                                error: err.clone(),
-                                recoverable: false,
-                            }));
-                            let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err)));
-                        }
-                        // Tool events are handled INSIDE run_agent_stream
-                        // Agent automatically executes tools and continues
-                        _ => {}
-                    }
-                })
-                .await
-            {
-                let err_msg = e.to_string();
+    let agent = match client.create_agent(mcp_tools, &system_prompt).await {
+        Ok(agent) => agent,
+        Err(e) => {
+            let err_msg = format!("Failed to create agent: {e}");
+            let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+                conversation_id,
+                error: err_msg.clone(),
+                recoverable: false,
+            }));
+            let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err_msg)));
+            is_streaming.store(false, Ordering::Release);
+            return;
+        }
+    };
+
+    if let Err(e) = client
+        .run_agent_stream(&agent, &messages, |event| match event {
+            LlmStreamEvent::TextDelta(text) => {
+                tracing::info!("ChatService emitting TextDelta: '{}'", text);
+                let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+                let _ = tx.send(ChatStreamEvent::Token(text.clone()));
+                response_text.push_str(&text);
+            }
+            LlmStreamEvent::ThinkingDelta(text) => {
+                let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
+                    text: text.clone(),
+                }));
+                thinking_text.push_str(&text);
+            }
+            LlmStreamEvent::Complete => {
+                let _ = tx.send(ChatStreamEvent::Complete);
+            }
+            LlmStreamEvent::Error(err) => {
                 let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
-                    conversation_id: event_conversation_id,
-                    error: err_msg.clone(),
+                    conversation_id,
+                    error: err.clone(),
                     recoverable: false,
                 }));
-                let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err_msg)));
+                let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err)));
             }
+            _ => {}
+        })
+        .await
+    {
+        let err_msg = e.to_string();
+        let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+            conversation_id,
+            error: err_msg.clone(),
+            recoverable: false,
+        }));
+        let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err_msg)));
+    }
 
-            // Save the assistant message when complete
-            if !response_text.is_empty() || !thinking_text.is_empty() {
-                // For now, persist only the assistant text content; thinking is surfaced
-                // separately during streaming and is not stored durably here.
-                let _ = conversation_service
-                    .add_assistant_message(event_conversation_id, response_text.clone())
-                    .await;
-            }
+    if !response_text.is_empty() || !thinking_text.is_empty() {
+        let _ = conversation_service
+            .add_assistant_message(conversation_id, response_text.clone())
+            .await;
+    }
 
-            // Emit StreamCompleted event
-            let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
-                conversation_id: event_conversation_id,
-                message_id: Uuid::new_v4(),
-                total_tokens: None,
-            }));
+    let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
+        conversation_id,
+        message_id: Uuid::new_v4(),
+        total_tokens: None,
+    }));
+    is_streaming.store(false, Ordering::Release);
+}
 
-            // Reset streaming flag
-            is_streaming.store(false, Ordering::Release);
-        });
+#[allow(clippy::too_many_lines)]
+#[async_trait::async_trait]
+impl ChatService for ChatServiceImpl {
+    /// Send a message and get a streaming response
+    async fn send_message(
+        &self,
+        conversation_id: Uuid,
+        content: String,
+    ) -> ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> {
+        self.begin_stream(conversation_id).await?;
 
-        // Convert the channel receiver to a stream
+        let prepared = self
+            .prepare_message_context(conversation_id, content)
+            .await?;
+        Self::emit_stream_started(conversation_id, prepared.profile.model_id.clone());
+        let mcp_tools = self.load_mcp_tools().await;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ChatStreamEvent>();
+        self.spawn_stream_task(conversation_id, prepared, mcp_tools, tx);
+
         let message_stream: Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>> =
             Box::pin(stream::unfold(rx, move |mut rx| async move {
                 rx.recv().await.map(|event| (event, rx))

@@ -212,6 +212,7 @@ fn bug_chat_service_should_fallback_to_profile_system_prompt_when_conversation_h
     let source = include_str!("../src/services/chat_impl.rs");
     let start = source
         .find("let system_prompt = conversation")
+        .or_else(|| source.find("fn system_prompt_for_conversation"))
         .expect("system_prompt extraction should exist");
     let end = (start + 520).min(source.len());
     let window = &source[start..end];

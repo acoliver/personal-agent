@@ -238,13 +238,29 @@ impl ProfileEditorPresenter {
     ) {
         tracing::info!("Saving profile: {}", profile.name);
 
-        let auth = match profile.auth.clone() {
+        let auth = Self::profile_auth_from_payload(&profile);
+        let parameters = Self::profile_parameters_from_payload(&profile);
+        let updated =
+            Self::update_profile_from_payload(profile_service, &profile, &auth, &parameters).await;
+        let persisted =
+            Self::persist_profile_from_payload(updated, profile_service, profile, auth, parameters)
+                .await;
+
+        Self::publish_profile_save_result(event_bus_tx, view_tx, persisted).await;
+    }
+
+    fn profile_auth_from_payload(profile: &crate::events::types::ModelProfile) -> AuthConfig {
+        match profile.auth.clone() {
             Some(ModelProfileAuth::Keychain { label }) => AuthConfig::Keychain { label },
             None => AuthConfig::Keychain {
                 label: String::new(),
             },
-        };
+        }
+    }
 
+    fn profile_parameters_from_payload(
+        profile: &crate::events::types::ModelProfile,
+    ) -> ModelParameters {
         let mut parameters = ModelParameters::default();
         if let Some(payload_parameters) = profile.parameters.clone() {
             if let Some(temperature) = payload_parameters.temperature {
@@ -263,50 +279,69 @@ impl ProfileEditorPresenter {
                 parameters.thinking_budget = Some(thinking_budget);
             }
         }
+        parameters
+    }
 
-        let update_name = Some(profile.name.clone());
-        let update_provider = profile.provider_id.clone();
-        let update_model = profile.model_id.clone();
-        let update_base_url = profile.base_url.clone();
-        let update_system_prompt = profile.system_prompt.clone();
-
-        let updated = profile_service
+    async fn update_profile_from_payload(
+        profile_service: &Arc<dyn ProfileService>,
+        profile: &crate::events::types::ModelProfile,
+        auth: &AuthConfig,
+        parameters: &ModelParameters,
+    ) -> Result<crate::models::ModelProfile, ServiceError> {
+        profile_service
             .update(
                 profile.id,
-                update_name,
-                update_provider,
-                update_model.clone(),
-                update_base_url.clone(),
+                Some(profile.name.clone()),
+                profile.provider_id.clone(),
+                profile.model_id.clone(),
+                profile.base_url.clone(),
                 Some(auth.clone()),
                 Some(parameters.clone()),
-                update_system_prompt.clone(),
+                profile.system_prompt.clone(),
             )
-            .await;
+            .await
+    }
 
-        let fallback_provider = profile.provider_id.unwrap_or_else(|| "openai".to_string());
+    async fn persist_profile_from_payload(
+        updated: Result<crate::models::ModelProfile, ServiceError>,
+        profile_service: &Arc<dyn ProfileService>,
+        profile: crate::events::types::ModelProfile,
+        auth: AuthConfig,
+        parameters: ModelParameters,
+    ) -> Result<crate::models::ModelProfile, ServiceError> {
+        let fallback_provider = profile
+            .provider_id
+            .clone()
+            .unwrap_or_else(|| "openai".to_string());
         let fallback_model = profile
             .model_id
             .clone()
             .unwrap_or_else(|| "gpt-4o".to_string());
 
-        let persisted = match updated {
+        match updated {
             Ok(saved) => Ok(saved),
             Err(ServiceError::NotFound(_)) => {
                 profile_service
                     .create(
-                        profile.name.clone(),
+                        profile.name,
                         fallback_provider,
                         fallback_model,
-                        update_base_url,
+                        profile.base_url,
                         auth,
                         parameters,
-                        update_system_prompt,
+                        profile.system_prompt,
                     )
                     .await
             }
             Err(e) => Err(e),
-        };
+        }
+    }
 
+    async fn publish_profile_save_result(
+        event_bus_tx: &broadcast::Sender<AppEvent>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        persisted: Result<crate::models::ModelProfile, ServiceError>,
+    ) {
         match persisted {
             Ok(saved) => {
                 let _ = event_bus_tx.send(AppEvent::Profile(ProfileEvent::Updated {
