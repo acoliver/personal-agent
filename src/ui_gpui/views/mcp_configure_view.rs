@@ -271,6 +271,17 @@ impl McpConfigureView {
                 env,
                 url,
             } => {
+                // Infer auth method from env vars: if no env vars exist the
+                // server needs no credentials (e.g. Exa remote HTTP).
+                let has_env = env
+                    .as_ref()
+                    .is_some_and(|v| v.iter().any(|(k, _)| !k.is_empty()));
+                self.state.data.auth_method = if has_env {
+                    McpAuthMethod::ApiKey
+                } else {
+                    McpAuthMethod::None
+                };
+
                 self.state.data.id = Some(id);
                 self.state.data.name = name;
                 self.state.data.package = package;
