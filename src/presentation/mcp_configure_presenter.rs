@@ -290,15 +290,16 @@ impl McpConfigurePresenter {
 
         match save_result {
             Ok(()) => {
-                // Reload global MCP runtime so chat can use the new server
+                // Reload global MCP runtime so chat can use the new server.
+                // Use lock().await (not try_lock) so the reload waits for any
+                // in-progress initialisation to finish before reloading config.
                 let global = crate::mcp::McpService::global();
                 tokio::spawn(async move {
-                    if let Ok(mut svc) = global.try_lock() {
-                        if let Err(e) = svc.reload().await {
-                            tracing::error!("MCP global reload after save failed: {e}");
-                        } else {
-                            tracing::info!("MCP global runtime reloaded after save");
-                        }
+                    let mut svc = global.lock().await;
+                    if let Err(e) = svc.reload().await {
+                        tracing::error!("MCP global reload after save failed: {e}");
+                    } else {
+                        tracing::info!("MCP global runtime reloaded after save");
                     }
                 });
 
