@@ -386,7 +386,7 @@ fn forward_runtime_commands_to_main_panel(commands: Vec<ViewCommand>, cx: &mut A
 fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
     cx.spawn(async move |cx| loop {
         cx.background_executor()
-            .timer(Duration::from_millis(16))
+            .timer(Duration::from_millis(100))
             .await;
 
         drain_selection_intents(&app_state);

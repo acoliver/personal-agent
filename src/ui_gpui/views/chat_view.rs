@@ -2301,15 +2301,6 @@ impl gpui::Render for ChatView {
     #[allow(clippy::too_many_lines)]
     #[rustfmt::skip]
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        tracing::info!(
-            chat_view_entity_id = ?cx.entity_id(),
-            conversation_title = %self.state.conversation_title,
-            active_conversation_id = ?self.state.active_conversation_id,
-            message_count = self.state.messages.len(),
-            profile_count = self.state.profiles.len(),
-            selected_profile_id = ?self.state.selected_profile_id,
-            "ChatView::render state snapshot"
-        );
 
         div()
             .id("chat-view")

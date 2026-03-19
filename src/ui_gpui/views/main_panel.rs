@@ -316,11 +316,7 @@ impl MainPanel {
             .map(|s| s.gpui_bridge.clone());
         tracing::info!("MainPanel::init - bridge is_some: {}", bridge.is_some());
 
-        // Set up navigation channel notify callback to trigger MainPanel redraw
-        let _entity_id = cx.entity_id();
-        // We can't directly call cx.notify() from outside, so we use a shared flag
-        // that render() will check
-        println!(">>> MainPanel::init - setting up navigation notify callback <<<");
+        // Child view input already schedules redraws, so no render self-polling is needed.
         self.ensure_store_subscription(cx);
 
         // Chat view
@@ -1195,14 +1191,6 @@ impl gpui::Render for MainPanel {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        tracing::info!(
-            main_panel_entity_id = ?cx.entity_id(),
-            current_view = ?self.navigation.current(),
-            runtime_started = self.runtime_started,
-            chat_view_entity_id = ?self.chat_view.as_ref().map(gpui::Entity::entity_id),
-            child_observation_count = self.child_observations.len(),
-            "MainPanel::render state snapshot"
-        );
 
         // Initialize child views on first render
         if !self.is_initialized() {
@@ -1290,13 +1278,6 @@ impl gpui::Render for MainPanel {
                 window.focus(&self.focus_handle, cx);
             }
         }
-
-        // Schedule a notify after a brief delay to keep polling for navigation
-        // This is a workaround since we can't use async notify from static channel
-        let entity_id = cx.entity_id();
-        cx.defer(move |cx| {
-            cx.notify(entity_id);
-        });
 
         let focus_handle = self.focus_handle.clone();
 
