@@ -213,6 +213,7 @@ impl McpAddPresenter {
                         command: entry.command,
                         args: entry.args,
                         env: entry.env,
+                        url: entry.url,
                     })
                     .collect();
 
@@ -269,6 +270,7 @@ impl McpAddPresenter {
                         command: entry.command,
                         args: entry.args,
                         env: entry.env,
+                        url: entry.url,
                     });
                     let _ = view_tx.send(ViewCommand::NavigateTo {
                         view: super::view_command::ViewId::McpConfigure,

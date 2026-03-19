@@ -1177,6 +1177,18 @@ fn main() {
                 info!("Started ApiKeyManagerPresenter");
                 info!("All 8 presenters started");
 
+                // Initialize global MCP runtime so chat can discover tools
+                info!("Initializing global MCP runtime...");
+                {
+                    let global = personal_agent::mcp::McpService::global();
+                    let mut svc = global.lock().await;
+                    if let Err(e) = svc.initialize().await {
+                        tracing::error!("Global MCP initialization failed: {e}");
+                    } else {
+                        info!("Global MCP runtime initialized");
+                    }
+                }
+
                 // Keep runtime alive
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;

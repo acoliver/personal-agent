@@ -372,6 +372,7 @@ fn test_mcp_registry_search_results_are_routed() {
                 command: "npx -y @modelcontextprotocol/server-fetch".to_string(),
                 args: vec![],
                 env: None,
+                url: None,
             },
             McpRegistryResult {
                 id: "filesystem".to_string(),
@@ -381,6 +382,7 @@ fn test_mcp_registry_search_results_are_routed() {
                 command: "npx -y @modelcontextprotocol/server-filesystem".to_string(),
                 args: vec![],
                 env: None,
+                url: None,
             },
         ],
     });
@@ -415,6 +417,7 @@ fn test_mcp_configure_draft_loaded_is_routed() {
             "@modelcontextprotocol/server-fetch".to_string(),
         ],
         env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
+        url: None,
     });
 
     let mut targets = CommandTargets::default();
@@ -472,6 +475,7 @@ fn test_mcp_configure_draft_loaded_does_not_count_as_mcp_config_saved() {
             "@modelcontextprotocol/server-filesystem".to_string(),
         ],
         env: None,
+        url: None,
     });
 
     let mut targets = CommandTargets::default();

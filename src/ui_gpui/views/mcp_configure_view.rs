@@ -83,6 +83,8 @@ pub struct McpConfigureData {
     pub oauth_provider: String,
     pub oauth_status: OAuthStatus,
     pub config_fields: Vec<ConfigField>,
+    /// Remote URL for HTTP/SSE transport MCPs (None for stdio-only).
+    pub url: Option<String>,
 }
 
 impl McpConfigureData {
@@ -104,8 +106,10 @@ impl McpConfigureData {
             return false;
         }
 
-        // Persistence path requires an executable command for MCP stdio/http config.
-        if self.command.trim().is_empty() {
+        // Need either a command (stdio) or a URL (remote HTTP/SSE).
+        let has_command = !self.command.trim().is_empty();
+        let has_url = self.url.as_ref().is_some_and(|u| !u.trim().is_empty());
+        if !has_command && !has_url {
             return false;
         }
 
@@ -183,17 +187,61 @@ impl McpConfigureView {
             .id
             .clone()
             .and_then(|s| uuid::Uuid::parse_str(&s).ok())
-            .unwrap_or_else(uuid::Uuid::nil);
+            .unwrap_or_else(uuid::Uuid::new_v4);
+
+        let d = &self.state.data;
+        let has_url = d.url.as_ref().is_some_and(|u| !u.trim().is_empty());
+
+        let transport = if has_url {
+            crate::mcp::McpTransport::Http
+        } else {
+            crate::mcp::McpTransport::Stdio
+        };
+
+        let source = if has_url {
+            crate::mcp::McpSource::Manual {
+                url: d.url.clone().unwrap_or_default(),
+            }
+        } else {
+            crate::mcp::McpSource::Manual { url: String::new() }
+        };
+
+        let package = crate::mcp::McpPackage {
+            package_type: if has_url {
+                crate::mcp::McpPackageType::Http
+            } else {
+                crate::mcp::McpPackageType::Npm
+            },
+            identifier: d.package.clone(),
+            runtime_hint: None,
+        };
+
+        let config = crate::mcp::McpConfig {
+            id,
+            name: d.name.clone(),
+            enabled: true,
+            source,
+            package,
+            transport,
+            auth_type: crate::mcp::McpAuthType::None,
+            env_vars: d.env.as_ref().map_or_else(Vec::new, |pairs| {
+                pairs
+                    .iter()
+                    .map(|(k, _)| crate::mcp::EnvVarConfig {
+                        name: k.clone(),
+                        required: true,
+                    })
+                    .collect()
+            }),
+            package_args: vec![],
+            keyfile_path: None,
+            config: serde_json::Value::Null,
+            oauth_token: None,
+        };
 
         self.emit(&UserEvent::SaveMcpConfig {
             id,
-            config: crate::events::types::McpConfig {
-                id,
-                name: self.state.data.name.clone(),
-                command: self.state.data.command.clone(),
-                args: self.state.data.args.clone(),
-                env: self.state.data.env.clone(),
-            },
+            config: Box::new(config),
         });
     }
 
@@ -221,6 +269,7 @@ impl McpConfigureView {
                 command,
                 args,
                 env,
+                url,
             } => {
                 self.state.data.id = Some(id);
                 self.state.data.name = name;
@@ -229,6 +278,7 @@ impl McpConfigureView {
                 self.state.data.command = command;
                 self.state.data.args = args;
                 self.state.data.env = env;
+                self.state.data.url = url;
                 self.state.is_new = self
                     .state
                     .data

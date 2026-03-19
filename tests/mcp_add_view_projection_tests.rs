@@ -18,6 +18,7 @@ fn test_projected_search_results_preserve_source_args_and_env_metadata() {
             "@modelcontextprotocol/server-filesystem".to_string(),
         ],
         env: Some(vec![("FILESYSTEM_ROOT".to_string(), "/tmp".to_string())]),
+        url: None,
     };
 
     let mapped = [

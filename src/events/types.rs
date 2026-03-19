@@ -113,8 +113,8 @@ pub enum UserEvent {
     /// User clicked configure MCP
     ConfigureMcp { id: Uuid },
 
-    /// User saved MCP configuration
-    SaveMcpConfig { id: Uuid, config: McpConfig },
+    /// User saved MCP configuration (boxed to keep `UserEvent` size small).
+    SaveMcpConfig { id: Uuid, config: Box<McpConfig> },
 
     /// User clicked delete MCP
     DeleteMcp { id: Uuid },
@@ -503,17 +503,8 @@ pub struct ModelProfile {
     pub system_prompt: Option<String>,
 }
 
-/// Lightweight MCP config payload for GPUI save flow
-///
-/// @plan PLAN-20250125-REFACTOR.P04
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct McpConfig {
-    pub id: Uuid,
-    pub name: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub env: Option<Vec<(String, String)>>,
-}
+/// Rich MCP config re-export for save flow (replaces earlier lossy placeholder).
+pub use crate::mcp::McpConfig;
 
 /// Placeholder for `McpRegistrySource`
 ///

@@ -33,6 +33,9 @@ pub struct McpConfigurePresenter {
 
     /// Running flag for event loop
     running: Arc<std::sync::atomic::AtomicBool>,
+
+    /// Optional config path override (for testing); `None` → `Config::default_path()`.
+    config_path_override: Option<std::path::PathBuf>,
 }
 
 impl McpConfigurePresenter {
@@ -48,6 +51,7 @@ impl McpConfigurePresenter {
         Self {
             rx,
             mcp_service,
+            config_path_override: None,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -72,9 +76,17 @@ impl McpConfigurePresenter {
         Self {
             rx,
             mcp_service,
+            config_path_override: None,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Override the config file path (for testing).
+    #[must_use]
+    pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
+        self.config_path_override = Some(path);
+        self
     }
 
     /// Start the presenter event loop
@@ -96,12 +108,14 @@ impl McpConfigurePresenter {
         let running = self.running.clone();
         let mcp_service = self.mcp_service.clone();
         let view_tx = self.view_tx.clone();
+        let config_path = self.config_path_override.clone();
 
         tokio::spawn(async move {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 match rx.recv().await {
                     Ok(event) => {
-                        Self::handle_event(&mcp_service, &view_tx, event).await;
+                        Self::handle_event(&mcp_service, &view_tx, event, config_path.as_deref())
+                            .await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("McpConfigurePresenter lagged: {} events missed", n);
@@ -146,10 +160,11 @@ impl McpConfigurePresenter {
         mcp_service: &Arc<dyn McpService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
+        config_path: Option<&std::path::Path>,
     ) {
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(mcp_service, view_tx, user_evt).await;
+                Self::handle_user_event(mcp_service, view_tx, user_evt, config_path).await;
             }
             AppEvent::Mcp(mcp_evt) => {
                 Self::handle_mcp_event(view_tx, mcp_evt).await;
@@ -167,13 +182,14 @@ impl McpConfigurePresenter {
         mcp_service: &Arc<dyn McpService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
+        config_path: Option<&std::path::Path>,
     ) {
         match event {
             UserEvent::ConfigureMcp { id } => {
                 Self::on_configure_mcp(mcp_service, view_tx, id).await;
             }
             UserEvent::SaveMcpConfig { id, config } => {
-                Self::on_save_config(mcp_service, view_tx, id, config).await;
+                Self::on_save_config(mcp_service, view_tx, id, *config, config_path).await;
             }
             UserEvent::StartMcpOAuth { id, provider } => {
                 Self::on_start_oauth(mcp_service, view_tx, id, provider).await;
@@ -197,10 +213,14 @@ impl McpConfigurePresenter {
 
         match mcp_service.get(id).await {
             Ok(cfg) => {
-                let (command, args) = match cfg.transport {
-                    serdes_ai_mcp::McpTransportConfig::Stdio { command, args } => (command, args),
+                let (command, args, url) = match cfg.transport {
+                    serdes_ai_mcp::McpTransportConfig::Stdio { command, args } => {
+                        (command, args, None)
+                    }
                     serdes_ai_mcp::McpTransportConfig::Http { url }
-                    | serdes_ai_mcp::McpTransportConfig::Sse { url } => (url, vec![]),
+                    | serdes_ai_mcp::McpTransportConfig::Sse { url } => {
+                        (String::new(), vec![], Some(url))
+                    }
                 };
 
                 let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
@@ -211,6 +231,7 @@ impl McpConfigurePresenter {
                     command,
                     args,
                     env: None,
+                    url,
                 });
 
                 let _ = view_tx.send(ViewCommand::NavigateTo {
@@ -229,68 +250,61 @@ impl McpConfigurePresenter {
     }
 
     async fn on_save_config(
-        mcp_service: &Arc<dyn McpService>,
+        _mcp_service: &Arc<dyn McpService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         id: Uuid,
         config: crate::events::types::McpConfig,
+        config_path_override: Option<&std::path::Path>,
     ) {
-        tracing::info!("Saving MCP config for id: {}", id);
+        tracing::info!("Saving MCP config for id: {} name: {}", id, config.name);
 
-        let crate::events::types::McpConfig {
-            id: _,
-            name,
-            command,
-            args,
-            env,
-        } = config;
+        let saved_name = config.name.clone();
+        let mut config = config;
 
-        let fallback_name = name.clone();
-        let result = if id.is_nil() {
-            mcp_service
-                .add(name, command, args, env)
-                .await
-                .map(|cfg| cfg.name)
-        } else {
-            mcp_service
-                .update(id, Some(name), Some(command), Some(args), env)
-                .await
-                .map(|cfg| cfg.name)
-        };
+        // Generate a stable ID for new MCPs
+        if config.id.is_nil() {
+            config.id = Uuid::new_v4();
+        }
+        let saved_id = config.id;
 
-        match result {
-            Ok(saved_name_from_service) => {
-                let resolved_name = if saved_name_from_service.is_empty() {
-                    fallback_name
-                } else {
-                    saved_name_from_service
-                };
+        let save_result: Result<(), String> = (|| {
+            let config_path = match config_path_override {
+                Some(p) => p.to_path_buf(),
+                None => crate::config::Config::default_path()
+                    .map_err(|e| format!("Failed to resolve config path: {e}"))?,
+            };
+            let mut app_config = crate::config::Config::load(&config_path)
+                .map_err(|e| format!("Failed to load config: {e}"))?;
 
-                let saved_id = if id.is_nil() {
-                    match mcp_service.resolve_id_by_name(&resolved_name).await {
-                        Ok(Some(found)) => found,
-                        Ok(None) => {
-                            tracing::warn!(
-                                "MCP save created '{}', but service could not resolve id by name; using nil id fallback",
-                                resolved_name
-                            );
-                            uuid::Uuid::nil()
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "MCP save created '{}', but id resolution failed: {}; using nil id fallback",
-                                resolved_name,
-                                e
-                            );
-                            uuid::Uuid::nil()
+            if let Some(existing) = app_config.mcps.iter_mut().find(|m| m.id == saved_id) {
+                *existing = config;
+            } else {
+                app_config.mcps.push(config);
+            }
+
+            app_config
+                .save(&config_path)
+                .map_err(|e| format!("Failed to save config: {e}"))?;
+            Ok(())
+        })();
+
+        match save_result {
+            Ok(()) => {
+                // Reload global MCP runtime so chat can use the new server
+                let global = crate::mcp::McpService::global();
+                tokio::spawn(async move {
+                    if let Ok(mut svc) = global.try_lock() {
+                        if let Err(e) = svc.reload().await {
+                            tracing::error!("MCP global reload after save failed: {e}");
+                        } else {
+                            tracing::info!("MCP global runtime reloaded after save");
                         }
                     }
-                } else {
-                    id
-                };
+                });
 
                 let _ = view_tx.send(ViewCommand::McpConfigSaved {
                     id: saved_id,
-                    name: Some(resolved_name),
+                    name: Some(saved_name),
                 });
                 let _ = view_tx.send(ViewCommand::NavigateBack);
             }
@@ -298,7 +312,7 @@ impl McpConfigurePresenter {
                 tracing::error!("MCP config save failed: {}", e);
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "Save Failed".to_string(),
-                    message: e.to_string(),
+                    message: e,
                     severity: super::view_command::ErrorSeverity::Error,
                 });
             }

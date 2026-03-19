@@ -21,6 +21,8 @@ pub struct McpRegistryEntry {
     pub args: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
     pub tags: Vec<String>,
+    /// Remote URL for HTTP/SSE transport MCPs (None for stdio-only).
+    pub url: Option<String>,
 }
 
 /// MCP registry service trait
@@ -84,6 +86,7 @@ mod tests {
             args: vec!["-y".to_string(), "@test/server".to_string()],
             env: None,
             tags: vec!["test".to_string(), "demo".to_string()],
+            url: None,
         };
 
         assert_eq!(entry.name, "test-server");
@@ -105,6 +108,7 @@ mod tests {
             args: vec!["server.js".to_string()],
             env: Some(vec![("API_KEY".to_string(), "value".to_string())]),
             tags: vec![],
+            url: None,
         };
 
         assert!(entry.env.is_some());

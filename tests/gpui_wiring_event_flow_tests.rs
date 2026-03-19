@@ -23,6 +23,44 @@ use personal_agent::services::{
 
 use personal_agent::ui_gpui::bridge::{spawn_user_event_forwarder, GpuiBridge};
 
+/// Create a temporary config file with a valid default Config for test isolation.
+fn temp_config_path() -> std::path::PathBuf {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let dir_path = dir.keep();
+    let path = dir_path.join("config.json");
+    let default_config = personal_agent::config::Config::default();
+    let json = serde_json::to_string_pretty(&default_config).expect("serialize default config");
+    std::fs::write(&path, json).expect("write default config");
+    path
+}
+
+/// Create a temporary config file whose path is unwritable (for failure tests).
+fn broken_config_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("/nonexistent/dir/config.json")
+}
+
+/// Build a rich `McpConfig` for test payloads (replaces old lossy placeholder).
+fn test_rich_mcp_config(id: uuid::Uuid, name: &str) -> personal_agent::mcp::McpConfig {
+    personal_agent::mcp::McpConfig {
+        id,
+        name: name.to_string(),
+        enabled: true,
+        source: personal_agent::mcp::McpSource::Manual { url: String::new() },
+        package: personal_agent::mcp::McpPackage {
+            package_type: personal_agent::mcp::McpPackageType::Npm,
+            identifier: String::new(),
+            runtime_hint: None,
+        },
+        transport: personal_agent::mcp::McpTransport::Stdio,
+        auth_type: personal_agent::mcp::McpAuthType::None,
+        env_vars: vec![],
+        package_args: vec![],
+        keyfile_path: None,
+        config: serde_json::Value::Null,
+        oauth_token: None,
+    }
+}
+
 // ============================================================
 // No-op service stubs for presenter construction
 // ============================================================
@@ -1057,6 +1095,7 @@ async fn test_mcp_add_presenter_search_emits_registry_results() {
         args: vec![],
         env: None,
         tags: vec![],
+        url: None,
     }];
 
     let mcp_registry_service: Arc<dyn personal_agent::services::McpRegistryService> =
@@ -1096,6 +1135,7 @@ async fn test_mcp_add_presenter_search_emits_registry_results() {
         command: "npx -y @modelcontextprotocol/server-fetch".to_string(),
         args: vec![],
         env: None,
+        url: None,
     }];
 
     assert!(
@@ -1129,6 +1169,7 @@ async fn test_mcp_add_presenter_search_preserves_requested_source_in_results() {
         args: vec![],
         env: None,
         tags: vec![],
+        url: None,
     }];
 
     let mcp_registry_service: Arc<dyn personal_agent::services::McpRegistryService> =
@@ -1198,6 +1239,7 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
         ],
         env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
         tags: vec![],
+        url: None,
     }];
 
     let mcp_registry_service: Arc<dyn personal_agent::services::McpRegistryService> =
@@ -1291,6 +1333,7 @@ async fn test_mcp_add_presenter_select_preserves_source_hint_in_configure_draft_
         ],
         env: Some(vec![("FILESYSTEM_ROOT".to_string(), "/tmp".to_string())]),
         tags: vec![],
+        url: None,
     }];
 
     let mcp_registry_service: Arc<dyn personal_agent::services::McpRegistryService> =
@@ -1362,6 +1405,7 @@ async fn test_mcp_add_presenter_select_missing_entry_emits_show_error_with_sourc
         ],
         env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
         tags: vec![],
+        url: None,
     }];
 
     let mcp_registry_service: Arc<dyn personal_agent::services::McpRegistryService> =
@@ -1538,7 +1582,8 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
         mcp_service,
         &event_bus_sender,
         view_tx,
-    );
+    )
+    .with_config_path(temp_config_path());
 
     presenter
         .start()
@@ -1550,16 +1595,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
     event_bus_sender
         .send(AppEvent::User(UserEvent::SaveMcpConfig {
             id,
-            config: personal_agent::events::types::McpConfig {
-                id,
-                name: "Fetch".to_string(),
-                command: "npx".to_string(),
-                args: vec![
-                    "-y".to_string(),
-                    "@modelcontextprotocol/server-fetch".to_string(),
-                ],
-                env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
-            },
+            config: Box::new(test_rich_mcp_config(id, "Fetch")),
         }))
         .ok();
 
@@ -1608,7 +1644,8 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
         mcp_service,
         &event_bus_sender,
         view_tx,
-    );
+    )
+    .with_config_path(temp_config_path());
 
     presenter
         .start()
@@ -1620,16 +1657,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
     event_bus_sender
         .send(AppEvent::User(UserEvent::SaveMcpConfig {
             id,
-            config: personal_agent::events::types::McpConfig {
-                id,
-                name: "Registry Fetch".to_string(),
-                command: "npx".to_string(),
-                args: vec![
-                    "-y".to_string(),
-                    "@modelcontextprotocol/server-fetch".to_string(),
-                ],
-                env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
-            },
+            config: Box::new(test_rich_mcp_config(id, "Registry Fetch")),
         }))
         .ok();
 
@@ -1677,7 +1705,8 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
         mcp_service,
         &event_bus_sender,
         view_tx,
-    );
+    )
+    .with_config_path(broken_config_path());
 
     presenter
         .start()
@@ -1689,16 +1718,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
     event_bus_sender
         .send(AppEvent::User(UserEvent::SaveMcpConfig {
             id,
-            config: personal_agent::events::types::McpConfig {
-                id,
-                name: "Broken MCP".to_string(),
-                command: "npx".to_string(),
-                args: vec![
-                    "-y".to_string(),
-                    "@modelcontextprotocol/server-broken".to_string(),
-                ],
-                env: None,
-            },
+            config: Box::new(test_rich_mcp_config(id, "Broken MCP")),
         }))
         .ok();
 
@@ -1739,7 +1759,8 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payloa
         mcp_service,
         &event_bus_sender,
         view_tx,
-    );
+    )
+    .with_config_path(temp_config_path());
 
     presenter
         .start()
@@ -1751,16 +1772,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payloa
     event_bus_sender
         .send(AppEvent::User(UserEvent::SaveMcpConfig {
             id,
-            config: personal_agent::events::types::McpConfig {
-                id,
-                name: "Filesystem".to_string(),
-                command: "npx".to_string(),
-                args: vec![
-                    "-y".to_string(),
-                    "@modelcontextprotocol/server-filesystem".to_string(),
-                ],
-                env: Some(vec![("FILESYSTEM_ROOT".to_string(), "/tmp".to_string())]),
-            },
+            config: Box::new(test_rich_mcp_config(id, "Filesystem")),
         }))
         .ok();
 
@@ -1907,14 +1919,14 @@ async fn test_mcp_configure_presenter_configure_mcp_maps_sse_transport_to_comman
                 ref id,
                 ref name,
                 ref command,
-                ref args,
+                ref url,
                 ..
             } if id == &configured_id.to_string()
                 && name == "sse-server"
-                && command == "https://mcp.example.com/sse"
-                && args.is_empty()
+                && command.is_empty()
+                && *url == Some("https://mcp.example.com/sse".to_string())
         ),
-        "first command should map SSE transport into configure draft command/url, got {first:?}"
+        "first command should map SSE transport into configure draft url, got {first:?}"
     );
     assert!(
         matches!(

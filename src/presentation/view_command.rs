@@ -201,6 +201,8 @@ pub enum ViewCommand {
         command: String,
         args: Vec<String>,
         env: Option<Vec<(String, String)>>,
+        /// Remote URL for HTTP/SSE transport MCPs (None for stdio-only).
+        url: Option<String>,
     },
 
     // ===== Model Selector Commands =====
@@ -331,6 +333,9 @@ pub struct McpRegistryResult {
     pub command: String,
     pub args: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
+    /// Remote URL for HTTP/SSE transport MCPs (None for stdio-only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// MCP server status

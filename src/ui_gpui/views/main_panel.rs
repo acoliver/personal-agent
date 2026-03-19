@@ -1111,6 +1111,7 @@ impl MainPanel {
                 ref command,
                 ref args,
                 ref env,
+                ref url,
             } => {
                 if let Some(ref mcp_configure) = self.mcp_configure_view {
                     let id_clone = id.clone();
@@ -1120,6 +1121,7 @@ impl MainPanel {
                     let command_clone = command.clone();
                     let args_clone = args.clone();
                     let env_clone = env.clone();
+                    let url_clone = url.clone();
                     mcp_configure.update(cx, |view, cx| {
                         view.handle_command(
                             ViewCommand::McpConfigureDraftLoaded {
@@ -1130,6 +1132,7 @@ impl MainPanel {
                                 command: command_clone,
                                 args: args_clone,
                                 env: env_clone,
+                                url: url_clone,
                             },
                             cx,
                         );
@@ -1191,7 +1194,6 @@ impl gpui::Render for MainPanel {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-
         // Initialize child views on first render
         if !self.is_initialized() {
             self.init(cx);

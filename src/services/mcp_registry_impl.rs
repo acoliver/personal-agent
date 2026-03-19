@@ -97,6 +97,8 @@ impl McpRegistryServiceImpl {
 
     /// Convert registry wrapper to entry
     fn wrapper_to_entry(wrapper: &McpRegistryServerWrapper) -> McpRegistryEntry {
+        let remote_url = wrapper.server.remotes.first().map(|r| r.url.clone());
+
         McpRegistryEntry {
             name: wrapper.server.name.clone(),
             display_name: wrapper.server.name.clone(),
@@ -114,6 +116,7 @@ impl McpRegistryServiceImpl {
             args: vec![],
             env: None,
             tags: vec![],
+            url: remote_url,
         }
     }
 }

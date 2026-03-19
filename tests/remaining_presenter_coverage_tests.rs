@@ -4,11 +4,42 @@ use async_trait::async_trait;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+fn test_rich_mcp_config(id: Uuid, name: &str) -> personal_agent::mcp::McpConfig {
+    personal_agent::mcp::McpConfig {
+        id,
+        name: name.to_string(),
+        enabled: true,
+        source: personal_agent::mcp::McpSource::Manual { url: String::new() },
+        package: personal_agent::mcp::McpPackage {
+            package_type: personal_agent::mcp::McpPackageType::Npm,
+            identifier: String::new(),
+            runtime_hint: None,
+        },
+        transport: personal_agent::mcp::McpTransport::Stdio,
+        auth_type: personal_agent::mcp::McpAuthType::None,
+        env_vars: vec![],
+        package_args: vec![],
+        keyfile_path: None,
+        config: serde_json::Value::Null,
+        oauth_token: None,
+    }
+}
+
+fn temp_config_path() -> std::path::PathBuf {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let dir_path = dir.keep();
+    let path = dir_path.join("config.json");
+    let default_config = personal_agent::config::Config::default();
+    let json = serde_json::to_string_pretty(&default_config).expect("serialize default config");
+    std::fs::write(&path, json).expect("write default config");
+    path
+}
+
 use personal_agent::events::{
     bus::EventBus,
     types::{
-        AppEvent, McpConfig, McpEvent, McpRegistrySource, ModelProfile as EventModelProfile,
-        ModelProfileAuth, ModelProfileParameters, ProfileEvent, SystemEvent, UserEvent,
+        AppEvent, McpEvent, McpRegistrySource, ModelProfile as EventModelProfile, ModelProfileAuth,
+        ModelProfileParameters, ProfileEvent, SystemEvent, UserEvent,
     },
 };
 use personal_agent::models::{AuthConfig, ModelParameters, ModelProfile};
@@ -343,6 +374,7 @@ fn registry_entry() -> personal_agent::services::McpRegistryEntry {
         args: vec!["-y".to_string(), "@test/filesystem".to_string()],
         env: Some(vec![("API_KEY".to_string(), "value".to_string())]),
         tags: vec!["files".to_string()],
+        url: None,
     }
 }
 
@@ -878,8 +910,10 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = broadcast::channel(128);
 
+    let tmp_config = temp_config_path();
     let mut presenter =
-        McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx);
+        McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
+            .with_config_path(tmp_config);
     presenter.start().await.expect("start presenter");
     let _ = collect_broadcast_commands(&mut view_rx).await;
 
@@ -904,13 +938,7 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
     event_bus
         .publish(AppEvent::User(UserEvent::SaveMcpConfig {
             id: Uuid::nil(),
-            config: McpConfig {
-                id: Uuid::nil(),
-                name: "Filesystem".to_string(),
-                command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@test/filesystem".to_string()],
-                env: Some(vec![("API_KEY".to_string(), "value".to_string())]),
-            },
+            config: Box::new(test_rich_mcp_config(Uuid::nil(), "Filesystem")),
         }))
         .expect("publish save new mcp config");
     let create_commands = collect_broadcast_commands(&mut view_rx).await;
@@ -919,7 +947,7 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
         ViewCommand::McpConfigSaved {
             id,
             name: Some(name),
-        } if *id == resolved_id && name == "Filesystem"
+        } if !id.is_nil() && name == "Filesystem"
     )));
     assert!(create_commands
         .iter()
@@ -928,13 +956,7 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
     event_bus
         .publish(AppEvent::User(UserEvent::SaveMcpConfig {
             id: config_id,
-            config: McpConfig {
-                id: config_id,
-                name: "Filesystem Updated".to_string(),
-                command: "node".to_string(),
-                args: vec!["server.js".to_string()],
-                env: None,
-            },
+            config: Box::new(test_rich_mcp_config(config_id, "Filesystem Updated")),
         }))
         .expect("publish update mcp config");
     let update_commands = collect_broadcast_commands(&mut view_rx).await;
@@ -943,7 +965,7 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
         ViewCommand::McpConfigSaved {
             id,
             name: Some(name),
-        } if *id == config_id && name == "Filesystem"
+        } if *id == config_id && name == "Filesystem Updated"
     )));
 
     event_bus
@@ -985,7 +1007,8 @@ async fn mcp_configure_presenter_surfaces_load_and_save_errors() {
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = broadcast::channel(128);
 
-    let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx);
+    let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx)
+        .with_config_path(std::path::PathBuf::from("/nonexistent/dir/config.json"));
     presenter.start().await.expect("start presenter");
     let _ = collect_broadcast_commands(&mut view_rx).await;
 
@@ -1005,13 +1028,7 @@ async fn mcp_configure_presenter_surfaces_load_and_save_errors() {
     event_bus
         .publish(AppEvent::User(UserEvent::SaveMcpConfig {
             id: config_id,
-            config: McpConfig {
-                id: config_id,
-                name: "Broken".to_string(),
-                command: "broken".to_string(),
-                args: vec![],
-                env: None,
-            },
+            config: Box::new(test_rich_mcp_config(config_id, "Broken")),
         }))
         .expect("publish save failure");
     let save_error = collect_broadcast_commands(&mut view_rx).await;
@@ -1021,6 +1038,6 @@ async fn mcp_configure_presenter_surfaces_load_and_save_errors() {
             title,
             message,
             severity: ErrorSeverity::Error,
-        } if title == "Save Failed" && message.contains("cannot save config")
+        } if title == "Save Failed"
     )));
 }

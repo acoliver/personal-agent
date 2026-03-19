@@ -48,6 +48,8 @@ pub struct McpSearchResult {
     pub args: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
     pub source: String,
+    /// Remote URL for HTTP/SSE transport MCPs (None for stdio-only).
+    pub url: Option<String>,
 }
 
 impl McpSearchResult {
@@ -65,6 +67,7 @@ impl McpSearchResult {
             args: vec![],
             env: None,
             source: "official".to_string(),
+            url: None,
         }
     }
 
@@ -95,6 +98,12 @@ impl McpSearchResult {
     #[must_use]
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
         self.source = source.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_url(mut self, url: Option<String>) -> Self {
+        self.url = url;
         self
     }
 }
@@ -246,6 +255,7 @@ impl McpAddView {
                 command,
                 args,
                 env,
+                url,
             } => {
                 tracing::info!("MCP draft loaded for configure: {}", name);
                 self.state.manual_entry =
@@ -275,7 +285,8 @@ impl McpAddView {
                         .with_command(package)
                         .with_args(args)
                         .with_env(env)
-                        .with_source(inferred_source)];
+                        .with_source(inferred_source)
+                        .with_url(url)];
                 let _ = env_var_name;
                 crate::ui_gpui::navigation_channel()
                     .request_navigate(crate::presentation::view_command::ViewId::McpConfigure);
@@ -295,6 +306,7 @@ impl McpAddView {
                             .with_args(r.args)
                             .with_env(r.env)
                             .with_source(r.source)
+                            .with_url(r.url)
                     })
                     .collect();
                 self.set_results(mapped);

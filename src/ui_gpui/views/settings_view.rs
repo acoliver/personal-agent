@@ -334,12 +334,12 @@ impl SettingsView {
                         existing.name = name;
                     }
                     existing.enabled = true;
-                    existing.status = McpStatus::Running;
+                    existing.status = McpStatus::Stopped;
                 } else {
                     self.state.mcps.push(
                         McpItem::new(id, name.unwrap_or_else(|| format!("MCP {id}")))
-                            .with_status(McpStatus::Running)
-                            .with_enabled(true),
+                            .with_enabled(true)
+                            .with_status(McpStatus::Stopped),
                     );
                 }
             }

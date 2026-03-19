@@ -157,6 +157,7 @@ fn route_view_command_counts_chat_history_settings_and_model_variants() {
                     command: "npx".to_string(),
                     args: vec![],
                     env: None,
+                    url: None,
                 },
                 McpRegistryResult {
                     id: "fetch".to_string(),
@@ -166,6 +167,7 @@ fn route_view_command_counts_chat_history_settings_and_model_variants() {
                     command: "npx".to_string(),
                     args: vec![],
                     env: Some(vec![("API_KEY".to_string(), "value".to_string())]),
+                    url: None,
                 },
             ],
         },
@@ -177,6 +179,7 @@ fn route_view_command_counts_chat_history_settings_and_model_variants() {
             command: "npx".to_string(),
             args: vec!["-y".to_string()],
             env: Some(vec![("API_KEY".to_string(), "value".to_string())]),
+            url: None,
         },
         ViewCommand::ModelSearchResults {
             models: vec![
