@@ -2352,11 +2352,15 @@ impl gpui::Render for ChatView {
                                 this.state.cursor_position = 0;
                                 this.state.streaming = StreamingState::Idle;
                                 this.state.thinking_content = None;
+                                this.state.active_conversation_id = None;
+                                this.conversation_id = None;
+                                this.state.conversation_title = "New Conversation".to_string();
+                                this.state.conversation_dropdown_open = false;
                                 this.state.conversation_title_editing = false;
                                 this.state.conversation_title_input.clear();
+                                this.state.profile_dropdown_open = false;
                                 this.state.chat_autoscroll_enabled = true;
                                 this.chat_scroll_handle.scroll_to_bottom();
-                                this.state.conversation_title = "New Conversation".to_string();
                                 cx.notify();
                                 return;
                             }
