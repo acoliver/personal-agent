@@ -100,6 +100,72 @@ pub struct AppState {
 
 impl Global for AppState {}
 
+/// Re-emit MCP config snapshot directly into the flume channel.
+///
+/// Called from `open_popup` so that a newly-created `MainPanel` (and its
+/// fresh `SettingsView`) receives the current MCP list.  The one-shot
+/// broadcast emission at startup was already consumed by the previous
+/// (now-closed) window.
+fn emit_mcp_snapshot_to_flume(
+    tx: &flume::Sender<personal_agent::presentation::ViewCommand>,
+) {
+    use personal_agent::presentation::view_command::{McpStatus, ViewCommand};
+
+    let config_path = match personal_agent::config::Config::default_path() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("Cannot resolve config path for MCP snapshot (open_popup): {e}");
+            return;
+        }
+    };
+    let config = match personal_agent::config::Config::load(&config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Cannot load config for MCP snapshot (open_popup): {e}");
+            return;
+        }
+    };
+
+    let global_mcp = personal_agent::mcp::McpService::global();
+
+    for mcp in &config.mcps {
+        let runtime_status = global_mcp
+            .try_lock()
+            .ok()
+            .and_then(|svc| svc.get_status(&mcp.id));
+
+        let status = match runtime_status {
+            Some(personal_agent::mcp::McpStatus::Running) => McpStatus::Running,
+            Some(
+                personal_agent::mcp::McpStatus::Starting
+                | personal_agent::mcp::McpStatus::Restarting,
+            ) => McpStatus::Starting,
+            Some(personal_agent::mcp::McpStatus::Error(_)) => McpStatus::Failed,
+            Some(
+                personal_agent::mcp::McpStatus::Stopped | personal_agent::mcp::McpStatus::Disabled,
+            ) => McpStatus::Stopped,
+            None if mcp.enabled => McpStatus::Starting,
+            None => McpStatus::Stopped,
+        };
+
+        let _ = tx.send(ViewCommand::McpServerStarted {
+            id: mcp.id,
+            name: Some(mcp.name.clone()),
+            tool_count: 0,
+            enabled: Some(mcp.enabled),
+        });
+        let _ = tx.send(ViewCommand::McpStatusChanged {
+            id: mcp.id,
+            status,
+        });
+    }
+
+    tracing::info!(
+        "emit_mcp_snapshot_to_flume: sent {} MCP entries on popup reopen",
+        config.mcps.len()
+    );
+}
+
 fn spawn_mpsc_to_flume_view_command_bridge(
     mut rx: tokio::sync::mpsc::Receiver<personal_agent::presentation::ViewCommand>,
     tx: flume::Sender<personal_agent::presentation::ViewCommand>,
@@ -733,6 +799,13 @@ impl SystemTray {
                         main_panel.start_runtime(cx);
                     }
                 });
+                // Re-emit MCP snapshot so the new settings view is populated.
+                // The one-shot startup emission was consumed by the previous
+                // (now-dead) MainPanel; this replays it into the flume channel
+                // that the new pump will drain.
+                if let Some(app_state) = cx.try_global::<AppState>().cloned() {
+                    emit_mcp_snapshot_to_flume(&app_state.view_cmd_tx);
+                }
                 info!(x = origin_x, y = origin_y, "Popup opened");
             }
             Err(e) => {
