@@ -81,7 +81,11 @@ impl McpStatusManager {
         }
     }
 
-    /// Get status for an MCP (thread-safe)
+    /// Get status for an MCP (thread-safe).
+    ///
+    /// Returns the default `Stopped` for unknown IDs — use
+    /// [`get_status_if_known`] when callers need to distinguish
+    /// "never registered" from "explicitly stopped".
     #[must_use]
     pub fn get_status(&self, id: &Uuid) -> McpStatus {
         self.statuses
@@ -89,6 +93,16 @@ impl McpStatusManager {
             .ok()
             .and_then(|s| s.get(id).cloned())
             .unwrap_or(McpStatus::Stopped)
+    }
+
+    /// Like [`get_status`] but returns `None` when the MCP has never
+    /// been registered with the status manager.
+    #[must_use]
+    pub fn get_status_if_known(&self, id: &Uuid) -> Option<McpStatus> {
+        self.statuses
+            .read()
+            .ok()
+            .and_then(|s| s.get(id).cloned())
     }
 
     /// Clear status for an MCP (thread-safe)

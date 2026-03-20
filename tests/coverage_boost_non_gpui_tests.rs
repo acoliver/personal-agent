@@ -495,7 +495,7 @@ async fn mcp_service_empty_runtime_paths_are_stable() {
         assert!(!guard.has_active_mcps());
         assert_eq!(guard.active_count(), 0);
         let missing_status = guard.get_status(&Uuid::new_v4());
-        assert_eq!(missing_status, Some(McpStatus::Stopped));
+        assert_eq!(missing_status, None);
     }
 
     {

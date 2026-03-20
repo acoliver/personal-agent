@@ -292,33 +292,49 @@ impl SettingsView {
                 }
             }
             ViewCommand::McpStatusChanged { id, status } => {
-                let mapped = match status {
-                    crate::presentation::view_command::McpStatus::Running => McpStatus::Running,
+                // Map runtime status to view status.  `enabled` comes
+                // from config (set by McpServerStarted/toggle) — only
+                // Running/Starting promote it; Stopped/Failed leave it
+                // unchanged so the toggle matches config.json truth.
+                let (mapped, force_enabled) = match status {
+                    crate::presentation::view_command::McpStatus::Running => {
+                        (McpStatus::Running, Some(true))
+                    }
+                    crate::presentation::view_command::McpStatus::Starting => {
+                        (McpStatus::Running, Some(true))
+                    }
                     crate::presentation::view_command::McpStatus::Failed
-                    | crate::presentation::view_command::McpStatus::Unhealthy => McpStatus::Error,
-                    _ => McpStatus::Stopped,
+                    | crate::presentation::view_command::McpStatus::Unhealthy => {
+                        (McpStatus::Error, None)
+                    }
+                    _ => (McpStatus::Stopped, None),
                 };
                 if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
                     existing.status = mapped;
-                    existing.enabled = matches!(mapped, McpStatus::Running);
+                    if let Some(en) = force_enabled {
+                        existing.enabled = en;
+                    }
                 } else {
                     self.state
                         .mcps
                         .push(McpItem::new(id, format!("MCP {id}")).with_status(mapped));
                 }
             }
-            ViewCommand::McpServerStarted { id, name, .. } => {
+            ViewCommand::McpServerStarted { id, name, enabled, .. } => {
+                let is_enabled = enabled.unwrap_or(true);
                 if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
                     if let Some(n) = name {
                         existing.name = n;
                     }
-                    existing.status = McpStatus::Running;
-                    existing.enabled = true;
+                    existing.enabled = is_enabled;
+                    if is_enabled {
+                        existing.status = McpStatus::Running;
+                    }
                 } else {
                     let display = name.unwrap_or_else(|| format!("MCP {id}"));
                     self.state
                         .mcps
-                        .push(McpItem::new(id, display).with_enabled(true));
+                        .push(McpItem::new(id, display).with_enabled(is_enabled));
                 }
             }
             ViewCommand::McpServerFailed { id, .. } => {
@@ -498,7 +514,7 @@ impl SettingsView {
             .child(
                 div()
                     .id("profiles-list")
-                    .w(px(360.0))
+                    .w_full()
                     .h(px(100.0))
                     .bg(Theme::bg_darker())
                     .border_1()
@@ -531,7 +547,7 @@ impl SettingsView {
             // Toolbar: [-] [+] [spacer] [Edit]
             .child(
                 div()
-                    .w(px(360.0))
+                    .w_full()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -694,22 +710,12 @@ impl SettingsView {
                     .child(if enabled { "ON" } else { "OFF" })
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, _, _window, cx| {
+                        cx.listener(move |this, _, _window, _cx| {
                             tracing::info!("MCP toggle clicked: {} -> {}", mcp_id, !enabled);
                             this.emit(&UserEvent::ToggleMcp {
                                 id: mcp_id,
                                 enabled: !enabled,
                             });
-                            // Update local state
-                            if let Some(m) = this.state.mcps.iter_mut().find(|m| m.id == mcp_id) {
-                                m.enabled = !m.enabled;
-                                m.status = if m.enabled {
-                                    McpStatus::Running
-                                } else {
-                                    McpStatus::Stopped
-                                };
-                            }
-                            cx.notify();
                         }),
                     ),
             )
@@ -747,7 +753,7 @@ impl SettingsView {
             .child(
                 div()
                     .id("mcps-list")
-                    .w(px(360.0))
+                    .w_full()
                     .h(px(100.0))
                     .bg(Theme::bg_darker())
                     .border_1()
@@ -780,7 +786,7 @@ impl SettingsView {
             // Toolbar: [-] [+] [spacer] [Edit]
             .child(
                 div()
-                    .w(px(360.0))
+                    .w_full()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -892,7 +898,7 @@ impl SettingsView {
             // Hotkey field
             .child(
                 div()
-                    .w(px(360.0))
+                    .w_full()
                     .h(px(24.0))
                     .px(px(8.0))
                     .bg(Theme::bg_dark())

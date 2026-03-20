@@ -229,7 +229,10 @@ impl SettingsPresenter {
                 Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
             }
             UserEvent::ToggleMcp { id, enabled } => {
-                Self::on_toggle_mcp(profile_service, view_tx, id, enabled).await;
+                Self::on_toggle_mcp(view_tx, id, enabled);
+            }
+            UserEvent::DeleteMcp { id } | UserEvent::ConfirmDeleteMcp { id } => {
+                Self::on_delete_mcp(view_tx, id);
             }
             _ => {} // Ignore other user events
         }
@@ -287,7 +290,7 @@ impl SettingsPresenter {
                 tools: _,
                 tool_count,
             } => {
-                let _ = view_tx.send(ViewCommand::McpServerStarted { id, name: Some(name), tool_count });
+                let _ = view_tx.send(ViewCommand::McpServerStarted { id, name: Some(name), tool_count, enabled: None });
                 let _ = view_tx.send(ViewCommand::McpStatusChanged {
                     id,
                     status: super::view_command::McpStatus::Running,
@@ -493,24 +496,67 @@ impl SettingsPresenter {
         }
     }
 
-    /// Handle `ToggleMcp` user event
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-025.4
-    async fn on_toggle_mcp(
-        _profile_service: &Arc<dyn ProfileService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        id: Uuid,
-        enabled: bool,
-    ) {
-        tracing::info!("Toggling MCP: {} for profile {}", enabled, id);
-        // Emit status change event
+    /// Toggle an MCP's enabled state in config.json and emit the result.
+    fn on_toggle_mcp(view_tx: &broadcast::Sender<ViewCommand>, id: Uuid, enabled: bool) {
+        tracing::info!("Toggling MCP {id} enabled={enabled}");
+        let config_path = match crate::config::Config::default_path() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("Cannot resolve config path for MCP toggle: {e}");
+                return;
+            }
+        };
+        let mut config = match crate::config::Config::load(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Cannot load config for MCP toggle: {e}");
+                return;
+            }
+        };
+        if let Some(mcp) = config.mcps.iter_mut().find(|m| m.id == id) {
+            mcp.enabled = enabled;
+        } else {
+            tracing::warn!("MCP {id} not found in config for toggle");
+            return;
+        }
+        if let Err(e) = config.save(&config_path) {
+            tracing::error!("Failed to save config after MCP toggle: {e}");
+            return;
+        }
         let status = if enabled {
             super::view_command::McpStatus::Starting
         } else {
             super::view_command::McpStatus::Stopped
         };
         let _ = view_tx.send(ViewCommand::McpStatusChanged { id, status });
+    }
+
+    /// Delete an MCP from config.json and emit the result.
+    fn on_delete_mcp(view_tx: &broadcast::Sender<ViewCommand>, id: Uuid) {
+        tracing::info!("Deleting MCP {id}");
+        let config_path = match crate::config::Config::default_path() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("Cannot resolve config path for MCP delete: {e}");
+                return;
+            }
+        };
+        let mut config = match crate::config::Config::load(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Cannot load config for MCP delete: {e}");
+                return;
+            }
+        };
+        if let Err(e) = config.remove_mcp(&id) {
+            tracing::error!("Failed to remove MCP {id}: {e}");
+            return;
+        }
+        if let Err(e) = config.save(&config_path) {
+            tracing::error!("Failed to save config after MCP delete: {e}");
+            return;
+        }
+        let _ = view_tx.send(ViewCommand::McpDeleted { id });
     }
 
     async fn emit_profiles_snapshot(
@@ -594,25 +640,30 @@ impl SettingsPresenter {
         let global_mcp = crate::mcp::McpService::global();
 
         for mcp in &config.mcps {
-            let status = global_mcp
+            let runtime_status = global_mcp
                 .try_lock()
                 .ok()
-                .and_then(|svc| svc.get_status(&mcp.id))
-                .map_or(super::view_command::McpStatus::Stopped, |s| match s {
-                    crate::mcp::McpStatus::Running => super::view_command::McpStatus::Running,
-                    crate::mcp::McpStatus::Starting | crate::mcp::McpStatus::Restarting => {
-                        super::view_command::McpStatus::Starting
-                    }
-                    crate::mcp::McpStatus::Error(_) => super::view_command::McpStatus::Failed,
-                    crate::mcp::McpStatus::Stopped | crate::mcp::McpStatus::Disabled => {
-                        super::view_command::McpStatus::Stopped
-                    }
-                });
+                .and_then(|svc| svc.get_status(&mcp.id));
+
+            // Map runtime status, falling back to config.enabled
+            let status = match runtime_status {
+                Some(crate::mcp::McpStatus::Running) => super::view_command::McpStatus::Running,
+                Some(crate::mcp::McpStatus::Starting | crate::mcp::McpStatus::Restarting) => {
+                    super::view_command::McpStatus::Starting
+                }
+                Some(crate::mcp::McpStatus::Error(_)) => super::view_command::McpStatus::Failed,
+                Some(crate::mcp::McpStatus::Stopped | crate::mcp::McpStatus::Disabled) => {
+                    super::view_command::McpStatus::Stopped
+                }
+                None if mcp.enabled => super::view_command::McpStatus::Starting,
+                None => super::view_command::McpStatus::Stopped,
+            };
 
             let _ = view_tx.send(ViewCommand::McpServerStarted {
                 id: mcp.id,
                 name: Some(mcp.name.clone()),
                 tool_count: 0,
+                enabled: Some(mcp.enabled),
             });
             let _ = view_tx.send(ViewCommand::McpStatusChanged {
                 id: mcp.id,

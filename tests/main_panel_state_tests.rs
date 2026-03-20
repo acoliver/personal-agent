@@ -130,6 +130,7 @@ fn route_view_command_counts_chat_history_settings_and_model_variants() {
             id: mcp_id,
             name: None,
             tool_count: 2,
+            enabled: None,
         },
         ViewCommand::McpServerFailed {
             id: mcp_id,

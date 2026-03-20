@@ -364,6 +364,10 @@ fn publish_store_snapshot_to_main_panel(app_store: &GpuiAppStore, cx: &mut Async
 /// @requirement REQ-ARCH-004.1
 /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-036
 fn forward_runtime_commands_to_main_panel(commands: Vec<ViewCommand>, cx: &mut AsyncApp) {
+    if commands.is_empty() {
+        return;
+    }
+
     let popup_window = cx
         .try_read_global::<MainPanelAppState, _>(|state, _| state.popup_window)
         .flatten();

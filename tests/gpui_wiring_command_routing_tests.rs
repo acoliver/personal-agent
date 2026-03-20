@@ -284,6 +284,7 @@ fn test_settings_view_mcp_server_lifecycle_is_routed() {
         id: mcp_id,
         name: None,
         tool_count: 3,
+        enabled: None,
     });
     sink.send(ViewCommand::McpServerFailed {
         id: mcp_id,

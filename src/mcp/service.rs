@@ -130,11 +130,16 @@ impl McpService {
         self.runtime.active_count()
     }
 
-    /// Get the status of a specific MCP
+    /// Get the status of a specific MCP.
+    ///
+    /// Returns `None` when the MCP has never been registered with the
+    /// runtime (i.e. before `initialize()` runs).  This lets callers
+    /// distinguish "not yet started" from "explicitly stopped".
     #[must_use]
     pub fn get_status(&self, id: &uuid::Uuid) -> Option<crate::mcp::McpStatus> {
-        let status_manager = self.runtime.status_manager();
-        Some(status_manager.get_status(id))
+        self.runtime
+            .status_manager()
+            .get_status_if_known(id)
     }
 
     /// Reload MCPs from config (useful after config changes)
