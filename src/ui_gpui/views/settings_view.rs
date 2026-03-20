@@ -307,14 +307,18 @@ impl SettingsView {
                         .push(McpItem::new(id, format!("MCP {id}")).with_status(mapped));
                 }
             }
-            ViewCommand::McpServerStarted { id, .. } => {
+            ViewCommand::McpServerStarted { id, name, .. } => {
                 if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
+                    if let Some(n) = name {
+                        existing.name = n;
+                    }
                     existing.status = McpStatus::Running;
                     existing.enabled = true;
                 } else {
+                    let display = name.unwrap_or_else(|| format!("MCP {id}"));
                     self.state
                         .mcps
-                        .push(McpItem::new(id, format!("MCP {id}")).with_enabled(true));
+                        .push(McpItem::new(id, display).with_enabled(true));
                 }
             }
             ViewCommand::McpServerFailed { id, .. } => {

@@ -283,11 +283,11 @@ impl SettingsPresenter {
             }
             McpEvent::Started {
                 id,
-                name: _,
+                name,
                 tools: _,
                 tool_count,
             } => {
-                let _ = view_tx.send(ViewCommand::McpServerStarted { id, tool_count });
+                let _ = view_tx.send(ViewCommand::McpServerStarted { id, name: Some(name), tool_count });
                 let _ = view_tx.send(ViewCommand::McpStatusChanged {
                     id,
                     status: super::view_command::McpStatus::Running,
@@ -571,6 +571,59 @@ impl SettingsPresenter {
             ),
             Err(e) => tracing::error!("SettingsPresenter: ChatProfilesUpdated send failed: {}", e),
         }
+    }
+
+    /// Emit the current MCP list from config.json so the settings view
+    /// shows all configured MCPs (with real runtime status when available).
+    pub fn emit_mcp_snapshot(view_tx: &broadcast::Sender<ViewCommand>) {
+        let config_path = match crate::config::Config::default_path() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("Cannot resolve config path for MCP snapshot: {e}");
+                return;
+            }
+        };
+        let config = match crate::config::Config::load(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Cannot load config for MCP snapshot: {e}");
+                return;
+            }
+        };
+
+        let global_mcp = crate::mcp::McpService::global();
+
+        for mcp in &config.mcps {
+            let status = global_mcp
+                .try_lock()
+                .ok()
+                .and_then(|svc| svc.get_status(&mcp.id))
+                .map_or(super::view_command::McpStatus::Stopped, |s| match s {
+                    crate::mcp::McpStatus::Running => super::view_command::McpStatus::Running,
+                    crate::mcp::McpStatus::Starting | crate::mcp::McpStatus::Restarting => {
+                        super::view_command::McpStatus::Starting
+                    }
+                    crate::mcp::McpStatus::Error(_) => super::view_command::McpStatus::Failed,
+                    crate::mcp::McpStatus::Stopped | crate::mcp::McpStatus::Disabled => {
+                        super::view_command::McpStatus::Stopped
+                    }
+                });
+
+            let _ = view_tx.send(ViewCommand::McpServerStarted {
+                id: mcp.id,
+                name: Some(mcp.name.clone()),
+                tool_count: 0,
+            });
+            let _ = view_tx.send(ViewCommand::McpStatusChanged {
+                id: mcp.id,
+                status,
+            });
+        }
+
+        tracing::info!(
+            "SettingsPresenter::emit_mcp_snapshot: sent {} MCP entries",
+            config.mcps.len()
+        );
     }
 }
 // Implement Presenter trait

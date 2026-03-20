@@ -1101,6 +1101,7 @@ fn main() {
                     conversation_service.clone(),
                     view_tx.clone(),
                 );
+                let settings_view_tx_for_snapshot = settings_view_tx.clone();
                 let mut settings_presenter = SettingsPresenter::new_with_event_bus(
                     profile_service.clone(),
                     app_settings.clone(),
@@ -1188,6 +1189,11 @@ fn main() {
                         info!("Global MCP runtime initialized");
                     }
                 }
+
+                // Emit MCP snapshot so settings view shows all configured MCPs
+                personal_agent::presentation::SettingsPresenter::emit_mcp_snapshot(
+                    &settings_view_tx_for_snapshot,
+                );
 
                 // Keep runtime alive
                 loop {

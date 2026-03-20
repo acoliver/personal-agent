@@ -1179,7 +1179,7 @@ mod settings_presenter_tests {
         .await;
         assert_eq!(
             recv_broadcast_command(&mut view_rx).await,
-            ViewCommand::McpServerStarted { id, tool_count: 2 }
+            ViewCommand::McpServerStarted { id, name: Some("server".to_string()), tool_count: 2 }
         );
         assert_eq!(
             recv_broadcast_command(&mut view_rx).await,

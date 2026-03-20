@@ -994,10 +994,10 @@ impl MainPanel {
                     });
                 }
             }
-            ViewCommand::McpServerStarted { id, tool_count } => {
+            ViewCommand::McpServerStarted { id, name, tool_count } => {
                 if let Some(ref settings) = self.settings_view {
                     settings.update(cx, |view, cx| {
-                        view.handle_command(ViewCommand::McpServerStarted { id, tool_count }, cx);
+                        view.handle_command(ViewCommand::McpServerStarted { id, name, tool_count }, cx);
                     });
                 }
             }
