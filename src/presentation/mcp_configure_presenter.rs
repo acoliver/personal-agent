@@ -213,20 +213,46 @@ impl McpConfigurePresenter {
 
         match mcp_service.get(id).await {
             Ok(cfg) => {
-                let (command, args, url) = match cfg.transport {
+                let name = cfg.name;
+                let (command, args, url, package, package_type, runtime_hint) = match cfg.transport {
                     serdes_ai_mcp::McpTransportConfig::Stdio { command, args } => {
-                        (command, args, None)
+                        let package = if command == "docker" {
+                            args.last().cloned().unwrap_or_default()
+                        } else {
+                            args.iter()
+                                .find(|arg| !arg.starts_with('-'))
+                                .cloned()
+                                .unwrap_or_else(|| command.clone())
+                        };
+                        let package_type = if command == "docker" {
+                            crate::mcp::McpPackageType::Docker
+                        } else {
+                            crate::mcp::McpPackageType::Npm
+                        };
+                        let runtime_hint = if command == "docker" {
+                            Some("docker".to_string())
+                        } else {
+                            Some(command.clone())
+                        };
+                        (command, args, None, package, package_type, runtime_hint)
                     }
                     serdes_ai_mcp::McpTransportConfig::Http { url }
-                    | serdes_ai_mcp::McpTransportConfig::Sse { url } => {
-                        (String::new(), vec![], Some(url))
-                    }
+                    | serdes_ai_mcp::McpTransportConfig::Sse { url } => (
+                        String::new(),
+                        vec![],
+                        Some(url.clone()),
+                        url,
+                        crate::mcp::McpPackageType::Http,
+                        None,
+                    ),
                 };
 
                 let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
                     id: id.to_string(),
-                    name: cfg.name,
-                    package: String::new(),
+                    name,
+                    package,
+                    package_type,
+                    runtime_hint,
                     env_var_name: "API_KEY".to_string(),
                     command,
                     args,
@@ -307,7 +333,9 @@ impl McpConfigurePresenter {
                     id: saved_id,
                     name: Some(saved_name),
                 });
-                let _ = view_tx.send(ViewCommand::NavigateBack);
+                let _ = view_tx.send(ViewCommand::NavigateTo {
+                    view: super::view_command::ViewId::Settings,
+                });
             }
             Err(e) => {
                 tracing::error!("MCP config save failed: {}", e);

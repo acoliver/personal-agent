@@ -271,6 +271,13 @@ impl personal_agent::services::McpRegistryService for NoopMcpRegistryService {
     async fn search(&self, _query: &str) -> ServiceResult<Vec<McpRegistryEntry>> {
         Ok(vec![])
     }
+    async fn search_registry(
+        &self,
+        _query: &str,
+        _source: &str,
+    ) -> ServiceResult<Vec<McpRegistryEntry>> {
+        Ok(vec![])
+    }
     async fn get_details(&self, _name: &str) -> ServiceResult<Option<McpRegistryEntry>> {
         Ok(None)
     }
@@ -374,6 +381,10 @@ impl RecordingMcpRegistryService {
 #[async_trait::async_trait]
 impl personal_agent::services::McpRegistryService for RecordingMcpRegistryService {
     async fn search(&self, _query: &str) -> ServiceResult<Vec<McpRegistryEntry>> {
+        Ok(self.entries.lock().expect("registry lock poisoned").clone())
+    }
+
+    async fn search_registry(&self, _query: &str, _source: &str) -> ServiceResult<Vec<McpRegistryEntry>> {
         Ok(self.entries.lock().expect("registry lock poisoned").clone())
     }
 
@@ -531,7 +542,9 @@ async fn test_mcp_add_presenter_handles_mcp_add_next() {
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     event_bus_sender
-        .send(AppEvent::User(UserEvent::McpAddNext))
+        .send(AppEvent::User(UserEvent::McpAddNext {
+            manual_entry: Some("npx -y @modelcontextprotocol/server-fetch".to_string()),
+        }))
         .ok();
 
     tokio::time::sleep(Duration::from_millis(150)).await;
@@ -595,7 +608,9 @@ async fn test_full_path_mcp_add_next_reaches_event_bus() {
     let bridge = GpuiBridge::new(user_tx, view_rx);
     let _fwd = spawn_user_event_forwarder(event_bus.clone(), user_rx);
 
-    bridge.emit(UserEvent::McpAddNext);
+    bridge.emit(UserEvent::McpAddNext {
+        manual_entry: Some("npx -y @modelcontextprotocol/server-fetch".to_string()),
+    });
 
     let received = tokio::time::timeout(Duration::from_millis(200), bus_rx.recv())
         .await
@@ -603,7 +618,12 @@ async fn test_full_path_mcp_add_next_reaches_event_bus() {
         .expect("bus closed");
 
     assert!(
-        matches!(received, AppEvent::User(UserEvent::McpAddNext)),
+        matches!(
+            received,
+            AppEvent::User(UserEvent::McpAddNext {
+                manual_entry: Some(ref entry)
+            }) if entry == "npx -y @modelcontextprotocol/server-fetch"
+        ),
         "Expected McpAddNext on EventBus, got {received:?}"
     );
 }
@@ -1091,12 +1111,19 @@ async fn test_mcp_add_presenter_search_emits_registry_results() {
         author: "MCP Team".to_string(),
         license: "MIT".to_string(),
         repository: "https://github.com/modelcontextprotocol/servers".to_string(),
-        command: "npx -y @modelcontextprotocol/server-fetch".to_string(),
-        args: vec![],
-        env: None,
+        command: "npx".to_string(),
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-fetch".to_string(),
+        ],
+        env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
         tags: vec![],
+        source: "official".to_string(),
+        package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+        runtime_hint: Some("npx".to_string()),
         url: None,
     }];
+
 
     let mcp_registry_service: Arc<dyn personal_agent::services::McpRegistryService> =
         Arc::new(RecordingMcpRegistryService::with_entries(entries));
@@ -1132,9 +1159,14 @@ async fn test_mcp_add_presenter_search_emits_registry_results() {
         name: "Fetch".to_string(),
         description: "HTTP fetch tools".to_string(),
         source: "official".to_string(),
-        command: "npx -y @modelcontextprotocol/server-fetch".to_string(),
-        args: vec![],
-        env: None,
+        command: "npx".to_string(),
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-fetch".to_string(),
+        ],
+        env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
+        package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+        runtime_hint: Some("npx".to_string()),
         url: None,
     }];
 
@@ -1169,6 +1201,9 @@ async fn test_mcp_add_presenter_search_preserves_requested_source_in_results() {
         args: vec![],
         env: None,
         tags: vec![],
+        source: "smithery".to_string(),
+        package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+        runtime_hint: Some("npx".to_string()),
         url: None,
     }];
 
@@ -1239,6 +1274,9 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
         ],
         env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
         tags: vec![],
+        source: "official".to_string(),
+        package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+        runtime_hint: Some("npx".to_string()),
         url: None,
     }];
 
@@ -1333,6 +1371,9 @@ async fn test_mcp_add_presenter_select_preserves_source_hint_in_configure_draft_
         ],
         env: Some(vec![("FILESYSTEM_ROOT".to_string(), "/tmp".to_string())]),
         tags: vec![],
+        source: "smithery".to_string(),
+        package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+        runtime_hint: Some("npx".to_string()),
         url: None,
     }];
 
@@ -1405,6 +1446,9 @@ async fn test_mcp_add_presenter_select_missing_entry_emits_show_error_with_sourc
         ],
         env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
         tags: vec![],
+        source: "official".to_string(),
+        package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+        runtime_hint: Some("npx".to_string()),
         url: None,
     }];
 
@@ -1562,16 +1606,16 @@ async fn test_mcp_configure_presenter_configure_mcp_failure_emits_error_only() {
     );
 }
 
-/// REQ-WIRE-001: `SaveMcpConfig` persists MCP fields and emits `McpConfigSaved` + `NavigateBack`
+/// REQ-WIRE-001: `SaveMcpConfig` persists MCP fields and emits `McpConfigSaved` + Settings navigation
 ///
 /// GIVEN: `McpConfigurePresenter` with MCP service update path available
 /// WHEN:  `SaveMcpConfig` event is published
-/// THEN:  presenter emits `McpConfigSaved` then `NavigateBack`
+/// THEN:  presenter emits `McpConfigSaved` then navigates to `Settings`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
 #[tokio::test]
-async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_back() {
+async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_to_settings() {
     let event_bus_sender: broadcast::Sender<AppEvent> = broadcast::channel::<AppEvent>(32).0;
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(32);
 
@@ -1619,21 +1663,26 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
         "first command should be McpConfigSaved with name payload, got {first:?}"
     );
     assert!(
-        matches!(second, ViewCommand::NavigateBack),
-        "second command should be NavigateBack, got {second:?}"
+        matches!(
+            second,
+            ViewCommand::NavigateTo {
+                view: personal_agent::presentation::view_command::ViewId::Settings
+            }
+        ),
+        "second command should navigate to Settings, got {second:?}"
     );
 }
 
-/// REQ-WIRE-001: `SaveMcpConfig` create path (nil id) emits `McpConfigSaved` with name and `NavigateBack`
+/// REQ-WIRE-001: `SaveMcpConfig` create path (nil id) emits `McpConfigSaved` with name and Settings navigation
 ///
 /// GIVEN: `McpConfigurePresenter` and `SaveMcpConfig` payload with nil id
 /// WHEN:  `SaveMcpConfig` event is published
-/// THEN:  presenter uses create path and emits McpConfigSaved(name) then `NavigateBack`
+/// THEN:  presenter uses create path and emits McpConfigSaved(name) then navigates to `Settings`
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
 #[tokio::test]
-async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_navigate_back() {
+async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_navigate_to_settings() {
     let event_bus_sender: broadcast::Sender<AppEvent> = broadcast::channel::<AppEvent>(32).0;
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(32);
 
@@ -1681,8 +1730,13 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
         "first command should be McpConfigSaved with non-nil id and saved name, got {first:?}"
     );
     assert!(
-        matches!(second, ViewCommand::NavigateBack),
-        "second command should be NavigateBack, got {second:?}"
+        matches!(
+            second,
+            ViewCommand::NavigateTo {
+                view: personal_agent::presentation::view_command::ViewId::Settings
+            }
+        ),
+        "second command should navigate to Settings, got {second:?}"
     );
 }
 
@@ -1743,12 +1797,12 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
 ///
 /// GIVEN: `McpConfigurePresenter` with nil-id create save request
 /// WHEN:  `SaveMcpConfig` is published with command/args payload
-/// THEN:  presenter emits `McpConfigSaved` + `NavigateBack` (create flow accepts payload)
+/// THEN:  presenter emits `McpConfigSaved` + Settings navigation (create flow accepts payload)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
 #[tokio::test]
-async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payload_succeeds() {
+async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payload_navigates_to_settings() {
     let event_bus_sender: broadcast::Sender<AppEvent> = broadcast::channel::<AppEvent>(32).0;
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(32);
 
@@ -1796,8 +1850,13 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payloa
         "first command should be McpConfigSaved with non-nil id and preserved name, got {first:?}"
     );
     assert!(
-        matches!(second, ViewCommand::NavigateBack),
-        "second command should be NavigateBack, got {second:?}"
+        matches!(
+            second,
+            ViewCommand::NavigateTo {
+                view: personal_agent::presentation::view_command::ViewId::Settings
+            }
+        ),
+        "second command should navigate to Settings, got {second:?}"
     );
 }
 

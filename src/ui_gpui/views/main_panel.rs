@@ -1107,6 +1107,8 @@ impl MainPanel {
                 ref id,
                 ref name,
                 ref package,
+                ref package_type,
+                ref runtime_hint,
                 ref env_var_name,
                 ref command,
                 ref args,
@@ -1117,6 +1119,8 @@ impl MainPanel {
                     let id_clone = id.clone();
                     let name_clone = name.clone();
                     let package_clone = package.clone();
+                    let package_type_clone = package_type.clone();
+                    let runtime_hint_clone = runtime_hint.clone();
                     let env_var_name_clone = env_var_name.clone();
                     let command_clone = command.clone();
                     let args_clone = args.clone();
@@ -1128,6 +1132,8 @@ impl MainPanel {
                                 id: id_clone,
                                 name: name_clone,
                                 package: package_clone,
+                                package_type: package_type_clone,
+                                runtime_hint: runtime_hint_clone,
                                 env_var_name: env_var_name_clone,
                                 command: command_clone,
                                 args: args_clone,

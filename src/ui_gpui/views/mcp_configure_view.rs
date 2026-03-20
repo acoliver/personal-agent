@@ -68,11 +68,13 @@ pub enum ConfigField {
 
 /// MCP Configure view data
 /// @plan PLAN-20250130-GPUIREDUX.P10
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct McpConfigureData {
     pub id: Option<String>,
     pub name: String,
     pub package: String,
+    pub package_type: crate::mcp::McpPackageType,
+    pub runtime_hint: Option<String>,
     pub command: String,
     pub args: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
@@ -87,11 +89,36 @@ pub struct McpConfigureData {
     pub url: Option<String>,
 }
 
+impl Default for McpConfigureData {
+    fn default() -> Self {
+        Self {
+            id: None,
+            name: String::new(),
+            package: String::new(),
+            package_type: crate::mcp::McpPackageType::Npm,
+            runtime_hint: Some("npx".to_string()),
+            command: String::new(),
+            args: vec![],
+            env: None,
+            auth_method: McpAuthMethod::default(),
+            env_var_name: String::new(),
+            api_key: String::new(),
+            keyfile_path: String::new(),
+            oauth_provider: String::new(),
+            oauth_status: OAuthStatus::default(),
+            config_fields: vec![],
+            url: None,
+        }
+    }
+}
+
 impl McpConfigureData {
     #[must_use]
     pub fn new() -> Self {
         Self {
             env_var_name: "API_KEY".to_string(),
+            package_type: crate::mcp::McpPackageType::Npm,
+            runtime_hint: Some("npx".to_string()),
             command: String::new(),
             args: vec![],
             env: None,
@@ -191,29 +218,38 @@ impl McpConfigureView {
 
         let d = &self.state.data;
         let has_url = d.url.as_ref().is_some_and(|u| !u.trim().is_empty());
-
-        let transport = if has_url {
-            crate::mcp::McpTransport::Http
+        let package_type = if has_url {
+            crate::mcp::McpPackageType::Http
         } else {
-            crate::mcp::McpTransport::Stdio
+            d.package_type.clone()
         };
 
-        let source = if has_url {
-            crate::mcp::McpSource::Manual {
-                url: d.url.clone().unwrap_or_default(),
+        let transport = match package_type {
+            crate::mcp::McpPackageType::Http => crate::mcp::McpTransport::Http,
+            crate::mcp::McpPackageType::Npm | crate::mcp::McpPackageType::Docker => {
+                crate::mcp::McpTransport::Stdio
             }
-        } else {
-            crate::mcp::McpSource::Manual { url: String::new() }
         };
+
+        let source_url = match package_type {
+            crate::mcp::McpPackageType::Http => d.url.clone().unwrap_or_default(),
+            crate::mcp::McpPackageType::Docker => format!("docker run {}", d.package),
+            crate::mcp::McpPackageType::Npm => {
+                let runtime = d.runtime_hint.as_deref().unwrap_or("npx");
+                format!("{runtime} {}", d.package)
+            }
+        };
+
+        let source = crate::mcp::McpSource::Manual { url: source_url };
 
         let package = crate::mcp::McpPackage {
-            package_type: if has_url {
-                crate::mcp::McpPackageType::Http
-            } else {
-                crate::mcp::McpPackageType::Npm
-            },
+            package_type: package_type.clone(),
             identifier: d.package.clone(),
-            runtime_hint: None,
+            runtime_hint: match package_type {
+                crate::mcp::McpPackageType::Npm => d.runtime_hint.clone(),
+                crate::mcp::McpPackageType::Docker => Some("docker".to_string()),
+                crate::mcp::McpPackageType::Http => None,
+            },
         };
 
         let config = crate::mcp::McpConfig {
@@ -265,6 +301,8 @@ impl McpConfigureView {
                 id,
                 name,
                 package,
+                package_type,
+                runtime_hint,
                 env_var_name,
                 command,
                 args,
@@ -285,6 +323,8 @@ impl McpConfigureView {
                 self.state.data.id = Some(id);
                 self.state.data.name = name;
                 self.state.data.package = package;
+                self.state.data.package_type = package_type;
+                self.state.data.runtime_hint = runtime_hint;
                 self.state.data.env_var_name = env_var_name;
                 self.state.data.command = command;
                 self.state.data.args = args;

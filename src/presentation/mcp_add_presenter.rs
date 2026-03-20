@@ -34,6 +34,16 @@ pub struct McpAddPresenter {
     running: Arc<std::sync::atomic::AtomicBool>,
 }
 
+struct ManualMcpDraft {
+    name: String,
+    package: String,
+    package_type: crate::mcp::McpPackageType,
+    runtime_hint: Option<String>,
+    command: String,
+    args: Vec<String>,
+    url: Option<String>,
+}
+
 impl McpAddPresenter {
     /// Create a new `McpAddPresenter`
     ///
@@ -174,8 +184,8 @@ impl McpAddPresenter {
             UserEvent::SelectMcpFromRegistry { source } => {
                 Self::on_select_from_registry(mcp_registry_service, view_tx, source).await;
             }
-            UserEvent::McpAddNext => {
-                Self::on_mcp_add_next(mcp_registry_service, view_tx).await;
+            UserEvent::McpAddNext { manual_entry } => {
+                Self::on_mcp_add_next(mcp_registry_service, view_tx, manual_entry).await;
             }
             _ => {} // Ignore other user events
         }
@@ -196,10 +206,10 @@ impl McpAddPresenter {
             query
         );
 
-        // Current registry service is source-agnostic; preserve caller source in projected payload
-        // so the UI can keep source-specific context while backend support evolves.
-        let source_name = source.name;
-        match mcp_registry_service.search(&query).await {
+        match mcp_registry_service
+            .search_registry(&query, &source.name)
+            .await
+        {
             Ok(entries) => {
                 tracing::debug!("MCP registry search returned {} results", entries.len());
 
@@ -209,10 +219,12 @@ impl McpAddPresenter {
                         id: entry.name.clone(),
                         name: entry.display_name,
                         description: entry.description,
-                        source: source_name.clone(),
+                        source: entry.source,
                         command: entry.command,
                         args: entry.args,
                         env: entry.env,
+                        package_type: entry.package_type,
+                        runtime_hint: entry.runtime_hint,
                         url: entry.url,
                     })
                     .collect();
@@ -266,6 +278,8 @@ impl McpAddPresenter {
                         id: format!("{source_hint}::{package_name}"),
                         name: configure_name,
                         package: package_name,
+                        package_type: entry.package_type.unwrap_or(crate::mcp::McpPackageType::Npm),
+                        runtime_hint: entry.runtime_hint,
                         env_var_name,
                         command: entry.command,
                         args: entry.args,
@@ -302,12 +316,150 @@ impl McpAddPresenter {
     async fn on_mcp_add_next(
         _mcp_registry_service: &Arc<dyn McpRegistryService>,
         view_tx: &broadcast::Sender<ViewCommand>,
+        manual_entry: Option<String>,
     ) {
         tracing::info!("McpAddPresenter: handling McpAddNext");
-        // Advance to MCP configure view for the selected server
-        let _ = view_tx.send(ViewCommand::NavigateTo {
-            view: super::view_command::ViewId::McpConfigure,
-        });
+
+        let Some(raw_entry) = manual_entry.map(|entry| entry.trim().to_string()) else {
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "Manual Entry Required".to_string(),
+                message: "Enter an MCP package, docker image, or URL before continuing."
+                    .to_string(),
+                severity: super::view_command::ErrorSeverity::Warning,
+            });
+            return;
+        };
+
+        if raw_entry.is_empty() {
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "Manual Entry Required".to_string(),
+                message: "Enter an MCP package, docker image, or URL before continuing."
+                    .to_string(),
+                severity: super::view_command::ErrorSeverity::Warning,
+            });
+            return;
+        }
+
+        match Self::parse_manual_entry(&raw_entry) {
+            Ok(draft) => {
+                let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
+                    id: uuid::Uuid::nil().to_string(),
+                    name: draft.name,
+                    package: draft.package,
+                    package_type: draft.package_type,
+                    runtime_hint: draft.runtime_hint,
+                    env_var_name: "API_KEY".to_string(),
+                    command: draft.command,
+                    args: draft.args,
+                    env: None,
+                    url: draft.url,
+                });
+                let _ = view_tx.send(ViewCommand::NavigateTo {
+                    view: super::view_command::ViewId::McpConfigure,
+                });
+            }
+            Err(message) => {
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Invalid Manual Entry".to_string(),
+                    message,
+                    severity: super::view_command::ErrorSeverity::Warning,
+                });
+            }
+        }
+    }
+
+    fn parse_manual_entry(raw_entry: &str) -> Result<ManualMcpDraft, String> {
+        let trimmed = raw_entry.trim();
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            let name = trimmed
+                .trim_end_matches('/')
+                .split('/')
+                .next_back()
+                .filter(|segment| !segment.is_empty())
+                .unwrap_or("mcp")
+                .to_string();
+            return Ok(ManualMcpDraft {
+                name,
+                package: trimmed.to_string(),
+                package_type: crate::mcp::McpPackageType::Http,
+                runtime_hint: None,
+                command: String::new(),
+                args: vec![],
+                url: Some(trimmed.to_string()),
+            });
+        }
+
+        if trimmed.starts_with("docker ") {
+            let image = trimmed
+                .split_whitespace()
+                .last()
+                .ok_or_else(|| "Invalid docker command".to_string())?
+                .to_string();
+            let name = image
+                .split(':')
+                .next()
+                .unwrap_or(&image)
+                .split('/')
+                .next_back()
+                .unwrap_or(&image)
+                .to_string();
+            return Ok(ManualMcpDraft {
+                name,
+                package: image,
+                package_type: crate::mcp::McpPackageType::Docker,
+                runtime_hint: Some("docker".to_string()),
+                command: "docker".to_string(),
+                args: trimmed
+                    .split_whitespace()
+                    .skip(1)
+                    .map(ToString::to_string)
+                    .collect(),
+                url: None,
+            });
+        }
+
+        if trimmed.starts_with("npx ") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            let identifier = parts
+                .iter()
+                .skip(1)
+                .find(|part| !part.starts_with('-'))
+                .ok_or_else(|| "Invalid npx command".to_string())?
+                .to_string();
+            let name = identifier
+                .split('/')
+                .next_back()
+                .unwrap_or(&identifier)
+                .to_string();
+            return Ok(ManualMcpDraft {
+                name,
+                package: identifier,
+                package_type: crate::mcp::McpPackageType::Npm,
+                runtime_hint: Some("npx".to_string()),
+                command: "npx".to_string(),
+                args: parts.iter().skip(1).map(|part| (*part).to_string()).collect(),
+                url: None,
+            });
+        }
+
+        if trimmed.starts_with('@') || trimmed.contains('/') {
+            let name = trimmed
+                .split('/')
+                .next_back()
+                .unwrap_or(trimmed)
+                .to_string();
+            return Ok(ManualMcpDraft {
+                name,
+                package: trimmed.to_string(),
+                package_type: crate::mcp::McpPackageType::Npm,
+                runtime_hint: Some("npx".to_string()),
+                command: "npx".to_string(),
+                args: vec![trimmed.to_string()],
+                url: None,
+            });
+        }
+
+        Err("Use a package like @scope/package, an npx command, a docker command, or an http(s) URL.".to_string())
     }
 
     /// Handle MCP domain events

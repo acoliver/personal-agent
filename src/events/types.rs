@@ -178,7 +178,7 @@ pub enum UserEvent {
     // ===== MCP Add Actions =====
     /// User clicked Next in MCP Add view
     /// @plan PLAN-20250130-GPUIREDUX.P09
-    McpAddNext,
+    McpAddNext { manual_entry: Option<String> },
 
     // ===== Navigation =====
     /// User clicked to navigate to a view

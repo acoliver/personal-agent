@@ -18,6 +18,8 @@ fn test_projected_search_results_preserve_source_args_and_env_metadata() {
             "@modelcontextprotocol/server-filesystem".to_string(),
         ],
         env: Some(vec![("FILESYSTEM_ROOT".to_string(), "/tmp".to_string())]),
+        package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+        runtime_hint: Some("npx".to_string()),
         url: None,
     };
 
@@ -35,7 +37,8 @@ fn test_projected_search_results_preserve_source_args_and_env_metadata() {
         .with_command(raw.command.clone())
         .with_args(raw.args.clone())
         .with_env(raw.env.clone())
-        .with_source(raw.source.clone()),
+        .with_source(raw.source.clone())
+        .with_package_metadata(raw.package_type.clone(), raw.runtime_hint.clone()),
     ];
 
     assert_eq!(mapped.len(), 1);

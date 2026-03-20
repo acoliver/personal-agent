@@ -374,6 +374,8 @@ fn test_mcp_registry_search_results_are_routed() {
                 command: "npx -y @modelcontextprotocol/server-fetch".to_string(),
                 args: vec![],
                 env: None,
+                package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+                runtime_hint: Some("npx".to_string()),
                 url: None,
             },
             McpRegistryResult {
@@ -384,6 +386,8 @@ fn test_mcp_registry_search_results_are_routed() {
                 command: "npx -y @modelcontextprotocol/server-filesystem".to_string(),
                 args: vec![],
                 env: None,
+                package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+                runtime_hint: Some("npx".to_string()),
                 url: None,
             },
         ],
@@ -412,6 +416,8 @@ fn test_mcp_configure_draft_loaded_is_routed() {
         id: "fetch".to_string(),
         name: "Fetch".to_string(),
         package: "fetch".to_string(),
+        package_type: personal_agent::mcp::McpPackageType::Npm,
+        runtime_hint: Some("npx".to_string()),
         env_var_name: "FETCH_API_KEY".to_string(),
         command: "npx".to_string(),
         args: vec![
@@ -470,6 +476,8 @@ fn test_mcp_configure_draft_loaded_does_not_count_as_mcp_config_saved() {
         id: "filesystem".to_string(),
         name: "Filesystem".to_string(),
         package: "filesystem".to_string(),
+        package_type: personal_agent::mcp::McpPackageType::Npm,
+        runtime_hint: Some("npx".to_string()),
         env_var_name: String::new(),
         command: "npx".to_string(),
         args: vec![

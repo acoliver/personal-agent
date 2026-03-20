@@ -21,6 +21,9 @@ pub struct McpRegistryEntry {
     pub args: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
     pub tags: Vec<String>,
+    pub source: String,
+    pub package_type: Option<crate::mcp::McpPackageType>,
+    pub runtime_hint: Option<String>,
     /// Remote URL for HTTP/SSE transport MCPs (None for stdio-only).
     pub url: Option<String>,
 }
@@ -35,6 +38,13 @@ pub trait McpRegistryService: Send + Sync {
     /// # Arguments
     /// * `query` - Search query string
     async fn search(&self, query: &str) -> ServiceResult<Vec<McpRegistryEntry>>;
+
+    /// Search a specific registry source.
+    async fn search_registry(
+        &self,
+        query: &str,
+        source: &str,
+    ) -> ServiceResult<Vec<McpRegistryEntry>>;
 
     /// Get detailed information about a specific MCP server
     ///
@@ -86,6 +96,9 @@ mod tests {
             args: vec!["-y".to_string(), "@test/server".to_string()],
             env: None,
             tags: vec!["test".to_string(), "demo".to_string()],
+            source: "official".to_string(),
+            package_type: Some(crate::mcp::McpPackageType::Npm),
+            runtime_hint: Some("npx".to_string()),
             url: None,
         };
 
@@ -108,6 +121,9 @@ mod tests {
             args: vec!["server.js".to_string()],
             env: Some(vec![("API_KEY".to_string(), "value".to_string())]),
             tags: vec![],
+            source: "official".to_string(),
+            package_type: Some(crate::mcp::McpPackageType::Npm),
+            runtime_hint: Some("npx".to_string()),
             url: None,
         };
 

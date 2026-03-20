@@ -201,6 +201,14 @@ impl McpRegistryService for MockMcpRegistryService {
         self.search_result.lock().await.clone()
     }
 
+    async fn search_registry(
+        &self,
+        _query: &str,
+        _source: &str,
+    ) -> Result<Vec<personal_agent::services::McpRegistryEntry>, ServiceError> {
+        self.search_result.lock().await.clone()
+    }
+
     async fn get_details(
         &self,
         _name: &str,
@@ -374,6 +382,9 @@ fn registry_entry() -> personal_agent::services::McpRegistryEntry {
         args: vec!["-y".to_string(), "@test/filesystem".to_string()],
         env: Some(vec![("API_KEY".to_string(), "value".to_string())]),
         tags: vec!["files".to_string()],
+        source: "official".to_string(),
+        package_type: Some(personal_agent::mcp::McpPackageType::Npm),
+        runtime_hint: Some("npx".to_string()),
         url: None,
     }
 }
@@ -838,9 +849,22 @@ async fn mcp_add_presenter_handles_search_selection_and_errors() {
     )));
 
     event_bus
-        .publish(AppEvent::User(UserEvent::McpAddNext))
+        .publish(AppEvent::User(UserEvent::McpAddNext {
+            manual_entry: Some("npx -y @test/filesystem".to_string()),
+        }))
         .expect("publish mcp add next");
     let next_commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(next_commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigureDraftLoaded {
+            package,
+            package_type,
+            command,
+            ..
+        } if package == "@test/filesystem"
+            && *package_type == personal_agent::mcp::McpPackageType::Npm
+            && command == "npx"
+    )));
     assert!(next_commands.iter().any(|command| matches!(
         command,
         ViewCommand::NavigateTo {
@@ -949,9 +973,12 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
             name: Some(name),
         } if !id.is_nil() && name == "Filesystem"
     )));
-    assert!(create_commands
-        .iter()
-        .any(|command| matches!(command, ViewCommand::NavigateBack)));
+    assert!(create_commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::NavigateTo {
+            view: ViewId::Settings
+        }
+    )));
 
     event_bus
         .publish(AppEvent::User(UserEvent::SaveMcpConfig {

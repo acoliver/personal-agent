@@ -98,6 +98,49 @@ impl McpRegistryServiceImpl {
     /// Convert registry wrapper to entry
     fn wrapper_to_entry(wrapper: &McpRegistryServerWrapper) -> McpRegistryEntry {
         let remote_url = wrapper.server.remotes.first().map(|r| r.url.clone());
+        let primary_package = wrapper.server.packages.first();
+        let package_type = primary_package.and_then(|package| match package.registry_type.as_str() {
+            "npm" => Some(crate::mcp::McpPackageType::Npm),
+            "oci" => Some(crate::mcp::McpPackageType::Docker),
+            _ => None,
+        });
+        let runtime_hint = match package_type {
+            Some(crate::mcp::McpPackageType::Npm) => Some("npx".to_string()),
+            Some(crate::mcp::McpPackageType::Docker) => Some("docker".to_string()),
+            Some(crate::mcp::McpPackageType::Http) | None => None,
+        };
+        let env = primary_package.map(|package| {
+            package
+                .environment_variables
+                .iter()
+                .map(|var| (var.name.clone(), String::new()))
+                .collect::<Vec<_>>()
+        });
+        let args = primary_package
+            .map(|package| {
+                package
+                    .package_arguments
+                    .iter()
+                    .map(|arg| arg.name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let tags = wrapper
+            .meta
+            .get("tags")
+            .and_then(|value| value.as_array())
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|tag| tag.as_str().map(ToString::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let source = wrapper
+            .meta
+            .get("source")
+            .and_then(|value| value.as_str())
+            .unwrap_or("official")
+            .to_string();
 
         McpRegistryEntry {
             name: wrapper.server.name.clone(),
@@ -107,15 +150,15 @@ impl McpRegistryServiceImpl {
             author: wrapper.server.repository.url.clone().unwrap_or_default(),
             license: "Unknown".to_string(),
             repository: wrapper.server.repository.url.clone().unwrap_or_default(),
-            command: wrapper
-                .server
-                .packages
-                .first()
+            command: primary_package
                 .map(|p| p.identifier.clone())
                 .unwrap_or_default(),
-            args: vec![],
-            env: None,
-            tags: vec![],
+            args,
+            env,
+            tags,
+            source,
+            package_type,
+            runtime_hint,
             url: remote_url,
         }
     }
@@ -125,27 +168,96 @@ impl McpRegistryServiceImpl {
 impl McpRegistryService for McpRegistryServiceImpl {
     /// Search for MCP servers in the registry
     async fn search(&self, query: &str) -> ServiceResult<Vec<McpRegistryEntry>> {
+        self.search_registry(query, "official").await
+    }
+
+    async fn search_registry(&self, query: &str, source: &str) -> ServiceResult<Vec<McpRegistryEntry>> {
         // Try to load from cache first
         let cached = self.load_from_disk()?;
         if !cached.is_empty() {
             self.cached_results.write().await.clone_from(&cached);
         }
 
-        // Perform search using the McpRegistry client
-        let search_result = self
-            .registry
-            .search(query)
-            .await
-            .map_err(|e| ServiceError::Network(format!("Failed to search registry: {e}")))?;
+        let normalized_source = source.trim().to_lowercase();
+        let query = query.trim();
+        let fetched_wrappers = match normalized_source.as_str() {
+            "smithery" => {
+                let config_path = crate::config::Config::default_path().map_err(|e| {
+                    ServiceError::Io(format!("Failed to resolve config path for Smithery search: {e}"))
+                })?;
+                let config = crate::config::Config::load(&config_path).map_err(|e| {
+                    ServiceError::Io(format!("Failed to load config for Smithery search: {e}"))
+                })?;
+                let smithery_key = config.smithery_auth.ok_or_else(|| {
+                    ServiceError::Validation(
+                        "Smithery search requires smithery_auth in config/settings.json".to_string(),
+                    )
+                })?;
+                self.registry
+                    .search_registry(
+                        query,
+                        crate::mcp::registry::McpRegistrySource::Smithery,
+                        Some(&smithery_key),
+                    )
+                    .await
+                    .map_err(|e| ServiceError::Network(format!("Failed to search registry: {e}")))?
+                    .entries
+            }
+            "both" => {
+                let mut combined = Vec::new();
+                let official = self
+                    .registry
+                    .search_registry(
+                        query,
+                        crate::mcp::registry::McpRegistrySource::Official,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| ServiceError::Network(format!("Failed to search registry: {e}")))?
+                    .entries;
+                combined.extend(official);
 
-        // Convert to wrapper format
-        let wrappers: Vec<McpRegistryServerWrapper> = search_result
-            .entries
+                if let Ok(config_path) = crate::config::Config::default_path() {
+                    if let Ok(config) = crate::config::Config::load(&config_path) {
+                        if let Some(smithery_key) = config.smithery_auth {
+                            if let Ok(smithery) = self
+                                .registry
+                                .search_registry(
+                                    query,
+                                    crate::mcp::registry::McpRegistrySource::Smithery,
+                                    Some(&smithery_key),
+                                )
+                                .await
+                            {
+                                combined.extend(smithery.entries);
+                            }
+                        }
+                    }
+                }
+
+                combined
+            }
+            _ => {
+                self.registry
+                    .search_registry(
+                        query,
+                        crate::mcp::registry::McpRegistrySource::Official,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| ServiceError::Network(format!("Failed to search registry: {e}")))?
+                    .entries
+            }
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        let wrappers: Vec<McpRegistryServerWrapper> = fetched_wrappers
             .into_iter()
             .map(|entry| McpRegistryServerWrapper {
                 server: entry.server,
                 meta: entry.meta,
             })
+            .filter(|entry| seen.insert(entry.server.name.clone()))
             .collect();
 
         // Save to cache
