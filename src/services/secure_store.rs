@@ -148,22 +148,21 @@ pub fn set_secret(key: &str, value: &str) -> Result<(), SecureStoreError> {
             .insert(key.to_string(), value.to_string());
         return Ok(());
     }
-    // On macOS, use the `security` CLI directly — it runs as a signed
-    // Apple binary so the keychain never prompts for permission.  The
-    // `keyring` crate uses Security.framework which ties the ACL to
-    // *our* binary's code signature; every `cargo build` produces a new
-    // unsigned binary, triggering a fresh keychain prompt every launch.
-    #[cfg(target_os = "macos")]
-    {
-        macos_security_set_secret(key, value)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let entry = keyring::Entry::new(SERVICE_NAME, key)
-            .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
-        entry
-            .set_password(value)
-            .map_err(|e| SecureStoreError::Keychain(e.to_string()))
+    let entry = keyring::Entry::new(SERVICE_NAME, key)
+        .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
+    match entry.set_password(value) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            #[cfg(target_os = "macos")]
+            {
+                tracing::warn!(key = %key, error = %e, "Keyring set failed; falling back to security CLI");
+                macos_security_set_secret(key, value)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err(SecureStoreError::Keychain(e.to_string()))
+            }
+        }
     }
 }
 
@@ -185,18 +184,21 @@ pub fn get_secret(key: &str) -> Result<Option<String>, SecureStoreError> {
             .get(key)
             .cloned());
     }
-    #[cfg(target_os = "macos")]
-    {
-        macos_security_get_secret(key)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let entry = keyring::Entry::new(SERVICE_NAME, key)
-            .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
-        match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(SecureStoreError::Keychain(e.to_string())),
+    let entry = keyring::Entry::new(SERVICE_NAME, key)
+        .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
+    match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => {
+            #[cfg(target_os = "macos")]
+            {
+                tracing::warn!(key = %key, error = %e, "Keyring get failed; falling back to security CLI");
+                macos_security_get_secret(key)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err(SecureStoreError::Keychain(e.to_string()))
+            }
         }
     }
 }
@@ -218,17 +220,20 @@ pub fn delete_secret(key: &str) -> Result<(), SecureStoreError> {
             .remove(key);
         return Ok(());
     }
-    #[cfg(target_os = "macos")]
-    {
-        macos_security_delete_secret(key)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let entry = keyring::Entry::new(SERVICE_NAME, key)
-            .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(SecureStoreError::Keychain(e.to_string())),
+    let entry = keyring::Entry::new(SERVICE_NAME, key)
+        .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => {
+            #[cfg(target_os = "macos")]
+            {
+                tracing::warn!(key = %key, error = %e, "Keyring delete failed; falling back to security CLI");
+                macos_security_delete_secret(key)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err(SecureStoreError::Keychain(e.to_string()))
+            }
         }
     }
 }

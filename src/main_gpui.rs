@@ -1178,6 +1178,14 @@ fn main() {
                 info!("Started ApiKeyManagerPresenter");
                 info!("All 8 presenters started");
 
+                // Emit MCP snapshot immediately so settings view is populated
+                // before the slow (~90s) global MCP init.  MCPs appear with
+                // Stopped status; real-time McpEvent callbacks update them
+                // to Running/Failed as each one finishes starting.
+                personal_agent::presentation::SettingsPresenter::emit_mcp_snapshot(
+                    &settings_view_tx_for_snapshot,
+                );
+
                 // Initialize global MCP runtime so chat can discover tools
                 info!("Initializing global MCP runtime...");
                 {
@@ -1189,11 +1197,6 @@ fn main() {
                         info!("Global MCP runtime initialized");
                     }
                 }
-
-                // Emit MCP snapshot so settings view shows all configured MCPs
-                personal_agent::presentation::SettingsPresenter::emit_mcp_snapshot(
-                    &settings_view_tx_for_snapshot,
-                );
 
                 // Keep runtime alive
                 loop {
