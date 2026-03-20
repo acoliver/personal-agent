@@ -5,7 +5,6 @@ use personal_agent::events::global::init_event_bus;
 use personal_agent::events::types::SystemEvent;
 use personal_agent::events::{self, AppEvent};
 use personal_agent::llm::error::{LlmError, LlmResult};
-use personal_agent::main_utils::load_icon_from_bytes;
 use personal_agent::mcp::registry::{
     McpRegistryEnvVar, McpRegistryPackage, McpRegistryPackageArgument, McpRegistryRemote,
     McpRegistryRepository, McpRegistryServer, McpRegistryServerWrapper, McpRegistrySource,
@@ -315,12 +314,6 @@ async fn app_settings_reports_invalid_existing_json_and_invalid_uuids() {
         conversation_error,
         ServiceError::Validation(message) if message == "Invalid conversation ID UUID"
     ));
-}
-
-#[test]
-fn main_utils_rejects_invalid_icon_bytes() {
-    let invalid_icon = load_icon_from_bytes(b"not-a-png");
-    assert!(invalid_icon.is_err());
 }
 
 #[test]

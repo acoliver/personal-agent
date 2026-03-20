@@ -22,12 +22,12 @@ cd personal-agent
 cargo build --release
 ```
 
-The binary will be at `target/release/personal_agent_menubar`.
+The binary will be at `target/release/personal_agent_gpui`.
 
 ### Running
 
 ```bash
-./target/release/personal_agent_menubar
+./target/release/personal_agent_gpui
 ```
 
 Look for "PA" in your menu bar. Click to open the chat panel.
@@ -75,14 +75,13 @@ For models that support reasoning/thinking (like Claude with extended thinking o
 ```
 personalAgent/
 ├── src/
-│   ├── main_menubar.rs    # Application entry point
+│   ├── main_gpui.rs       # Application entry point
 │   ├── lib.rs             # Library exports
 │   ├── config/            # Configuration management
 │   ├── models/            # Data models (profiles, conversations)
 │   ├── storage/           # Conversation persistence
 │   ├── llm/               # LLM client integration
-│   ├── ui/                # Legacy UI components (deprecated)
-│   └── ui_gpui/           # GPUI-based UI system (active development)
+│   └── ui_gpui/           # GPUI-based UI system
 │       ├── bridge/        # Runtime bridge between GPUI and tokio
 │       ├── components/    # Reusable UI components
 │       ├── views/         # Main view components
@@ -93,16 +92,12 @@ personalAgent/
     └── serdesAI/          # LLM communication library
 ```
 
-## GPUI-based UI System
 
-PersonalAgent is transitioning to a GPUI-based UI system for better performance and native UI experience. The new UI system is currently implemented behind a feature flag.
+## UI Architecture
 
-### Feature Flag
+PersonalAgent uses a GPUI-based UI system for native performance and a modern UI experience.
 
-Enable the GPUI UI system with:
-```bash
-cargo run --features gpui --bin personal_agent_menubar
-```
+
 
 ### Architecture
 
@@ -129,10 +124,10 @@ See `src/ui_gpui/` for more detailed documentation.
 
 ```bash
 # Build debug
-cargo build --bin personal_agent_menubar
+cargo build --bin personal_agent_gpui
 
 # Build release
-cargo build --release --bin personal_agent_menubar
+cargo build --release --bin personal_agent_gpui
 
 # Run tests
 cargo test

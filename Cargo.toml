@@ -3,21 +3,12 @@ name = "personal_agent"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "personal_agent"
-path = "src/main.rs"
-
-[[bin]]
-name = "personal_agent_menubar"
-path = "src/main_menubar.rs"
 
 [[bin]]
 name = "personal_agent_gpui"
 path = "src/main_gpui.rs"
 
 [dependencies]
-eframe = "0.29"
-egui = "0.29"
 tray-icon = "0.21"
 image = "0.25"
 tracing = "0.1"

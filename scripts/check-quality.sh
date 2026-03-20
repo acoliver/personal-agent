@@ -7,10 +7,10 @@ ERROR_EXIT=0
 echo "=== Running quality checks ==="
 
 # GPUI view/component rendering code requires a live GPUI context and is excluded
-# from automated complexity, file-length, and coverage checks (same rationale as src/ui/).
+# from automated complexity, file-length, and coverage checks.
 GPUI_RENDER_EXCLUDES="src/ui_gpui/views/|src/ui_gpui/components/|"
-# Other files excluded: legacy TUI code, binary entry points, GPUI framework plumbing
-OTHER_EXCLUDES="src/ui/|src/main_menubar.rs|src/popover.rs|src/main_gpui.rs|src/bin/|"
+# Other files excluded: binary entry points, GPUI framework plumbing
+OTHER_EXCLUDES="src/main_gpui.rs|src/bin/|"
 
 # Format check
 echo "Checking formatting..."
@@ -27,11 +27,9 @@ if ! command -v lizard &> /dev/null; then
     echo "Install with: pip3 install lizard"
 else
     LIZARD_EXCLUDES=(
-        --exclude "src/ui/*"
         --exclude "src/ui_gpui/views/*"
         --exclude "src/ui_gpui/components/*"
         --exclude "src/main_gpui.rs"
-        --exclude "src/main_menubar.rs"
         --exclude "src/bin/*"
         --exclude "src/services/chat.rs"
         --exclude "src/llm/client_agent.rs"
@@ -48,14 +46,12 @@ else
     fi
 fi
 
-# File length check (exclude GPUI rendering code and legacy TUI)
+# File length check (exclude GPUI rendering code)
 echo "Checking file lengths..."
 for file in $(find src -name "*.rs" \
-    -not -path "src/ui/*" \
     -not -path "src/ui_gpui/views/*" \
     -not -path "src/ui_gpui/components/*" \
     -not -path "src/main_gpui.rs" \
-    -not -path "src/main_menubar.rs" \
     -not -path "src/bin/*"); do
     lines=$(wc -l < "$file")
     if [ "$lines" -gt 1000 ]; then
@@ -84,7 +80,7 @@ else
     export LLVM_COV
     export LLVM_PROFDATA
     
-    IGNORE_REGEX="research/serdesAI/|${GPUI_RENDER_EXCLUDES}${OTHER_EXCLUDES}src/main\.rs|src/llm/client_agent.rs|src/popover.rs|src/ui_gpui/popup_window.rs|src/ui_gpui/tray_bridge.rs|src/ui_gpui/navigation_channel.rs|src/ui_gpui/selection_intent_channel.rs"
+    IGNORE_REGEX="research/serdesAI/|${GPUI_RENDER_EXCLUDES}${OTHER_EXCLUDES}src/llm/client_agent.rs|src/ui_gpui/popup_window.rs|src/ui_gpui/tray_bridge.rs|src/ui_gpui/navigation_channel.rs|src/ui_gpui/selection_intent_channel.rs"
     # Split into run + report to avoid combined-mode timeouts on macOS
     if ! cargo llvm-cov --no-report --lib --tests 2>/tmp/cov_run_err.txt; then
         if grep -q "failed to find llvm-tools-preview" /tmp/cov_run_err.txt; then
@@ -121,5 +117,10 @@ elif [ "$WARN_EXIT" -eq 1 ]; then
     exit 0
 else
     echo "=== PASSED: All checks clean ==="
+    exit 0
+fi
+ exit 0
+fi
+ecks clean ==="
     exit 0
 fi
