@@ -106,9 +106,7 @@ impl Global for AppState {}
 /// fresh `SettingsView`) receives the current MCP list.  The one-shot
 /// broadcast emission at startup was already consumed by the previous
 /// (now-closed) window.
-fn emit_mcp_snapshot_to_flume(
-    tx: &flume::Sender<personal_agent::presentation::ViewCommand>,
-) {
+fn emit_mcp_snapshot_to_flume(tx: &flume::Sender<personal_agent::presentation::ViewCommand>) {
     use personal_agent::presentation::view_command::{McpStatus, ViewCommand};
 
     let config_path = match personal_agent::config::Config::default_path() {
@@ -154,10 +152,7 @@ fn emit_mcp_snapshot_to_flume(
             tool_count: 0,
             enabled: Some(mcp.enabled),
         });
-        let _ = tx.send(ViewCommand::McpStatusChanged {
-            id: mcp.id,
-            status,
-        });
+        let _ = tx.send(ViewCommand::McpStatusChanged { id: mcp.id, status });
     }
 
     tracing::info!(

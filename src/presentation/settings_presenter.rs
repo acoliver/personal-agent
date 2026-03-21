@@ -290,7 +290,12 @@ impl SettingsPresenter {
                 tools: _,
                 tool_count,
             } => {
-                let _ = view_tx.send(ViewCommand::McpServerStarted { id, name: Some(name), tool_count, enabled: None });
+                let _ = view_tx.send(ViewCommand::McpServerStarted {
+                    id,
+                    name: Some(name),
+                    tool_count,
+                    enabled: None,
+                });
                 let _ = view_tx.send(ViewCommand::McpStatusChanged {
                     id,
                     status: super::view_command::McpStatus::Running,
@@ -665,10 +670,7 @@ impl SettingsPresenter {
                 tool_count: 0,
                 enabled: Some(mcp.enabled),
             });
-            let _ = view_tx.send(ViewCommand::McpStatusChanged {
-                id: mcp.id,
-                status,
-            });
+            let _ = view_tx.send(ViewCommand::McpStatusChanged { id: mcp.id, status });
         }
 
         tracing::info!(

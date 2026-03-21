@@ -137,9 +137,7 @@ impl McpService {
     /// distinguish "not yet started" from "explicitly stopped".
     #[must_use]
     pub fn get_status(&self, id: &uuid::Uuid) -> Option<crate::mcp::McpStatus> {
-        self.runtime
-            .status_manager()
-            .get_status_if_known(id)
+        self.runtime.status_manager().get_status_if_known(id)
     }
 
     /// Reload MCPs from config (useful after config changes)

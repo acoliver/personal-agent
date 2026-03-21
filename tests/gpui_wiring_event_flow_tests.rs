@@ -384,7 +384,11 @@ impl personal_agent::services::McpRegistryService for RecordingMcpRegistryServic
         Ok(self.entries.lock().expect("registry lock poisoned").clone())
     }
 
-    async fn search_registry(&self, _query: &str, _source: &str) -> ServiceResult<Vec<McpRegistryEntry>> {
+    async fn search_registry(
+        &self,
+        _query: &str,
+        _source: &str,
+    ) -> ServiceResult<Vec<McpRegistryEntry>> {
         Ok(self.entries.lock().expect("registry lock poisoned").clone())
     }
 
@@ -1124,7 +1128,6 @@ async fn test_mcp_add_presenter_search_emits_registry_results() {
         url: None,
     }];
 
-
     let mcp_registry_service: Arc<dyn personal_agent::services::McpRegistryService> =
         Arc::new(RecordingMcpRegistryService::with_entries(entries));
 
@@ -1682,7 +1685,8 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
 #[tokio::test]
-async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_navigate_to_settings() {
+async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_navigate_to_settings()
+{
     let event_bus_sender: broadcast::Sender<AppEvent> = broadcast::channel::<AppEvent>(32).0;
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(32);
 
@@ -1802,7 +1806,8 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
 #[tokio::test]
-async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payload_navigates_to_settings() {
+async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payload_navigates_to_settings(
+) {
     let event_bus_sender: broadcast::Sender<AppEvent> = broadcast::channel::<AppEvent>(32).0;
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(32);
 

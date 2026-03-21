@@ -99,10 +99,7 @@ impl McpStatusManager {
     /// been registered with the status manager.
     #[must_use]
     pub fn get_status_if_known(&self, id: &Uuid) -> Option<McpStatus> {
-        self.statuses
-            .read()
-            .ok()
-            .and_then(|s| s.get(id).cloned())
+        self.statuses.read().ok().and_then(|s| s.get(id).cloned())
     }
 
     /// Clear status for an MCP (thread-safe)

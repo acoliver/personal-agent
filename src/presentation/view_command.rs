@@ -172,7 +172,12 @@ pub enum ViewCommand {
 
     // ===== MCP Commands =====
     /// MCP server started successfully
-    McpServerStarted { id: Uuid, name: Option<String>, tool_count: usize, enabled: Option<bool> },
+    McpServerStarted {
+        id: Uuid,
+        name: Option<String>,
+        tool_count: usize,
+        enabled: Option<bool>,
+    },
 
     /// MCP server failed to start
     McpServerFailed { id: Uuid, error: String },

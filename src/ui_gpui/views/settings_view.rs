@@ -254,6 +254,7 @@ impl SettingsView {
 
     /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P06
+    #[allow(clippy::too_many_lines)]
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
             ViewCommand::ShowSettings {
@@ -297,17 +298,17 @@ impl SettingsView {
                 // Running/Starting promote it; Stopped/Failed leave it
                 // unchanged so the toggle matches config.json truth.
                 let (mapped, force_enabled) = match status {
-                    crate::presentation::view_command::McpStatus::Running => {
-                        (McpStatus::Running, Some(true))
-                    }
-                    crate::presentation::view_command::McpStatus::Starting => {
+                    crate::presentation::view_command::McpStatus::Running
+                    | crate::presentation::view_command::McpStatus::Starting => {
                         (McpStatus::Running, Some(true))
                     }
                     crate::presentation::view_command::McpStatus::Failed
                     | crate::presentation::view_command::McpStatus::Unhealthy => {
                         (McpStatus::Error, None)
                     }
-                    _ => (McpStatus::Stopped, None),
+                    crate::presentation::view_command::McpStatus::Stopped => {
+                        (McpStatus::Stopped, None)
+                    }
                 };
                 if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
                     existing.status = mapped;
@@ -320,7 +321,9 @@ impl SettingsView {
                         .push(McpItem::new(id, format!("MCP {id}")).with_status(mapped));
                 }
             }
-            ViewCommand::McpServerStarted { id, name, enabled, .. } => {
+            ViewCommand::McpServerStarted {
+                id, name, enabled, ..
+            } => {
                 let is_enabled = enabled.unwrap_or(true);
                 if let Some(existing) = self.state.mcps.iter_mut().find(|m| m.id == id) {
                     if let Some(n) = name {

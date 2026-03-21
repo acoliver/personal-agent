@@ -278,7 +278,9 @@ impl McpAddPresenter {
                         id: format!("{source_hint}::{package_name}"),
                         name: configure_name,
                         package: package_name,
-                        package_type: entry.package_type.unwrap_or(crate::mcp::McpPackageType::Npm),
+                        package_type: entry
+                            .package_type
+                            .unwrap_or(crate::mcp::McpPackageType::Npm),
                         runtime_hint: entry.runtime_hint,
                         env_var_name,
                         command: entry.command,
@@ -437,7 +439,11 @@ impl McpAddPresenter {
                 package_type: crate::mcp::McpPackageType::Npm,
                 runtime_hint: Some("npx".to_string()),
                 command: "npx".to_string(),
-                args: parts.iter().skip(1).map(|part| (*part).to_string()).collect(),
+                args: parts
+                    .iter()
+                    .skip(1)
+                    .map(|part| (*part).to_string())
+                    .collect(),
                 url: None,
             });
         }

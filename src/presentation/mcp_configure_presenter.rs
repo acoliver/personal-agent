@@ -214,7 +214,8 @@ impl McpConfigurePresenter {
         match mcp_service.get(id).await {
             Ok(cfg) => {
                 let name = cfg.name;
-                let (command, args, url, package, package_type, runtime_hint) = match cfg.transport {
+                let (command, args, url, package, package_type, runtime_hint) = match cfg.transport
+                {
                     serdes_ai_mcp::McpTransportConfig::Stdio { command, args } => {
                         let package = if command == "docker" {
                             args.last().cloned().unwrap_or_default()

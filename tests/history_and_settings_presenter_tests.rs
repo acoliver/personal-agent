@@ -983,7 +983,10 @@ mod settings_presenter_tests {
             recv_broadcast_command(&mut view_rx),
         )
         .await;
-        assert!(result.is_err(), "Expected timeout (no command emitted for missing MCP)");
+        assert!(
+            result.is_err(),
+            "Expected timeout (no command emitted for missing MCP)"
+        );
     }
 
     #[tokio::test]
@@ -1170,7 +1173,12 @@ mod settings_presenter_tests {
         .await;
         assert_eq!(
             recv_broadcast_command(&mut view_rx).await,
-            ViewCommand::McpServerStarted { id, name: Some("server".to_string()), tool_count: 2, enabled: None }
+            ViewCommand::McpServerStarted {
+                id,
+                name: Some("server".to_string()),
+                tool_count: 2,
+                enabled: None
+            }
         );
         assert_eq!(
             recv_broadcast_command(&mut view_rx).await,

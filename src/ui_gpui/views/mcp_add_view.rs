@@ -418,15 +418,18 @@ impl McpAddView {
                 url,
             } => {
                 tracing::info!("MCP draft loaded for configure: {}", name);
-                self.state.manual_entry = if let Some(ref draft_url) = url {
-                    draft_url.clone()
-                } else if command.is_empty() {
-                    package.clone()
-                } else if args.is_empty() {
-                    command.clone()
-                } else {
-                    format!("{} {}", command, args.join(" ")).trim().to_string()
-                };
+                self.state.manual_entry = url.as_ref().map_or_else(
+                    || {
+                        if command.is_empty() {
+                            package.clone()
+                        } else if args.is_empty() {
+                            command
+                        } else {
+                            format!("{command} {}", args.join(" ")).trim().to_string()
+                        }
+                    },
+                    Clone::clone,
+                );
 
                 let (source_hint, normalized_id) = id.split_once("::").map_or_else(
                     || (None, id.clone()),
@@ -704,16 +707,18 @@ impl McpAddView {
                         }),
                     )
                     .child(registry)
-                    .child(
-                        div()
-                            .text_color(Theme::text_muted())
-                            .child(if self.state.show_registry_dropdown { "▲" } else { "▼" }),
-                    ),
+                    .child(div().text_color(Theme::text_muted()).child(
+                        if self.state.show_registry_dropdown {
+                            "▲"
+                        } else {
+                            "▼"
+                        },
+                    )),
             )
     }
 
     /// Render the floating registry dropdown overlay
-    fn render_registry_overlay(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_registry_overlay(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("registry-menu-overlay")
             .absolute()
@@ -736,7 +741,10 @@ impl McpAddView {
                 .into_iter()
                 .map(|(registry, label)| {
                     div()
-                        .id(SharedString::from(format!("registry-option-{}", label.to_lowercase())))
+                        .id(SharedString::from(format!(
+                            "registry-option-{}",
+                            label.to_lowercase()
+                        )))
                         .px(px(8.0))
                         .py(px(6.0))
                         .cursor_pointer()
@@ -752,8 +760,7 @@ impl McpAddView {
                             }),
                         )
                         .child(label)
-                })
-                .collect::<Vec<_>>(),
+                }),
             )
     }
 
@@ -900,7 +907,7 @@ impl McpAddView {
                         Theme::text_muted()
                     })
                     .whitespace_normal()
-                    .child(format!("{} · {}", source, command_preview)),
+                    .child(format!("{source} · {command_preview}")),
             )
             .into_any_element()
     }
@@ -1123,6 +1130,7 @@ impl gpui::EntityInputHandler for McpAddView {
 }
 
 impl gpui::Render for McpAddView {
+    #[allow(clippy::too_many_lines)]
     fn render(
         &mut self,
         _window: &mut gpui::Window,
@@ -1203,7 +1211,6 @@ impl gpui::Render for McpAddView {
                         });
                         this.state.show_registry_dropdown = false;
                         cx.notify();
-                        return;
                     }
 
                     // All other keys (printable chars) fall through to EntityInputHandler
@@ -1236,7 +1243,7 @@ impl gpui::Render for McpAddView {
                             cx.notify();
                         }),
                     )
-                    .child(self.render_registry_overlay(cx)),
+                    .child(Self::render_registry_overlay(cx)),
             )
         } else {
             root

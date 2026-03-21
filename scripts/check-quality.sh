@@ -119,8 +119,3 @@ else
     echo "=== PASSED: All checks clean ==="
     exit 0
 fi
- exit 0
-fi
-ecks clean ==="
-    exit 0
-fi
