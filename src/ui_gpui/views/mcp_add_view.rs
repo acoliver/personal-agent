@@ -1262,7 +1262,6 @@ impl gpui::Render for McpAddView {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::future_not_send)]
@@ -1281,13 +1280,14 @@ mod tests {
     }
 
     fn clear_navigation_requests() {
-        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+        while crate::ui_gpui::navigation_channel()
+            .take_pending()
+            .is_some()
+        {}
     }
 
     #[gpui::test]
-    async fn emit_search_registry_trims_query_and_reports_registry_source(
-        cx: &mut TestAppContext,
-    ) {
+    async fn emit_search_registry_trims_query_and_reports_registry_source(cx: &mut TestAppContext) {
         let (bridge, user_rx) = make_bridge();
         let view = cx.new(McpAddView::new);
 
@@ -1348,7 +1348,10 @@ mod tests {
 
         view.read_with(cx, |view, _| {
             let state = view.get_state();
-            assert_eq!(state.manual_entry, "npx -y @modelcontextprotocol/server-fetch");
+            assert_eq!(
+                state.manual_entry,
+                "npx -y @modelcontextprotocol/server-fetch"
+            );
             assert_eq!(state.selected_result_id.as_deref(), Some("fetch"));
             assert_eq!(state.search_state, SearchState::Results);
             assert_eq!(state.results.len(), 1);
@@ -1358,7 +1361,10 @@ mod tests {
             assert_eq!(result.command, "@smithery/fetch");
             assert_eq!(
                 result.args,
-                vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]
+                vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-fetch".to_string()
+                ]
             );
             assert_eq!(
                 result.env,
@@ -1387,7 +1393,10 @@ mod tests {
                             description: "HTTP fetch server".to_string(),
                             source: "smithery".to_string(),
                             command: "npx".to_string(),
-                            args: vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+                            args: vec![
+                                "-y".to_string(),
+                                "@modelcontextprotocol/server-fetch".to_string(),
+                            ],
                             env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
                             package_type: Some(crate::mcp::McpPackageType::Npm),
                             runtime_hint: Some("npx".to_string()),
@@ -1447,7 +1456,10 @@ mod tests {
                 McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
                     .with_registry(McpRegistry::Official)
                     .with_command("npx")
-                    .with_args(vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]),
+                    .with_args(vec![
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-fetch".to_string(),
+                    ]),
                 McpSearchResult::new("exa", "Exa", "Remote search")
                     .with_registry(McpRegistry::Smithery)
                     .with_url(Some("https://exa.example/mcp".to_string())),
@@ -1486,7 +1498,10 @@ mod tests {
                 },
             }
         );
-        assert!(user_rx.try_recv().is_err(), "unexpected additional MCP events");
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional MCP events"
+        );
     }
 
     #[gpui::test]
@@ -1501,7 +1516,10 @@ mod tests {
                 McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
                     .with_registry(McpRegistry::Official)
                     .with_command("npx")
-                    .with_args(vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]),
+                    .with_args(vec![
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-fetch".to_string(),
+                    ]),
                 McpSearchResult::new("exa", "Exa", "Remote search")
                     .with_registry(McpRegistry::Smithery)
                     .with_command("npx")
@@ -1520,7 +1538,10 @@ mod tests {
             view.set_results(vec![McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
                 .with_registry(McpRegistry::Official)
                 .with_command("npx")
-                .with_args(vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()])]);
+                .with_args(vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-fetch".to_string(),
+                ])]);
             assert_eq!(view.get_state().selected_result_id, None);
             assert_eq!(view.get_state().search_state, SearchState::Empty);
 
@@ -1529,7 +1550,10 @@ mod tests {
             view.set_results(vec![McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
                 .with_registry(McpRegistry::Official)
                 .with_command("npx")
-                .with_args(vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()])]);
+                .with_args(vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-fetch".to_string(),
+                ])]);
             assert_eq!(view.get_state().search_state, SearchState::Results);
             assert_eq!(view.filtered_results().len(), 1);
             assert_eq!(
@@ -1540,9 +1564,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn key_and_input_handling_follow_real_registry_and_search_rules(
-        cx: &mut TestAppContext,
-    ) {
+    async fn key_and_input_handling_follow_real_registry_and_search_rules(cx: &mut TestAppContext) {
         clear_navigation_requests();
         let (bridge, user_rx) = make_bridge();
         let view = cx.new(McpAddView::new);
@@ -1573,11 +1595,17 @@ mod tests {
                     },
                     cx,
                 );
-                assert_eq!(view.get_state().active_field, Some(ActiveField::SearchQuery));
+                assert_eq!(
+                    view.get_state().active_field,
+                    Some(ActiveField::SearchQuery)
+                );
 
                 view.replace_text_in_range(None, "exa", window, cx);
                 assert_eq!(view.get_state().search_query, "exa");
-                assert_eq!(view.text_for_range(0..2, &mut None, window, cx), Some("ex".to_string()));
+                assert_eq!(
+                    view.text_for_range(0..2, &mut None, window, cx),
+                    Some("ex".to_string())
+                );
 
                 view.replace_and_mark_text_in_range(None, "!", None, window, cx);
                 assert_eq!(view.get_state().search_query, "exa!");
@@ -1659,8 +1687,9 @@ mod tests {
                 }
             );
         }
-        assert!(user_rx.try_recv().is_err(), "unexpected additional search registry events");
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional search registry events"
+        );
     }
-
-
 }

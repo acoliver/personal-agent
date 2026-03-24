@@ -572,7 +572,9 @@ mod tests {
             assert_eq!(conversations[0].date_display, "3h ago");
             assert_eq!(conversations[1].title, "Selected");
             assert_eq!(conversations[1].date_display, "2m ago");
-            assert!(conversations.iter().all(|conversation| !conversation.is_selected));
+            assert!(conversations
+                .iter()
+                .all(|conversation| !conversation.is_selected));
 
             view.handle_command(
                 ViewCommand::ConversationActivated {
@@ -625,7 +627,10 @@ mod tests {
             view.handle_command(ViewCommand::ConversationDeleted { id: selected_id }, cx);
             assert_eq!(view.state.selected_conversation_id, Some(created_id));
             assert!(view.conversations()[0].is_selected);
-            assert!(view.conversations().iter().all(|conversation| conversation.id != selected_id));
+            assert!(view
+                .conversations()
+                .iter()
+                .all(|conversation| conversation.id != selected_id));
 
             view.handle_command(ViewCommand::ConversationCleared, cx);
         });

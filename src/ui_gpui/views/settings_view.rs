@@ -1006,8 +1006,6 @@ impl gpui::Render for SettingsView {
             )
             // Top bar (44px)
             .child(Self::render_top_bar(cx))
-
-
             // Content scroll area
             .child(
                 div()
@@ -1033,12 +1031,14 @@ mod tests {
     #![allow(clippy::future_not_send)]
 
     use super::*;
-    use gpui::TestAppContext;
     use crate::presentation::view_command::ViewId;
-
+    use gpui::TestAppContext;
 
     fn clear_navigation_requests() {
-        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+        while crate::ui_gpui::navigation_channel()
+            .take_pending()
+            .is_some()
+        {}
     }
 
     fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
@@ -1046,7 +1046,6 @@ mod tests {
         let (_view_tx, view_rx) = flume::bounded(16);
         (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
     }
-
 
     use flume;
 
@@ -1280,10 +1279,15 @@ mod tests {
             ]);
             assert_eq!(view.state.selected_profile_id, Some(profile_a));
             assert_eq!(view.state.profiles.len(), 2);
-            assert_eq!(view.state.profiles[1].display_text(), "Gamma (openai:gpt-4.1)");
+            assert_eq!(
+                view.state.profiles[1].display_text(),
+                "Gamma (openai:gpt-4.1)"
+            );
 
             view.state.selected_profile_id = Some(profile_b);
-            view.set_profiles(vec![ProfileItem::new(profile_c, "Gamma").with_model("openai", "gpt-4.1")]);
+            view.set_profiles(vec![
+                ProfileItem::new(profile_c, "Gamma").with_model("openai", "gpt-4.1")
+            ]);
             assert_eq!(view.state.selected_profile_id, Some(profile_b));
 
             view.set_mcps(vec![
@@ -1302,13 +1306,14 @@ mod tests {
             assert_eq!(view.state.mcps[1].status, McpStatus::Error);
 
             view.state.selected_mcp_id = Some(mcp_a);
-            view.set_mcps(vec![McpItem::new(mcp_c, "Fetcher").with_status(McpStatus::Error)]);
+            view.set_mcps(vec![
+                McpItem::new(mcp_c, "Fetcher").with_status(McpStatus::Error)
+            ]);
             assert_eq!(view.state.selected_mcp_id, Some(mcp_c));
             assert_eq!(view.state.mcps.len(), 1);
             assert!(!view.state.mcps[0].enabled);
         });
     }
-
 
     #[gpui::test]
     async fn helper_actions_and_key_handling_emit_expected_events_and_navigation(
@@ -1471,8 +1476,9 @@ mod tests {
             user_rx.recv().expect("e key edits profile"),
             UserEvent::EditProfile { id: profile_b }
         );
-        assert!(user_rx.try_recv().is_err(), "unexpected additional settings events");
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional settings events"
+        );
     }
-
-
 }

@@ -1,4 +1,0 @@
-PID=87001
-PASS: ChatView received non-empty profile snapshot (count=35)
-PASS: Profile dropdown opened
-PASS: Profile dropdown emitted SelectChatProfile event

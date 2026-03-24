@@ -1,5 +1,0 @@
-PID=86227
-PASS: ChatView received non-empty conversation list (count=20)
-PASS: Conversation dropdown opened
-PASS: Conversation dropdown selection path executed
-PASS: SelectConversation event emitted

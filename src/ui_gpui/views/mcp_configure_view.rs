@@ -1065,7 +1065,6 @@ impl gpui::Render for McpConfigureView {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::future_not_send)]
@@ -1085,12 +1084,16 @@ mod tests {
     }
 
     fn clear_navigation_requests() {
-        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+        while crate::ui_gpui::navigation_channel()
+            .take_pending()
+            .is_some()
+        {}
     }
 
-
     #[gpui::test]
-    async fn draft_loaded_sets_auth_transport_and_save_payload_for_remote_http(cx: &mut TestAppContext) {
+    async fn draft_loaded_sets_auth_transport_and_save_payload_for_remote_http(
+        cx: &mut TestAppContext,
+    ) {
         let (bridge, user_rx) = make_bridge();
         let view = cx.new(McpConfigureView::new);
 
@@ -1113,7 +1116,10 @@ mod tests {
             );
             assert!(view.state.is_new);
             assert_eq!(view.state.data.auth_method, McpAuthMethod::None);
-            assert_eq!(view.state.data.url.as_deref(), Some("https://exa.example/mcp"));
+            assert_eq!(
+                view.state.data.url.as_deref(),
+                Some("https://exa.example/mcp")
+            );
             assert!(view.state.data.can_save());
             view.emit_save_mcp_config();
         });
@@ -1122,7 +1128,10 @@ mod tests {
             UserEvent::SaveMcpConfig { id, config } => {
                 assert_eq!(id, Uuid::nil());
                 assert_eq!(config.name, "Exa Remote");
-                assert_eq!(config.package.package_type, crate::mcp::McpPackageType::Http);
+                assert_eq!(
+                    config.package.package_type,
+                    crate::mcp::McpPackageType::Http
+                );
                 assert_eq!(config.transport, crate::mcp::McpTransport::Http);
                 assert_eq!(
                     config.source,
@@ -1153,7 +1162,10 @@ mod tests {
                     runtime_hint: Some("npx".to_string()),
                     env_var_name: "FILESYSTEM_TOKEN".to_string(),
                     command: "npx".to_string(),
-                    args: vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()],
+                    args: vec![
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-filesystem".to_string(),
+                    ],
                     env: Some(vec![("FILESYSTEM_TOKEN".to_string(), String::new())]),
                     url: None,
                 },
@@ -1162,10 +1174,7 @@ mod tests {
             assert!(!view.state.is_new);
             assert_eq!(view.state.data.auth_method, McpAuthMethod::ApiKey);
             assert_eq!(view.state.data.env_var_name, "FILESYSTEM_TOKEN");
-            assert_eq!(
-                view.state.data.runtime_hint.as_deref(),
-                Some("npx")
-            );
+            assert_eq!(view.state.data.runtime_hint.as_deref(), Some("npx"));
             assert!(!view.state.data.can_save());
 
             view.handle_command(
@@ -1201,7 +1210,10 @@ mod tests {
                 },
                 cx,
             );
-            assert_eq!(view.state.data.id.as_deref(), Some(saved_id.to_string().as_str()));
+            assert_eq!(
+                view.state.data.id.as_deref(),
+                Some(saved_id.to_string().as_str())
+            );
             assert_eq!(view.state.data.name, "Filesystem Saved");
             assert!(!view.state.is_new);
             assert_eq!(
@@ -1254,7 +1266,10 @@ mod tests {
             UserEvent::SaveMcpConfig { id, config } => {
                 assert_eq!(id, saved_id);
                 assert_eq!(config.name, "Docker Filesystem");
-                assert_eq!(config.package.package_type, crate::mcp::McpPackageType::Docker);
+                assert_eq!(
+                    config.package.package_type,
+                    crate::mcp::McpPackageType::Docker
+                );
                 assert_eq!(
                     config.package.identifier,
                     "ghcr.io/example/filesystem-mcp:latest"
@@ -1449,8 +1464,9 @@ mod tests {
             other => panic!("expected SaveMcpConfig event, got {other:?}"),
         }
 
-        assert!(user_rx.try_recv().is_err(), "unexpected additional mcp configure events");
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional mcp configure events"
+        );
     }
-
-
 }
