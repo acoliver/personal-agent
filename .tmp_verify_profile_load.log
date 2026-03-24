@@ -1,5 +1,0 @@
-wrote legacy profile fixtures
-PID=84102
-PASS: Legacy profile fixture #1 loaded
-PASS: Legacy profile fixture #2 loaded
-PASS: ProfileService emitted total loaded count

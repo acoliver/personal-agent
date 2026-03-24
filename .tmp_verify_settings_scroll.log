@@ -1,8 +1,0 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.28s
-PASS: cargo check
-FAIL: List boxes are not using overflow_y_scroll
-414:    fn render_profiles_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-652:    fn render_mcp_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-881:                    .child(self.render_profiles_section(cx))
-883:                    .child(self.render_mcp_section(cx))
-PASS: Settings sections found

@@ -1,6 +1,0 @@
-PID=55548
-PASS: Conversation list loaded into chat view before selection
-FAIL: Conversation dropdown did not open
-FAIL: No SelectConversation event observed
-FAIL: No replay log for selected old conversation
-FAIL: No MessageAppended routing observed after selection
