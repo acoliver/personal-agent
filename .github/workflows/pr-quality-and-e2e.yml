@@ -187,10 +187,6 @@ jobs:
       - name: Resolve PA_E2E defaults
         run: |
           set -euo pipefail
-          if [ -z "${OLLAMA_API_KEY}" ]; then
-            echo "Missing required secret OLLAMA_API_KEY"
-            exit 1
-          fi
 
           E2E_PROVIDER_ID="${PA_E2E_PROVIDER_ID:-ollama}"
           E2E_MODEL_ID="${PA_E2E_MODEL_ID:-minimax-m2.7:cloud}"
@@ -202,20 +198,31 @@ jobs:
             echo "PA_E2E_MODEL_ID=${E2E_MODEL_ID}"
             echo "PA_E2E_BASE_URL=${E2E_BASE_URL}"
             echo "PA_E2E_KEY_LABEL=${E2E_KEY_LABEL}"
-            echo "PA_E2E_API_KEY=${OLLAMA_API_KEY}"
           } >> "$GITHUB_ENV"
 
+          if [ -n "${OLLAMA_API_KEY}" ]; then
+            echo "PA_E2E_API_KEY=${OLLAMA_API_KEY}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Skip notice when OLLAMA_API_KEY is not configured
+        if: env.OLLAMA_API_KEY == ''
+        run: |
+          echo "Skipping real ignored E2E: OLLAMA_API_KEY secret is not configured for this repository."
+
       - name: Seed secure store label for fallback auth path
+        if: env.OLLAMA_API_KEY != ''
         run: |
           set -euo pipefail
           security add-generic-password -U -a "apikey:$PA_E2E_KEY_LABEL" -s personal-agent -w "$PA_E2E_API_KEY"
 
       - name: Verify secure store label
+        if: env.OLLAMA_API_KEY != ''
         run: |
           set -euo pipefail
           security find-generic-password -a "apikey:$PA_E2E_KEY_LABEL" -s personal-agent -w >/dev/null
 
       - name: Run ignored real E2E tests
+        if: env.OLLAMA_API_KEY != ''
         run: |
           set -euo pipefail
           cargo test --test e2e_chat_synthetic -- --ignored --nocapture
