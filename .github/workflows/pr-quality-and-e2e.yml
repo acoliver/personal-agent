@@ -9,10 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Quality Gate (fmt, clippy, tests, coverage)
+  fmt:
+    name: Format (rustfmt)
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -20,17 +20,30 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
 
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: Run Cargo QA gate
-        run: cargo qa
+  lint:
+    name: Lint (clippy + structural)
+    runs-on: macos-14
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Install complexity tooling (lizard)
         run: |
@@ -71,10 +84,85 @@ jobs:
             exit 1
           fi
 
+  test:
+    name: Tests (lib + integration)
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run library and integration tests
+        run: cargo test --lib --tests
+
+  coverage:
+    name: Coverage (llvm-cov report)
+    runs-on: macos-14
+    needs:
+      - fmt
+      - lint
+      - test
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Generate coverage summary (workspace scoped)
+        run: |
+          set -euo pipefail
+
+          HOST_TRIPLE="$(rustc -vV | awk '/^host: /{print $2}')"
+          LLVM_BIN="$(rustc --print sysroot)/lib/rustlib/${HOST_TRIPLE}/bin"
+          export LLVM_COV="${LLVM_BIN}/llvm-cov"
+          export LLVM_PROFDATA="${LLVM_BIN}/llvm-profdata"
+
+          IGNORE_REGEX='research/serdesAI/|src/main_gpui.rs|src/bin/|src/llm/client_agent.rs|src/ui_gpui/popup_window.rs|src/ui_gpui/tray_bridge.rs|src/ui_gpui/navigation_channel.rs|src/ui_gpui/selection_intent_channel.rs'
+
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --no-report --lib --tests -q
+
+          mkdir -p target/llvm-cov-target
+          cargo llvm-cov report --summary-only --ignore-filename-regex "$IGNORE_REGEX"
+          cargo llvm-cov report \
+            --json \
+            --summary-only \
+            --skip-functions \
+            --ignore-filename-regex "$IGNORE_REGEX" \
+            --output-path target/llvm-cov-target/workspace-summary.json
+
+      - name: Upload coverage summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-summary
+          path: target/llvm-cov-target/workspace-summary.json
+
   real-e2e:
     name: Real ignored E2E (PA_E2E contract)
     runs-on: macos-14
-    needs: quality
+    needs:
+      - fmt
+      - lint
+      - test
+      - coverage
     timeout-minutes: 60
     env:
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
