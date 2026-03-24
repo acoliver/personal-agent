@@ -310,7 +310,6 @@ impl ModelSelectorView {
         }
     }
 
-
     fn toggle_provider_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.show_provider_dropdown = !self.state.show_provider_dropdown;
         cx.notify();
@@ -1262,7 +1261,10 @@ mod tests {
             );
             assert!(!view.get_state().show_provider_dropdown);
             assert_eq!(view.get_state().filtered_models().len(), 1);
-            assert_eq!(view.get_state().filtered_models()[0].id, "claude-3-7-sonnet");
+            assert_eq!(
+                view.get_state().filtered_models()[0].id,
+                "claude-3-7-sonnet"
+            );
 
             view.toggle_reasoning_filter(cx);
             assert!(view.get_state().filter_reasoning);
@@ -1279,7 +1281,10 @@ mod tests {
             view.toggle_vision_filter(cx);
             assert!(!view.get_state().filter_vision);
             assert_eq!(view.get_state().filtered_models().len(), 1);
-            assert_eq!(view.get_state().filtered_models()[0].id, "claude-3-7-sonnet");
+            assert_eq!(
+                view.get_state().filtered_models()[0].id,
+                "claude-3-7-sonnet"
+            );
 
             view.select_model("anthropic".to_string(), "claude-3-7-sonnet".to_string());
             assert!(!view.get_state().show_provider_dropdown);
@@ -1302,14 +1307,20 @@ mod tests {
                 model_id: "claude-3-7-sonnet".to_string(),
             }
         );
-        assert!(user_rx.try_recv().is_err(), "unexpected additional selector events");
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional selector events"
+        );
     }
 
     #[gpui::test]
     async fn key_handling_closes_dropdown_navigates_and_backspaces_search_once(
         cx: &mut TestAppContext,
     ) {
-        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+        while crate::ui_gpui::navigation_channel()
+            .take_pending()
+            .is_some()
+        {}
         let (user_tx, user_rx) = flume::bounded(16);
         let (_view_tx, view_rx) = flume::bounded(16);
         let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
@@ -1385,7 +1396,9 @@ mod tests {
                 query: "claude-3".to_string(),
             }
         );
-        assert!(user_rx.try_recv().is_err(), "unexpected additional key-handling events");
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional key-handling events"
+        );
     }
-
 }

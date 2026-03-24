@@ -1474,7 +1474,6 @@ impl gpui::Render for ProfileEditorView {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::future_not_send)]
@@ -1492,11 +1491,12 @@ mod tests {
         (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
     }
 
-
     fn clear_navigation_requests() {
-        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+        while crate::ui_gpui::navigation_channel()
+            .take_pending()
+            .is_some()
+        {}
     }
-
 
     #[gpui::test]
     async fn set_bridge_requests_api_keys_and_model_selection_can_be_saved(
@@ -1520,7 +1520,10 @@ mod tests {
             view.emit_save_profile();
         });
 
-        assert_eq!(user_rx.recv().expect("refresh api keys event"), UserEvent::RefreshApiKeys);
+        assert_eq!(
+            user_rx.recv().expect("refresh api keys event"),
+            UserEvent::RefreshApiKeys
+        );
         match user_rx.recv().expect("save profile event") {
             UserEvent::SaveProfile { profile } => {
                 assert_eq!(profile.name, "gpt-4.1");
@@ -1589,7 +1592,10 @@ mod tests {
             );
 
             assert!(!view.state.is_new);
-            assert_eq!(view.state.data.id.as_deref(), Some(profile_id.to_string().as_str()));
+            assert_eq!(
+                view.state.data.id.as_deref(),
+                Some(profile_id.to_string().as_str())
+            );
             assert_eq!(view.state.data.name, "Existing Profile");
             assert_eq!(view.state.data.model_id, "claude-sonnet-4-20250514");
             assert_eq!(view.state.data.api_type, ApiType::Anthropic);
@@ -1669,7 +1675,10 @@ mod tests {
                 view.state.active_field = Some(ActiveField::SystemPrompt);
                 let prompt_before = view.state.data.system_prompt.clone();
                 view.replace_and_mark_text_in_range(None, " plan", None, window, cx);
-                assert_eq!(view.state.data.system_prompt, format!("{prompt_before} plan"));
+                assert_eq!(
+                    view.state.data.system_prompt,
+                    format!("{prompt_before} plan")
+                );
                 assert!(view.marked_text_range(window, cx).is_some());
                 view.replace_text_in_range(None, " final", window, cx);
                 assert!(view.state.data.system_prompt.ends_with(" final"));
@@ -1700,10 +1709,22 @@ mod tests {
             view.state.data.key_label = view.state.data.available_keys[0].clone();
         });
 
-        assert_eq!(user_rx.recv().expect("initial refresh"), UserEvent::RefreshApiKeys);
-        assert_eq!(user_rx.recv().expect("explicit refresh"), UserEvent::RefreshApiKeys);
-        assert_eq!(user_rx.recv().expect("empty dropdown refresh"), UserEvent::RefreshApiKeys);
-        assert!(user_rx.try_recv().is_err(), "unexpected additional profile events");
+        assert_eq!(
+            user_rx.recv().expect("initial refresh"),
+            UserEvent::RefreshApiKeys
+        );
+        assert_eq!(
+            user_rx.recv().expect("explicit refresh"),
+            UserEvent::RefreshApiKeys
+        );
+        assert_eq!(
+            user_rx.recv().expect("empty dropdown refresh"),
+            UserEvent::RefreshApiKeys
+        );
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional profile events"
+        );
 
         clear_navigation_requests();
         crate::ui_gpui::navigation_channel()
@@ -1770,7 +1791,10 @@ mod tests {
             view.emit_save_profile();
         });
 
-        assert_eq!(user_rx.recv().expect("refresh api keys event"), UserEvent::RefreshApiKeys);
+        assert_eq!(
+            user_rx.recv().expect("refresh api keys event"),
+            UserEvent::RefreshApiKeys
+        );
         match user_rx.recv().expect("save profile event") {
             UserEvent::SaveProfile { profile } => {
                 assert_eq!(profile.id, existing_id);
@@ -1848,5 +1872,4 @@ mod tests {
             });
         });
     }
-
 }

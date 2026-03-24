@@ -1786,7 +1786,10 @@ mod tests {
 
         panel.update(cx, |panel: &mut MainPanel, cx| {
             panel.init(cx);
-            assert_eq!(panel.current_view(), crate::presentation::view_command::ViewId::Chat);
+            assert_eq!(
+                panel.current_view(),
+                crate::presentation::view_command::ViewId::Chat
+            );
 
             panel.handle_command(
                 ViewCommand::NavigateTo {
@@ -1800,7 +1803,10 @@ mod tests {
             );
 
             panel.handle_command(ViewCommand::NavigateBack, cx);
-            assert_eq!(panel.current_view(), crate::presentation::view_command::ViewId::Chat);
+            assert_eq!(
+                panel.current_view(),
+                crate::presentation::view_command::ViewId::Chat
+            );
 
             panel.handle_command(
                 ViewCommand::ModelSearchResults {
@@ -2010,6 +2016,4 @@ mod tests {
             assert_eq!(targets.mcp_config_saved_count, 1);
         });
     }
-
-
 }

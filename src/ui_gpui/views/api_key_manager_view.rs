@@ -1089,9 +1089,11 @@ mod tests {
         );
     }
 
-
     fn clear_navigation_requests() {
-        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+        while crate::ui_gpui::navigation_channel()
+            .take_pending()
+            .is_some()
+        {}
     }
 
     #[gpui::test]
@@ -1128,8 +1130,7 @@ mod tests {
 
                 view.handle_key_down(
                     &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("escape")
-                            .expect("escape keystroke"),
+                        keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
                         is_held: false,
                         prefer_character_input: false,
                     },
@@ -1149,7 +1150,10 @@ mod tests {
                 label: "openai".to_string()
             }
         );
-        assert!(user_rx.try_recv().is_err(), "unexpected additional user events");
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional user events"
+        );
         assert_eq!(
             crate::ui_gpui::navigation_channel().take_pending(),
             Some(ViewId::ProfileEditor)
@@ -1192,5 +1196,4 @@ mod tests {
             });
         });
     }
-
 }

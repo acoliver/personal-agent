@@ -4,8 +4,8 @@ use chrono::Utc;
 use gpui::{AppContext, EntityInputHandler, TestAppContext};
 use personal_agent::events::types::UserEvent;
 use personal_agent::presentation::view_command::{
-    ConversationMessagePayload, ConversationSummary, MessageRole as ViewMessageRole, ProfileSummary,
-    ViewCommand,
+    ConversationMessagePayload, ConversationSummary, MessageRole as ViewMessageRole,
+    ProfileSummary, ViewCommand,
 };
 use personal_agent::ui_gpui::app_store::{
     ChatStoreSnapshot, ConversationLoadState, SettingsStoreSnapshot, StreamingStoreSnapshot,
@@ -61,7 +61,10 @@ fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
 }
 
 fn drain_selection_requests() {
-    while personal_agent::ui_gpui::selection_intent_channel().take_pending().is_some() {}
+    while personal_agent::ui_gpui::selection_intent_channel()
+        .take_pending()
+        .is_some()
+    {}
 }
 
 #[gpui::test]
@@ -174,7 +177,10 @@ async fn conversation_selection_requests_authoritative_switch_and_stops_streamin
         view.confirm_conversation_dropdown_selection(cx);
     });
 
-    assert_eq!(user_rx.recv().expect("stop streaming event"), UserEvent::StopStreaming);
+    assert_eq!(
+        user_rx.recv().expect("stop streaming event"),
+        UserEvent::StopStreaming
+    );
     assert_eq!(
         personal_agent::ui_gpui::selection_intent_channel().take_pending(),
         Some(second_id)
@@ -411,7 +417,6 @@ async fn input_editing_and_ime_composition_follow_real_cursor_and_dropdown_rules
     });
 }
 
-
 #[gpui::test]
 async fn handle_command_ignores_inactive_updates_and_replaces_active_transcript(
     cx: &mut TestAppContext,
@@ -422,9 +427,8 @@ async fn handle_command_ignores_inactive_updates_and_replaces_active_transcript(
 
     view.update(cx, |view: &mut ChatView, cx| {
         view.state.current_model = "claude-3-7-sonnet".to_string();
-        view.state.messages = vec![personal_agent::ui_gpui::views::chat_view::ChatMessage::user(
-            "stale",
-        )];
+        view.state.messages =
+            vec![personal_agent::ui_gpui::views::chat_view::ChatMessage::user("stale")];
         view.state.thinking_content = Some("old".to_string());
         view.state.streaming = StreamingState::Error("old error".to_string());
         view.state.conversations = vec![conversation(active_id, "Active", 1)];
@@ -480,7 +484,10 @@ async fn handle_command_ignores_inactive_updates_and_replaces_active_transcript(
         assert_eq!(view.state.messages.len(), 3);
         assert_eq!(view.state.messages[0].content, "hi");
         assert_eq!(view.state.messages[1].content, "hello");
-        assert_eq!(view.state.messages[1].thinking.as_deref(), Some("reasoning"));
+        assert_eq!(
+            view.state.messages[1].thinking.as_deref(),
+            Some("reasoning")
+        );
         assert_eq!(view.state.messages[1].timestamp, Some(20));
         assert_eq!(view.state.messages[2].content, "follow-up");
         assert_eq!(
@@ -603,9 +610,8 @@ async fn handle_command_conversation_lifecycle_maintains_selection_title_and_cle
             conversation(second_id, "", 0),
         ];
         view.set_conversation_id(first_id);
-        view.state.messages = vec![personal_agent::ui_gpui::views::chat_view::ChatMessage::user(
-            "existing",
-        )];
+        view.state.messages =
+            vec![personal_agent::ui_gpui::views::chat_view::ChatMessage::user("existing")];
         view.state.streaming = StreamingState::Streaming {
             content: "partial".to_string(),
             done: false,
