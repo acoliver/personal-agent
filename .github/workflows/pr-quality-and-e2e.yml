@@ -48,14 +48,17 @@ jobs:
       - name: Install complexity tooling (lizard)
         run: |
           set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install lizard
+          python3 -m venv .venv-lizard
+          . .venv-lizard/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install lizard
 
       - name: Run structural quality checks (complexity + file length)
         run: |
           set -euo pipefail
+          . .venv-lizard/bin/activate
 
-          python3 -m lizard -C 50 -L 100 -w src/ \
+          python -m lizard -C 50 -L 100 -w src/ \
             --exclude "src/ui_gpui/views/*" \
             --exclude "src/ui_gpui/components/*" \
             --exclude "src/main_gpui.rs" \
