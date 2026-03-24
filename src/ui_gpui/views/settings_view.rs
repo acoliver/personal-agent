@@ -240,6 +240,83 @@ impl SettingsView {
         self.select_profile_by_index(next, true);
     }
 
+    fn select_profile(&mut self, profile_id: Uuid, cx: &mut gpui::Context<Self>) {
+        self.state.selected_profile_id = Some(profile_id);
+        self.emit(&UserEvent::SelectProfile { id: profile_id });
+        cx.notify();
+    }
+
+    fn delete_selected_profile(&self) {
+        if let Some(id) = self.state.selected_profile_id {
+            self.emit(&UserEvent::DeleteProfile { id });
+        }
+    }
+
+    fn edit_selected_profile(&self) {
+        if let Some(id) = self.state.selected_profile_id {
+            self.emit(&UserEvent::EditProfile { id });
+        }
+    }
+
+    fn navigate_to_chat(&self) {
+        crate::ui_gpui::navigation_channel()
+            .request_navigate(crate::presentation::view_command::ViewId::Chat);
+    }
+
+    fn navigate_to_profile_editor(&self) {
+        crate::ui_gpui::navigation_channel()
+            .request_navigate(crate::presentation::view_command::ViewId::ProfileEditor);
+    }
+
+    fn toggle_mcp(&self, id: Uuid, enabled: bool) {
+        self.emit(&UserEvent::ToggleMcp { id, enabled });
+    }
+
+    fn select_mcp(&mut self, mcp_id: Uuid, cx: &mut gpui::Context<Self>) {
+        self.state.selected_mcp_id = Some(mcp_id);
+        cx.notify();
+    }
+
+    fn delete_selected_mcp(&self) {
+        if let Some(id) = self.state.selected_mcp_id {
+            self.emit(&UserEvent::DeleteMcp { id });
+        }
+    }
+
+    fn navigate_to_mcp_add(&self) {
+        crate::ui_gpui::navigation_channel()
+            .request_navigate(crate::presentation::view_command::ViewId::McpAdd);
+    }
+
+    fn edit_selected_mcp(&self) {
+        if let Some(id) = self.state.selected_mcp_id {
+            self.emit(&UserEvent::ConfigureMcp { id });
+            crate::ui_gpui::navigation_channel()
+                .request_navigate(crate::presentation::view_command::ViewId::McpConfigure);
+        }
+    }
+
+    fn handle_key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut gpui::Context<Self>) {
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
+
+        if key == "escape" || (modifiers.platform && key == "w") {
+            self.navigate_to_chat();
+        } else if key == "=" && modifiers.shift {
+            self.navigate_to_profile_editor();
+        } else if key == "e" && !modifiers.platform {
+            self.edit_selected_profile();
+        } else if key == "m" && !modifiers.platform {
+            self.navigate_to_mcp_add();
+        } else if key == "up" && !modifiers.platform {
+            self.scroll_profiles(-1);
+            cx.notify();
+        } else if key == "down" && !modifiers.platform {
+            self.scroll_profiles(1);
+            cx.notify();
+        }
+    }
+
     /// Emit a `UserEvent` through the bridge
     /// @plan PLAN-20250130-GPUIREDUX.P06
     fn emit(&self, event: &UserEvent) {
@@ -486,9 +563,7 @@ impl SettingsView {
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, cx| {
                     tracing::info!("Profile selected: {}", profile_id);
-                    this.state.selected_profile_id = Some(profile_id);
-                    this.emit(&UserEvent::SelectProfile { id: profile_id });
-                    cx.notify();
+                    this.select_profile(profile_id, cx);
                 }),
             )
             .into_any_element()
@@ -578,8 +653,8 @@ impl SettingsView {
                                 cx.listener(|this, _, _window, _cx| {
                                     if let Some(id) = this.state.selected_profile_id {
                                         tracing::info!("Delete profile clicked: {}", id);
-                                        this.emit(&UserEvent::DeleteProfile { id });
                                     }
+                                    this.delete_selected_profile();
                                 }),
                             ),
                     )
@@ -599,14 +674,11 @@ impl SettingsView {
                             .child("+")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|_this, _, _window, _cx| {
-                                    println!(">>> Add profile button clicked <<<");
+                                cx.listener(|this, _, _window, _cx| {
                                     tracing::info!(
                                         "Add profile clicked - navigating to ModelSelector"
                                     );
-                                    crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::ProfileEditor,
-                                    );
+                                    this.navigate_to_profile_editor();
                                 }),
                             ),
                     )
@@ -636,8 +708,8 @@ impl SettingsView {
                                 cx.listener(|this, _, _window, _cx| {
                                     if let Some(id) = this.state.selected_profile_id {
                                         tracing::info!("Edit profile clicked: {}", id);
-                                        this.emit(&UserEvent::EditProfile { id });
                                     }
+                                    this.edit_selected_profile();
                                 }),
                             ),
                     ),
@@ -715,10 +787,7 @@ impl SettingsView {
                         MouseButton::Left,
                         cx.listener(move |this, _, _window, _cx| {
                             tracing::info!("MCP toggle clicked: {} -> {}", mcp_id, !enabled);
-                            this.emit(&UserEvent::ToggleMcp {
-                                id: mcp_id,
-                                enabled: !enabled,
-                            });
+                            this.toggle_mcp(mcp_id, !enabled);
                         }),
                     ),
             )
@@ -726,8 +795,7 @@ impl SettingsView {
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, cx| {
                     tracing::info!("MCP row selected: {}", mcp_id);
-                    this.state.selected_mcp_id = Some(mcp_id);
-                    cx.notify();
+                    this.select_mcp(mcp_id, cx);
                 }),
             )
             .into_any_element()
@@ -816,8 +884,8 @@ impl SettingsView {
                                 cx.listener(|this, _, _window, _cx| {
                                     if let Some(id) = this.state.selected_mcp_id {
                                         tracing::info!("Delete MCP clicked: {}", id);
-                                        this.emit(&UserEvent::DeleteMcp { id });
                                     }
+                                    this.delete_selected_mcp();
                                 }),
                             ),
                     )
@@ -837,11 +905,9 @@ impl SettingsView {
                             .child("+")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|_this, _, _window, _cx| {
+                                cx.listener(|this, _, _window, _cx| {
                                     tracing::info!("Add MCP clicked - navigating to McpAdd");
-                                    crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::McpAdd,
-                                    );
+                                    this.navigate_to_mcp_add();
                                 }),
                             ),
                     )
@@ -871,11 +937,8 @@ impl SettingsView {
                                 cx.listener(|this, _, _window, _cx| {
                                     if let Some(id) = this.state.selected_mcp_id {
                                         tracing::info!("Edit MCP clicked: {}", id);
-                                        this.emit(&UserEvent::ConfigureMcp { id });
-                                        crate::ui_gpui::navigation_channel().request_navigate(
-                                            crate::presentation::view_command::ViewId::McpConfigure,
-                                        );
                                     }
+                                    this.edit_selected_mcp();
                                 }),
                             ),
                     ),
@@ -938,53 +1001,13 @@ impl gpui::Render for SettingsView {
             .track_focus(&self.focus_handle)
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                    let key = &event.keystroke.key;
-                    let modifiers = &event.keystroke.modifiers;
-
-                    println!(
-                        ">>> SettingsView key: {} platform={} <<<",
-                        key, modifiers.platform
-                    );
-
-                    // Escape or Cmd+W: Go back to Chat
-                    if key == "escape" || (modifiers.platform && key == "w") {
-                        println!(">>> Escape/Cmd+W pressed - navigating to Chat <<<");
-                        crate::ui_gpui::navigation_channel()
-                            .request_navigate(crate::presentation::view_command::ViewId::Chat);
-                    }
-                    // "+" key: Add new profile (navigate to ModelSelector)
-                    else if key == "=" && modifiers.shift {
-                        // Shift+= is "+"
-                        println!(">>> + pressed - Add Profile <<<");
-                        crate::ui_gpui::navigation_channel().request_navigate(
-                            crate::presentation::view_command::ViewId::ProfileEditor,
-                        );
-                    }
-                    // "e" key: Edit selected profile
-                    else if key == "e" && !modifiers.platform {
-                        if let Some(id) = this.state.selected_profile_id {
-                            println!(">>> e pressed - Edit Profile {id:?} <<<");
-                            this.emit(&UserEvent::EditProfile { id });
-                        }
-                    }
-                    // "m" key: Add MCP
-                    else if key == "m" && !modifiers.platform {
-                        println!(">>> m pressed - Add MCP <<<");
-                        crate::ui_gpui::navigation_channel()
-                            .request_navigate(crate::presentation::view_command::ViewId::McpAdd);
-                    }
-                    // Arrow key navigation for profile list
-                    else if key == "up" && !modifiers.platform {
-                        this.scroll_profiles(-1);
-                        cx.notify();
-                    } else if key == "down" && !modifiers.platform {
-                        this.scroll_profiles(1);
-                        cx.notify();
-                    }
+                    this.handle_key_down(event, cx);
                 }),
             )
             // Top bar (44px)
             .child(Self::render_top_bar(cx))
+
+
             // Content scroll area
             .child(
                 div()
@@ -1003,4 +1026,453 @@ impl gpui::Render for SettingsView {
                     .child(self.render_hotkey_section(cx)),
             )
     }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::future_not_send)]
+
+    use super::*;
+    use gpui::TestAppContext;
+    use crate::presentation::view_command::ViewId;
+
+
+    fn clear_navigation_requests() {
+        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+    }
+
+    fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
+        let (user_tx, user_rx) = flume::bounded(16);
+        let (_view_tx, view_rx) = flume::bounded(16);
+        (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
+    }
+
+
+    use flume;
+
+    fn profile_summary(
+        id: Uuid,
+        name: &str,
+        provider: &str,
+        model: &str,
+        is_default: bool,
+    ) -> ProfileSummary {
+        ProfileSummary {
+            id,
+            name: name.to_string(),
+            provider_id: provider.to_string(),
+            model_id: model.to_string(),
+            is_default,
+        }
+    }
+
+    #[gpui::test]
+    async fn handle_command_applies_profile_summaries_and_selection_fallbacks(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let profile_a = Uuid::new_v4();
+        let profile_b = Uuid::new_v4();
+        let profile_c = Uuid::new_v4();
+        let view = cx.new(SettingsView::new);
+
+        view.update(cx, |view: &mut SettingsView, cx| {
+            view.handle_command(
+                ViewCommand::ShowSettings {
+                    profiles: vec![
+                        profile_summary(profile_a, "Alpha", "openai", "gpt-4o", false),
+                        profile_summary(profile_b, "Beta", "anthropic", "claude", true),
+                    ],
+                    selected_profile_id: None,
+                },
+                cx,
+            );
+
+            assert_eq!(view.state.selected_profile_id, Some(profile_a));
+            assert_eq!(view.state.profiles.len(), 2);
+            assert_eq!(
+                view.state.profiles[0].display_text(),
+                "Alpha (openai:gpt-4o)"
+            );
+            assert_eq!(
+                view.state.profiles[1].display_text(),
+                "Beta (anthropic:claude)"
+            );
+            assert!(view.state.profiles[1].is_default);
+
+            view.handle_command(
+                ViewCommand::ChatProfilesUpdated {
+                    profiles: vec![
+                        profile_summary(profile_b, "Beta", "anthropic", "claude", true),
+                        profile_summary(profile_c, "Gamma", "openai", "gpt-4.1", false),
+                    ],
+                    selected_profile_id: Some(profile_b),
+                },
+                cx,
+            );
+
+            assert_eq!(view.state.selected_profile_id, Some(profile_b));
+            assert_eq!(view.state.profiles.len(), 2);
+
+            view.handle_command(
+                ViewCommand::ShowSettings {
+                    profiles: vec![profile_summary(
+                        profile_c, "Gamma", "openai", "gpt-4.1", false,
+                    )],
+                    selected_profile_id: Some(profile_b),
+                },
+                cx,
+            );
+
+            assert_eq!(view.state.selected_profile_id, Some(profile_c));
+            assert_eq!(view.state.profiles.len(), 1);
+            assert_eq!(view.state.profiles[0].name, "Gamma");
+        });
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[gpui::test]
+    async fn profile_navigation_and_mcp_commands_update_state_and_emit_events(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let profile_a = Uuid::new_v4();
+        let profile_b = Uuid::new_v4();
+        let mcp_existing = Uuid::new_v4();
+        let mcp_new = Uuid::new_v4();
+        let (user_tx, user_rx) = flume::bounded(16);
+        let (_view_tx, view_rx) = flume::bounded(16);
+        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
+        let view = cx.new(SettingsView::new);
+
+        view.update(cx, |view: &mut SettingsView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.set_profiles(vec![
+                ProfileItem::new(profile_a, "Alpha").with_model("openai", "gpt-4o"),
+                ProfileItem::new(profile_b, "Beta").with_model("anthropic", "claude"),
+            ]);
+            view.state.selected_profile_id = Some(profile_a);
+
+            view.scroll_profiles(1);
+            assert_eq!(view.state.selected_profile_id, Some(profile_b));
+            view.scroll_profiles(20);
+            assert_eq!(view.state.selected_profile_id, Some(profile_b));
+            view.scroll_profiles(-20);
+            assert_eq!(view.state.selected_profile_id, Some(profile_a));
+
+            view.set_mcps(vec![
+                McpItem::new(mcp_existing, "Existing").with_status(McpStatus::Stopped)
+            ]);
+            assert_eq!(view.state.selected_mcp_id, Some(mcp_existing));
+
+            view.handle_command(
+                ViewCommand::McpStatusChanged {
+                    id: mcp_existing,
+                    status: crate::presentation::view_command::McpStatus::Running,
+                },
+                cx,
+            );
+            let existing = view
+                .state
+                .mcps
+                .iter()
+                .find(|mcp| mcp.id == mcp_existing)
+                .expect("existing mcp retained");
+            assert_eq!(existing.status, McpStatus::Running);
+            assert!(existing.enabled);
+
+            view.handle_command(
+                ViewCommand::McpServerStarted {
+                    id: mcp_new,
+                    name: Some("Fetch".to_string()),
+                    tool_count: 3,
+                    enabled: Some(false),
+                },
+                cx,
+            );
+            let inserted = view
+                .state
+                .mcps
+                .iter()
+                .find(|mcp| mcp.id == mcp_new)
+                .expect("new mcp inserted");
+            assert_eq!(inserted.name, "Fetch");
+            assert!(!inserted.enabled);
+            assert_eq!(inserted.status, McpStatus::Stopped);
+
+            view.handle_command(
+                ViewCommand::McpServerFailed {
+                    id: mcp_new,
+                    error: "boom".to_string(),
+                },
+                cx,
+            );
+            let failed = view
+                .state
+                .mcps
+                .iter()
+                .find(|mcp| mcp.id == mcp_new)
+                .expect("mcp still present after failure");
+            assert_eq!(failed.status, McpStatus::Error);
+            assert!(!failed.enabled);
+
+            view.handle_command(
+                ViewCommand::McpConfigSaved {
+                    id: mcp_new,
+                    name: Some("Saved MCP".to_string()),
+                },
+                cx,
+            );
+            let saved = view
+                .state
+                .mcps
+                .iter()
+                .find(|mcp| mcp.id == mcp_new)
+                .expect("saved mcp retained");
+            assert_eq!(view.state.selected_mcp_id, Some(mcp_new));
+            assert_eq!(saved.name, "Saved MCP");
+            assert!(saved.enabled);
+            assert_eq!(saved.status, McpStatus::Stopped);
+
+            view.handle_command(ViewCommand::McpDeleted { id: mcp_new }, cx);
+            assert!(view.state.mcps.iter().all(|mcp| mcp.id != mcp_new));
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("profile scroll selects beta"),
+            UserEvent::SelectProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().expect("profile scroll returns to alpha"),
+            UserEvent::SelectProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().expect("profile scroll selects alpha"),
+            UserEvent::SelectProfile { id: profile_a }
+        );
+        assert!(
+            user_rx.try_recv().is_err(),
+            "settings view test should emit only expected bridge events"
+        );
+    }
+
+    #[gpui::test]
+    async fn profile_and_mcp_setters_enforce_selection_fallbacks_without_bridge(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let profile_a = Uuid::new_v4();
+        let profile_b = Uuid::new_v4();
+        let profile_c = Uuid::new_v4();
+        let mcp_a = Uuid::new_v4();
+        let mcp_b = Uuid::new_v4();
+        let mcp_c = Uuid::new_v4();
+        let view = cx.new(SettingsView::new);
+
+        view.update(cx, |view: &mut SettingsView, _cx| {
+            view.set_profiles(vec![
+                ProfileItem::new(profile_a, "Alpha").with_model("openai", "gpt-4o"),
+                ProfileItem::new(profile_b, "Beta").with_model("anthropic", "claude"),
+            ]);
+            assert_eq!(view.state.selected_profile_id, None);
+
+            view.state.selected_profile_id = Some(profile_a);
+            view.set_profiles(vec![
+                ProfileItem::new(profile_a, "Alpha").with_model("openai", "gpt-4o"),
+                ProfileItem::new(profile_c, "Gamma").with_model("openai", "gpt-4.1"),
+            ]);
+            assert_eq!(view.state.selected_profile_id, Some(profile_a));
+            assert_eq!(view.state.profiles.len(), 2);
+            assert_eq!(view.state.profiles[1].display_text(), "Gamma (openai:gpt-4.1)");
+
+            view.state.selected_profile_id = Some(profile_b);
+            view.set_profiles(vec![ProfileItem::new(profile_c, "Gamma").with_model("openai", "gpt-4.1")]);
+            assert_eq!(view.state.selected_profile_id, Some(profile_b));
+
+            view.set_mcps(vec![
+                McpItem::new(mcp_a, "Existing").with_status(McpStatus::Stopped),
+                McpItem::new(mcp_b, "Runner").with_enabled(true),
+            ]);
+            assert_eq!(view.state.selected_mcp_id, Some(mcp_a));
+
+            view.state.selected_mcp_id = Some(mcp_b);
+            view.set_mcps(vec![
+                McpItem::new(mcp_b, "Runner").with_enabled(true),
+                McpItem::new(mcp_c, "Fetcher").with_status(McpStatus::Error),
+            ]);
+            assert_eq!(view.state.selected_mcp_id, Some(mcp_b));
+            assert_eq!(view.state.mcps[0].status, McpStatus::Running);
+            assert_eq!(view.state.mcps[1].status, McpStatus::Error);
+
+            view.state.selected_mcp_id = Some(mcp_a);
+            view.set_mcps(vec![McpItem::new(mcp_c, "Fetcher").with_status(McpStatus::Error)]);
+            assert_eq!(view.state.selected_mcp_id, Some(mcp_c));
+            assert_eq!(view.state.mcps.len(), 1);
+            assert!(!view.state.mcps[0].enabled);
+        });
+    }
+
+
+    #[gpui::test]
+    async fn helper_actions_and_key_handling_emit_expected_events_and_navigation(
+        cx: &mut TestAppContext,
+    ) {
+        clear_navigation_requests();
+        let profile_a = Uuid::new_v4();
+        let profile_b = Uuid::new_v4();
+        let mcp_a = Uuid::new_v4();
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(SettingsView::new);
+
+        view.update(cx, |view: &mut SettingsView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.set_profiles(vec![
+                ProfileItem::new(profile_a, "Alpha").with_model("openai", "gpt-4o"),
+                ProfileItem::new(profile_b, "Beta").with_model("anthropic", "claude"),
+            ]);
+            view.set_mcps(vec![McpItem::new(mcp_a, "Fetcher").with_enabled(true)]);
+            view.state.selected_profile_id = Some(profile_a);
+            view.state.selected_mcp_id = Some(mcp_a);
+
+            view.select_profile(profile_b, cx);
+            assert_eq!(view.state.selected_profile_id, Some(profile_b));
+
+            view.delete_selected_profile();
+            view.edit_selected_profile();
+
+            view.toggle_mcp(mcp_a, false);
+            view.select_mcp(mcp_a, cx);
+            assert_eq!(view.state.selected_mcp_id, Some(mcp_a));
+            view.delete_selected_mcp();
+            view.edit_selected_mcp();
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(ViewId::McpConfigure)
+            );
+
+            view.handle_key_down(
+                &gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("up").expect("up keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                cx,
+            );
+            assert_eq!(view.state.selected_profile_id, Some(profile_a));
+
+            view.handle_key_down(
+                &gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("down").expect("down keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                cx,
+            );
+            assert_eq!(view.state.selected_profile_id, Some(profile_b));
+
+            view.handle_key_down(
+                &gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("e").expect("e keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                cx,
+            );
+
+            view.handle_key_down(
+                &gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("shift-=").expect("plus keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                cx,
+            );
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(ViewId::ProfileEditor)
+            );
+
+            view.handle_key_down(
+                &gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("m").expect("m keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                cx,
+            );
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(ViewId::McpAdd)
+            );
+
+            view.handle_key_down(
+                &gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("cmd-w").expect("cmd-w keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                cx,
+            );
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(ViewId::Chat)
+            );
+
+            view.navigate_to_profile_editor();
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(ViewId::ProfileEditor)
+            );
+            view.navigate_to_mcp_add();
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(ViewId::McpAdd)
+            );
+            view.navigate_to_chat();
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(ViewId::Chat)
+            );
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("profile select helper"),
+            UserEvent::SelectProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().expect("delete profile helper"),
+            UserEvent::DeleteProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().expect("edit profile helper"),
+            UserEvent::EditProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().expect("toggle mcp helper"),
+            UserEvent::ToggleMcp {
+                id: mcp_a,
+                enabled: false,
+            }
+        );
+        assert_eq!(
+            user_rx.recv().expect("delete mcp helper"),
+            UserEvent::DeleteMcp { id: mcp_a }
+        );
+        assert_eq!(
+            user_rx.recv().expect("configure mcp helper"),
+            UserEvent::ConfigureMcp { id: mcp_a }
+        );
+        assert_eq!(
+            user_rx.recv().expect("up key selects alpha"),
+            UserEvent::SelectProfile { id: profile_a }
+        );
+        assert_eq!(
+            user_rx.recv().expect("down key selects beta"),
+            UserEvent::SelectProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().expect("e key edits profile"),
+            UserEvent::EditProfile { id: profile_b }
+        );
+        assert!(user_rx.try_recv().is_err(), "unexpected additional settings events");
+    }
+
+
 }

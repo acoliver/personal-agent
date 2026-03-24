@@ -914,3 +914,283 @@ impl gpui::Render for ApiKeyManagerView {
             .child(self.render_content(cx))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::future_not_send)]
+
+    use super::*;
+    use gpui::{AppContext, EntityInputHandler, TestAppContext};
+
+    fn key_info(label: &str, masked_value: &str, used_by: &[&str]) -> ApiKeyInfo {
+        ApiKeyInfo {
+            label: label.to_string(),
+            masked_value: masked_value.to_string(),
+            used_by: used_by.iter().map(|value| (*value).to_string()).collect(),
+        }
+    }
+
+    #[gpui::test]
+    async fn handle_command_updates_key_list_and_resets_edit_state(cx: &mut TestAppContext) {
+        let view = cx.new(ApiKeyManagerView::new);
+
+        view.update(cx, |view: &mut ApiKeyManagerView, cx| {
+            view.state.start_adding();
+            view.state.label_input = "anthropic".to_string();
+            view.state.value_input = "sk-secret".to_string();
+            view.state.error = Some("boom".to_string());
+
+            view.handle_command(
+                ViewCommand::ApiKeysListed {
+                    keys: vec![
+                        key_info("anthropic", "••••1234", &["Claude"]),
+                        key_info("openai", "••••5678", &[]),
+                    ],
+                },
+                cx,
+            );
+
+            assert_eq!(view.state.keys.len(), 2);
+            assert_eq!(view.state.keys[0].label, "anthropic");
+            assert_eq!(view.state.edit_mode, EditMode::Adding);
+
+            view.handle_command(
+                ViewCommand::ApiKeyStored {
+                    label: "anthropic".to_string(),
+                },
+                cx,
+            );
+
+            assert_eq!(view.state.edit_mode, EditMode::Idle);
+            assert!(view.state.label_input.is_empty());
+            assert!(view.state.value_input.is_empty());
+            assert!(view.state.error.is_none());
+
+            view.state.start_editing("openai");
+            view.state.value_input = "replacement".to_string();
+            view.handle_command(
+                ViewCommand::ApiKeyDeleted {
+                    label: "openai".to_string(),
+                },
+                cx,
+            );
+            assert_eq!(view.state.edit_mode, EditMode::Idle);
+            assert!(view.state.active_field.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn save_current_validates_and_emits_store_event(cx: &mut TestAppContext) {
+        let (user_tx, user_rx) = flume::bounded(8);
+        let (_view_tx, view_rx) = flume::bounded(8);
+        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
+        let view = cx.new(ApiKeyManagerView::new);
+
+        view.update(cx, |view: &mut ApiKeyManagerView, _cx| {
+            view.set_bridge(Arc::clone(&bridge));
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("refresh event"),
+            UserEvent::RefreshApiKeys
+        );
+
+        view.update(cx, |view: &mut ApiKeyManagerView, _cx| {
+            view.state.start_adding();
+            view.state.label_input.clear();
+            view.state.value_input = "secret".to_string();
+            view.save_current();
+            assert_eq!(view.state.error.as_deref(), Some("Label cannot be empty"));
+
+            view.state.label_input = "anthropic".to_string();
+            view.state.value_input.clear();
+            view.save_current();
+            assert_eq!(
+                view.state.error.as_deref(),
+                Some("API key value cannot be empty")
+            );
+
+            view.state.value_input = "  sk-live  ".to_string();
+            view.save_current();
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("store event"),
+            UserEvent::StoreApiKey {
+                label: "anthropic".to_string(),
+                value: "sk-live".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn text_entry_and_key_handling_follow_active_field_rules() {
+        let mut view = ApiKeyManagerState::new();
+
+        view.start_adding();
+        assert_eq!(view.active_field, Some(ActiveField::Label));
+
+        let mut manager = ApiKeyManagerState::new();
+        manager.start_adding();
+        assert_eq!(manager.edit_mode, EditMode::Adding);
+        assert_eq!(manager.active_field, Some(ActiveField::Label));
+
+        let mut key_manager = ApiKeyManagerState::new();
+        key_manager.start_adding();
+
+        let mut wrapper = ApiKeyManagerState::new();
+        wrapper.start_adding();
+
+        let mut state = ApiKeyManagerState::new();
+        state.start_adding();
+        assert_eq!(state.edit_mode, EditMode::Adding);
+        assert_eq!(state.active_field, Some(ActiveField::Label));
+
+        let mut view = ApiKeyManagerState::new();
+        view.start_adding();
+        assert_eq!(view.edit_mode, EditMode::Adding);
+
+        let mut manager = ApiKeyManagerState::new();
+        manager.start_adding();
+        manager.label_input = "anthropic".to_string();
+        assert_eq!(manager.label_input, "anthropic");
+
+        manager.active_field = Some(ActiveField::Value);
+        manager.value_input = "sk-".to_string();
+        assert_eq!(manager.value_input, "sk-");
+
+        manager.value_input.push_str("live");
+        assert_eq!(manager.value_input, "sk-live");
+
+        manager.value_input.pop();
+        assert_eq!(manager.value_input, "sk-liv");
+
+        manager.active_field = Some(ActiveField::Label);
+        assert_eq!(manager.active_field, Some(ActiveField::Label));
+
+        manager.start_editing("anthropic");
+        assert_eq!(manager.active_field, Some(ActiveField::Value));
+        assert_eq!(manager.label_input, "anthropic");
+
+        manager.cancel_edit();
+        assert_eq!(manager.edit_mode, EditMode::Idle);
+        assert!(manager.active_field.is_none());
+    }
+
+    #[test]
+    fn sanitized_clipboard_text_trims_only_newlines() {
+        assert_eq!(
+            ApiKeyManagerView::sanitized_clipboard_text("\nsecret\r\n"),
+            "secret"
+        );
+        assert_eq!(
+            ApiKeyManagerView::sanitized_clipboard_text("  secret  "),
+            "  secret  "
+        );
+    }
+
+
+    fn clear_navigation_requests() {
+        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+    }
+
+    #[gpui::test]
+    async fn delete_key_and_escape_navigation_emit_expected_user_and_navigation_actions(
+        cx: &mut TestAppContext,
+    ) {
+        clear_navigation_requests();
+        let (user_tx, user_rx) = flume::bounded(8);
+        let (_view_tx, view_rx) = flume::bounded(8);
+        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
+        let view = cx.new(ApiKeyManagerView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut ApiKeyManagerView, cx| {
+                view.set_bridge(Arc::clone(&bridge));
+                view.handle_command(
+                    ViewCommand::ApiKeysListed {
+                        keys: vec![key_info("openai", "••••5678", &["Default"])],
+                    },
+                    cx,
+                );
+                view.state.start_editing("openai");
+                view.state.value_input = "replacement".to_string();
+                view.delete_key("openai");
+                view.handle_command(
+                    ViewCommand::ApiKeyDeleted {
+                        label: "openai".to_string(),
+                    },
+                    cx,
+                );
+                assert_eq!(view.state.edit_mode, EditMode::Idle);
+                assert!(view.state.active_field.is_none());
+
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("escape")
+                            .expect("escape keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("refresh event"),
+            UserEvent::RefreshApiKeys
+        );
+        assert_eq!(
+            user_rx.recv().expect("delete event"),
+            UserEvent::DeleteApiKey {
+                label: "openai".to_string()
+            }
+        );
+        assert!(user_rx.try_recv().is_err(), "unexpected additional user events");
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(ViewId::ProfileEditor)
+        );
+    }
+
+    #[gpui::test]
+    async fn input_handler_tracks_marked_text_replacement_and_cursor_position(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(ApiKeyManagerView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut ApiKeyManagerView, cx| {
+                view.state.start_adding();
+                view.replace_text_in_range(None, "anth", window, cx);
+                assert_eq!(view.state.label_input, "anth");
+                assert_eq!(
+                    view.text_for_range(0..2, &mut None, window, cx),
+                    Some("an".to_string())
+                );
+
+                view.replace_and_mark_text_in_range(None, "ro", None, window, cx);
+                assert_eq!(view.state.label_input, "anthro");
+                assert_eq!(view.marked_text_range(window, cx), Some(4..6));
+
+                view.replace_text_in_range(None, "pic", window, cx);
+                assert_eq!(view.state.label_input, "anthpic");
+                assert_eq!(view.marked_text_range(window, cx), None);
+
+                let selection = view
+                    .selected_text_range(false, window, cx)
+                    .expect("selection range");
+                let len = "anthpic".encode_utf16().count();
+                assert_eq!(selection.range, len..len);
+
+                view.unmark_text(window, cx);
+                assert_eq!(view.marked_text_range(window, cx), None);
+            });
+        });
+    }
+
+}

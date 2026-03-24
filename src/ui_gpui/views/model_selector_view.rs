@@ -310,6 +310,73 @@ impl ModelSelectorView {
         }
     }
 
+
+    fn toggle_provider_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.show_provider_dropdown = !self.state.show_provider_dropdown;
+        cx.notify();
+    }
+
+    fn toggle_reasoning_filter(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.filter_reasoning = !self.state.filter_reasoning;
+        cx.notify();
+    }
+
+    fn toggle_vision_filter(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.filter_vision = !self.state.filter_vision;
+        cx.notify();
+    }
+
+    fn clear_provider_filter(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.selected_provider = None;
+        self.state.show_provider_dropdown = false;
+        self.emit_filter_events_if_changed();
+        cx.notify();
+    }
+
+    fn select_provider_filter(&mut self, provider_id: String, cx: &mut gpui::Context<Self>) {
+        self.state.selected_provider = Some(provider_id);
+        self.state.show_provider_dropdown = false;
+        self.emit_filter_events_if_changed();
+        cx.notify();
+    }
+
+    fn select_model(&mut self, provider_id: String, model_id: String) {
+        println!(">>> Model selected: {model_id} from {provider_id} <<<");
+        self.emit(&UserEvent::SelectModel {
+            provider_id,
+            model_id,
+        });
+        self.state.show_provider_dropdown = false;
+    }
+
+    fn handle_key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut gpui::Context<Self>) {
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
+
+        if key == "escape" {
+            if self.state.show_provider_dropdown {
+                self.state.show_provider_dropdown = false;
+                cx.notify();
+            } else {
+                crate::ui_gpui::navigation_channel()
+                    .request_navigate(crate::presentation::view_command::ViewId::Settings);
+            }
+            return;
+        }
+
+        if modifiers.platform && key == "w" {
+            crate::ui_gpui::navigation_channel()
+                .request_navigate(crate::presentation::view_command::ViewId::Settings);
+            return;
+        }
+
+        if !modifiers.platform && !modifiers.control && key == "backspace" {
+            self.state.search_query.pop();
+            self.emit_filter_events_if_changed();
+            cx.notify();
+        }
+    }
+
     /// Render the top bar with cancel button and title
     /// @plan PLAN-20250130-GPUIREDUX.P07
     fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -441,9 +508,7 @@ impl ModelSelectorView {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, _window, cx| {
-                                    this.state.show_provider_dropdown =
-                                        !this.state.show_provider_dropdown;
-                                    cx.notify();
+                                    this.toggle_provider_dropdown(cx);
                                 }),
                             )
                             .child(provider_display)
@@ -482,8 +547,7 @@ impl ModelSelectorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {
-                            this.state.filter_reasoning = !this.state.filter_reasoning;
-                            cx.notify();
+                            this.toggle_reasoning_filter(cx);
                         }),
                     )
                     .child(
@@ -522,8 +586,7 @@ impl ModelSelectorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {
-                            this.state.filter_vision = !this.state.filter_vision;
-                            cx.notify();
+                            this.toggle_vision_filter(cx);
                         }),
                     )
                     .child(
@@ -605,12 +668,7 @@ impl ModelSelectorView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, _cx| {
-                    println!(">>> Model selected: {model_id} from {provider_id} <<<");
-                    this.emit(&UserEvent::SelectModel {
-                        provider_id: provider_id.clone(),
-                        model_id: model_id.clone(),
-                    });
-                    this.state.show_provider_dropdown = false;
+                    this.select_model(provider_id.clone(), model_id.clone());
                 }),
             )
             .child(div().flex_1().overflow_hidden().child(model.id.clone()))
@@ -766,10 +824,7 @@ impl ModelSelectorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {
-                            this.state.selected_provider = None;
-                            this.state.show_provider_dropdown = false;
-                            this.emit_filter_events_if_changed();
-                            cx.notify();
+                            this.clear_provider_filter(cx);
                         }),
                     )
                     .child("All"),
@@ -789,10 +844,7 @@ impl ModelSelectorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, _window, cx| {
-                            this.state.selected_provider = Some(provider_id.clone());
-                            this.state.show_provider_dropdown = false;
-                            this.emit_filter_events_if_changed();
-                            cx.notify();
+                            this.select_provider_filter(provider_id.clone(), cx);
                         }),
                     )
                     .child(provider_name)
@@ -957,35 +1009,7 @@ impl gpui::Render for ModelSelectorView {
             )
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                    let key = &event.keystroke.key;
-                    let modifiers = &event.keystroke.modifiers;
-
-                    // Escape: close dropdown or go back
-                    if key == "escape" {
-                        if this.state.show_provider_dropdown {
-                            this.state.show_provider_dropdown = false;
-                            cx.notify();
-                        } else {
-                            crate::ui_gpui::navigation_channel().request_navigate(
-                                crate::presentation::view_command::ViewId::Settings,
-                            );
-                        }
-                        return;
-                    }
-
-                    // Cmd+W: Go back to Settings
-                    if modifiers.platform && key == "w" {
-                        crate::ui_gpui::navigation_channel()
-                            .request_navigate(crate::presentation::view_command::ViewId::Settings);
-                        return;
-                    }
-
-                    // Handle named keys for search; printable chars go through InputHandler
-                    if !modifiers.platform && !modifiers.control && key == "backspace" {
-                        this.state.search_query.pop();
-                        this.emit_filter_events_if_changed();
-                        cx.notify();
-                    }
+                    this.handle_key_down(event, cx);
                     // All other printable chars fall through to EntityInputHandler
                 }),
             )
@@ -1031,4 +1055,337 @@ impl gpui::Render for ModelSelectorView {
             root
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::future_not_send)]
+
+    use super::*;
+    use flume;
+    use gpui::{AppContext, EntityInputHandler, TestAppContext};
+
+    fn remote_model(
+        provider_id: &str,
+        model_id: &str,
+        context_length: Option<u32>,
+    ) -> crate::presentation::view_command::ModelInfo {
+        crate::presentation::view_command::ModelInfo {
+            provider_id: provider_id.to_string(),
+            model_id: model_id.to_string(),
+            name: model_id.to_string(),
+            context_length,
+        }
+    }
+
+    #[test]
+    fn model_info_formatting_and_state_filters_work() {
+        let free = ModelInfo::new("claude", "anthropic")
+            .with_context(200_000)
+            .with_capabilities(true, false)
+            .with_costs(0.0, 3.5);
+        assert_eq!(free.context_display(), "200K");
+        assert_eq!(ModelInfo::cost_display(0.0), "free");
+        assert_eq!(ModelInfo::cost_display(3.0), "$3");
+        assert_eq!(ModelInfo::cost_display(0.25), "$0.25");
+
+        let vision = ModelInfo::new("gpt-4o", "openai")
+            .with_context(1_000_000)
+            .with_capabilities(false, true);
+        assert_eq!(vision.context_display(), "1M");
+
+        let mut state = ModelSelectorState::new();
+        state.models = vec![free, vision];
+        assert_eq!(state.filtered_models().len(), 2);
+
+        state.selected_provider = Some("anthropic".to_string());
+        let filtered = state.filtered_models();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].provider_id, "anthropic");
+
+        state.selected_provider = None;
+        state.search_query = "4o".to_string();
+        let filtered = state.filtered_models();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "gpt-4o");
+
+        state.search_query.clear();
+        state.filter_reasoning = true;
+        let filtered = state.filtered_models();
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].reasoning);
+
+        state.filter_reasoning = false;
+        state.filter_vision = true;
+        let filtered = state.filtered_models();
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].vision);
+
+        assert_eq!(state.all_providers(), vec!["anthropic", "openai"]);
+    }
+
+    #[gpui::test]
+    async fn handle_command_maps_models_and_filter_events_emit_only_on_changes(
+        cx: &mut TestAppContext,
+    ) {
+        let (user_tx, user_rx) = flume::bounded(16);
+        let (_view_tx, view_rx) = flume::bounded(16);
+        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
+        let view = cx.new(ModelSelectorView::new);
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.handle_command(
+                ViewCommand::ModelSearchResults {
+                    models: vec![
+                        remote_model("anthropic", "claude-3-5-sonnet", Some(200_000)),
+                        remote_model("openai", "gpt-4o", Some(128_000)),
+                        remote_model("anthropic", "claude-haiku", None),
+                    ],
+                },
+                cx,
+            );
+
+            assert_eq!(view.state.models.len(), 3);
+            assert_eq!(view.state.providers.len(), 2);
+            assert_eq!(view.state.models[0].id, "claude-3-5-sonnet");
+            assert_eq!(view.state.models[0].context, 200_000);
+            assert_eq!(view.state.models[2].context, 128_000);
+
+            view.state.search_query = "claude".to_string();
+            view.emit_filter_events_if_changed();
+            view.emit_filter_events_if_changed();
+
+            view.state.selected_provider = Some("anthropic".to_string());
+            view.emit_filter_events_if_changed();
+            view.emit_filter_events_if_changed();
+
+            view.request_models();
+            view.emit_search_models();
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("search event"),
+            UserEvent::SearchModels {
+                query: "claude".to_string(),
+            }
+        );
+        assert_eq!(
+            user_rx.recv().expect("provider filter event"),
+            UserEvent::FilterModelsByProvider {
+                provider_id: Some("anthropic".to_string()),
+            }
+        );
+        assert_eq!(
+            user_rx.recv().expect("open selector event"),
+            UserEvent::OpenModelSelector
+        );
+        assert_eq!(
+            user_rx.recv().expect("manual search emit"),
+            UserEvent::SearchModels {
+                query: "claude".to_string(),
+            }
+        );
+        assert!(
+            user_rx.try_recv().is_err(),
+            "duplicate filter events should not be emitted"
+        );
+    }
+
+    #[gpui::test]
+    async fn input_handler_mutates_search_query_and_marks_composition(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut ModelSelectorView, cx| {
+                view.replace_text_in_range(None, "cla", window, cx);
+                assert_eq!(view.state.search_query, "cla");
+                assert_eq!(
+                    view.text_for_range(0..2, &mut None, window, cx),
+                    Some("cl".to_string())
+                );
+
+                view.replace_and_mark_text_in_range(None, "u", None, window, cx);
+                assert_eq!(view.state.search_query, "clau");
+                assert!(view.marked_text_range(window, cx).is_some());
+
+                view.replace_text_in_range(None, "de", window, cx);
+                assert_eq!(view.state.search_query, "clade");
+                assert_eq!(view.marked_text_range(window, cx), None);
+
+                let selected = view
+                    .selected_text_range(false, window, cx)
+                    .expect("selection range");
+                let len = "clade".encode_utf16().count();
+                assert_eq!(selected.range, len..len);
+
+                view.unmark_text(window, cx);
+                assert_eq!(view.marked_text_range(window, cx), None);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn provider_dropdown_selection_and_model_emission_follow_real_filter_rules(
+        cx: &mut TestAppContext,
+    ) {
+        let (user_tx, user_rx) = flume::bounded(16);
+        let (_view_tx, view_rx) = flume::bounded(16);
+        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
+        let view = cx.new(ModelSelectorView::new);
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.set_models(
+                vec![
+                    ProviderInfo::new("anthropic", "anthropic"),
+                    ProviderInfo::new("openai", "openai"),
+                ],
+                vec![
+                    ModelInfo::new("claude-3-7-sonnet", "anthropic")
+                        .with_context(200_000)
+                        .with_capabilities(true, false),
+                    ModelInfo::new("gpt-4o", "openai")
+                        .with_context(128_000)
+                        .with_capabilities(false, true),
+                ],
+            );
+
+            view.toggle_provider_dropdown(cx);
+            assert!(view.get_state().show_provider_dropdown);
+
+            view.select_provider_filter("anthropic".to_string(), cx);
+            assert_eq!(
+                view.get_state().selected_provider.as_deref(),
+                Some("anthropic")
+            );
+            assert!(!view.get_state().show_provider_dropdown);
+            assert_eq!(view.get_state().filtered_models().len(), 1);
+            assert_eq!(view.get_state().filtered_models()[0].id, "claude-3-7-sonnet");
+
+            view.toggle_reasoning_filter(cx);
+            assert!(view.get_state().filter_reasoning);
+            assert_eq!(view.get_state().filtered_models().len(), 1);
+
+            view.toggle_vision_filter(cx);
+            assert!(view.get_state().filter_vision);
+            assert!(view.get_state().filtered_models().is_empty());
+
+            view.clear_provider_filter(cx);
+            assert_eq!(view.get_state().selected_provider, None);
+            assert_eq!(view.get_state().filtered_models().len(), 0);
+
+            view.toggle_vision_filter(cx);
+            assert!(!view.get_state().filter_vision);
+            assert_eq!(view.get_state().filtered_models().len(), 1);
+            assert_eq!(view.get_state().filtered_models()[0].id, "claude-3-7-sonnet");
+
+            view.select_model("anthropic".to_string(), "claude-3-7-sonnet".to_string());
+            assert!(!view.get_state().show_provider_dropdown);
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("provider filter event"),
+            UserEvent::FilterModelsByProvider {
+                provider_id: Some("anthropic".to_string()),
+            }
+        );
+        assert_eq!(
+            user_rx.recv().expect("clear provider filter event"),
+            UserEvent::FilterModelsByProvider { provider_id: None }
+        );
+        assert_eq!(
+            user_rx.recv().expect("select model event"),
+            UserEvent::SelectModel {
+                provider_id: "anthropic".to_string(),
+                model_id: "claude-3-7-sonnet".to_string(),
+            }
+        );
+        assert!(user_rx.try_recv().is_err(), "unexpected additional selector events");
+    }
+
+    #[gpui::test]
+    async fn key_handling_closes_dropdown_navigates_and_backspaces_search_once(
+        cx: &mut TestAppContext,
+    ) {
+        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+        let (user_tx, user_rx) = flume::bounded(16);
+        let (_view_tx, view_rx) = flume::bounded(16);
+        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
+        let view = cx.new(ModelSelectorView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut ModelSelectorView, cx| {
+                view.set_bridge(Arc::clone(&bridge));
+                view.state.show_provider_dropdown = true;
+                view.state.search_query = "claude".to_string();
+                view.state.last_emitted_search_query = "claude".to_string();
+
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert!(!view.state.show_provider_dropdown);
+                assert_eq!(crate::ui_gpui::navigation_channel().take_pending(), None);
+
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("backspace")
+                            .expect("backspace keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert_eq!(view.state.search_query, "claud");
+
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("cmd-w").expect("cmd-w keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    crate::ui_gpui::navigation_channel().take_pending(),
+                    Some(crate::presentation::view_command::ViewId::Settings)
+                );
+
+                view.replace_and_mark_text_in_range(None, "e", None, window, cx);
+                assert_eq!(view.state.search_query, "claude");
+                assert_eq!(view.marked_text_range(window, cx), Some(5..6));
+                view.replace_text_in_range(None, "e-3", window, cx);
+                assert_eq!(view.state.search_query, "claude-3");
+                assert_eq!(view.marked_text_range(window, cx), None);
+            });
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("backspace search event"),
+            UserEvent::SearchModels {
+                query: "claud".to_string(),
+            }
+        );
+        assert_eq!(
+            user_rx.recv().expect("composition search event"),
+            UserEvent::SearchModels {
+                query: "claude".to_string(),
+            }
+        );
+        assert_eq!(
+            user_rx.recv().expect("composition replace search event"),
+            UserEvent::SearchModels {
+                query: "claude-3".to_string(),
+            }
+        );
+        assert!(user_rx.try_recv().is_err(), "unexpected additional key-handling events");
+    }
+
 }

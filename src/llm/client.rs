@@ -101,6 +101,14 @@ impl LlmClient {
 
     /// Resolve the API key from profile auth config (OS keychain lookup).
     fn resolve_api_key(profile: &ModelProfile) -> StdResult<String, LlmError> {
+        // Non-interactive E2E override for CI and local ignored-test runs.
+        if let Ok(api_key_override) = std::env::var("PA_E2E_API_KEY") {
+            let trimmed = api_key_override.trim();
+            if !trimmed.is_empty() {
+                return Ok(trimmed.to_string());
+            }
+        }
+
         let AuthConfig::Keychain { label } = &profile.auth;
         let trimmed = label.trim();
         if trimmed.is_empty() {

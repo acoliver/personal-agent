@@ -9,51 +9,27 @@
 //!
 //! Run with:
 //!   cargo test --test `e2e_install_and_search` -- --ignored --nocapture
+//!
+//! Requires:
+//! - PA_E2E_PROVIDER_ID (optional; default: ollama)
+//! - PA_E2E_MODEL_ID (optional; default: minimax-m2.7:cloud)
+//! - PA_E2E_BASE_URL (optional; default: https://ollama.com/v1)
+//! - PA_E2E_KEY_LABEL (optional; default: pa-e2e-ollama-cloud)
+//! - PA_E2E_API_KEY (recommended for non-interactive runs)
 
 use personal_agent::llm::AgentClientExt;
 use personal_agent::mcp::McpService;
 use personal_agent::services::{McpRegistryService, McpRegistryServiceImpl};
-use personal_agent::{AuthConfig, LlmClient, ModelProfile, StreamEvent};
+use personal_agent::{LlmClient, ModelProfile, StreamEvent};
 
-fn load_synthetic_profile() -> ModelProfile {
-    let home = dirs::home_dir().expect("No home directory");
-    let profile_path = home.join(".llxprt/profiles/synthetic.json");
+mod support;
 
-    let content = std::fs::read_to_string(&profile_path)
-        .expect("Failed to read ~/.llxprt/profiles/synthetic.json");
-
-    let json: serde_json::Value =
-        serde_json::from_str(&content).expect("Failed to parse synthetic.json");
-
-    let provider = json["provider"].as_str().unwrap_or("openai").to_string();
-    let model = json["model"].as_str().expect("No model").to_string();
-    let base_url = json["ephemeralSettings"]["base-url"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-    let keyfile_path = json["ephemeralSettings"]["auth-keyfile"]
-        .as_str()
-        .unwrap_or("~/.synthetic_key")
-        .to_string();
-
-    let keyfile_path = keyfile_path.strip_prefix("~/").map_or_else(
-        || keyfile_path.clone(),
-        |stripped| home.join(stripped).to_string_lossy().to_string(),
-    );
-
-    ModelProfile::new(
-        "Synthetic GLM".to_string(),
-        provider,
-        model,
-        base_url,
-        AuthConfig::Keychain {
-            label: keyfile_path,
-        },
-    )
+fn load_e2e_profile() -> ModelProfile {
+    support::e2e_config::load_e2e_profile()
 }
 
 #[tokio::test]
-#[ignore = "Requires synthetic profile, API key, and Exa MCP"]
+#[ignore = "Requires PA_E2E_* configuration and Exa MCP"]
 #[allow(clippy::too_many_lines)]
 async fn test_install_exa_and_search() {
     println!("=== E2E Test: Install Exa and Search ===\n");
@@ -129,7 +105,7 @@ async fn test_install_exa_and_search() {
 
     // Step 3: Create agent with tools
     println!("\nStep 3: Creating agent with Exa tools...");
-    let profile = load_synthetic_profile();
+    let profile = load_e2e_profile();
     let client = LlmClient::from_profile(&profile).expect("Failed to create client");
 
     let agent = client

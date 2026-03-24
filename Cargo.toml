@@ -50,7 +50,7 @@ objc2-core-graphics = "0.3"
 # and removing these avoids version conflicts with GPUI
 raw-window-handle = "0.6"
 # Pin GPUI to same commit that ExactoBar uses (verified to build)
-gpui = { git = "https://github.com/zed-industries/zed", rev = "c67328ab2e0d572718575e02ae07db37552e1cbe", package = "gpui" }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "c67328ab2e0d572718575e02ae07db37552e1cbe", package = "gpui", features = ["test-support"] }
 # Pin core-text to 21.0.0 to avoid core-graphics version conflict (21.1.0 requires core-graphics 0.25 which conflicts)
 core-text = "=21.0.0"
 serde = { version = "1", features = ["derive"] }

@@ -133,11 +133,22 @@ cargo build --release --bin personal_agent_gpui
 cargo test
 
 # Check formatting
-cargo fmt --check
+cargo fmt --all -- --check
 
 # Run clippy
-cargo clippy
+cargo clippy --all-targets -- -D warnings
+
+# Run the full local quality gate
+cargo qa
+
+# Run just the coverage gate
+cargo coverage
 ```
+
+The project includes a small Rust-native `xtask` runner rather than relying on a large shell script.
+`cargo qa` runs formatting, clippy, tests, and coverage using Cargo subcommands.
+Coverage reports still write build artifacts under `target/llvm-cov-target`, which is Cargo's normal output area rather than `src/bin`.
+`src/bin/` contains additional binary source files, not compiled output artifacts.
 
 ### Debug Logging
 

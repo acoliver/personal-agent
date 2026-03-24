@@ -466,3 +466,177 @@ impl gpui::Render for HistoryView {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::future_not_send)]
+
+    use super::*;
+    use chrono::{Duration, Utc};
+    use flume;
+    use gpui::{AppContext, TestAppContext};
+
+    use crate::events::types::UserEvent;
+    use crate::presentation::view_command::{ConversationSummary, ViewCommand};
+    use crate::ui_gpui::app_store::HistoryStoreSnapshot;
+
+    fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
+        let (user_tx, user_rx) = flume::bounded(16);
+        let (_view_tx, view_rx) = flume::bounded(16);
+        (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
+    }
+
+    fn conversation_summary(
+        id: Uuid,
+        title: &str,
+        updated_at: chrono::DateTime<Utc>,
+        message_count: usize,
+    ) -> ConversationSummary {
+        ConversationSummary {
+            id,
+            title: title.to_string(),
+            updated_at,
+            message_count,
+        }
+    }
+
+    #[gpui::test]
+    async fn apply_store_snapshot_projects_titles_dates_counts_and_selection(
+        cx: &mut TestAppContext,
+    ) {
+        let selected_id = Uuid::new_v4();
+        let older_id = Uuid::new_v4();
+        let snapshot = HistoryStoreSnapshot {
+            conversations: vec![
+                conversation_summary(older_id, "", Utc::now() - Duration::days(2), 9),
+                conversation_summary(
+                    selected_id,
+                    "Selected conversation",
+                    Utc::now() - Duration::minutes(5),
+                    1,
+                ),
+            ],
+            selected_conversation_id: Some(selected_id),
+        };
+        let view = cx.new(HistoryView::new);
+
+        view.update(cx, |view: &mut HistoryView, cx| {
+            view.apply_store_snapshot(&snapshot, cx);
+
+            let conversations = view.conversations();
+            assert_eq!(conversations.len(), 2);
+            assert_eq!(conversations[0].id, older_id);
+            assert_eq!(conversations[0].title, "Untitled Conversation");
+            assert_eq!(conversations[0].date_display, "2d ago");
+            assert_eq!(conversations[0].message_count, 9);
+            assert!(!conversations[0].is_selected);
+
+            assert_eq!(conversations[1].id, selected_id);
+            assert_eq!(conversations[1].title, "Selected conversation");
+            assert_eq!(conversations[1].date_display, "5m ago");
+            assert_eq!(conversations[1].message_count, 1);
+            assert!(conversations[1].is_selected);
+        });
+    }
+
+    #[gpui::test]
+    async fn handle_command_updates_history_state_and_emits_refresh_requests(
+        cx: &mut TestAppContext,
+    ) {
+        let older_id = Uuid::new_v4();
+        let selected_id = Uuid::new_v4();
+        let created_id = Uuid::new_v4();
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(HistoryView::new);
+
+        view.update(cx, |view: &mut HistoryView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.handle_command(
+                ViewCommand::ConversationListRefreshed {
+                    conversations: vec![
+                        conversation_summary(older_id, "", Utc::now() - Duration::hours(3), 4),
+                        conversation_summary(
+                            selected_id,
+                            "Selected",
+                            Utc::now() - Duration::minutes(2),
+                            2,
+                        ),
+                    ],
+                },
+                cx,
+            );
+
+            let conversations = view.conversations();
+            assert_eq!(conversations.len(), 2);
+            assert_eq!(conversations[0].title, "Untitled Conversation");
+            assert_eq!(conversations[0].date_display, "3h ago");
+            assert_eq!(conversations[1].title, "Selected");
+            assert_eq!(conversations[1].date_display, "2m ago");
+            assert!(conversations.iter().all(|conversation| !conversation.is_selected));
+
+            view.handle_command(
+                ViewCommand::ConversationActivated {
+                    id: selected_id,
+                    selection_generation: 7,
+                },
+                cx,
+            );
+            assert_eq!(view.state.selected_conversation_id, Some(selected_id));
+            assert!(view.conversations()[1].is_selected);
+            assert!(!view.conversations()[0].is_selected);
+
+            view.handle_command(
+                ViewCommand::ConversationCreated {
+                    id: created_id,
+                    profile_id: Uuid::new_v4(),
+                },
+                cx,
+            );
+            assert_eq!(view.conversations()[0].id, created_id);
+            assert_eq!(view.conversations()[0].title, "New Conversation");
+            assert_eq!(view.conversations()[0].date_display, "Just now");
+            assert_eq!(view.conversations()[0].message_count, 0);
+            assert!(!view.conversations()[0].is_selected);
+
+            view.handle_command(
+                ViewCommand::ConversationCreated {
+                    id: created_id,
+                    profile_id: Uuid::new_v4(),
+                },
+                cx,
+            );
+            assert_eq!(
+                view.conversations()
+                    .iter()
+                    .filter(|conversation| conversation.id == created_id)
+                    .count(),
+                1
+            );
+
+            view.handle_command(
+                ViewCommand::ConversationRenamed {
+                    id: created_id,
+                    new_title: "Renamed conversation".to_string(),
+                },
+                cx,
+            );
+            assert_eq!(view.conversations()[0].title, "Renamed conversation");
+
+            view.handle_command(ViewCommand::ConversationDeleted { id: selected_id }, cx);
+            assert_eq!(view.state.selected_conversation_id, Some(created_id));
+            assert!(view.conversations()[0].is_selected);
+            assert!(view.conversations().iter().all(|conversation| conversation.id != selected_id));
+
+            view.handle_command(ViewCommand::ConversationCleared, cx);
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("refresh history event"),
+            UserEvent::RefreshHistory
+        );
+        assert!(
+            user_rx.try_recv().is_err(),
+            "history view should emit only the explicit refresh request in this scenario"
+        );
+    }
+}

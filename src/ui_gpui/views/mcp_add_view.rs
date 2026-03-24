@@ -310,6 +310,68 @@ impl McpAddView {
         }
     }
 
+    fn toggle_registry_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.show_registry_dropdown = !self.state.show_registry_dropdown;
+        self.state.active_field = None;
+        cx.notify();
+    }
+
+    fn select_result(&mut self, result_id: String, cx: &mut gpui::Context<Self>) {
+        tracing::info!("Result selected: {}", result_id);
+        self.state.selected_result_id = Some(result_id);
+        self.state.active_field = None;
+        self.state.manual_entry.clear();
+        cx.notify();
+    }
+
+    fn handle_key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut gpui::Context<Self>) {
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
+
+        if key == "escape" || (modifiers.platform && key == "w") {
+            if self.state.show_registry_dropdown {
+                self.state.show_registry_dropdown = false;
+                cx.notify();
+                return;
+            }
+            crate::ui_gpui::navigation_channel()
+                .request_navigate(crate::presentation::view_command::ViewId::Settings);
+            return;
+        }
+
+        if modifiers.platform || modifiers.control {
+            return;
+        }
+
+        if key == "backspace" {
+            self.backspace_active_field();
+            if self.state.active_field == Some(ActiveField::SearchQuery) {
+                self.emit_search_registry();
+            }
+            cx.notify();
+            return;
+        }
+
+        if key == "enter" {
+            if self.state.show_registry_dropdown {
+                self.state.show_registry_dropdown = false;
+            } else if self.state.active_field == Some(ActiveField::SearchQuery) {
+                self.emit_search_registry();
+            }
+            cx.notify();
+            return;
+        }
+
+        if key == "tab" {
+            self.state.active_field = Some(match self.state.active_field {
+                Some(ActiveField::ManualEntry) => ActiveField::SearchQuery,
+                Some(ActiveField::SearchQuery) | None => ActiveField::ManualEntry,
+            });
+            self.state.show_registry_dropdown = false;
+            cx.notify();
+        }
+    }
+
     fn filtered_results(&self) -> Vec<McpSearchResult> {
         let query = self.state.search_query.trim().to_lowercase();
         let matches_registry = |result: &McpSearchResult| match self.state.registry {
@@ -700,10 +762,8 @@ impl McpAddView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
-                            this.state.show_registry_dropdown = !this.state.show_registry_dropdown;
-                            this.state.active_field = None;
+                            this.toggle_registry_dropdown(cx);
                             window.focus(&this.focus_handle, cx);
-                            cx.notify();
                         }),
                     )
                     .child(registry)
@@ -847,11 +907,7 @@ impl McpAddView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, cx| {
-                    tracing::info!("Result selected: {}", id_for_closure);
-                    this.state.selected_result_id = Some(id_for_closure.clone());
-                    this.state.active_field = None;
-                    this.state.manual_entry.clear();
-                    cx.notify();
+                    this.select_result(id_for_closure.clone(), cx);
                 }),
             )
             .child(
@@ -1167,52 +1223,7 @@ impl gpui::Render for McpAddView {
             )
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                    let key = &event.keystroke.key;
-                    let modifiers = &event.keystroke.modifiers;
-
-                    if key == "escape" || (modifiers.platform && key == "w") {
-                        if this.state.show_registry_dropdown {
-                            this.state.show_registry_dropdown = false;
-                            cx.notify();
-                            return;
-                        }
-                        crate::ui_gpui::navigation_channel()
-                            .request_navigate(crate::presentation::view_command::ViewId::Settings);
-                        return;
-                    }
-
-                    if modifiers.platform || modifiers.control {
-                        return;
-                    }
-
-                    if key == "backspace" {
-                        this.backspace_active_field();
-                        if this.state.active_field == Some(ActiveField::SearchQuery) {
-                            this.emit_search_registry();
-                        }
-                        cx.notify();
-                        return;
-                    }
-
-                    if key == "enter" {
-                        if this.state.show_registry_dropdown {
-                            this.state.show_registry_dropdown = false;
-                        } else if this.state.active_field == Some(ActiveField::SearchQuery) {
-                            this.emit_search_registry();
-                        }
-                        cx.notify();
-                        return;
-                    }
-
-                    if key == "tab" {
-                        this.state.active_field = Some(match this.state.active_field {
-                            Some(ActiveField::ManualEntry) => ActiveField::SearchQuery,
-                            Some(ActiveField::SearchQuery) | None => ActiveField::ManualEntry,
-                        });
-                        this.state.show_registry_dropdown = false;
-                        cx.notify();
-                    }
-
+                    this.handle_key_down(event, cx);
                     // All other keys (printable chars) fall through to EntityInputHandler
                 }),
             )
@@ -1249,4 +1260,407 @@ impl gpui::Render for McpAddView {
             root
         }
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::future_not_send)]
+
+    use super::*;
+    use flume;
+    use gpui::{AppContext, EntityInputHandler, TestAppContext};
+
+    use crate::events::types::UserEvent;
+    use crate::presentation::view_command::{ErrorSeverity, ViewCommand, ViewId};
+
+    fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
+        let (user_tx, user_rx) = flume::bounded(16);
+        let (_view_tx, view_rx) = flume::bounded(16);
+        (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
+    }
+
+    fn clear_navigation_requests() {
+        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+    }
+
+    #[gpui::test]
+    async fn emit_search_registry_trims_query_and_reports_registry_source(
+        cx: &mut TestAppContext,
+    ) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpAddView::new);
+
+        view.update(cx, |view: &mut McpAddView, _cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.set_search_query("  fetch registry  ".to_string());
+            view.state.registry = McpRegistry::Smithery;
+            view.emit_search_registry();
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("search registry event"),
+            UserEvent::SearchMcpRegistry {
+                query: "fetch registry".to_string(),
+                source: crate::events::types::McpRegistrySource {
+                    name: "smithery".to_string(),
+                },
+            }
+        );
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.get_state().search_state, SearchState::Loading);
+        });
+    }
+
+    #[gpui::test]
+    async fn draft_loaded_preserves_transport_metadata_and_requests_configure_navigation(
+        cx: &mut TestAppContext,
+    ) {
+        clear_navigation_requests();
+        let view = cx.new(McpAddView::new);
+
+        view.update(cx, |view: &mut McpAddView, cx| {
+            view.handle_command(
+                ViewCommand::McpConfigureDraftLoaded {
+                    id: "smithery::fetch".to_string(),
+                    name: "Fetch".to_string(),
+                    package: "@smithery/fetch".to_string(),
+                    package_type: crate::mcp::McpPackageType::Npm,
+                    runtime_hint: Some("npx".to_string()),
+                    env_var_name: "FETCH_API_KEY".to_string(),
+                    command: "npx".to_string(),
+                    args: vec![
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-fetch".to_string(),
+                    ],
+                    env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
+                    url: None,
+                },
+                cx,
+            );
+        });
+
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(ViewId::McpConfigure)
+        );
+
+        view.read_with(cx, |view, _| {
+            let state = view.get_state();
+            assert_eq!(state.manual_entry, "npx -y @modelcontextprotocol/server-fetch");
+            assert_eq!(state.selected_result_id.as_deref(), Some("fetch"));
+            assert_eq!(state.search_state, SearchState::Results);
+            assert_eq!(state.results.len(), 1);
+            let result = &state.results[0];
+            assert_eq!(result.registry, McpRegistry::Smithery);
+            assert_eq!(result.source, "smithery");
+            assert_eq!(result.command, "@smithery/fetch");
+            assert_eq!(
+                result.args,
+                vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]
+            );
+            assert_eq!(
+                result.env,
+                Some(vec![("FETCH_API_KEY".to_string(), String::new())])
+            );
+            assert_eq!(result.package_type, Some(crate::mcp::McpPackageType::Npm));
+            assert_eq!(result.runtime_hint.as_deref(), Some("npx"));
+            assert!(state.can_proceed());
+        });
+    }
+
+    #[gpui::test]
+    async fn registry_results_and_errors_update_search_state_without_source_loss(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(McpAddView::new);
+
+        view.update(cx, |view: &mut McpAddView, cx| {
+            view.set_search_query("fetch".to_string());
+            view.handle_command(
+                ViewCommand::McpRegistrySearchResults {
+                    results: vec![
+                        crate::presentation::view_command::McpRegistryResult {
+                            id: "fetch".to_string(),
+                            name: "Fetch".to_string(),
+                            description: "HTTP fetch server".to_string(),
+                            source: "smithery".to_string(),
+                            command: "npx".to_string(),
+                            args: vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()],
+                            env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
+                            package_type: Some(crate::mcp::McpPackageType::Npm),
+                            runtime_hint: Some("npx".to_string()),
+                            url: None,
+                        },
+                        crate::presentation::view_command::McpRegistryResult {
+                            id: "exa".to_string(),
+                            name: "Exa".to_string(),
+                            description: "Remote MCP".to_string(),
+                            source: "official".to_string(),
+                            command: String::new(),
+                            args: vec![],
+                            env: None,
+                            package_type: Some(crate::mcp::McpPackageType::Http),
+                            runtime_hint: None,
+                            url: Some("https://exa.example/mcp".to_string()),
+                        },
+                    ],
+                },
+                cx,
+            );
+
+            assert_eq!(view.get_state().results.len(), 2);
+            assert_eq!(view.get_state().search_state, SearchState::Results);
+            assert_eq!(view.get_state().results[0].registry, McpRegistry::Smithery);
+            assert_eq!(view.get_state().results[0].source, "smithery");
+            assert_eq!(
+                view.get_state().results[1].url.as_deref(),
+                Some("https://exa.example/mcp")
+            );
+
+            view.handle_command(
+                ViewCommand::ShowError {
+                    title: "search failed".to_string(),
+                    message: "registry unavailable".to_string(),
+                    severity: ErrorSeverity::Warning,
+                },
+                cx,
+            );
+            assert_eq!(
+                view.get_state().search_state,
+                SearchState::Error("registry unavailable".to_string())
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn manual_entry_registry_switch_and_empty_search_follow_real_state_rules(
+        cx: &mut TestAppContext,
+    ) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpAddView::new);
+
+        view.update(cx, |view: &mut McpAddView, _cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.set_results(vec![
+                McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
+                    .with_registry(McpRegistry::Official)
+                    .with_command("npx")
+                    .with_args(vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]),
+                McpSearchResult::new("exa", "Exa", "Remote search")
+                    .with_registry(McpRegistry::Smithery)
+                    .with_url(Some("https://exa.example/mcp".to_string())),
+            ]);
+            view.state.selected_result_id = Some("fetch".to_string());
+            assert!(view.get_state().can_proceed());
+
+            view.set_manual_entry(" custom-mcp ".to_string());
+            assert_eq!(view.get_state().manual_entry, " custom-mcp ");
+            assert_eq!(view.get_state().selected_result_id, None);
+            assert!(view.get_state().can_proceed());
+
+            view.set_search_query("exa".to_string());
+            view.state.selected_result_id = Some("exa".to_string());
+            view.select_registry(McpRegistry::Official);
+            assert_eq!(view.get_state().registry, McpRegistry::Official);
+            assert_eq!(view.get_state().selected_result_id, None);
+            assert_eq!(view.get_state().search_state, SearchState::Loading);
+
+            view.set_loading(false);
+            assert_eq!(view.get_state().search_state, SearchState::Results);
+
+            view.set_search_query("   ".to_string());
+            view.select_registry(McpRegistry::Both);
+            assert_eq!(view.get_state().registry, McpRegistry::Both);
+            assert!(view.get_state().results.is_empty());
+            assert_eq!(view.get_state().search_state, SearchState::Idle);
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("registry switch search"),
+            UserEvent::SearchMcpRegistry {
+                query: "exa".to_string(),
+                source: crate::events::types::McpRegistrySource {
+                    name: "official".to_string(),
+                },
+            }
+        );
+        assert!(user_rx.try_recv().is_err(), "unexpected additional MCP events");
+    }
+
+    #[gpui::test]
+    async fn set_results_filters_selection_and_command_preview_handles_remote_urls(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(McpAddView::new);
+
+        view.update(cx, |view: &mut McpAddView, _cx| {
+            view.set_search_query("exa".to_string());
+            view.set_results(vec![
+                McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
+                    .with_registry(McpRegistry::Official)
+                    .with_command("npx")
+                    .with_args(vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]),
+                McpSearchResult::new("exa", "Exa", "Remote search")
+                    .with_registry(McpRegistry::Smithery)
+                    .with_command("npx")
+                    .with_args(vec!["-y".to_string(), "exa-mcp".to_string()])
+                    .with_url(Some("https://exa.example/mcp".to_string())),
+            ]);
+            view.state.selected_result_id = Some("exa".to_string());
+            view.state.registry = McpRegistry::Smithery;
+            assert_eq!(view.filtered_results().len(), 1);
+            assert_eq!(view.filtered_results()[0].id, "exa");
+            assert_eq!(
+                McpAddView::command_preview(&view.filtered_results()[0]),
+                "https://exa.example/mcp"
+            );
+
+            view.set_results(vec![McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
+                .with_registry(McpRegistry::Official)
+                .with_command("npx")
+                .with_args(vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()])]);
+            assert_eq!(view.get_state().selected_result_id, None);
+            assert_eq!(view.get_state().search_state, SearchState::Empty);
+
+            view.set_search_query("fetch".to_string());
+            view.state.registry = McpRegistry::Official;
+            view.set_results(vec![McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
+                .with_registry(McpRegistry::Official)
+                .with_command("npx")
+                .with_args(vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()])]);
+            assert_eq!(view.get_state().search_state, SearchState::Results);
+            assert_eq!(view.filtered_results().len(), 1);
+            assert_eq!(
+                McpAddView::command_preview(&view.filtered_results()[0]),
+                "npx -y @modelcontextprotocol/server-fetch"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn key_and_input_handling_follow_real_registry_and_search_rules(
+        cx: &mut TestAppContext,
+    ) {
+        clear_navigation_requests();
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpAddView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpAddView, cx| {
+                view.set_bridge(Arc::clone(&bridge));
+                view.set_results(vec![
+                    McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
+                        .with_registry(McpRegistry::Official)
+                        .with_command("npx")
+                        .with_args(vec![
+                            "-y".to_string(),
+                            "@modelcontextprotocol/server-fetch".to_string(),
+                        ]),
+                    McpSearchResult::new("exa", "Exa", "Remote search")
+                        .with_registry(McpRegistry::Smithery)
+                        .with_url(Some("https://exa.example/mcp".to_string())),
+                ]);
+
+                view.state.active_field = Some(ActiveField::ManualEntry);
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("tab").expect("tab keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert_eq!(view.get_state().active_field, Some(ActiveField::SearchQuery));
+
+                view.replace_text_in_range(None, "exa", window, cx);
+                assert_eq!(view.get_state().search_query, "exa");
+                assert_eq!(view.text_for_range(0..2, &mut None, window, cx), Some("ex".to_string()));
+
+                view.replace_and_mark_text_in_range(None, "!", None, window, cx);
+                assert_eq!(view.get_state().search_query, "exa!");
+                assert_eq!(view.marked_text_range(window, cx), Some(3..4));
+                view.replace_text_in_range(None, "-mcp", window, cx);
+                assert_eq!(view.get_state().search_query, "exa-mcp");
+                assert_eq!(view.marked_text_range(window, cx), None);
+
+                let selected = view
+                    .selected_text_range(false, window, cx)
+                    .expect("selection range");
+                let len = "exa-mcp".encode_utf16().count();
+                assert_eq!(selected.range, len..len);
+
+                view.state.show_registry_dropdown = true;
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("enter").expect("enter keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert!(!view.get_state().show_registry_dropdown);
+
+                view.toggle_registry_dropdown(cx);
+                assert!(view.get_state().show_registry_dropdown);
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert!(!view.get_state().show_registry_dropdown);
+                assert_eq!(crate::ui_gpui::navigation_channel().take_pending(), None);
+
+                view.select_result("exa".to_string(), cx);
+                assert_eq!(view.get_state().selected_result_id.as_deref(), Some("exa"));
+                assert!(view.get_state().manual_entry.is_empty());
+
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("backspace")
+                            .expect("backspace keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert_eq!(view.get_state().search_query, "exa-mcp");
+                assert_eq!(view.get_state().selected_result_id, Some("exa".to_string()));
+
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("cmd-w").expect("cmd-w keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    crate::ui_gpui::navigation_channel().take_pending(),
+                    Some(ViewId::Settings)
+                );
+            });
+        });
+
+        let expected_queries = ["exa", "exa!", "exa-mcp"];
+        for query in expected_queries {
+            assert_eq!(
+                user_rx.recv().expect("search registry event"),
+                UserEvent::SearchMcpRegistry {
+                    query: query.to_string(),
+                    source: crate::events::types::McpRegistrySource {
+                        name: "both".to_string(),
+                    },
+                }
+            );
+        }
+        assert!(user_rx.try_recv().is_err(), "unexpected additional search registry events");
+    }
+
+
 }

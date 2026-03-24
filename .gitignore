@@ -3,6 +3,7 @@ research/
 
 # Rust
 target/
+xtask/target/
 Cargo.lock
 
 # macOS

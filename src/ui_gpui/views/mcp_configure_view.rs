@@ -207,6 +207,46 @@ impl McpConfigureView {
         self.state.is_new = is_new;
     }
 
+    fn navigate_to_settings(&self) {
+        crate::ui_gpui::navigation_channel()
+            .request_navigate(crate::presentation::view_command::ViewId::Settings);
+    }
+
+    fn save_current(&self) {
+        self.emit_save_mcp_config();
+    }
+
+    fn toggle_mask_api_key(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.mask_api_key = !self.state.mask_api_key;
+        cx.notify();
+    }
+
+    fn start_oauth(&self) {
+        let parsed_id = self
+            .state
+            .data
+            .id
+            .as_ref()
+            .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+            .unwrap_or_else(uuid::Uuid::nil);
+        self.emit(&UserEvent::StartMcpOAuth {
+            id: parsed_id,
+            provider: self.state.data.oauth_provider.clone(),
+        });
+    }
+
+    fn handle_key_down(&self, event: &gpui::KeyDownEvent) {
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
+
+        if key == "escape" || (modifiers.platform && key == "w") {
+            self.navigate_to_settings();
+        }
+        if modifiers.platform && key == "s" {
+            self.save_current();
+        }
+    }
+
     fn emit_save_mcp_config(&self) {
         let id = self
             .state
@@ -394,11 +434,9 @@ impl McpConfigureView {
                     .child("Cancel")
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
+                        cx.listener(|this, _, _window, _cx| {
                             tracing::info!("Cancel clicked - navigating to Settings");
-                            crate::ui_gpui::navigation_channel().request_navigate(
-                                crate::presentation::view_command::ViewId::Settings,
-                            );
+                            this.navigate_to_settings();
                         }),
                     ),
             )
@@ -431,7 +469,7 @@ impl McpConfigureView {
                                 MouseButton::Left,
                                 cx.listener(|this, _, _window, _cx| {
                                     tracing::info!("Save clicked - emitting SaveMcpConfig");
-                                    this.emit_save_mcp_config();
+                                    this.save_current();
                                 }),
                             )
                     })
@@ -597,8 +635,7 @@ impl McpConfigureView {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, _window, cx| {
-                                    this.state.mask_api_key = !this.state.mask_api_key;
-                                    cx.notify();
+                                    this.toggle_mask_api_key(cx);
                                 }),
                             )
                             .child(
@@ -756,17 +793,7 @@ impl McpConfigureView {
                         MouseButton::Left,
                         cx.listener(|this, _, _window, _cx| {
                             tracing::info!("OAuth authorize clicked");
-                            let parsed_id = this
-                                .state
-                                .data
-                                .id
-                                .as_ref()
-                                .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
-                                .unwrap_or_else(uuid::Uuid::nil);
-                            this.emit(&UserEvent::StartMcpOAuth {
-                                id: parsed_id,
-                                provider: this.state.data.oauth_provider.clone(),
-                            });
+                            this.start_oauth();
                         }),
                     ),
             )
@@ -1028,20 +1055,7 @@ impl gpui::Render for McpConfigureView {
             .track_focus(&self.focus_handle)
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
-                    let key = &event.keystroke.key;
-                    let modifiers = &event.keystroke.modifiers;
-
-                    // Escape or Cmd+W: Go back to Settings
-                    if key == "escape" || (modifiers.platform && key == "w") {
-                        println!(">>> Escape/Cmd+W pressed - navigating to Settings <<<");
-                        crate::ui_gpui::navigation_channel()
-                            .request_navigate(crate::presentation::view_command::ViewId::Settings);
-                    }
-                    // Cmd+S: Save MCP config
-                    if modifiers.platform && key == "s" {
-                        println!(">>> Cmd+S pressed - saving MCP config <<<");
-                        this.emit_save_mcp_config();
-                    }
+                    this.handle_key_down(event);
                 }),
             )
             // Top bar (44px)
@@ -1049,4 +1063,394 @@ impl gpui::Render for McpConfigureView {
             // Content (scrollable)
             .child(self.render_content(cx))
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::future_not_send)]
+
+    use super::*;
+    use flume;
+    use gpui::{AppContext, TestAppContext};
+    use uuid::Uuid;
+
+    use crate::events::types::UserEvent;
+    use crate::presentation::view_command::{ErrorSeverity, ViewCommand};
+
+    fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
+        let (user_tx, user_rx) = flume::bounded(16);
+        let (_view_tx, view_rx) = flume::bounded(16);
+        (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
+    }
+
+    fn clear_navigation_requests() {
+        while crate::ui_gpui::navigation_channel().take_pending().is_some() {}
+    }
+
+
+    #[gpui::test]
+    async fn draft_loaded_sets_auth_transport_and_save_payload_for_remote_http(cx: &mut TestAppContext) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpConfigureView::new);
+
+        view.update(cx, |view: &mut McpConfigureView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.handle_command(
+                ViewCommand::McpConfigureDraftLoaded {
+                    id: Uuid::nil().to_string(),
+                    name: "Exa Remote".to_string(),
+                    package: "exa-remote".to_string(),
+                    package_type: crate::mcp::McpPackageType::Http,
+                    runtime_hint: None,
+                    env_var_name: String::new(),
+                    command: String::new(),
+                    args: vec![],
+                    env: None,
+                    url: Some("https://exa.example/mcp".to_string()),
+                },
+                cx,
+            );
+            assert!(view.state.is_new);
+            assert_eq!(view.state.data.auth_method, McpAuthMethod::None);
+            assert_eq!(view.state.data.url.as_deref(), Some("https://exa.example/mcp"));
+            assert!(view.state.data.can_save());
+            view.emit_save_mcp_config();
+        });
+
+        match user_rx.recv().expect("save mcp config event") {
+            UserEvent::SaveMcpConfig { id, config } => {
+                assert_eq!(id, Uuid::nil());
+                assert_eq!(config.name, "Exa Remote");
+                assert_eq!(config.package.package_type, crate::mcp::McpPackageType::Http);
+                assert_eq!(config.transport, crate::mcp::McpTransport::Http);
+                assert_eq!(
+                    config.source,
+                    crate::mcp::McpSource::Manual {
+                        url: "https://exa.example/mcp".to_string()
+                    }
+                );
+                assert!(config.env_vars.is_empty());
+            }
+            other => panic!("expected SaveMcpConfig event, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn draft_loaded_with_env_requires_api_key_and_status_commands_update_oauth_state(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(McpConfigureView::new);
+        let saved_id = Uuid::new_v4();
+
+        view.update(cx, |view: &mut McpConfigureView, cx| {
+            view.handle_command(
+                ViewCommand::McpConfigureDraftLoaded {
+                    id: saved_id.to_string(),
+                    name: "Filesystem".to_string(),
+                    package: "@modelcontextprotocol/server-filesystem".to_string(),
+                    package_type: crate::mcp::McpPackageType::Npm,
+                    runtime_hint: Some("npx".to_string()),
+                    env_var_name: "FILESYSTEM_TOKEN".to_string(),
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()],
+                    env: Some(vec![("FILESYSTEM_TOKEN".to_string(), String::new())]),
+                    url: None,
+                },
+                cx,
+            );
+            assert!(!view.state.is_new);
+            assert_eq!(view.state.data.auth_method, McpAuthMethod::ApiKey);
+            assert_eq!(view.state.data.env_var_name, "FILESYSTEM_TOKEN");
+            assert_eq!(
+                view.state.data.runtime_hint.as_deref(),
+                Some("npx")
+            );
+            assert!(!view.state.data.can_save());
+
+            view.handle_command(
+                ViewCommand::ShowNotification {
+                    message: "alice".to_string(),
+                },
+                cx,
+            );
+            assert_eq!(
+                view.state.data.oauth_status,
+                OAuthStatus::Connected {
+                    username: "alice".to_string()
+                }
+            );
+
+            view.handle_command(
+                ViewCommand::ShowError {
+                    title: "oauth failed".to_string(),
+                    message: "denied".to_string(),
+                    severity: ErrorSeverity::Error,
+                },
+                cx,
+            );
+            assert_eq!(
+                view.state.data.oauth_status,
+                OAuthStatus::Error("denied".to_string())
+            );
+
+            view.handle_command(
+                ViewCommand::McpConfigSaved {
+                    id: saved_id,
+                    name: Some("Filesystem Saved".to_string()),
+                },
+                cx,
+            );
+            assert_eq!(view.state.data.id.as_deref(), Some(saved_id.to_string().as_str()));
+            assert_eq!(view.state.data.name, "Filesystem Saved");
+            assert!(!view.state.is_new);
+            assert_eq!(
+                view.state.data.oauth_status,
+                OAuthStatus::Connected {
+                    username: "Saved".to_string()
+                }
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn set_mcp_with_keyfile_auth_and_docker_package_emits_stdio_save_payload(
+        cx: &mut TestAppContext,
+    ) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpConfigureView::new);
+        let saved_id = Uuid::new_v4();
+
+        view.update(cx, |view: &mut McpConfigureView, _cx| {
+            view.set_bridge(Arc::clone(&bridge));
+
+            let mut data = McpConfigureData::new();
+            data.id = Some(saved_id.to_string());
+            data.name = "Docker Filesystem".to_string();
+            data.package = "ghcr.io/example/filesystem-mcp:latest".to_string();
+            data.package_type = crate::mcp::McpPackageType::Docker;
+            data.command = "docker".to_string();
+            data.args = vec!["run".to_string(), "--rm".to_string()];
+            data.env = Some(vec![
+                ("FILESYSTEM_TOKEN".to_string(), String::new()),
+                ("ROOT".to_string(), String::new()),
+            ]);
+            data.auth_method = McpAuthMethod::Keyfile;
+            data.keyfile_path = "/tmp/filesystem-key.json".to_string();
+
+            view.set_mcp(data, false);
+            assert!(!view.state.is_new);
+            assert!(view.state.data.can_save());
+
+            view.state.data.keyfile_path.clear();
+            assert!(!view.state.data.can_save());
+            view.state.data.keyfile_path = "/tmp/filesystem-key.json".to_string();
+            assert!(view.state.data.can_save());
+
+            view.emit_save_mcp_config();
+        });
+
+        match user_rx.recv().expect("save docker mcp event") {
+            UserEvent::SaveMcpConfig { id, config } => {
+                assert_eq!(id, saved_id);
+                assert_eq!(config.name, "Docker Filesystem");
+                assert_eq!(config.package.package_type, crate::mcp::McpPackageType::Docker);
+                assert_eq!(
+                    config.package.identifier,
+                    "ghcr.io/example/filesystem-mcp:latest"
+                );
+                assert_eq!(config.package.runtime_hint.as_deref(), Some("docker"));
+                assert_eq!(config.transport, crate::mcp::McpTransport::Stdio);
+                assert_eq!(
+                    config.source,
+                    crate::mcp::McpSource::Manual {
+                        url: "docker run ghcr.io/example/filesystem-mcp:latest".to_string()
+                    }
+                );
+                assert_eq!(
+                    config.env_vars,
+                    vec![
+                        crate::mcp::EnvVarConfig {
+                            name: "FILESYSTEM_TOKEN".to_string(),
+                            required: true,
+                        },
+                        crate::mcp::EnvVarConfig {
+                            name: "ROOT".to_string(),
+                            required: true,
+                        },
+                    ]
+                );
+            }
+            other => panic!("expected SaveMcpConfig event, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn set_mcp_with_oauth_only_saves_when_connected_and_emits_npm_payload(
+        cx: &mut TestAppContext,
+    ) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpConfigureView::new);
+
+        view.update(cx, |view: &mut McpConfigureView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+
+            let mut data = McpConfigureData::new();
+            data.name = "OAuth MCP".to_string();
+            data.package = "@example/oauth-mcp".to_string();
+            data.package_type = crate::mcp::McpPackageType::Npm;
+            data.runtime_hint = Some("npx".to_string());
+            data.command = "npx".to_string();
+            data.auth_method = McpAuthMethod::OAuth;
+            data.oauth_status = OAuthStatus::NotConnected;
+
+            view.set_mcp(data, true);
+            assert!(view.state.is_new);
+            assert!(!view.state.data.can_save());
+
+            view.handle_command(
+                ViewCommand::ShowNotification {
+                    message: "carol".to_string(),
+                },
+                cx,
+            );
+            assert_eq!(
+                view.state.data.oauth_status,
+                OAuthStatus::Connected {
+                    username: "carol".to_string()
+                }
+            );
+            assert!(view.state.data.can_save());
+
+            view.handle_command(
+                ViewCommand::ShowError {
+                    title: "oauth failed".to_string(),
+                    message: "expired".to_string(),
+                    severity: ErrorSeverity::Error,
+                },
+                cx,
+            );
+            assert_eq!(
+                view.state.data.oauth_status,
+                OAuthStatus::Error("expired".to_string())
+            );
+            assert!(!view.state.data.can_save());
+
+            view.handle_command(
+                ViewCommand::ShowNotification {
+                    message: "carol".to_string(),
+                },
+                cx,
+            );
+            assert!(view.state.data.can_save());
+            view.emit_save_mcp_config();
+        });
+
+        match user_rx.recv().expect("save npm mcp event") {
+            UserEvent::SaveMcpConfig { id, config } => {
+                assert_ne!(id, Uuid::nil());
+                assert_eq!(config.name, "OAuth MCP");
+                assert_eq!(config.package.package_type, crate::mcp::McpPackageType::Npm);
+                assert_eq!(config.package.identifier, "@example/oauth-mcp");
+                assert_eq!(config.package.runtime_hint.as_deref(), Some("npx"));
+                assert_eq!(config.transport, crate::mcp::McpTransport::Stdio);
+                assert_eq!(
+                    config.source,
+                    crate::mcp::McpSource::Manual {
+                        url: "npx @example/oauth-mcp".to_string()
+                    }
+                );
+                assert!(config.env_vars.is_empty());
+            }
+            other => panic!("expected SaveMcpConfig event, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn helper_actions_and_key_shortcuts_emit_oauth_save_and_navigation_events(
+        cx: &mut TestAppContext,
+    ) {
+        clear_navigation_requests();
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpConfigureView::new);
+        let saved_id = Uuid::new_v4();
+
+        view.update(cx, |view: &mut McpConfigureView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+
+            let mut data = McpConfigureData::new();
+            data.id = Some(saved_id.to_string());
+            data.name = "Weather MCP".to_string();
+            data.package = "@example/weather-mcp".to_string();
+            data.package_type = crate::mcp::McpPackageType::Npm;
+            data.runtime_hint = Some("npx".to_string());
+            data.command = "npx".to_string();
+            data.auth_method = McpAuthMethod::ApiKey;
+            data.env_var_name = "WEATHER_API_KEY".to_string();
+            data.api_key = "secret-token".to_string();
+            data.oauth_provider = "ExampleAuth".to_string();
+            view.set_mcp(data, false);
+
+            assert!(view.state.mask_api_key);
+            view.toggle_mask_api_key(cx);
+            assert!(!view.state.mask_api_key);
+            view.toggle_mask_api_key(cx);
+            assert!(view.state.mask_api_key);
+
+            view.start_oauth();
+            view.save_current();
+
+            view.handle_key_down(&gpui::KeyDownEvent {
+                keystroke: gpui::Keystroke::parse("cmd-s").expect("cmd-s keystroke"),
+                is_held: false,
+                prefer_character_input: false,
+            });
+
+            view.handle_key_down(&gpui::KeyDownEvent {
+                keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
+                is_held: false,
+                prefer_character_input: false,
+            });
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(crate::presentation::view_command::ViewId::Settings)
+            );
+
+            view.navigate_to_settings();
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(crate::presentation::view_command::ViewId::Settings)
+            );
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("oauth start event"),
+            UserEvent::StartMcpOAuth {
+                id: saved_id,
+                provider: "ExampleAuth".to_string(),
+            }
+        );
+
+        match user_rx.recv().expect("explicit save event") {
+            UserEvent::SaveMcpConfig { id, config } => {
+                assert_eq!(id, saved_id);
+                assert_eq!(config.name, "Weather MCP");
+                assert_eq!(config.package.identifier, "@example/weather-mcp");
+            }
+            other => panic!("expected SaveMcpConfig event, got {other:?}"),
+        }
+
+        match user_rx.recv().expect("cmd-s save event") {
+            UserEvent::SaveMcpConfig { id, config } => {
+                assert_eq!(id, saved_id);
+                assert_eq!(config.name, "Weather MCP");
+                assert_eq!(config.package.identifier, "@example/weather-mcp");
+            }
+            other => panic!("expected SaveMcpConfig event, got {other:?}"),
+        }
+
+        assert!(user_rx.try_recv().is_err(), "unexpected additional mcp configure events");
+    }
+
+
 }

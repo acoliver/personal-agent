@@ -9,57 +9,25 @@
 //!   cargo test --test `e2e_real_tool_execution` -- --ignored --nocapture
 //!
 //! Requires:
-//! - ~/.llxprt/profiles/synthetic.json (profile config)
-//! - ~/.`synthetic_key` (API key)
+//! - PA_E2E_PROVIDER_ID (optional; default: ollama)
+//! - PA_E2E_MODEL_ID (optional; default: minimax-m2.7:cloud)
+//! - PA_E2E_BASE_URL (optional; default: https://ollama.com/v1)
+//! - PA_E2E_KEY_LABEL (optional; default: pa-e2e-ollama-cloud)
+//! - PA_E2E_API_KEY (recommended for non-interactive runs)
 
 use personal_agent::llm::AgentClientExt;
 use personal_agent::mcp::McpService;
 use personal_agent::services::{McpRegistryService, McpRegistryServiceImpl};
-use personal_agent::{AuthConfig, LlmClient, ModelProfile, StreamEvent};
+use personal_agent::{LlmClient, ModelProfile, StreamEvent};
 
-/// Load synthetic profile from ~/.llxprt/profiles/synthetic.json
-fn load_synthetic_profile() -> ModelProfile {
-    let home = dirs::home_dir().expect("No home directory");
-    let profile_path = home.join(".llxprt/profiles/synthetic.json");
+mod support;
 
-    let content = std::fs::read_to_string(&profile_path)
-        .expect("Failed to read ~/.llxprt/profiles/synthetic.json");
-
-    let json: serde_json::Value =
-        serde_json::from_str(&content).expect("Failed to parse synthetic.json");
-
-    let provider = json["provider"].as_str().unwrap_or("openai").to_string();
-    let model = json["model"]
-        .as_str()
-        .expect("No model in profile")
-        .to_string();
-    let base_url = json["ephemeralSettings"]["base-url"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-    let keyfile_path = json["ephemeralSettings"]["auth-keyfile"]
-        .as_str()
-        .unwrap_or("~/.synthetic_key")
-        .to_string();
-
-    let keyfile_path = keyfile_path.strip_prefix("~/").map_or_else(
-        || keyfile_path.clone(),
-        |stripped| home.join(stripped).to_string_lossy().to_string(),
-    );
-
-    ModelProfile::new(
-        "Synthetic GLM".to_string(),
-        provider,
-        model,
-        base_url,
-        AuthConfig::Keychain {
-            label: keyfile_path,
-        },
-    )
+fn load_e2e_profile() -> ModelProfile {
+    support::e2e_config::load_e2e_profile()
 }
 
 #[tokio::test]
-#[ignore = "Requires synthetic profile, API key, and Exa MCP"]
+#[ignore = "Requires PA_E2E_* configuration and Exa MCP"]
 #[allow(clippy::too_many_lines)]
 async fn test_real_exa_search() {
     println!("=== E2E Test: REAL Exa Search ===\n");
@@ -104,7 +72,7 @@ async fn test_real_exa_search() {
         drop(mcp);
 
         println!("\nStep 3: Testing agent without tools (basic mode)...");
-        let profile = load_synthetic_profile();
+        let profile = load_e2e_profile();
         let client = LlmClient::from_profile(&profile).expect("Failed to create client");
         let agent = client
             .create_agent(vec![], "You are a helpful assistant.")
@@ -139,7 +107,7 @@ async fn test_real_exa_search() {
 
     // Step 3: Create agent with tools and search
     println!("\nStep 3: Creating agent with tools...");
-    let profile = load_synthetic_profile();
+    let profile = load_e2e_profile();
     let client = LlmClient::from_profile(&profile).expect("Failed to create client");
 
     let mcp = mcp_service.lock().await;

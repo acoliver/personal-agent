@@ -1,39 +1,29 @@
-//! E2E test using the real runtime-selected keychain-backed profile.
+//! E2E test using PA_E2E_* environment-backed profile configuration.
 //!
 //! This test hits the actual API - run with:
 //!   cargo test --test `e2e_chat_synthetic` -- --ignored --nocapture
 //!
 //! Requires:
-//! - ~/Library/Application Support/PersonalAgent/profiles/default.json
-//! - the corresponding runtime profile JSON
-//! - the profile's keychain label to exist in the OS keychain
+//! - PA_E2E_PROVIDER_ID (optional; default: ollama)
+//! - PA_E2E_MODEL_ID (optional; default: minimax-m2.7:cloud)
+//! - PA_E2E_BASE_URL (optional; default: https://ollama.com/v1)
+//! - PA_E2E_KEY_LABEL (optional; default: pa-e2e-ollama-cloud)
+//! - PA_E2E_API_KEY (recommended for non-interactive runs)
 
 use personal_agent::{AuthConfig, LlmClient, ModelProfile};
 
-/// Load the runtime-selected default profile from the app support directory.
-fn load_runtime_default_profile() -> ModelProfile {
-    let home = dirs::home_dir().expect("No home directory");
-    let profiles_dir = home.join("Library/Application Support/PersonalAgent/profiles");
-    let default_path = profiles_dir.join("default.json");
+mod support;
 
-    let default_content = std::fs::read_to_string(&default_path)
-        .expect("Failed to read runtime profiles/default.json");
-    let default_profile_id: String = serde_json::from_str(&default_content)
-        .expect("Failed to parse runtime profiles/default.json");
-
-    let profile_path = profiles_dir.join(format!("{default_profile_id}.json"));
-    let content = std::fs::read_to_string(&profile_path)
-        .unwrap_or_else(|_| panic!("Failed to read runtime profile: {}", profile_path.display()));
-
-    serde_json::from_str(&content).expect("Failed to parse runtime default profile JSON")
+fn load_e2e_profile() -> ModelProfile {
+    support::e2e_config::load_e2e_profile()
 }
 
 #[tokio::test]
-#[ignore = "Run manually: cargo test --test e2e_chat_synthetic -- --ignored --nocapture"]
+#[ignore = "Requires PA_E2E_* configuration"]
 async fn test_real_chat_with_synthetic_api() {
-    println!("=== E2E Test: Real Chat with Runtime Default Profile ===\n");
+    println!("=== E2E Test: Real Chat with PA_E2E Profile ===\n");
 
-    let profile = load_runtime_default_profile();
+    let profile = load_e2e_profile();
     println!(
         "Profile loaded: {} / {}",
         profile.provider_id, profile.model_id
@@ -41,15 +31,21 @@ async fn test_real_chat_with_synthetic_api() {
     println!("Base URL: {}", profile.base_url);
 
     let AuthConfig::Keychain { ref label } = profile.auth;
-    assert!(!label.is_empty(), "Keychain label must not be empty");
-    println!("Keychain label: {label} [OK]");
+    assert!(!label.is_empty(), "Key label must not be empty");
+    println!("Key label: {label} [OK]");
 
-    let key_exists = personal_agent::services::secure_store::api_keys::exists(label)
-        .expect("Keychain lookup should not fail");
-    assert!(
-        key_exists,
-        "Expected runtime profile keychain label to exist"
-    );
+    let api_key_override_present = std::env::var("PA_E2E_API_KEY")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+
+    if !api_key_override_present {
+        let key_exists = personal_agent::services::secure_store::api_keys::exists(label)
+            .expect("Keychain lookup should not fail");
+        assert!(
+            key_exists,
+            "Expected configured PA_E2E key label to exist in secure store when PA_E2E_API_KEY is unset"
+        );
+    }
 
     let client =
         LlmClient::from_profile(&profile).expect("Failed to create LlmClient from profile");

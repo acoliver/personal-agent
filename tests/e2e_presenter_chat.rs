@@ -6,11 +6,14 @@
 //! This test proves `ChatPresenter` receives events through the full stack:
 //! - `EventBus`
 //! - `ChatPresenter`
-//! - `ChatService` with synthetic API
+//! - `ChatService` with provider API
 //!
 //! Requires:
-//! - ~/.llxprt/profiles/synthetic.json (profile config)
-//! - ~/.`synthetic_key` (API key)
+//! - PA_E2E_PROVIDER_ID (optional; default: ollama)
+//! - PA_E2E_MODEL_ID (optional; default: minimax-m2.7:cloud)
+//! - PA_E2E_BASE_URL (optional; default: https://ollama.com/v1)
+//! - PA_E2E_KEY_LABEL (optional; default: pa-e2e-ollama-cloud)
+//! - PA_E2E_API_KEY (recommended for non-interactive runs)
 //!
 //! Run with: cargo test --test `e2e_presenter_chat` -- --ignored --nocapture
 
@@ -33,46 +36,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-/// Load synthetic profile from ~/.llxprt/profiles/synthetic.json
-fn load_synthetic_profile() -> ModelProfile {
-    let home = dirs::home_dir().expect("No home directory");
-    let profile_path = home.join(".llxprt/profiles/synthetic.json");
+mod support;
 
-    let content = std::fs::read_to_string(&profile_path)
-        .expect("Failed to read ~/.llxprt/profiles/synthetic.json - create this file first");
-
-    let json: serde_json::Value =
-        serde_json::from_str(&content).expect("Failed to parse synthetic.json");
-
-    let provider = json["provider"].as_str().unwrap_or("openai").to_string();
-    let model = json["model"]
-        .as_str()
-        .expect("No model in profile")
-        .to_string();
-    let base_url = json["ephemeralSettings"]["base-url"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-    let keyfile_path = json["ephemeralSettings"]["auth-keyfile"]
-        .as_str()
-        .unwrap_or("~/.synthetic_key")
-        .to_string();
-
-    // Expand ~ to home directory
-    let keyfile_path = keyfile_path.strip_prefix("~/").map_or_else(
-        || keyfile_path.clone(),
-        |stripped| home.join(stripped).to_string_lossy().to_string(),
-    );
-
-    ModelProfile::new(
-        "Synthetic GLM".to_string(),
-        provider,
-        model,
-        base_url,
-        personal_agent::AuthConfig::Keychain {
-            label: keyfile_path,
-        },
-    )
+fn load_e2e_profile() -> ModelProfile {
+    support::e2e_config::load_e2e_profile()
 }
 
 /// Helper to collect `ViewCommands` from a channel
@@ -113,7 +80,7 @@ impl ViewCommandCollector {
 }
 
 #[tokio::test]
-#[ignore = "Requires ~/.llxprt/profiles/synthetic.json and ~/.synthetic_key"]
+#[ignore = "Requires PA_E2E_* configuration"]
 #[allow(clippy::too_many_lines)]
 async fn test_chat_presenter_receives_stream_events() {
     println!("=== E2E Test: ChatPresenter Receives Stream Events ===\n");
@@ -143,8 +110,7 @@ async fn test_chat_presenter_receives_stream_events() {
 
     // Initialize profile service to load existing profiles (fire and forget)
     tokio::spawn(async move {
-        // Reload profiles in background
-        let _ = std::fs::read_to_string(profiles_dir.join("synthetic.json"));
+        let _ = std::fs::read_to_string(profiles_dir.join("default.json"));
     });
 
     let profile_service: Arc<dyn personal_agent::services::ProfileService> =
@@ -156,8 +122,8 @@ async fn test_chat_presenter_receives_stream_events() {
             .expect("Failed to create ConversationService"),
     );
 
-    // Setup: Create ChatService with synthetic profile
-    let profile = load_synthetic_profile();
+    // Setup: Create ChatService with PA_E2E profile
+    let profile = load_e2e_profile();
     println!(
         "Profile loaded: {} / {}",
         profile.provider_id, profile.model_id
@@ -310,7 +276,7 @@ async fn test_chat_presenter_receives_stream_events() {
 }
 
 #[tokio::test]
-#[ignore = "Requires ~/.llxprt/profiles/synthetic.json and ~/.synthetic_key"]
+#[ignore = "Requires PA_E2E_* configuration"]
 async fn test_chat_presenter_error_handling() {
     println!("=== E2E Test: ChatPresenter Error Handling ===\n");
 
@@ -403,7 +369,7 @@ async fn test_chat_presenter_error_handling() {
 }
 
 #[tokio::test]
-#[ignore = "Requires ~/.llxprt/profiles/synthetic.json and ~/.synthetic_key"]
+#[ignore = "Requires PA_E2E_* configuration"]
 async fn test_chat_presenter_manual_events() {
     println!("=== E2E Test: ChatPresenter Manual Event Injection ===\n");
 
@@ -418,7 +384,7 @@ async fn test_chat_presenter_manual_events() {
         ConversationServiceImpl::new(data_dir).expect("Failed to create ConversationService"),
     );
 
-    let profile = load_synthetic_profile();
+    let profile = load_e2e_profile();
     let _llm_client =
         Arc::new(LlmClient::from_profile(&profile).expect("Failed to create LlmClient"));
 
