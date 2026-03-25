@@ -1,4 +1,4 @@
-name: PR Quality and Real E2E
+name: PR Quality and Provider-backed E2E
 
 on:
   pull_request:
@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   fmt:
@@ -106,7 +109,7 @@ jobs:
         run: cargo test --lib --tests
 
   coverage:
-    name: Coverage (llvm-cov report)
+    name: Coverage (llvm-cov gate)
     runs-on: macos-14
     needs:
       - fmt
@@ -129,28 +132,8 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
 
-      - name: Generate coverage summary (workspace scoped)
-        run: |
-          set -euo pipefail
-
-          HOST_TRIPLE="$(rustc -vV | awk '/^host: /{print $2}')"
-          LLVM_BIN="$(rustc --print sysroot)/lib/rustlib/${HOST_TRIPLE}/bin"
-          export LLVM_COV="${LLVM_BIN}/llvm-cov"
-          export LLVM_PROFDATA="${LLVM_BIN}/llvm-profdata"
-
-          IGNORE_REGEX='research/serdesAI/|src/main_gpui.rs|src/bin/|src/llm/client_agent.rs|src/ui_gpui/popup_window.rs|src/ui_gpui/tray_bridge.rs|src/ui_gpui/navigation_channel.rs|src/ui_gpui/selection_intent_channel.rs'
-
-          cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report --lib --tests -q
-
-          mkdir -p target/llvm-cov-target
-          cargo llvm-cov report --summary-only --ignore-filename-regex "$IGNORE_REGEX"
-          cargo llvm-cov report \
-            --json \
-            --summary-only \
-            --skip-functions \
-            --ignore-filename-regex "$IGNORE_REGEX" \
-            --output-path target/llvm-cov-target/workspace-summary.json
+      - name: Run coverage gate
+        run: cargo coverage
 
       - name: Upload coverage summary artifact
         uses: actions/upload-artifact@v4
@@ -159,7 +142,7 @@ jobs:
           path: target/llvm-cov-target/workspace-summary.json
 
   real-e2e:
-    name: Real ignored E2E (PA_E2E contract)
+    name: Provider-backed E2E (PA_E2E contract)
     runs-on: macos-14
     needs:
       - fmt
@@ -215,7 +198,7 @@ jobs:
           set -euo pipefail
           security find-generic-password -a "apikey:$PA_E2E_KEY_LABEL" -s personal-agent -w >/dev/null
 
-      - name: Run ignored real E2E tests
+      - name: Run provider-backed E2E tests
         run: |
           set -euo pipefail
           cargo test --test e2e_chat_synthetic -- --ignored --nocapture
