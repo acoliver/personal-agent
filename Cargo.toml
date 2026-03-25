@@ -64,12 +64,13 @@ tokio = { version = "1.0", features = ["full"] }
 futures = "0.3"
 async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-serdes-ai = { path = "research/serdesAI/serdes-ai", features = ["openai", "anthropic", "mcp"] }
-serdes-ai-agent = { path = "research/serdesAI/serdes-ai-agent" }
-serdes-ai-tools = { path = "research/serdesAI/serdes-ai-tools" }
-serdes-ai-mcp = { path = "research/serdesAI/serdes-ai-mcp", features = ["client", "reqwest"] }
-serdes-ai-models = { path = "research/serdesAI/serdes-ai-models" }
-serdes-ai-core = { path = "research/serdesAI/serdes-ai-core" }
+# Pin serdes-ai workspace crates to upstream commit for reproducible local/CI builds.
+serdes-ai = { git = "https://github.com/janfeddersen-wq/serdesAI.git", rev = "be5774b5c618a71fe899ac5b8c6a5e958ea42a5d", package = "serdes-ai", features = ["openai", "anthropic", "mcp"] }
+serdes-ai-agent = { git = "https://github.com/janfeddersen-wq/serdesAI.git", rev = "be5774b5c618a71fe899ac5b8c6a5e958ea42a5d", package = "serdes-ai-agent" }
+serdes-ai-tools = { git = "https://github.com/janfeddersen-wq/serdesAI.git", rev = "be5774b5c618a71fe899ac5b8c6a5e958ea42a5d", package = "serdes-ai-tools" }
+serdes-ai-mcp = { git = "https://github.com/janfeddersen-wq/serdesAI.git", rev = "be5774b5c618a71fe899ac5b8c6a5e958ea42a5d", package = "serdes-ai-mcp", features = ["client", "reqwest"] }
+serdes-ai-models = { git = "https://github.com/janfeddersen-wq/serdesAI.git", rev = "be5774b5c618a71fe899ac5b8c6a5e958ea42a5d", package = "serdes-ai-models" }
+serdes-ai-core = { git = "https://github.com/janfeddersen-wq/serdesAI.git", rev = "be5774b5c618a71fe899ac5b8c6a5e958ea42a5d", package = "serdes-ai-core" }
 dispatch = "0.2"
 urlencoding = "2.1"
 tiny_http = "0.12"

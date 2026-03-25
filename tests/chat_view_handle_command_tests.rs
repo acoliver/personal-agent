@@ -1,4 +1,4 @@
-#![allow(clippy::future_not_send)]
+#![allow(clippy::future_not_send, clippy::unused_async)]
 
 use chrono::Utc;
 use gpui::{AppContext, EntityInputHandler, TestAppContext};

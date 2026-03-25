@@ -258,12 +258,12 @@ impl SettingsView {
         }
     }
 
-    fn navigate_to_chat(&self) {
+    fn navigate_to_chat() {
         crate::ui_gpui::navigation_channel()
             .request_navigate(crate::presentation::view_command::ViewId::Chat);
     }
 
-    fn navigate_to_profile_editor(&self) {
+    fn navigate_to_profile_editor() {
         crate::ui_gpui::navigation_channel()
             .request_navigate(crate::presentation::view_command::ViewId::ProfileEditor);
     }
@@ -283,7 +283,7 @@ impl SettingsView {
         }
     }
 
-    fn navigate_to_mcp_add(&self) {
+    fn navigate_to_mcp_add() {
         crate::ui_gpui::navigation_channel()
             .request_navigate(crate::presentation::view_command::ViewId::McpAdd);
     }
@@ -301,13 +301,13 @@ impl SettingsView {
         let modifiers = &event.keystroke.modifiers;
 
         if key == "escape" || (modifiers.platform && key == "w") {
-            self.navigate_to_chat();
+            Self::navigate_to_chat();
         } else if key == "=" && modifiers.shift {
-            self.navigate_to_profile_editor();
+            Self::navigate_to_profile_editor();
         } else if key == "e" && !modifiers.platform {
             self.edit_selected_profile();
         } else if key == "m" && !modifiers.platform {
-            self.navigate_to_mcp_add();
+            Self::navigate_to_mcp_add();
         } else if key == "up" && !modifiers.platform {
             self.scroll_profiles(-1);
             cx.notify();
@@ -674,11 +674,11 @@ impl SettingsView {
                             .child("+")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
+                                cx.listener(|_this, _, _window, _cx| {
                                     tracing::info!(
                                         "Add profile clicked - navigating to ModelSelector"
                                     );
-                                    this.navigate_to_profile_editor();
+                                    Self::navigate_to_profile_editor();
                                 }),
                             ),
                     )
@@ -905,9 +905,9 @@ impl SettingsView {
                             .child("+")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
+                                cx.listener(|_this, _, _window, _cx| {
                                     tracing::info!("Add MCP clicked - navigating to McpAdd");
-                                    this.navigate_to_mcp_add();
+                                    Self::navigate_to_mcp_add();
                                 }),
                             ),
                     )
@@ -1316,6 +1316,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[allow(clippy::too_many_lines)]
     async fn helper_actions_and_key_handling_emit_expected_events_and_navigation(
         cx: &mut TestAppContext,
     ) {
@@ -1420,17 +1421,17 @@ mod tests {
                 Some(ViewId::Chat)
             );
 
-            view.navigate_to_profile_editor();
+            SettingsView::navigate_to_profile_editor();
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::ProfileEditor)
             );
-            view.navigate_to_mcp_add();
+            SettingsView::navigate_to_mcp_add();
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::McpAdd)
             );
-            view.navigate_to_chat();
+            SettingsView::navigate_to_chat();
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::Chat)

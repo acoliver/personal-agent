@@ -11,11 +11,11 @@
 //!   cargo test --test `e2e_install_and_search` -- --ignored --nocapture
 //!
 //! Requires:
-//! - PA_E2E_PROVIDER_ID (optional; default: ollama)
-//! - PA_E2E_MODEL_ID (optional; default: minimax-m2.7:cloud)
-//! - PA_E2E_BASE_URL (optional; default: https://ollama.com/v1)
-//! - PA_E2E_KEY_LABEL (optional; default: pa-e2e-ollama-cloud)
-//! - PA_E2E_API_KEY (recommended for non-interactive runs)
+//! - `PA_E2E_PROVIDER_ID` (optional; default: `ollama`)
+//! - `PA_E2E_MODEL_ID` (optional; default: `minimax-m2.7:cloud`)
+//! - `PA_E2E_BASE_URL` (optional; default: <https://ollama.com/v1>)
+//! - `PA_E2E_KEY_LABEL` (optional; default: `pa-e2e-ollama-cloud`)
+//! - `PA_E2E_API_KEY` (recommended for non-interactive runs)
 
 use personal_agent::llm::AgentClientExt;
 use personal_agent::mcp::McpService;

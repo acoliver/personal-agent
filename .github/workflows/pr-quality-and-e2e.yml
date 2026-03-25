@@ -1,4 +1,4 @@
-name: PR Quality and Real E2E
+name: PR Quality and Provider-backed E2E
 
 on:
   pull_request:
@@ -8,11 +8,14 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
-  quality:
-    name: Quality Gate (fmt, clippy, tests, coverage)
+  fmt:
+    name: Format (rustfmt)
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -20,29 +23,45 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
 
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: Run Cargo QA gate
-        run: cargo qa
+  lint:
+    name: Lint (clippy + structural)
+    runs-on: macos-14
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Install complexity tooling (lizard)
         run: |
           set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install lizard
+          python3 -m venv .venv-lizard
+          . .venv-lizard/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install lizard
 
       - name: Run structural quality checks (complexity + file length)
         run: |
           set -euo pipefail
+          . .venv-lizard/bin/activate
 
-          python3 -m lizard -C 50 -L 100 -w src/ \
+          python -m lizard -C 50 -L 100 -w src/ \
             --exclude "src/ui_gpui/views/*" \
             --exclude "src/ui_gpui/components/*" \
             --exclude "src/main_gpui.rs" \
@@ -71,10 +90,65 @@ jobs:
             exit 1
           fi
 
-  real-e2e:
-    name: Real ignored E2E (PA_E2E contract)
+  test:
+    name: Tests (lib + integration)
     runs-on: macos-14
-    needs: quality
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run library and integration tests
+        run: cargo test --lib --tests
+
+  coverage:
+    name: Coverage (llvm-cov gate)
+    runs-on: macos-14
+    needs:
+      - fmt
+      - lint
+      - test
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Run coverage gate
+        run: cargo coverage
+
+      - name: Upload coverage summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-summary
+          path: target/llvm-cov-target/workspace-summary.json
+
+  real-e2e:
+    name: Provider-backed E2E (PA_E2E contract)
+    runs-on: macos-14
+    needs:
+      - fmt
+      - lint
+      - test
+      - coverage
     timeout-minutes: 60
     env:
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
@@ -124,7 +198,7 @@ jobs:
           set -euo pipefail
           security find-generic-password -a "apikey:$PA_E2E_KEY_LABEL" -s personal-agent -w >/dev/null
 
-      - name: Run ignored real E2E tests
+      - name: Run provider-backed E2E tests
         run: |
           set -euo pipefail
           cargo test --test e2e_chat_synthetic -- --ignored --nocapture

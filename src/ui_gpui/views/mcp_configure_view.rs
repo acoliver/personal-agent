@@ -207,7 +207,7 @@ impl McpConfigureView {
         self.state.is_new = is_new;
     }
 
-    fn navigate_to_settings(&self) {
+    fn navigate_to_settings() {
         crate::ui_gpui::navigation_channel()
             .request_navigate(crate::presentation::view_command::ViewId::Settings);
     }
@@ -240,7 +240,7 @@ impl McpConfigureView {
         let modifiers = &event.keystroke.modifiers;
 
         if key == "escape" || (modifiers.platform && key == "w") {
-            self.navigate_to_settings();
+            Self::navigate_to_settings();
         }
         if modifiers.platform && key == "s" {
             self.save_current();
@@ -434,9 +434,8 @@ impl McpConfigureView {
                     .child("Cancel")
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, _window, _cx| {
-                            tracing::info!("Cancel clicked - navigating to Settings");
-                            this.navigate_to_settings();
+                        cx.listener(|_this, _, _window, _cx| {
+                            Self::navigate_to_settings();
                         }),
                     ),
             )
@@ -1431,7 +1430,7 @@ mod tests {
                 Some(crate::presentation::view_command::ViewId::Settings)
             );
 
-            view.navigate_to_settings();
+            McpConfigureView::navigate_to_settings();
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(crate::presentation::view_command::ViewId::Settings)

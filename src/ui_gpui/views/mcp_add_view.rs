@@ -1564,6 +1564,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[allow(clippy::too_many_lines)]
     async fn key_and_input_handling_follow_real_registry_and_search_rules(cx: &mut TestAppContext) {
         clear_navigation_requests();
         let (bridge, user_rx) = make_bridge();

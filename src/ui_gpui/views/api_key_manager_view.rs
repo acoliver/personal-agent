@@ -1137,6 +1137,11 @@ mod tests {
                     window,
                     cx,
                 );
+
+                assert_eq!(
+                    crate::ui_gpui::navigation_channel().take_pending(),
+                    Some(ViewId::ProfileEditor)
+                );
             });
         });
 
@@ -1153,10 +1158,6 @@ mod tests {
         assert!(
             user_rx.try_recv().is_err(),
             "unexpected additional user events"
-        );
-        assert_eq!(
-            crate::ui_gpui::navigation_channel().take_pending(),
-            Some(ViewId::ProfileEditor)
         );
     }
 
