@@ -149,14 +149,22 @@ fn coverage() -> Result<()> {
 
 fn coverage_ignore_regex() -> String {
     [
+        // External vendored dependency
         "research/serdesAI/",
-        "src/main_gpui.rs",
+        // Binary entry points (no unit-testable logic)
+        "src/main_gpui",
         "src/bin/",
+        // Requires live LLM provider
         "src/llm/client_agent.rs",
+        // macOS AppKit / IPC plumbing (requires window server)
         "src/ui_gpui/popup_window.rs",
         "src/ui_gpui/tray_bridge.rs",
         "src/ui_gpui/navigation_channel.rs",
         "src/ui_gpui/selection_intent_channel.rs",
+        // GPUI declarative render + IME impls (require live GPUI window context)
+        r"/render\.rs$",
+        r"/render_bars\.rs$",
+        r"/ime\.rs$",
     ]
     .join("|")
 }

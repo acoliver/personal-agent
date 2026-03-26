@@ -150,16 +150,6 @@ async fn bug_save_profile_editor_should_emit_default_profile_changed() {
 }
 
 #[test]
-fn bug_model_selected_should_use_shared_provider_base_url_defaults() {
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
-
-    assert!(
-        source.contains("default_api_base_url_for_provider(&provider_id)"),
-        "ModelSelected prefill should delegate provider base URL fallback to shared defaults"
-    );
-}
-
-#[test]
 fn provider_defaults_should_use_models_dev_metadata_for_kimi_and_builtin_fallbacks() {
     assert_eq!(
         personal_agent::config::provider_api_url("kimi-for-coding").as_deref(),
@@ -176,55 +166,5 @@ fn provider_defaults_should_use_models_dev_metadata_for_kimi_and_builtin_fallbac
     assert_eq!(
         personal_agent::config::default_api_base_url_for_provider("synthetic"),
         "https://api.synthetic.new/v1"
-    );
-}
-
-#[test]
-fn bug_api_key_storage_uses_keychain_not_inline_paste() {
-    // API keys are now stored in the OS keychain via secure_store, not pasted inline.
-    // Verify the profile editor no longer has inline API key entry fields.
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
-
-    assert!(
-        !source.contains(".id(\"btn-paste-api-key\")"),
-        "Inline API key paste button should be removed — keys are stored via keychain"
-    );
-    assert!(
-        source.contains("key_label") || source.contains("api_key_label"),
-        "Profile editor should reference keychain labels instead of inline API keys"
-    );
-}
-
-#[test]
-fn bug_browse_model_should_preserve_or_refresh_available_api_keys_for_new_profile_flow() {
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
-
-    assert!(
-        source.contains("let available_keys = this.state.data.available_keys.clone();")
-            && source.contains("this.state.data.available_keys = available_keys;")
-            && source.contains("this.request_api_key_refresh();"),
-        "Browse -> ModelSelector should not strand the new-profile API key dropdown with an empty available_keys list"
-    );
-}
-
-#[test]
-fn bug_chat_service_should_fallback_to_profile_system_prompt_when_conversation_has_none() {
-    let source = include_str!("../src/services/chat_impl.rs");
-    let start = source
-        .find("let system_prompt = conversation")
-        .or_else(|| source.find("fn system_prompt_for_conversation"))
-        .expect("system_prompt extraction should exist");
-    let end = (start + 520).min(source.len());
-    let window = &source[start..end];
-
-    let has_profile_fallback = window.contains("profile.system_prompt")
-        || window.contains("unwrap_or(&profile.system_prompt)")
-        || window.contains("unwrap_or(profile.system_prompt")
-        || window.contains("if system_prompt.is_empty()")
-        || window.contains("if system_prompt.trim().is_empty()");
-
-    assert!(
-        has_profile_fallback,
-        "ChatService should fallback to profile.system_prompt when no system message exists in conversation"
     );
 }

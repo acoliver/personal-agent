@@ -309,9 +309,59 @@ impl HistoryView {
             )
     }
 
+    /// Render the action buttons bar for a conversation card
+    fn render_card_actions(conv_id: uuid::Uuid, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .justify_end()
+            .gap(px(8.0))
+            .pt(px(4.0))
+            .child(
+                div()
+                    .id(gpui::SharedString::from(format!("load-{conv_id}")))
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .rounded(px(6.0))
+                    .bg(Theme::bg_dark())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::accent()))
+                    .text_size(px(12.0))
+                    .text_color(Theme::text_primary())
+                    .child("Load")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |_this, _, _window, _cx| {
+                            tracing::info!("Load clicked for conversation: {}", conv_id);
+                            selection_intent_channel().request_select(conv_id);
+                            crate::ui_gpui::navigation_channel()
+                                .request_navigate(crate::presentation::view_command::ViewId::Chat);
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .id(gpui::SharedString::from(format!("delete-{conv_id}")))
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .rounded(px(6.0))
+                    .bg(Theme::bg_dark())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::danger()))
+                    .text_size(px(12.0))
+                    .text_color(Theme::text_primary())
+                    .child("Delete")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _window, _cx| {
+                            tracing::info!("Delete clicked for conversation: {}", conv_id);
+                            this.emit(&UserEvent::DeleteConversation { id: conv_id });
+                        }),
+                    ),
+            )
+    }
+
     /// Render a single conversation card
     /// @plan PLAN-20250130-GPUIREDUX.P05
-    #[allow(clippy::too_many_lines)]
     fn render_conversation_card(
         conv: &ConversationItem,
         cx: &mut gpui::Context<Self>,
@@ -329,7 +379,6 @@ impl HistoryView {
         } else {
             format!("{msg_count} messages")
         };
-
         let is_selected = conv.is_selected;
 
         let mut card = div()
@@ -376,56 +425,7 @@ impl HistoryView {
                 .text_color(subtitle_color)
                 .child(format!("{date} • {msg_text}")),
         )
-        .child(
-            div()
-                .flex()
-                .justify_end()
-                .gap(px(8.0))
-                .pt(px(4.0))
-                .child(
-                    div()
-                        .id(gpui::SharedString::from(format!("load-{conv_id}")))
-                        .px(px(12.0))
-                        .py(px(6.0))
-                        .rounded(px(6.0))
-                        .bg(Theme::bg_dark())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(Theme::accent()))
-                        .text_size(px(12.0))
-                        .text_color(Theme::text_primary())
-                        .child("Load")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |_this, _, _window, _cx| {
-                                tracing::info!("Load clicked for conversation: {}", conv_id);
-                                selection_intent_channel().request_select(conv_id);
-                                crate::ui_gpui::navigation_channel().request_navigate(
-                                    crate::presentation::view_command::ViewId::Chat,
-                                );
-                            }),
-                        ),
-                )
-                .child(
-                    div()
-                        .id(gpui::SharedString::from(format!("delete-{conv_id}")))
-                        .px(px(12.0))
-                        .py(px(6.0))
-                        .rounded(px(6.0))
-                        .bg(Theme::bg_dark())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(Theme::danger()))
-                        .text_size(px(12.0))
-                        .text_color(Theme::text_primary())
-                        .child("Delete")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _window, _cx| {
-                                tracing::info!("Delete clicked for conversation: {}", conv_id);
-                                this.emit(&UserEvent::DeleteConversation { id: conv_id });
-                            }),
-                        ),
-                ),
-        )
+        .child(Self::render_card_actions(conv_id, cx))
         .into_any_element()
     }
 }
@@ -540,17 +540,12 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn handle_command_updates_history_state_and_emits_refresh_requests(
-        cx: &mut TestAppContext,
-    ) {
+    async fn list_refresh_and_activation_commands_update_conversations(cx: &mut TestAppContext) {
         let older_id = Uuid::new_v4();
         let selected_id = Uuid::new_v4();
-        let created_id = Uuid::new_v4();
-        let (bridge, user_rx) = make_bridge();
         let view = cx.new(HistoryView::new);
 
         view.update(cx, |view: &mut HistoryView, cx| {
-            view.set_bridge(Arc::clone(&bridge));
             view.handle_command(
                 ViewCommand::ConversationListRefreshed {
                     conversations: vec![
@@ -572,9 +567,7 @@ mod tests {
             assert_eq!(conversations[0].date_display, "3h ago");
             assert_eq!(conversations[1].title, "Selected");
             assert_eq!(conversations[1].date_display, "2m ago");
-            assert!(conversations
-                .iter()
-                .all(|conversation| !conversation.is_selected));
+            assert!(conversations.iter().all(|c| !c.is_selected));
 
             view.handle_command(
                 ViewCommand::ConversationActivated {
@@ -586,6 +579,23 @@ mod tests {
             assert_eq!(view.state.selected_conversation_id, Some(selected_id));
             assert!(view.conversations()[1].is_selected);
             assert!(!view.conversations()[0].is_selected);
+        });
+    }
+
+    #[gpui::test]
+    async fn created_renamed_deleted_cleared_commands_update_state_and_emit_refresh(
+        cx: &mut TestAppContext,
+    ) {
+        let selected_id = Uuid::new_v4();
+        let created_id = Uuid::new_v4();
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(HistoryView::new);
+
+        view.update(cx, |view: &mut HistoryView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.state.selected_conversation_id = Some(selected_id);
+            view.state.conversations =
+                vec![ConversationItem::new(selected_id, "Selected").with_selected(true)];
 
             view.handle_command(
                 ViewCommand::ConversationCreated {
@@ -600,6 +610,7 @@ mod tests {
             assert_eq!(view.conversations()[0].message_count, 0);
             assert!(!view.conversations()[0].is_selected);
 
+            // duplicate creation is idempotent
             view.handle_command(
                 ViewCommand::ConversationCreated {
                     id: created_id,
@@ -610,7 +621,7 @@ mod tests {
             assert_eq!(
                 view.conversations()
                     .iter()
-                    .filter(|conversation| conversation.id == created_id)
+                    .filter(|c| c.id == created_id)
                     .count(),
                 1
             );
@@ -627,10 +638,7 @@ mod tests {
             view.handle_command(ViewCommand::ConversationDeleted { id: selected_id }, cx);
             assert_eq!(view.state.selected_conversation_id, Some(created_id));
             assert!(view.conversations()[0].is_selected);
-            assert!(view
-                .conversations()
-                .iter()
-                .all(|conversation| conversation.id != selected_id));
+            assert!(view.conversations().iter().all(|c| c.id != selected_id));
 
             view.handle_command(ViewCommand::ConversationCleared, cx);
         });

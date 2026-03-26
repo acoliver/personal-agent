@@ -61,13 +61,7 @@ jobs:
           set -euo pipefail
           . .venv-lizard/bin/activate
 
-          python -m lizard -C 50 -L 100 -w src/ \
-            --exclude "src/ui_gpui/views/*" \
-            --exclude "src/ui_gpui/components/*" \
-            --exclude "src/main_gpui.rs" \
-            --exclude "src/bin/*" \
-            --exclude "src/services/chat.rs" \
-            --exclude "src/llm/client_agent.rs"
+          python -m lizard -C 50 -L 100 -w src/
 
           error_exit=0
           while IFS= read -r file; do
@@ -78,13 +72,7 @@ jobs:
             elif [ "$lines" -gt 750 ]; then
               echo "WARNING: $file has $lines lines (recommended max 750)"
             fi
-          done < <(
-            find src -name "*.rs" \
-              -not -path "src/ui_gpui/views/*" \
-              -not -path "src/ui_gpui/components/*" \
-              -not -path "src/main_gpui.rs" \
-              -not -path "src/bin/*" | sort
-          )
+          done < <(find src -name "*.rs" | sort)
 
           if [ "$error_exit" -eq 1 ]; then
             exit 1

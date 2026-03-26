@@ -52,16 +52,6 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
 
 /// Agent client extensions for `LlmClient`
 pub trait AgentClientExt {
-    /// Create an Agent with MCP tools integrated
-    ///
-    /// This builds a `SerdesAI` Agent with the current profile's model and system prompt,
-    /// and registers MCP tools as native Agent tools using a bridge executor.
-    fn create_agent(
-        &self,
-        mcp_tools: Vec<crate::llm::tools::Tool>,
-        system_prompt: &str,
-    ) -> impl std::future::Future<Output = StdResult<Agent<McpToolContext>, LlmError>> + Send;
-
     /// Run an agent with streaming
     fn run_agent_stream<F>(
         &self,
@@ -71,9 +61,142 @@ pub trait AgentClientExt {
     ) -> impl std::future::Future<Output = StdResult<(), LlmError>> + Send
     where
         F: FnMut(StreamEvent) + Send;
+
+    /// Create an Agent with MCP tools integrated
+    fn create_agent(
+        &self,
+        mcp_tools: Vec<crate::llm::tools::Tool>,
+        system_prompt: &str,
+    ) -> impl std::future::Future<Output = StdResult<Agent<McpToolContext>, LlmError>> + Send;
+}
+
+impl AgentClientExt for crate::llm::LlmClient {
+    async fn run_agent_stream<F>(
+        &self,
+        agent: &Agent<McpToolContext>,
+        messages: &[Message],
+        mut on_event: F,
+    ) -> StdResult<(), LlmError>
+    where
+        F: FnMut(StreamEvent) + Send,
+    {
+        self.do_run_agent_stream(agent, messages, &mut on_event)
+            .await
+    }
+
+    async fn create_agent(
+        &self,
+        mcp_tools: Vec<crate::llm::tools::Tool>,
+        system_prompt: &str,
+    ) -> StdResult<Agent<McpToolContext>, LlmError> {
+        tracing::info!(
+            "create_agent: model={}, base_url={}",
+            self.profile.model_id,
+            self.profile.base_url
+        );
+        self.set_api_key_env();
+
+        let model = self.build_agent_model()?;
+        let mut builder = self.build_agent_builder(model, system_prompt);
+        builder = Self::register_mcp_tools(builder, mcp_tools);
+
+        Ok(builder.build())
+    }
 }
 
 impl crate::llm::LlmClient {
+    async fn do_run_agent_stream<F>(
+        &self,
+        agent: &Agent<McpToolContext>,
+        messages: &[Message],
+        on_event: &mut F,
+    ) -> StdResult<(), LlmError>
+    where
+        F: FnMut(StreamEvent) + Send,
+    {
+        let (prompt, history_messages) = Self::split_prompt_and_history(messages);
+        let message_history = Self::build_agent_message_history(history_messages);
+
+        tracing::info!(
+            "run_agent_stream: prompt='{}' history_messages={} history_requests={}",
+            prompt,
+            history_messages.len(),
+            message_history.len()
+        );
+
+        let context = McpToolContext;
+        let options = if message_history.is_empty() {
+            RunOptions::default()
+        } else {
+            RunOptions::default().message_history(message_history)
+        };
+
+        tracing::info!("run_agent_stream: creating AgentStream...");
+        let mut stream = AgentStream::new(agent, UserContent::text(prompt), context, options)
+            .await
+            .map_err(|e| {
+                tracing::error!("run_agent_stream: AgentStream creation failed: {}", e);
+                LlmError::SerdesAi(e.to_string())
+            })?;
+        tracing::info!("run_agent_stream: AgentStream created, processing events...");
+
+        while let Some(event_result) = stream.next().await {
+            match event_result {
+                Ok(event) => match event {
+                    AgentStreamEvent::TextDelta { text } => {
+                        tracing::info!("run_agent_stream: TextDelta: '{}'", text);
+                        on_event(StreamEvent::TextDelta(text));
+                    }
+                    AgentStreamEvent::ThinkingDelta { text } => {
+                        on_event(StreamEvent::ThinkingDelta(text));
+                    }
+                    AgentStreamEvent::ToolCallStart {
+                        tool_name,
+                        tool_call_id,
+                        ..
+                    } => {
+                        on_event(StreamEvent::ToolCallStarted {
+                            tool_name: tool_name.clone(),
+                            call_id: tool_call_id.clone().unwrap_or_default(),
+                        });
+                    }
+                    AgentStreamEvent::ToolExecuted {
+                        tool_name,
+                        tool_call_id,
+                        success,
+                        error,
+                        ..
+                    } => {
+                        on_event(StreamEvent::ToolCallCompleted {
+                            tool_name,
+                            call_id: tool_call_id.unwrap_or_default(),
+                            success,
+                            result: None,
+                            error,
+                        });
+                    }
+                    AgentStreamEvent::RunComplete { .. } => {
+                        tracing::info!("run_agent_stream: RunComplete");
+                        on_event(StreamEvent::Complete);
+                    }
+                    AgentStreamEvent::Error { message } => {
+                        tracing::error!("run_agent_stream: Error: {}", message);
+                        on_event(StreamEvent::Error(message));
+                    }
+                    other => {
+                        tracing::debug!("run_agent_stream: other event: {:?}", other);
+                    }
+                },
+                Err(e) => {
+                    on_event(StreamEvent::Error(e.to_string()));
+                    return Err(LlmError::SerdesAi(e.to_string()));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn build_agent_model(&self) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
         let base_url = self.base_url_override();
         let provider = self.get_serdes_provider();
@@ -216,124 +339,6 @@ impl crate::llm::LlmClient {
             .iter()
             .filter_map(Self::message_to_agent_history_request)
             .collect()
-    }
-}
-
-impl AgentClientExt for crate::llm::LlmClient {
-    async fn create_agent(
-        &self,
-        mcp_tools: Vec<crate::llm::tools::Tool>,
-        system_prompt: &str,
-    ) -> StdResult<Agent<McpToolContext>, LlmError> {
-        tracing::info!(
-            "create_agent: model={}, base_url={}",
-            self.profile.model_id,
-            self.profile.base_url
-        );
-        self.set_api_key_env();
-
-        let model = self.build_agent_model()?;
-        let mut builder = self.build_agent_builder(model, system_prompt);
-        builder = Self::register_mcp_tools(builder, mcp_tools);
-
-        Ok(builder.build())
-    }
-
-    async fn run_agent_stream<F>(
-        &self,
-        agent: &Agent<McpToolContext>,
-        messages: &[Message],
-        mut on_event: F,
-    ) -> StdResult<(), LlmError>
-    where
-        F: FnMut(StreamEvent) + Send,
-    {
-        let (prompt, history_messages) = Self::split_prompt_and_history(messages);
-        let message_history = Self::build_agent_message_history(history_messages);
-
-        tracing::info!(
-            "run_agent_stream: prompt='{}' history_messages={} history_requests={}",
-            prompt,
-            history_messages.len(),
-            message_history.len()
-        );
-
-        // Create the McpToolContext
-        let context = McpToolContext;
-        let options = if message_history.is_empty() {
-            RunOptions::default()
-        } else {
-            RunOptions::default().message_history(message_history)
-        };
-
-        // Create the agent stream
-        tracing::info!("run_agent_stream: creating AgentStream...");
-        let mut stream = AgentStream::new(agent, UserContent::text(prompt), context, options)
-            .await
-            .map_err(|e| {
-                tracing::error!("run_agent_stream: AgentStream creation failed: {}", e);
-                LlmError::SerdesAi(e.to_string())
-            })?;
-        tracing::info!("run_agent_stream: AgentStream created, processing events...");
-
-        // Process stream events
-        while let Some(event_result) = stream.next().await {
-            match event_result {
-                Ok(event) => match event {
-                    AgentStreamEvent::TextDelta { text } => {
-                        tracing::info!("run_agent_stream: TextDelta: '{}'", text);
-                        on_event(StreamEvent::TextDelta(text));
-                    }
-                    AgentStreamEvent::ThinkingDelta { text } => {
-                        on_event(StreamEvent::ThinkingDelta(text));
-                    }
-                    AgentStreamEvent::ToolCallStart {
-                        tool_name,
-                        tool_call_id,
-                        ..
-                    } => {
-                        // Emit tool call started event
-                        on_event(StreamEvent::ToolCallStarted {
-                            tool_name: tool_name.clone(),
-                            call_id: tool_call_id.clone().unwrap_or_default(),
-                        });
-                    }
-                    AgentStreamEvent::ToolExecuted {
-                        tool_name,
-                        tool_call_id,
-                        success,
-                        error,
-                        ..
-                    } => {
-                        // Emit tool call completed event
-                        on_event(StreamEvent::ToolCallCompleted {
-                            tool_name,
-                            call_id: tool_call_id.unwrap_or_default(),
-                            success,
-                            result: None, // SerdesAI doesn't include result in event
-                            error,
-                        });
-                    }
-                    AgentStreamEvent::RunComplete { .. } => {
-                        tracing::info!("run_agent_stream: RunComplete");
-                        on_event(StreamEvent::Complete);
-                    }
-                    AgentStreamEvent::Error { message } => {
-                        tracing::error!("run_agent_stream: Error: {}", message);
-                        on_event(StreamEvent::Error(message));
-                    }
-                    other => {
-                        tracing::debug!("run_agent_stream: other event: {:?}", other);
-                    } // Ignore other events
-                },
-                Err(e) => {
-                    on_event(StreamEvent::Error(e.to_string()));
-                    return Err(LlmError::SerdesAi(e.to_string()));
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 

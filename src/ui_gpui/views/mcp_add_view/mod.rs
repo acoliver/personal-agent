@@ -3,17 +3,15 @@
 //! @plan PLAN-20250130-GPUIREDUX.P09
 //! @requirement REQ-UI-MA
 
-use gpui::{
-    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
-    Pixels, ScrollWheelEvent, SharedString,
-};
-use std::ops::Range;
+mod ime;
+mod render;
+
+use gpui::FocusHandle;
 use std::sync::Arc;
 
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
 use crate::ui_gpui::bridge::GpuiBridge;
-use crate::ui_gpui::theme::Theme;
 
 /// Registry source for MCP search
 /// @plan PLAN-20250130-GPUIREDUX.P09
@@ -124,7 +122,7 @@ impl McpSearchResult {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ActiveField {
+pub(super) enum ActiveField {
     ManualEntry,
     SearchQuery,
 }
@@ -151,8 +149,8 @@ pub struct McpAddState {
     pub search_state: SearchState,
     pub results: Vec<McpSearchResult>,
     pub selected_result_id: Option<String>,
-    active_field: Option<ActiveField>,
-    show_registry_dropdown: bool,
+    pub(super) active_field: Option<ActiveField>,
+    pub(super) show_registry_dropdown: bool,
 }
 
 impl McpAddState {
@@ -171,10 +169,10 @@ impl McpAddState {
 /// MCP Add view component
 /// @plan PLAN-20250130-GPUIREDUX.P09
 pub struct McpAddView {
-    state: McpAddState,
-    bridge: Option<Arc<GpuiBridge>>,
-    focus_handle: FocusHandle,
-    ime_marked_byte_count: usize,
+    pub(super) state: McpAddState,
+    pub(super) bridge: Option<Arc<GpuiBridge>>,
+    pub(super) focus_handle: FocusHandle,
+    pub(super) ime_marked_byte_count: usize,
 }
 
 impl McpAddView {
@@ -463,8 +461,6 @@ impl McpAddView {
         }
     }
 
-    /// Handle `ViewCommand` from presenter
-    /// @plan PLAN-20250130-GPUIREDUX.P09
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
             ViewCommand::McpConfigureDraftLoaded {
@@ -553,713 +549,6 @@ impl McpAddView {
         }
         cx.notify();
     }
-
-    /// Render the top bar with cancel, title, and next
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let can_proceed = self.state.can_proceed();
-
-        div()
-            .id("mcp-add-top-bar")
-            .h(px(44.0))
-            .w_full()
-            .bg(Theme::bg_darker())
-            .border_b_1()
-            .border_color(Theme::border())
-            .px(px(12.0))
-            .flex()
-            .items_center()
-            .justify_between()
-            // Left: Cancel button - uses navigation_channel
-            .child(
-                div()
-                    .id("btn-cancel")
-                    .w(px(70.0))
-                    .py(px(6.0))
-                    .rounded(px(4.0))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(12.0))
-                    .text_color(Theme::text_secondary())
-                    .child("Cancel")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
-                            tracing::info!("Cancel clicked - navigating to Settings");
-                            crate::ui_gpui::navigation_channel().request_navigate(
-                                crate::presentation::view_command::ViewId::Settings,
-                            );
-                        }),
-                    ),
-            )
-            // Center: Title
-            .child(
-                div().flex_1().flex().justify_center().child(
-                    div()
-                        .text_size(px(14.0))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(Theme::text_primary())
-                        .child("Add MCP"),
-                ),
-            )
-            // Right: Next button
-            .child(
-                div()
-                    .id("btn-next")
-                    .w(px(60.0))
-                    .py(px(6.0))
-                    .rounded(px(4.0))
-                    .flex()
-                    .justify_center()
-                    .text_size(px(12.0))
-                    .when(can_proceed, |d| {
-                        d.cursor_pointer()
-                            .bg(Theme::accent())
-                            .hover(|s| s.bg(Theme::accent_hover()))
-                            .text_color(gpui::white())
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
-                                    if let Some(selected_id) = this.state.selected_result_id.clone()
-                                    {
-                                        tracing::info!(
-                                            "Next clicked - selected MCP {}",
-                                            selected_id
-                                        );
-                                        this.emit(&UserEvent::SelectMcpFromRegistry {
-                                            source: crate::events::types::McpRegistrySource {
-                                                name: selected_id,
-                                            },
-                                        });
-                                    } else {
-                                        tracing::info!("Next clicked - proceeding via McpAddNext");
-                                        this.emit(&UserEvent::McpAddNext {
-                                            manual_entry: Some(this.state.manual_entry.clone()),
-                                        });
-                                    }
-                                }),
-                            )
-                    })
-                    .when(!can_proceed, |d| {
-                        d.bg(Theme::bg_dark()).text_color(Theme::text_muted())
-                    })
-                    .child("Next"),
-            )
-    }
-
-    /// Render a field label
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_label(text: &str) -> impl IntoElement {
-        div()
-            .text_size(px(11.0))
-            .text_color(Theme::text_secondary())
-            .mb(px(4.0))
-            .child(text.to_string())
-    }
-
-    /// Render the manual entry field
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_manual_entry(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::ManualEntry);
-
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .child(Self::render_label("MANUAL ENTRY"))
-            .child(
-                div()
-                    .id("field-manual-entry")
-                    .w_full()
-                    .min_h(px(30.0))
-                    .px(px(8.0))
-                    .py(px(6.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(if active {
-                        Theme::accent()
-                    } else {
-                        Theme::border()
-                    })
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .cursor_text()
-                    .text_size(px(12.0))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.state.active_field = Some(ActiveField::ManualEntry);
-                            this.state.show_registry_dropdown = false;
-                            window.focus(&this.focus_handle, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .child(if self.state.manual_entry.is_empty() {
-                        div()
-                            .text_color(Theme::text_muted())
-                            .w_full()
-                            .overflow_hidden()
-                            .child("npx @scope/package or docker image or URL")
-                    } else {
-                        div()
-                            .text_color(Theme::text_primary())
-                            .w_full()
-                            .child(self.state.manual_entry.clone())
-                    }),
-            )
-    }
-
-    /// Render the "or search registry" divider
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_divider() -> impl IntoElement {
-        div()
-            .w_full()
-            .my(px(16.0))
-            .flex()
-            .items_center()
-            .gap(px(12.0))
-            .child(div().flex_1().h(px(1.0)).bg(Theme::border()))
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(Theme::text_muted())
-                    .child("or search registry"),
-            )
-            .child(div().flex_1().h(px(1.0)).bg(Theme::border()))
-    }
-
-    /// Render the registry dropdown trigger
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_registry_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let registry = self.state.registry.display();
-
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .child(Self::render_label("REGISTRY"))
-            .child(
-                div()
-                    .id("dropdown-registry")
-                    .w_full()
-                    .h(px(30.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(if self.state.show_registry_dropdown {
-                        Theme::accent()
-                    } else {
-                        Theme::border()
-                    })
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .text_color(Theme::text_primary())
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_registry_dropdown(cx);
-                            window.focus(&this.focus_handle, cx);
-                        }),
-                    )
-                    .child(registry)
-                    .child(div().text_color(Theme::text_muted()).child(
-                        if self.state.show_registry_dropdown {
-                            "▲"
-                        } else {
-                            "▼"
-                        },
-                    )),
-            )
-    }
-
-    /// Render the floating registry dropdown overlay
-    fn render_registry_overlay(cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .id("registry-menu-overlay")
-            .absolute()
-            .top(px(170.0))
-            .left(px(12.0))
-            .right(px(12.0))
-            .bg(Theme::bg_dark())
-            .border_1()
-            .border_color(Theme::accent())
-            .rounded(px(4.0))
-            .shadow_lg()
-            .flex()
-            .flex_col()
-            .children(
-                [
-                    (McpRegistry::Official, "Official"),
-                    (McpRegistry::Smithery, "Smithery"),
-                    (McpRegistry::Both, "Both"),
-                ]
-                .into_iter()
-                .map(|(registry, label)| {
-                    div()
-                        .id(SharedString::from(format!(
-                            "registry-option-{}",
-                            label.to_lowercase()
-                        )))
-                        .px(px(8.0))
-                        .py(px(6.0))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(Theme::bg_darker()))
-                        .text_size(px(11.0))
-                        .text_color(Theme::text_primary())
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, window, cx| {
-                                this.select_registry(registry.clone());
-                                window.focus(&this.focus_handle, cx);
-                                cx.notify();
-                            }),
-                        )
-                        .child(label)
-                }),
-            )
-    }
-
-    /// Render the search field
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_search_field(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::SearchQuery);
-
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .child(Self::render_label("SEARCH"))
-            .child(
-                div()
-                    .id("field-search")
-                    .w_full()
-                    .h(px(30.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(if active {
-                        Theme::accent()
-                    } else {
-                        Theme::border()
-                    })
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .cursor_text()
-                    .text_size(px(12.0))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.state.active_field = Some(ActiveField::SearchQuery);
-                            this.state.show_registry_dropdown = false;
-                            window.focus(&this.focus_handle, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .child(if self.state.search_query.is_empty() {
-                        div()
-                            .text_color(Theme::text_muted())
-                            .w_full()
-                            .overflow_hidden()
-                            .child("Search MCP servers...")
-                    } else {
-                        div()
-                            .text_color(Theme::text_primary())
-                            .w_full()
-                            .child(self.state.search_query.clone())
-                    }),
-            )
-    }
-
-    /// Render a search result row
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_result_row(
-        &self,
-        result: &McpSearchResult,
-        cx: &mut gpui::Context<Self>,
-    ) -> gpui::AnyElement {
-        let id = result.id.clone();
-        let id_for_closure = id.clone();
-        let is_selected = self.state.selected_result_id.as_ref() == Some(&id);
-        let name = result.name.clone();
-        let description = result.description.clone();
-        let badge = result.registry.display();
-        let source = result.source.clone();
-        let command_preview = Self::command_preview(result);
-
-        div()
-            .id(SharedString::from(format!("result-{id}")))
-            .w_full()
-            .min_h(px(72.0))
-            .px(px(8.0))
-            .py(px(8.0))
-            .cursor_pointer()
-            .when(is_selected, |d| d.bg(Theme::accent()))
-            .when(!is_selected, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    this.select_result(id_for_closure.clone(), cx);
-                }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(if is_selected {
-                                gpui::white()
-                            } else {
-                                Theme::text_primary()
-                            })
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
-                            .bg(if is_selected {
-                                Theme::bg_darker()
-                            } else {
-                                Theme::bg_dark()
-                            })
-                            .text_size(px(9.0))
-                            .text_color(Theme::text_secondary())
-                            .child(badge),
-                    ),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .text_size(px(11.0))
-                    .text_color(if is_selected {
-                        Theme::text_primary()
-                    } else {
-                        Theme::text_secondary()
-                    })
-                    .whitespace_normal()
-                    .child(description),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .text_size(px(9.0))
-                    .text_color(if is_selected {
-                        Theme::text_secondary()
-                    } else {
-                        Theme::text_muted()
-                    })
-                    .whitespace_normal()
-                    .child(format!("{source} · {command_preview}")),
-            )
-            .into_any_element()
-    }
-
-    /// Render the results list
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_results(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .child(Self::render_label("RESULTS"))
-            .child(
-                div()
-                    .id("results-list")
-                    .w_full()
-                    .h(px(260.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .when(self.state.search_state == SearchState::Loading, |d| {
-                        d.items_center().justify_center().child(
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(Theme::text_secondary())
-                                .child("Searching..."),
-                        )
-                    })
-                    .when(self.state.search_state == SearchState::Empty, |d| {
-                        d.items_center().justify_center().p(px(16.0)).child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(
-                                    div()
-                                        .text_size(px(13.0))
-                                        .text_color(Theme::text_secondary())
-                                        .child(format!(
-                                            "No MCPs found matching \"{}\".",
-                                            self.state.search_query
-                                        )),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(11.0))
-                                        .text_color(Theme::text_muted())
-                                        .child("Try a different search term."),
-                                ),
-                        )
-                    })
-                    .when(self.state.search_state == SearchState::Idle, |d| {
-                        d.items_center().justify_center().child(
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(Theme::text_muted())
-                                .child("Enter a search term to find MCPs"),
-                        )
-                    })
-                    .when(self.state.search_state == SearchState::Results, |d| {
-                        let results: Vec<gpui::AnyElement> = self
-                            .filtered_results()
-                            .iter()
-                            .map(|r| self.render_result_row(r, cx))
-                            .collect();
-                        d.children(results)
-                    })
-                    .when(
-                        matches!(self.state.search_state, SearchState::Error(_)),
-                        |d| {
-                            let message = match &self.state.search_state {
-                                SearchState::Error(msg) => msg.clone(),
-                                _ => String::new(),
-                            };
-                            d.items_center().justify_center().p(px(16.0)).child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .text_color(Theme::danger())
-                                    .child(message),
-                            )
-                        },
-                    ),
-            )
-    }
-
-    /// Render the content area
-    /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_content(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .id("mcp-add-content")
-            .flex_1()
-            .w_full()
-            .bg(Theme::bg_base())
-            .overflow_y_scroll()
-            .p(px(12.0))
-            .flex()
-            .flex_col()
-            .gap(px(12.0))
-            .child(self.render_manual_entry(cx))
-            .child(Self::render_divider())
-            .child(self.render_registry_dropdown(cx))
-            .child(self.render_search_field(cx))
-            .child(self.render_results(cx))
-    }
-}
-
-impl gpui::Focusable for McpAddView {
-    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl gpui::EntityInputHandler for McpAddView {
-    fn text_for_range(
-        &mut self,
-        range: Range<usize>,
-        _adjusted_range: &mut Option<Range<usize>>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<String> {
-        let text = self.active_field_text();
-        let utf16: Vec<u16> = text.encode_utf16().collect();
-        let start = range.start.min(utf16.len());
-        let end = range.end.min(utf16.len());
-        String::from_utf16(&utf16[start..end]).ok()
-    }
-
-    fn selected_text_range(
-        &mut self,
-        _ignore_disabled_input: bool,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<gpui::UTF16Selection> {
-        let len16 = self.active_field_text().encode_utf16().count();
-        Some(gpui::UTF16Selection {
-            range: len16..len16,
-            reversed: false,
-        })
-    }
-
-    fn marked_text_range(
-        &self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<Range<usize>> {
-        if self.ime_marked_byte_count > 0 {
-            let q = self.active_field_text();
-            let len16: usize = q.encode_utf16().count();
-            let start_utf8 = q.len().saturating_sub(self.ime_marked_byte_count);
-            let start_utf16: usize = q[..start_utf8].encode_utf16().count();
-            Some(start_utf16..len16)
-        } else {
-            None
-        }
-    }
-
-    fn unmark_text(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) {
-        self.ime_marked_byte_count = 0;
-    }
-
-    fn replace_text_in_range(
-        &mut self,
-        _range: Option<Range<usize>>,
-        text: &str,
-        _window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
-        self.ime_marked_byte_count = 0;
-        self.append_to_active_field(text);
-        if self.state.active_field == Some(ActiveField::SearchQuery) {
-            self.emit_search_registry();
-        }
-        cx.notify();
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        _range: Option<Range<usize>>,
-        new_text: &str,
-        _new_selected_range: Option<Range<usize>>,
-        _window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
-        self.ime_marked_byte_count = 0;
-        if !new_text.is_empty() {
-            self.append_to_active_field(new_text);
-            self.ime_marked_byte_count = new_text.len();
-        }
-        if self.state.active_field == Some(ActiveField::SearchQuery) {
-            self.emit_search_registry();
-        }
-        cx.notify();
-    }
-
-    fn bounds_for_range(
-        &mut self,
-        _range: Range<usize>,
-        _element_bounds: Bounds<Pixels>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        None
-    }
-
-    fn character_index_for_point(
-        &mut self,
-        _point: gpui::Point<Pixels>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<usize> {
-        None
-    }
-}
-
-impl gpui::Render for McpAddView {
-    #[allow(clippy::too_many_lines)]
-    fn render(
-        &mut self,
-        _window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        let root = div()
-            .id("mcp-add-view")
-            .relative()
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(Theme::bg_base())
-            .track_focus(&self.focus_handle)
-            // Invisible canvas for InputHandler registration (IME/diacritics)
-            .child(
-                canvas(
-                    |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
-                    {
-                        let entity = cx.entity();
-                        let focus = self.focus_handle.clone();
-                        move |bounds: Bounds<Pixels>,
-                              _,
-                              window: &mut gpui::Window,
-                              cx: &mut gpui::App| {
-                            window.handle_input(
-                                &focus,
-                                ElementInputHandler::new(bounds, entity),
-                                cx,
-                            );
-                        }
-                    },
-                )
-                .size_0(),
-            )
-            .on_key_down(
-                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                    this.handle_key_down(event, cx);
-                    // All other keys (printable chars) fall through to EntityInputHandler
-                }),
-            )
-            // Top bar (44px)
-            .child(self.render_top_bar(cx))
-            // Content
-            .child(self.render_content(cx));
-
-        if self.state.show_registry_dropdown {
-            root.child(
-                div()
-                    .id("registry-menu-backdrop")
-                    .absolute()
-                    .top(px(44.0))
-                    .left(px(0.0))
-                    .right(px(0.0))
-                    .bottom(px(0.0))
-                    .block_mouse_except_scroll()
-                    .on_scroll_wheel(cx.listener(
-                        |_this, _event: &ScrollWheelEvent, _window, cx| {
-                            cx.stop_propagation();
-                        },
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.show_registry_dropdown = false;
-                            cx.notify();
-                        }),
-                    )
-                    .child(Self::render_registry_overlay(cx)),
-            )
-        } else {
-            root
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1339,12 +628,11 @@ mod tests {
                 },
                 cx,
             );
+            assert_eq!(
+                crate::ui_gpui::navigation_channel().take_pending(),
+                Some(ViewId::McpConfigure)
+            );
         });
-
-        assert_eq!(
-            crate::ui_gpui::navigation_channel().take_pending(),
-            Some(ViewId::McpConfigure)
-        );
 
         view.read_with(cx, |view, _| {
             let state = view.get_state();
@@ -1563,39 +851,42 @@ mod tests {
         });
     }
 
+    fn key_event(key: &str) -> gpui::KeyDownEvent {
+        gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),
+            is_held: false,
+            prefer_character_input: false,
+        }
+    }
+
+    fn setup_view_with_results(view: &mut McpAddView, bridge: &Arc<GpuiBridge>) {
+        view.set_bridge(Arc::clone(bridge));
+        view.set_results(vec![
+            McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
+                .with_registry(McpRegistry::Official)
+                .with_command("npx")
+                .with_args(vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-fetch".to_string(),
+                ]),
+            McpSearchResult::new("exa", "Exa", "Remote search")
+                .with_registry(McpRegistry::Smithery)
+                .with_url(Some("https://exa.example/mcp".to_string())),
+        ]);
+    }
+
     #[gpui::test]
-    #[allow(clippy::too_many_lines)]
-    async fn key_and_input_handling_follow_real_registry_and_search_rules(cx: &mut TestAppContext) {
-        clear_navigation_requests();
+    async fn text_input_and_ime_handling_emits_search_events(cx: &mut TestAppContext) {
         let (bridge, user_rx) = make_bridge();
         let view = cx.new(McpAddView::new);
         let mut visual_cx = cx.add_empty_window().clone();
 
         visual_cx.update(|window, app| {
             view.update(app, |view: &mut McpAddView, cx| {
-                view.set_bridge(Arc::clone(&bridge));
-                view.set_results(vec![
-                    McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
-                        .with_registry(McpRegistry::Official)
-                        .with_command("npx")
-                        .with_args(vec![
-                            "-y".to_string(),
-                            "@modelcontextprotocol/server-fetch".to_string(),
-                        ]),
-                    McpSearchResult::new("exa", "Exa", "Remote search")
-                        .with_registry(McpRegistry::Smithery)
-                        .with_url(Some("https://exa.example/mcp".to_string())),
-                ]);
+                setup_view_with_results(view, &bridge);
 
                 view.state.active_field = Some(ActiveField::ManualEntry);
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("tab").expect("tab keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
+                view.handle_key_down(&key_event("tab"), cx);
                 assert_eq!(
                     view.get_state().active_field,
                     Some(ActiveField::SearchQuery)
@@ -1620,59 +911,6 @@ mod tests {
                     .expect("selection range");
                 let len = "exa-mcp".encode_utf16().count();
                 assert_eq!(selected.range, len..len);
-
-                view.state.show_registry_dropdown = true;
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("enter").expect("enter keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert!(!view.get_state().show_registry_dropdown);
-
-                view.toggle_registry_dropdown(cx);
-                assert!(view.get_state().show_registry_dropdown);
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert!(!view.get_state().show_registry_dropdown);
-                assert_eq!(crate::ui_gpui::navigation_channel().take_pending(), None);
-
-                view.select_result("exa".to_string(), cx);
-                assert_eq!(view.get_state().selected_result_id.as_deref(), Some("exa"));
-                assert!(view.get_state().manual_entry.is_empty());
-
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("backspace")
-                            .expect("backspace keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert_eq!(view.get_state().search_query, "exa-mcp");
-                assert_eq!(view.get_state().selected_result_id, Some("exa".to_string()));
-
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("cmd-w").expect("cmd-w keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert_eq!(
-                    crate::ui_gpui::navigation_channel().take_pending(),
-                    Some(ViewId::Settings)
-                );
             });
         });
 
@@ -1692,5 +930,46 @@ mod tests {
             user_rx.try_recv().is_err(),
             "unexpected additional search registry events"
         );
+    }
+
+    #[gpui::test]
+    async fn dropdown_select_and_navigation_keys_behave_correctly(cx: &mut TestAppContext) {
+        let (bridge, _user_rx) = make_bridge();
+        let view = cx.new(McpAddView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut McpAddView, cx| {
+                setup_view_with_results(view, &bridge);
+                view.state.search_query = "exa-mcp".to_string();
+
+                view.state.show_registry_dropdown = true;
+                view.handle_key_down(&key_event("enter"), cx);
+                assert!(!view.get_state().show_registry_dropdown);
+
+                view.toggle_registry_dropdown(cx);
+                assert!(view.get_state().show_registry_dropdown);
+                // flush any navigation requests from concurrent tests before asserting None
+                clear_navigation_requests();
+                view.handle_key_down(&key_event("escape"), cx);
+                assert!(!view.get_state().show_registry_dropdown);
+                assert_eq!(crate::ui_gpui::navigation_channel().take_pending(), None);
+
+                view.select_result("exa".to_string(), cx);
+                assert_eq!(view.get_state().selected_result_id.as_deref(), Some("exa"));
+                assert!(view.get_state().manual_entry.is_empty());
+
+                view.handle_key_down(&key_event("backspace"), cx);
+                assert_eq!(view.get_state().search_query, "exa-mcp");
+                assert_eq!(view.get_state().selected_result_id, Some("exa".to_string()));
+
+                clear_navigation_requests();
+                view.handle_key_down(&key_event("cmd-w"), cx);
+                assert_eq!(
+                    crate::ui_gpui::navigation_channel().take_pending(),
+                    Some(ViewId::Settings)
+                );
+            });
+        });
     }
 }
