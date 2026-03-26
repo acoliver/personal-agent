@@ -218,3 +218,149 @@ impl ChatState {
             .min(self.profiles.len().saturating_sub(1));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_message_user_sets_role_and_content() {
+        let msg = ChatMessage::user("hello");
+        assert_eq!(msg.role, MessageRole::User);
+        assert_eq!(msg.content, "hello");
+        assert!(msg.thinking.is_none());
+        assert!(msg.model_id.is_none());
+    }
+
+    #[test]
+    fn chat_message_assistant_sets_model_id() {
+        let msg = ChatMessage::assistant("response", "gpt-4o");
+        assert_eq!(msg.role, MessageRole::Assistant);
+        assert_eq!(msg.content, "response");
+        assert_eq!(msg.model_id.as_deref(), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn chat_message_with_thinking_attaches_thinking_content() {
+        let msg = ChatMessage::assistant("answer", "model").with_thinking("step 1");
+        assert_eq!(msg.thinking.as_deref(), Some("step 1"));
+    }
+
+    #[test]
+    fn chat_state_default_is_idle_with_empty_messages() {
+        let state = ChatState::default();
+        assert!(state.messages.is_empty());
+        assert!(matches!(state.streaming, StreamingState::Idle));
+        assert!(!state.show_thinking);
+        assert!(state.thinking_content.is_none());
+    }
+
+    #[test]
+    fn chat_state_builder_chains() {
+        let state = ChatState::new()
+            .with_messages(vec![ChatMessage::user("hi")])
+            .with_streaming(StreamingState::Streaming {
+                content: "partial".into(),
+                done: false,
+            })
+            .with_thinking(true, Some("chain".into()));
+
+        assert_eq!(state.messages.len(), 1);
+        assert!(matches!(state.streaming, StreamingState::Streaming { .. }));
+        assert!(state.show_thinking);
+        assert_eq!(state.thinking_content.as_deref(), Some("chain"));
+    }
+
+    #[test]
+    fn add_message_appends_and_set_streaming_transitions() {
+        let mut state = ChatState::new();
+        state.add_message(ChatMessage::user("first"));
+        state.add_message(ChatMessage::assistant("second", "m"));
+        assert_eq!(state.messages.len(), 2);
+
+        state.set_streaming(StreamingState::Streaming {
+            content: String::new(),
+            done: false,
+        });
+        assert!(matches!(state.streaming, StreamingState::Streaming { .. }));
+
+        state.set_streaming(StreamingState::Idle);
+        assert!(matches!(state.streaming, StreamingState::Idle));
+    }
+
+    #[test]
+    fn selected_profile_prefers_explicit_then_default() {
+        let p1 = ProfileSummary {
+            id: Uuid::new_v4(),
+            name: "A".into(),
+            provider_id: "openai".into(),
+            model_id: "m1".into(),
+            is_default: false,
+        };
+        let p2 = ProfileSummary {
+            id: Uuid::new_v4(),
+            name: "B".into(),
+            provider_id: "openai".into(),
+            model_id: "m2".into(),
+            is_default: true,
+        };
+
+        let mut state = ChatState::new();
+        state.profiles = vec![p1.clone(), p2.clone()];
+
+        // No explicit selection -> falls back to default
+        assert_eq!(state.selected_profile().unwrap().id, p2.id);
+
+        // Explicit selection wins
+        state.selected_profile_id = Some(p1.id);
+        assert_eq!(state.selected_profile().unwrap().id, p1.id);
+    }
+
+    #[test]
+    fn sync_current_model_from_profile_uses_selected_or_fallback() {
+        let profile = ProfileSummary {
+            id: Uuid::new_v4(),
+            name: "Test".into(),
+            provider_id: "openai".into(),
+            model_id: "gpt-4o-mini".into(),
+            is_default: true,
+        };
+
+        let mut state = ChatState::new();
+        state.profiles = vec![profile];
+
+        state.sync_current_model_from_profile();
+        assert_eq!(state.current_model, "gpt-4o-mini");
+
+        state.profiles.clear();
+        state.sync_current_model_from_profile();
+        assert_eq!(state.current_model, "No profile selected");
+    }
+
+    #[test]
+    fn sync_profile_dropdown_index_clamps_to_valid_range() {
+        let p1 = ProfileSummary {
+            id: Uuid::new_v4(),
+            name: "A".into(),
+            provider_id: "openai".into(),
+            model_id: "m1".into(),
+            is_default: false,
+        };
+
+        let mut state = ChatState::new();
+        state.profiles = vec![p1.clone()];
+        state.selected_profile_id = Some(p1.id);
+        state.sync_profile_dropdown_index();
+        assert_eq!(state.profile_dropdown_index, 0);
+
+        // Unknown profile ID -> clamps to 0
+        state.selected_profile_id = Some(Uuid::new_v4());
+        state.sync_profile_dropdown_index();
+        assert_eq!(state.profile_dropdown_index, 0);
+
+        // Empty profiles -> clamps to 0
+        state.profiles.clear();
+        state.sync_profile_dropdown_index();
+        assert_eq!(state.profile_dropdown_index, 0);
+    }
+}
