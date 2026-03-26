@@ -419,6 +419,7 @@ mod tests {
                 assert_eq!(view.state.edit_mode, EditMode::Idle);
                 assert!(view.state.active_field.is_none());
 
+                clear_navigation_requests();
                 view.handle_key_down(
                     &gpui::KeyDownEvent {
                         keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),

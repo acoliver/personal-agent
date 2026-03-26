@@ -217,7 +217,210 @@ impl ApiKeyManagerView {
         list
     }
 
-    #[allow(clippy::too_many_lines)]
+    fn render_label_field(
+        &self,
+        label_editable: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(Theme::text_muted())
+                    .child("LABEL"),
+            )
+            .child(
+                div()
+                    .id("field-label")
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .bg(if label_editable {
+                        Theme::bg_dark()
+                    } else {
+                        Theme::bg_darker()
+                    })
+                    .border_1()
+                    .border_color(if self.state.active_field == Some(ActiveField::Label) {
+                        Theme::accent()
+                    } else {
+                        Theme::border()
+                    })
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .text_size(px(12.0))
+                    .text_color(if label_editable {
+                        Theme::text_primary()
+                    } else {
+                        Theme::text_muted()
+                    })
+                    .overflow_hidden()
+                    .when(label_editable, |d| {
+                        d.cursor_text().on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _window, cx| {
+                                this.state.active_field = Some(ActiveField::Label);
+                                cx.notify();
+                            }),
+                        )
+                    })
+                    .child(if self.state.label_input.is_empty() && label_editable {
+                        "e.g. anthropic".to_string()
+                    } else {
+                        self.state.label_input.clone()
+                    }),
+            )
+    }
+
+    fn render_value_field(
+        &self,
+        is_adding: bool,
+        value_display: String,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(Theme::text_muted())
+                            .child(if is_adding { "API KEY" } else { "NEW API KEY" }),
+                    )
+                    .child(
+                        div()
+                            .id("checkbox-mask-key")
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.state.mask_value = !this.state.mask_value;
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .size(px(12.0))
+                                    .border_1()
+                                    .border_color(Theme::border())
+                                    .rounded(px(2.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .when(self.state.mask_value, |d| {
+                                        d.bg(Theme::accent()).child(
+                                            div()
+                                                .text_size(px(8.0))
+                                                .text_color(gpui::white())
+                                                .child("v"),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(Theme::text_muted())
+                                    .child("Mask"),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("field-value")
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(if self.state.active_field == Some(ActiveField::Value) {
+                        Theme::accent()
+                    } else {
+                        Theme::border()
+                    })
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .text_size(px(12.0))
+                    .text_color(if self.state.value_input.is_empty() {
+                        Theme::text_muted()
+                    } else {
+                        Theme::text_primary()
+                    })
+                    .overflow_hidden()
+                    .cursor_text()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.active_field = Some(ActiveField::Value);
+                            cx.notify();
+                        }),
+                    )
+                    .child(value_display),
+            )
+    }
+
+    #[allow(clippy::unused_self)]
+    fn render_form_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .id("btn-cancel-edit")
+                    .cursor_pointer()
+                    .px(px(12.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .text_size(px(12.0))
+                    .text_color(Theme::text_secondary())
+                    .hover(|s| s.bg(Theme::bg_darker()))
+                    .child("Cancel")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.cancel_edit();
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("btn-save-key")
+                    .cursor_pointer()
+                    .px(px(12.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .bg(Theme::accent())
+                    .text_size(px(12.0))
+                    .text_color(Theme::text_primary())
+                    .hover(|s| s.opacity(0.85))
+                    .child("Save")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.save_current();
+                            cx.notify();
+                        }),
+                    ),
+            )
+    }
+
     fn render_edit_form(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let is_adding = self.state.edit_mode == EditMode::Adding;
         let title = if is_adding {
@@ -245,7 +448,6 @@ impl ApiKeyManagerView {
             .bg(Theme::bg_darker())
             .border_b_1()
             .border_color(Theme::border())
-            // Title
             .child(
                 div()
                     .text_size(px(13.0))
@@ -253,151 +455,8 @@ impl ApiKeyManagerView {
                     .text_color(Theme::text_primary())
                     .child(title),
             )
-            // Label field
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(Theme::text_muted())
-                            .child("LABEL"),
-                    )
-                    .child(
-                        div()
-                            .id("field-label")
-                            .h(px(28.0))
-                            .px(px(8.0))
-                            .bg(if label_editable {
-                                Theme::bg_dark()
-                            } else {
-                                Theme::bg_darker()
-                            })
-                            .border_1()
-                            .border_color(if self.state.active_field == Some(ActiveField::Label) {
-                                Theme::accent()
-                            } else {
-                                Theme::border()
-                            })
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .text_size(px(12.0))
-                            .text_color(if label_editable {
-                                Theme::text_primary()
-                            } else {
-                                Theme::text_muted()
-                            })
-                            .overflow_hidden()
-                            .when(label_editable, |d| {
-                                d.cursor_text().on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _window, cx| {
-                                        this.state.active_field = Some(ActiveField::Label);
-                                        cx.notify();
-                                    }),
-                                )
-                            })
-                            .child(if self.state.label_input.is_empty() && label_editable {
-                                "e.g. anthropic".to_string()
-                            } else {
-                                self.state.label_input.clone()
-                            }),
-                    ),
-            )
-            // Value field
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .text_color(Theme::text_muted())
-                                    .child(if is_adding { "API KEY" } else { "NEW API KEY" }),
-                            )
-                            .child(
-                                div()
-                                    .id("checkbox-mask-key")
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.0))
-                                    .cursor_pointer()
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _window, cx| {
-                                            this.state.mask_value = !this.state.mask_value;
-                                            cx.notify();
-                                        }),
-                                    )
-                                    .child(
-                                        div()
-                                            .size(px(12.0))
-                                            .border_1()
-                                            .border_color(Theme::border())
-                                            .rounded(px(2.0))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .when(self.state.mask_value, |d| {
-                                                d.bg(Theme::accent()).child(
-                                                    div()
-                                                        .text_size(px(8.0))
-                                                        .text_color(gpui::white())
-                                                        .child("v"),
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(10.0))
-                                            .text_color(Theme::text_muted())
-                                            .child("Mask"),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("field-value")
-                            .h(px(28.0))
-                            .px(px(8.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(if self.state.active_field == Some(ActiveField::Value) {
-                                Theme::accent()
-                            } else {
-                                Theme::border()
-                            })
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .text_size(px(12.0))
-                            .text_color(if self.state.value_input.is_empty() {
-                                Theme::text_muted()
-                            } else {
-                                Theme::text_primary()
-                            })
-                            .overflow_hidden()
-                            .cursor_text()
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, cx| {
-                                    this.state.active_field = Some(ActiveField::Value);
-                                    cx.notify();
-                                }),
-                            )
-                            .child(value_display),
-                    ),
-            )
-            // Error message
+            .child(self.render_label_field(label_editable, cx))
+            .child(self.render_value_field(is_adding, value_display, cx))
             .when(self.state.error.is_some(), |d| {
                 d.child(
                     div()
@@ -406,56 +465,7 @@ impl ApiKeyManagerView {
                         .child(self.state.error.clone().unwrap_or_default()),
                 )
             })
-            // Buttons
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .id("btn-cancel-edit")
-                            .cursor_pointer()
-                            .px(px(12.0))
-                            .py(px(4.0))
-                            .rounded(px(4.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(Theme::border())
-                            .text_size(px(12.0))
-                            .text_color(Theme::text_secondary())
-                            .hover(|s| s.bg(Theme::bg_darker()))
-                            .child("Cancel")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, cx| {
-                                    this.state.cancel_edit();
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("btn-save-key")
-                            .cursor_pointer()
-                            .px(px(12.0))
-                            .py(px(4.0))
-                            .rounded(px(4.0))
-                            .bg(Theme::accent())
-                            .text_size(px(12.0))
-                            .text_color(Theme::text_primary())
-                            .hover(|s| s.opacity(0.85))
-                            .child("Save")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, cx| {
-                                    this.save_current();
-                                    cx.notify();
-                                }),
-                            ),
-                    ),
-            )
+            .child(self.render_form_buttons(cx))
     }
 
     fn render_content(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {

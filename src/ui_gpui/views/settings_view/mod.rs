@@ -448,21 +448,16 @@ mod tests {
         });
     }
 
-    #[allow(clippy::too_many_lines)]
     #[gpui::test]
-    async fn profile_navigation_and_mcp_commands_update_state_and_emit_events(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn scroll_profiles_clamps_and_emits_selection_events(cx: &mut gpui::TestAppContext) {
         let profile_a = Uuid::new_v4();
         let profile_b = Uuid::new_v4();
-        let mcp_existing = Uuid::new_v4();
-        let mcp_new = Uuid::new_v4();
         let (user_tx, user_rx) = flume::bounded(16);
         let (_view_tx, view_rx) = flume::bounded(16);
         let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
         let view = cx.new(SettingsView::new);
 
-        view.update(cx, |view: &mut SettingsView, cx| {
+        view.update(cx, |view: &mut SettingsView, _cx| {
             view.set_bridge(Arc::clone(&bridge));
             view.set_profiles(vec![
                 ProfileItem::new(profile_a, "Alpha").with_model("openai", "gpt-4o"),
@@ -476,83 +471,6 @@ mod tests {
             assert_eq!(view.state.selected_profile_id, Some(profile_b));
             view.scroll_profiles(-20);
             assert_eq!(view.state.selected_profile_id, Some(profile_a));
-
-            view.set_mcps(vec![
-                McpItem::new(mcp_existing, "Existing").with_status(McpStatus::Stopped)
-            ]);
-            assert_eq!(view.state.selected_mcp_id, Some(mcp_existing));
-
-            view.handle_command(
-                ViewCommand::McpStatusChanged {
-                    id: mcp_existing,
-                    status: crate::presentation::view_command::McpStatus::Running,
-                },
-                cx,
-            );
-            let existing = view
-                .state
-                .mcps
-                .iter()
-                .find(|mcp| mcp.id == mcp_existing)
-                .expect("existing mcp retained");
-            assert_eq!(existing.status, McpStatus::Running);
-            assert!(existing.enabled);
-
-            view.handle_command(
-                ViewCommand::McpServerStarted {
-                    id: mcp_new,
-                    name: Some("Fetch".to_string()),
-                    tool_count: 3,
-                    enabled: Some(false),
-                },
-                cx,
-            );
-            let inserted = view
-                .state
-                .mcps
-                .iter()
-                .find(|mcp| mcp.id == mcp_new)
-                .expect("new mcp inserted");
-            assert_eq!(inserted.name, "Fetch");
-            assert!(!inserted.enabled);
-            assert_eq!(inserted.status, McpStatus::Stopped);
-
-            view.handle_command(
-                ViewCommand::McpServerFailed {
-                    id: mcp_new,
-                    error: "boom".to_string(),
-                },
-                cx,
-            );
-            let failed = view
-                .state
-                .mcps
-                .iter()
-                .find(|mcp| mcp.id == mcp_new)
-                .expect("mcp still present after failure");
-            assert_eq!(failed.status, McpStatus::Error);
-            assert!(!failed.enabled);
-
-            view.handle_command(
-                ViewCommand::McpConfigSaved {
-                    id: mcp_new,
-                    name: Some("Saved MCP".to_string()),
-                },
-                cx,
-            );
-            let saved = view
-                .state
-                .mcps
-                .iter()
-                .find(|mcp| mcp.id == mcp_new)
-                .expect("saved mcp retained");
-            assert_eq!(view.state.selected_mcp_id, Some(mcp_new));
-            assert_eq!(saved.name, "Saved MCP");
-            assert!(saved.enabled);
-            assert_eq!(saved.status, McpStatus::Stopped);
-
-            view.handle_command(ViewCommand::McpDeleted { id: mcp_new }, cx);
-            assert!(view.state.mcps.iter().all(|mcp| mcp.id != mcp_new));
         });
 
         assert_eq!(
@@ -571,6 +489,77 @@ mod tests {
             user_rx.try_recv().is_err(),
             "settings view test should emit only expected bridge events"
         );
+    }
+
+    #[gpui::test]
+    async fn mcp_commands_update_status_lifecycle_and_selection(cx: &mut gpui::TestAppContext) {
+        let mcp_existing = Uuid::new_v4();
+        let mcp_new = Uuid::new_v4();
+        let view = cx.new(SettingsView::new);
+
+        view.update(cx, |view: &mut SettingsView, cx| {
+            view.set_mcps(vec![
+                McpItem::new(mcp_existing, "Existing").with_status(McpStatus::Stopped)
+            ]);
+            assert_eq!(view.state.selected_mcp_id, Some(mcp_existing));
+
+            view.handle_command(
+                ViewCommand::McpStatusChanged {
+                    id: mcp_existing,
+                    status: crate::presentation::view_command::McpStatus::Running,
+                },
+                cx,
+            );
+            let existing = view
+                .state
+                .mcps
+                .iter()
+                .find(|m| m.id == mcp_existing)
+                .unwrap();
+            assert_eq!(existing.status, McpStatus::Running);
+            assert!(existing.enabled);
+
+            view.handle_command(
+                ViewCommand::McpServerStarted {
+                    id: mcp_new,
+                    name: Some("Fetch".to_string()),
+                    tool_count: 3,
+                    enabled: Some(false),
+                },
+                cx,
+            );
+            let inserted = view.state.mcps.iter().find(|m| m.id == mcp_new).unwrap();
+            assert_eq!(inserted.name, "Fetch");
+            assert!(!inserted.enabled);
+            assert_eq!(inserted.status, McpStatus::Stopped);
+
+            view.handle_command(
+                ViewCommand::McpServerFailed {
+                    id: mcp_new,
+                    error: "boom".to_string(),
+                },
+                cx,
+            );
+            let failed = view.state.mcps.iter().find(|m| m.id == mcp_new).unwrap();
+            assert_eq!(failed.status, McpStatus::Error);
+            assert!(!failed.enabled);
+
+            view.handle_command(
+                ViewCommand::McpConfigSaved {
+                    id: mcp_new,
+                    name: Some("Saved MCP".to_string()),
+                },
+                cx,
+            );
+            let saved = view.state.mcps.iter().find(|m| m.id == mcp_new).unwrap();
+            assert_eq!(view.state.selected_mcp_id, Some(mcp_new));
+            assert_eq!(saved.name, "Saved MCP");
+            assert!(saved.enabled);
+            assert_eq!(saved.status, McpStatus::Stopped);
+
+            view.handle_command(ViewCommand::McpDeleted { id: mcp_new }, cx);
+            assert!(view.state.mcps.iter().all(|m| m.id != mcp_new));
+        });
     }
 
     #[gpui::test]
@@ -635,11 +624,16 @@ mod tests {
         });
     }
 
+    fn settings_key_event(key: &str) -> gpui::KeyDownEvent {
+        gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),
+            is_held: false,
+            prefer_character_input: false,
+        }
+    }
+
     #[gpui::test]
-    #[allow(clippy::too_many_lines)]
-    async fn helper_actions_and_key_handling_emit_expected_events_and_navigation(
-        cx: &mut TestAppContext,
-    ) {
+    async fn helper_actions_emit_expected_bridge_events(cx: &mut TestAppContext) {
         clear_navigation_requests();
         let profile_a = Uuid::new_v4();
         let profile_b = Uuid::new_v4();
@@ -672,70 +666,77 @@ mod tests {
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::McpConfigure)
             );
+        });
 
-            view.handle_key_down(
-                &gpui::KeyDownEvent {
-                    keystroke: gpui::Keystroke::parse("up").expect("up keystroke"),
-                    is_held: false,
-                    prefer_character_input: false,
-                },
-                cx,
-            );
+        assert_eq!(
+            user_rx.recv().unwrap(),
+            UserEvent::SelectProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().unwrap(),
+            UserEvent::DeleteProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().unwrap(),
+            UserEvent::EditProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().unwrap(),
+            UserEvent::ToggleMcp {
+                id: mcp_a,
+                enabled: false
+            }
+        );
+        assert_eq!(user_rx.recv().unwrap(), UserEvent::DeleteMcp { id: mcp_a });
+        assert_eq!(
+            user_rx.recv().unwrap(),
+            UserEvent::ConfigureMcp { id: mcp_a }
+        );
+        assert!(
+            user_rx.try_recv().is_err(),
+            "unexpected additional settings events"
+        );
+    }
+
+    #[gpui::test]
+    async fn key_handling_navigates_and_emits_profile_events(cx: &mut TestAppContext) {
+        clear_navigation_requests();
+        let profile_a = Uuid::new_v4();
+        let profile_b = Uuid::new_v4();
+        let mcp_a = Uuid::new_v4();
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(SettingsView::new);
+
+        view.update(cx, |view: &mut SettingsView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.set_profiles(vec![
+                ProfileItem::new(profile_a, "Alpha").with_model("openai", "gpt-4o"),
+                ProfileItem::new(profile_b, "Beta").with_model("anthropic", "claude"),
+            ]);
+            view.set_mcps(vec![McpItem::new(mcp_a, "Fetcher").with_enabled(true)]);
+            view.state.selected_profile_id = Some(profile_b);
+
+            view.handle_key_down(&settings_key_event("up"), cx);
             assert_eq!(view.state.selected_profile_id, Some(profile_a));
 
-            view.handle_key_down(
-                &gpui::KeyDownEvent {
-                    keystroke: gpui::Keystroke::parse("down").expect("down keystroke"),
-                    is_held: false,
-                    prefer_character_input: false,
-                },
-                cx,
-            );
+            view.handle_key_down(&settings_key_event("down"), cx);
             assert_eq!(view.state.selected_profile_id, Some(profile_b));
 
-            view.handle_key_down(
-                &gpui::KeyDownEvent {
-                    keystroke: gpui::Keystroke::parse("e").expect("e keystroke"),
-                    is_held: false,
-                    prefer_character_input: false,
-                },
-                cx,
-            );
+            view.handle_key_down(&settings_key_event("e"), cx);
 
-            view.handle_key_down(
-                &gpui::KeyDownEvent {
-                    keystroke: gpui::Keystroke::parse("shift-=").expect("plus keystroke"),
-                    is_held: false,
-                    prefer_character_input: false,
-                },
-                cx,
-            );
+            view.handle_key_down(&settings_key_event("shift-="), cx);
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::ProfileEditor)
             );
 
-            view.handle_key_down(
-                &gpui::KeyDownEvent {
-                    keystroke: gpui::Keystroke::parse("m").expect("m keystroke"),
-                    is_held: false,
-                    prefer_character_input: false,
-                },
-                cx,
-            );
+            view.handle_key_down(&settings_key_event("m"), cx);
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::McpAdd)
             );
 
-            view.handle_key_down(
-                &gpui::KeyDownEvent {
-                    keystroke: gpui::Keystroke::parse("cmd-w").expect("cmd-w keystroke"),
-                    is_held: false,
-                    prefer_character_input: false,
-                },
-                cx,
-            );
+            view.handle_key_down(&settings_key_event("cmd-w"), cx);
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::Chat)
@@ -759,42 +760,15 @@ mod tests {
         });
 
         assert_eq!(
-            user_rx.recv().expect("profile select helper"),
-            UserEvent::SelectProfile { id: profile_b }
-        );
-        assert_eq!(
-            user_rx.recv().expect("delete profile helper"),
-            UserEvent::DeleteProfile { id: profile_b }
-        );
-        assert_eq!(
-            user_rx.recv().expect("edit profile helper"),
-            UserEvent::EditProfile { id: profile_b }
-        );
-        assert_eq!(
-            user_rx.recv().expect("toggle mcp helper"),
-            UserEvent::ToggleMcp {
-                id: mcp_a,
-                enabled: false,
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("delete mcp helper"),
-            UserEvent::DeleteMcp { id: mcp_a }
-        );
-        assert_eq!(
-            user_rx.recv().expect("configure mcp helper"),
-            UserEvent::ConfigureMcp { id: mcp_a }
-        );
-        assert_eq!(
-            user_rx.recv().expect("up key selects alpha"),
+            user_rx.recv().unwrap(),
             UserEvent::SelectProfile { id: profile_a }
         );
         assert_eq!(
-            user_rx.recv().expect("down key selects beta"),
+            user_rx.recv().unwrap(),
             UserEvent::SelectProfile { id: profile_b }
         );
         assert_eq!(
-            user_rx.recv().expect("e key edits profile"),
+            user_rx.recv().unwrap(),
             UserEvent::EditProfile { id: profile_b }
         );
         assert!(

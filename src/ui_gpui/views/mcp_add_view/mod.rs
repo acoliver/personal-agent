@@ -851,39 +851,42 @@ mod tests {
         });
     }
 
+    fn key_event(key: &str) -> gpui::KeyDownEvent {
+        gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),
+            is_held: false,
+            prefer_character_input: false,
+        }
+    }
+
+    fn setup_view_with_results(view: &mut McpAddView, bridge: &Arc<GpuiBridge>) {
+        view.set_bridge(Arc::clone(bridge));
+        view.set_results(vec![
+            McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
+                .with_registry(McpRegistry::Official)
+                .with_command("npx")
+                .with_args(vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-fetch".to_string(),
+                ]),
+            McpSearchResult::new("exa", "Exa", "Remote search")
+                .with_registry(McpRegistry::Smithery)
+                .with_url(Some("https://exa.example/mcp".to_string())),
+        ]);
+    }
+
     #[gpui::test]
-    #[allow(clippy::too_many_lines)]
-    async fn key_and_input_handling_follow_real_registry_and_search_rules(cx: &mut TestAppContext) {
-        clear_navigation_requests();
+    async fn text_input_and_ime_handling_emits_search_events(cx: &mut TestAppContext) {
         let (bridge, user_rx) = make_bridge();
         let view = cx.new(McpAddView::new);
         let mut visual_cx = cx.add_empty_window().clone();
 
         visual_cx.update(|window, app| {
             view.update(app, |view: &mut McpAddView, cx| {
-                view.set_bridge(Arc::clone(&bridge));
-                view.set_results(vec![
-                    McpSearchResult::new("fetch", "Fetch", "HTTP fetch")
-                        .with_registry(McpRegistry::Official)
-                        .with_command("npx")
-                        .with_args(vec![
-                            "-y".to_string(),
-                            "@modelcontextprotocol/server-fetch".to_string(),
-                        ]),
-                    McpSearchResult::new("exa", "Exa", "Remote search")
-                        .with_registry(McpRegistry::Smithery)
-                        .with_url(Some("https://exa.example/mcp".to_string())),
-                ]);
+                setup_view_with_results(view, &bridge);
 
                 view.state.active_field = Some(ActiveField::ManualEntry);
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("tab").expect("tab keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
+                view.handle_key_down(&key_event("tab"), cx);
                 assert_eq!(
                     view.get_state().active_field,
                     Some(ActiveField::SearchQuery)
@@ -908,59 +911,6 @@ mod tests {
                     .expect("selection range");
                 let len = "exa-mcp".encode_utf16().count();
                 assert_eq!(selected.range, len..len);
-
-                view.state.show_registry_dropdown = true;
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("enter").expect("enter keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert!(!view.get_state().show_registry_dropdown);
-
-                view.toggle_registry_dropdown(cx);
-                assert!(view.get_state().show_registry_dropdown);
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert!(!view.get_state().show_registry_dropdown);
-                assert_eq!(crate::ui_gpui::navigation_channel().take_pending(), None);
-
-                view.select_result("exa".to_string(), cx);
-                assert_eq!(view.get_state().selected_result_id.as_deref(), Some("exa"));
-                assert!(view.get_state().manual_entry.is_empty());
-
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("backspace")
-                            .expect("backspace keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert_eq!(view.get_state().search_query, "exa-mcp");
-                assert_eq!(view.get_state().selected_result_id, Some("exa".to_string()));
-
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("cmd-w").expect("cmd-w keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert_eq!(
-                    crate::ui_gpui::navigation_channel().take_pending(),
-                    Some(ViewId::Settings)
-                );
             });
         });
 
@@ -980,5 +930,46 @@ mod tests {
             user_rx.try_recv().is_err(),
             "unexpected additional search registry events"
         );
+    }
+
+    #[gpui::test]
+    async fn dropdown_select_and_navigation_keys_behave_correctly(cx: &mut TestAppContext) {
+        let (bridge, _user_rx) = make_bridge();
+        let view = cx.new(McpAddView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut McpAddView, cx| {
+                setup_view_with_results(view, &bridge);
+                view.state.search_query = "exa-mcp".to_string();
+
+                view.state.show_registry_dropdown = true;
+                view.handle_key_down(&key_event("enter"), cx);
+                assert!(!view.get_state().show_registry_dropdown);
+
+                view.toggle_registry_dropdown(cx);
+                assert!(view.get_state().show_registry_dropdown);
+                // flush any navigation requests from concurrent tests before asserting None
+                clear_navigation_requests();
+                view.handle_key_down(&key_event("escape"), cx);
+                assert!(!view.get_state().show_registry_dropdown);
+                assert_eq!(crate::ui_gpui::navigation_channel().take_pending(), None);
+
+                view.select_result("exa".to_string(), cx);
+                assert_eq!(view.get_state().selected_result_id.as_deref(), Some("exa"));
+                assert!(view.get_state().manual_entry.is_empty());
+
+                view.handle_key_down(&key_event("backspace"), cx);
+                assert_eq!(view.get_state().search_query, "exa-mcp");
+                assert_eq!(view.get_state().selected_result_id, Some("exa".to_string()));
+
+                clear_navigation_requests();
+                view.handle_key_down(&key_event("cmd-w"), cx);
+                assert_eq!(
+                    crate::ui_gpui::navigation_channel().take_pending(),
+                    Some(ViewId::Settings)
+                );
+            });
+        });
     }
 }
