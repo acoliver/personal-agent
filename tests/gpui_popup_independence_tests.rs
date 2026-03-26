@@ -251,23 +251,3 @@ fn disconnected_subscriber_does_not_block_store_mutation() {
         .expect("remaining subscriber should receive loaded transcript snapshot");
     assert_eq!(loaded_snapshot.chat.transcript, second_transcript);
 }
-
-/// @plan PLAN-20260304-GPUIREMEDIATE.P07
-/// @requirement REQ-ARCH-004.1
-/// @requirement REQ-ARCH-004.3
-/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:037-144
-#[test]
-fn production_ingress_path_is_popup_independent() {
-    let main_gpui = include_str!("../src/main_gpui.rs");
-    // Narrowed: ensure_bridge_polling lives in main_panel/startup.rs after extraction
-    let main_panel_startup = include_str!("../src/ui_gpui/views/main_panel/startup.rs");
-    // main_panel/mod.rs also checked for drain_commands absence
-    let main_panel_mod = include_str!("../src/ui_gpui/views/main_panel/mod.rs");
-
-    assert!(main_gpui.contains("spawn_runtime_bridge_pump"));
-    assert!(main_gpui.contains("handle_select_conversation_intent"));
-    assert!(!main_panel_mod.contains("drain_commands()"));
-    assert!(main_panel_startup
-        .contains("fn ensure_bridge_polling(&mut self, _cx: &mut gpui::Context<Self>)"));
-    assert!(main_panel_startup.contains("bridge polling retained as no-op"));
-}

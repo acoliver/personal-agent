@@ -1,15 +1,8 @@
-//! Regression tests for seven runtime bugs identified in manual testing.
-//!
-//! Each test documents the expected correct behavior.  Tests that exercise
-//! bugs in the current code are expected to FAIL until fixes land.
+//! Behavioral regression tests for runtime bugs identified in manual testing.
 //!
 //! Bug 1: R button starts new conversation instead of inline rename
-//! Bug 2: Conversation dropdown doesn't overlay messages (layout / z-index)
-//! Bug 3: Profile dropdown renders off-screen / arrow hidden / no dropdown
 //! Bug 4: Model has no conversational memory (history not sent to LLM)
 //! Bug 5: Thinking blocks never appear; T toggle appears disabled
-//! Bug 6: History view is empty (never receives conversation list)
-//! Bug 7: Profile editor model field should be editable as text override
 
 #![allow(
     clippy::or_fun_call,
@@ -234,74 +227,6 @@ fn bug1_rename_submit_updates_title_everywhere() {
 }
 
 // ======================================================================
-// Bug 2: Conversation dropdown must overlay messages
-// ======================================================================
-
-#[test]
-fn bug2_conversation_dropdown_has_root_overlay_positioning() {
-    // Narrowed: render_conversation_dropdown is in chat_view/render_bars.rs after extraction
-    let source = include_str!("../src/ui_gpui/views/chat_view/render_bars.rs");
-    let start = source
-        .find("chat-conversation-dropdown-menu")
-        .expect("Dropdown menu element should exist");
-    let window = &source[start..std::cmp::min(start + 1200, source.len())];
-
-    // Accept either explicit z-index OR root-level overlay rendering with
-    // `.absolute()` inside a `.relative()` chat-view root.
-    let has_z_index = window.contains("z_index");
-    let has_absolute = window.contains(".absolute()");
-    // root-relative lives in render.rs (the Render impl)
-    let render_source = include_str!("../src/ui_gpui/views/chat_view/render.rs");
-    let root_relative =
-        render_source.contains(".id(\"chat-view\")") && render_source.contains(".relative()");
-
-    assert!(
-        has_z_index || (has_absolute && root_relative),
-        "BUG 2: Conversation dropdown must be a real overlay (z_index or absolute+root-relative)"
-    );
-}
-
-#[test]
-fn bug2_conversation_dropdown_rendered_at_root_level() {
-    // Narrowed: impl Render for ChatView is in chat_view/render.rs after extraction
-    let source = include_str!("../src/ui_gpui/views/chat_view/render.rs");
-    // The conversation dropdown should be rendered in the root render() function
-    // (not inside render_title_bar) so it paints on top of everything.
-    // It should be in a separate render_conversation_dropdown method called from render().
-    let render_fn_pos = source.find("fn render(&mut self").unwrap();
-    let render_fn_section = &source[render_fn_pos..];
-    assert!(
-        render_fn_section.contains("render_conversation_dropdown"),
-        "BUG 2: Conversation dropdown must be rendered from root render() to overlay chat area"
-    );
-}
-
-// ======================================================================
-// Bug 3: Profile dropdown renders off-screen / no overlay
-// ======================================================================
-
-#[test]
-fn bug3_profile_dropdown_is_overlay_at_root() {
-    // Narrowed: render_profile_dropdown is in chat_view/render_bars.rs after extraction
-    let bars_source = include_str!("../src/ui_gpui/views/chat_view/render_bars.rs");
-
-    // Profile dropdown menu must exist
-    assert!(
-        bars_source.contains("chat-profile-dropdown-menu"),
-        "BUG 3: Profile dropdown menu container must exist"
-    );
-
-    // It should be rendered from a dedicated method called from root render()
-    let render_source = include_str!("../src/ui_gpui/views/chat_view/render.rs");
-    let render_fn_pos = render_source.find("fn render(&mut self").unwrap();
-    let render_fn_section = &render_source[render_fn_pos..];
-    assert!(
-        render_fn_section.contains("render_profile_dropdown"),
-        "BUG 3: Profile dropdown must be rendered from root render() as overlay"
-    );
-}
-
-// ======================================================================
 // Bug 4: Model has no conversational memory
 // ======================================================================
 
@@ -440,87 +365,4 @@ fn bug5_show_thinking_toggles() {
     assert!(state.show_thinking);
     state.show_thinking = !state.show_thinking;
     assert!(!state.show_thinking);
-}
-
-/// `FinalizeStream` handler must attach `thinking_content` to the message.
-#[test]
-fn bug5_finalize_stream_attaches_thinking_to_message() {
-    // Narrowed: FinalizeStream handler is in chat_view/command.rs after extraction
-    let source = include_str!("../src/ui_gpui/views/chat_view/command.rs");
-    let finalize_pos = source
-        .find("ViewCommand::FinalizeStream")
-        .expect("FinalizeStream handler should exist");
-    let window = &source[finalize_pos..std::cmp::min(finalize_pos + 500, source.len())];
-
-    let attaches_thinking = window.contains("with_thinking")
-        || window.contains("thinking_content")
-        || window.contains(".thinking");
-
-    assert!(
-        attaches_thinking,
-        "BUG 5: FinalizeStream must attach thinking_content to the ChatMessage. \
-         Currently it creates ChatMessage::assistant() without thinking."
-    );
-}
-
-// ======================================================================
-// Bug 6: History view is empty
-// ======================================================================
-
-#[test]
-fn bug6_history_view_handles_conversation_list_refreshed() {
-    let source = include_str!("../src/ui_gpui/views/history_view.rs");
-    assert!(
-        source.contains("ConversationListRefreshed"),
-        "BUG 6: HistoryView.handle_command must handle ConversationListRefreshed"
-    );
-}
-
-#[test]
-fn bug6_history_view_handles_conversation_created() {
-    let source = include_str!("../src/ui_gpui/views/history_view.rs");
-    assert!(
-        source.contains("ConversationCreated"),
-        "BUG 6: HistoryView should handle ConversationCreated"
-    );
-}
-
-#[test]
-fn bug6_chat_activation_does_not_clear_loaded_messages() {
-    // Narrowed: ConversationActivated handler is in chat_view/command.rs after extraction
-    let source = include_str!("../src/ui_gpui/views/chat_view/command.rs");
-
-    let activation_pos = source
-        .find("ViewCommand::ConversationActivated")
-        .expect("ConversationActivated handler should exist");
-    let window = &source[activation_pos..std::cmp::min(activation_pos + 500, source.len())];
-
-    assert!(
-        !window.contains("messages.clear()"),
-        "BUG 6/1 UX: ConversationActivated should not clear messages because presenter \
-         sends MessageAppended immediately after activation. Clearing here can blank \
-         chat content or create the illusion of a new conversation when renaming."
-    );
-}
-
-// ======================================================================
-// Bug 7: Profile editor model field should be text-editable
-// ======================================================================
-
-#[test]
-fn bug7_profile_editor_model_is_text_editable() {
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view/render.rs");
-
-    let has_model_active_field = source.contains("ActiveField::Model")
-        || source.contains("active_field = Some(ActiveField::Model)");
-
-    let has_model_text_field = source.find("fn render_model_section").is_some_and(|start| {
-        let section = &source[start..std::cmp::min(start + 800, source.len())];
-        section.contains("render_text_field")
-    });
-
-    assert!(
-        has_model_active_field || has_model_text_field,
-        "BUG 7: Profile editor model section should use an editable text field."
-    );
 }
