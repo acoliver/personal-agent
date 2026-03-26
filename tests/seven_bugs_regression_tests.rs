@@ -239,7 +239,8 @@ fn bug1_rename_submit_updates_title_everywhere() {
 
 #[test]
 fn bug2_conversation_dropdown_has_root_overlay_positioning() {
-    let source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: render_conversation_dropdown is in chat_view/render_bars.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/chat_view/render_bars.rs");
     let start = source
         .find("chat-conversation-dropdown-menu")
         .expect("Dropdown menu element should exist");
@@ -249,7 +250,10 @@ fn bug2_conversation_dropdown_has_root_overlay_positioning() {
     // `.absolute()` inside a `.relative()` chat-view root.
     let has_z_index = window.contains("z_index");
     let has_absolute = window.contains(".absolute()");
-    let root_relative = source.contains(".id(\"chat-view\")") && source.contains(".relative()");
+    // root-relative lives in render.rs (the Render impl)
+    let render_source = include_str!("../src/ui_gpui/views/chat_view/render.rs");
+    let root_relative =
+        render_source.contains(".id(\"chat-view\")") && render_source.contains(".relative()");
 
     assert!(
         has_z_index || (has_absolute && root_relative),
@@ -259,7 +263,8 @@ fn bug2_conversation_dropdown_has_root_overlay_positioning() {
 
 #[test]
 fn bug2_conversation_dropdown_rendered_at_root_level() {
-    let source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: impl Render for ChatView is in chat_view/render.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/chat_view/render.rs");
     // The conversation dropdown should be rendered in the root render() function
     // (not inside render_title_bar) so it paints on top of everything.
     // It should be in a separate render_conversation_dropdown method called from render().
@@ -277,17 +282,19 @@ fn bug2_conversation_dropdown_rendered_at_root_level() {
 
 #[test]
 fn bug3_profile_dropdown_is_overlay_at_root() {
-    let source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: render_profile_dropdown is in chat_view/render_bars.rs after extraction
+    let bars_source = include_str!("../src/ui_gpui/views/chat_view/render_bars.rs");
 
     // Profile dropdown menu must exist
     assert!(
-        source.contains("chat-profile-dropdown-menu"),
+        bars_source.contains("chat-profile-dropdown-menu"),
         "BUG 3: Profile dropdown menu container must exist"
     );
 
     // It should be rendered from a dedicated method called from root render()
-    let render_fn_pos = source.find("fn render(&mut self").unwrap();
-    let render_fn_section = &source[render_fn_pos..];
+    let render_source = include_str!("../src/ui_gpui/views/chat_view/render.rs");
+    let render_fn_pos = render_source.find("fn render(&mut self").unwrap();
+    let render_fn_section = &render_source[render_fn_pos..];
     assert!(
         render_fn_section.contains("render_profile_dropdown"),
         "BUG 3: Profile dropdown must be rendered from root render() as overlay"
@@ -438,7 +445,8 @@ fn bug5_show_thinking_toggles() {
 /// `FinalizeStream` handler must attach `thinking_content` to the message.
 #[test]
 fn bug5_finalize_stream_attaches_thinking_to_message() {
-    let source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: FinalizeStream handler is in chat_view/command.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/chat_view/command.rs");
     let finalize_pos = source
         .find("ViewCommand::FinalizeStream")
         .expect("FinalizeStream handler should exist");
@@ -479,7 +487,8 @@ fn bug6_history_view_handles_conversation_created() {
 
 #[test]
 fn bug6_chat_activation_does_not_clear_loaded_messages() {
-    let source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: ConversationActivated handler is in chat_view/command.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/chat_view/command.rs");
 
     let activation_pos = source
         .find("ViewCommand::ConversationActivated")
@@ -500,7 +509,7 @@ fn bug6_chat_activation_does_not_clear_loaded_messages() {
 
 #[test]
 fn bug7_profile_editor_model_is_text_editable() {
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
+    let source = include_str!("../src/ui_gpui/views/profile_editor_view/render.rs");
 
     let has_model_active_field = source.contains("ActiveField::Model")
         || source.contains("active_field = Some(ActiveField::Model)");

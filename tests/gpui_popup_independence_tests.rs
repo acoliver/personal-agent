@@ -259,13 +259,15 @@ fn disconnected_subscriber_does_not_block_store_mutation() {
 #[test]
 fn production_ingress_path_is_popup_independent() {
     let main_gpui = include_str!("../src/main_gpui.rs");
-    let main_panel = include_str!("../src/ui_gpui/views/main_panel.rs");
+    // Narrowed: ensure_bridge_polling lives in main_panel/startup.rs after extraction
+    let main_panel_startup = include_str!("../src/ui_gpui/views/main_panel/startup.rs");
+    // main_panel/mod.rs also checked for drain_commands absence
+    let main_panel_mod = include_str!("../src/ui_gpui/views/main_panel/mod.rs");
 
     assert!(main_gpui.contains("spawn_runtime_bridge_pump"));
     assert!(main_gpui.contains("handle_select_conversation_intent"));
-    assert!(!main_panel.contains("drain_commands()"));
-    assert!(
-        main_panel.contains("fn ensure_bridge_polling(&mut self, _cx: &mut gpui::Context<Self>)")
-    );
-    assert!(main_panel.contains("bridge polling retained as no-op"));
+    assert!(!main_panel_mod.contains("drain_commands()"));
+    assert!(main_panel_startup
+        .contains("fn ensure_bridge_polling(&mut self, _cx: &mut gpui::Context<Self>)"));
+    assert!(main_panel_startup.contains("bridge polling retained as no-op"));
 }

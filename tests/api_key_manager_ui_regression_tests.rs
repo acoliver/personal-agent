@@ -1,6 +1,6 @@
 #[test]
 fn api_key_manager_registers_entity_input_handler_for_text_entry() {
-    let source = include_str!("../src/ui_gpui/views/api_key_manager_view.rs");
+    let source = include_str!("../src/ui_gpui/views/api_key_manager_view/render.rs");
 
     assert!(
         source.contains("ElementInputHandler::new(bounds, entity)"),
@@ -15,7 +15,7 @@ fn api_key_manager_registers_entity_input_handler_for_text_entry() {
 
 #[test]
 fn api_key_manager_supports_cmd_v_paste_for_active_field() {
-    let source = include_str!("../src/ui_gpui/views/api_key_manager_view.rs");
+    let source = include_str!("../src/ui_gpui/views/api_key_manager_view/render.rs");
 
     assert!(
         source.contains("modifiers.platform && key == \"v\"")
@@ -26,7 +26,7 @@ fn api_key_manager_supports_cmd_v_paste_for_active_field() {
 
 #[test]
 fn api_key_manager_exposes_mask_toggle_for_secret_value() {
-    let source = include_str!("../src/ui_gpui/views/api_key_manager_view.rs");
+    let source = include_str!("../src/ui_gpui/views/api_key_manager_view/render.rs");
 
     assert!(
         source.contains("checkbox-mask-key") && source.contains("Mask"),
@@ -40,7 +40,7 @@ fn api_key_manager_exposes_mask_toggle_for_secret_value() {
 
 #[test]
 fn api_key_manager_keeps_label_non_editable_during_edit_mode_tabbing() {
-    let source = include_str!("../src/ui_gpui/views/api_key_manager_view.rs");
+    let source = include_str!("../src/ui_gpui/views/api_key_manager_view/render.rs");
 
     assert!(
         source.contains("(EditMode::Editing { .. }, Some(ActiveField::Value | ActiveField::Label))")
@@ -51,7 +51,7 @@ fn api_key_manager_keeps_label_non_editable_during_edit_mode_tabbing() {
 
 #[test]
 fn profile_editor_requests_key_refresh_when_bridge_is_attached() {
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
+    let source = include_str!("../src/ui_gpui/views/profile_editor_view/mod.rs");
 
     assert!(
         source.contains("fn request_api_key_refresh(&self)")
@@ -63,7 +63,8 @@ fn profile_editor_requests_key_refresh_when_bridge_is_attached() {
 
 #[test]
 fn main_panel_runtime_snapshot_requests_include_api_keys() {
-    let source = include_str!("../src/ui_gpui/views/main_panel.rs");
+    // Narrowed: request_runtime_snapshots is in main_panel/startup.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/main_panel/startup.rs");
 
     assert!(
         source.contains("bridge.emit(UserEvent::RefreshApiKeys)"),
@@ -73,7 +74,8 @@ fn main_panel_runtime_snapshot_requests_include_api_keys() {
 
 #[test]
 fn main_panel_profile_editor_navigation_requests_api_keys() {
-    let source = include_str!("../src/ui_gpui/views/main_panel.rs");
+    // Narrowed: navigation handling is in main_panel/render.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/main_panel/render.rs");
 
     assert!(
         source.contains("if view_id == ViewId::ProfileEditor")
@@ -84,7 +86,7 @@ fn main_panel_profile_editor_navigation_requests_api_keys() {
 
 #[test]
 fn profile_editor_empty_key_dropdown_requests_refresh_instead_of_silent_no_op() {
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
+    let source = include_str!("../src/ui_gpui/views/profile_editor_view/render.rs");
 
     assert!(
         source.contains("if this.state.data.available_keys.is_empty()")

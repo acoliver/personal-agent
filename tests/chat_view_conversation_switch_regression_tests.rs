@@ -2,7 +2,8 @@ use personal_agent::presentation::view_command::ViewCommand;
 
 #[test]
 fn chat_view_handles_loaded_transcript_before_incremental_appends() {
-    let source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: handle_command dispatch is in chat_view/command.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/chat_view/command.rs");
 
     let loaded_pos = source
         .find("ViewCommand::ConversationMessagesLoaded")
@@ -19,7 +20,8 @@ fn chat_view_handles_loaded_transcript_before_incremental_appends() {
 
 #[test]
 fn chat_view_loaded_transcript_replaces_messages_for_active_conversation() {
-    let source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: handle_command dispatch is in chat_view/command.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/chat_view/command.rs");
 
     let loaded_pos = source
         .find("ViewCommand::ConversationMessagesLoaded")
@@ -37,7 +39,8 @@ fn chat_view_loaded_transcript_replaces_messages_for_active_conversation() {
 fn replay_payload_preserves_thinking_and_timestamp_fidelity() {
     let presenter_source = include_str!("../src/presentation/chat_presenter.rs");
     let payload_source = include_str!("../src/presentation/view_command.rs");
-    let chat_view_source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: messages_from_payload is in chat_view/mod.rs after extraction
+    let chat_view_source = include_str!("../src/ui_gpui/views/chat_view/mod.rs");
 
     assert!(
         payload_source.contains("pub thinking_content: Option<String>")
@@ -92,7 +95,8 @@ fn view_command_exposes_conversation_messages_loaded_variant() {
 /// @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-063
 #[test]
 fn manual_selection_still_clears_local_transcript_before_runtime_replay_arrives() {
-    let source = include_str!("../src/ui_gpui/views/chat_view.rs");
+    // Narrowed: select_conversation_at_index is in chat_view/mod.rs after extraction
+    let source = include_str!("../src/ui_gpui/views/chat_view/mod.rs");
 
     let select_pos = source
         .find("fn select_conversation_at_index")

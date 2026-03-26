@@ -151,7 +151,7 @@ async fn bug_save_profile_editor_should_emit_default_profile_changed() {
 
 #[test]
 fn bug_model_selected_should_use_shared_provider_base_url_defaults() {
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
+    let source = include_str!("../src/ui_gpui/views/profile_editor_view/command.rs");
 
     assert!(
         source.contains("default_api_base_url_for_provider(&provider_id)"),
@@ -183,7 +183,7 @@ fn provider_defaults_should_use_models_dev_metadata_for_kimi_and_builtin_fallbac
 fn bug_api_key_storage_uses_keychain_not_inline_paste() {
     // API keys are now stored in the OS keychain via secure_store, not pasted inline.
     // Verify the profile editor no longer has inline API key entry fields.
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
+    let source = include_str!("../src/ui_gpui/views/profile_editor_view/mod.rs");
 
     assert!(
         !source.contains(".id(\"btn-paste-api-key\")"),
@@ -197,7 +197,7 @@ fn bug_api_key_storage_uses_keychain_not_inline_paste() {
 
 #[test]
 fn bug_browse_model_should_preserve_or_refresh_available_api_keys_for_new_profile_flow() {
-    let source = include_str!("../src/ui_gpui/views/profile_editor_view.rs");
+    let source = include_str!("../src/ui_gpui/views/profile_editor_view/render.rs");
 
     assert!(
         source.contains("let available_keys = this.state.data.available_keys.clone();")

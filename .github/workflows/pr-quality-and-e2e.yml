@@ -62,8 +62,6 @@ jobs:
           . .venv-lizard/bin/activate
 
           python -m lizard -C 50 -L 100 -w src/ \
-            --exclude "src/ui_gpui/views/*" \
-            --exclude "src/ui_gpui/components/*" \
             --exclude "src/main_gpui.rs" \
             --exclude "src/bin/*" \
             --exclude "src/services/chat.rs" \
@@ -80,8 +78,6 @@ jobs:
             fi
           done < <(
             find src -name "*.rs" \
-              -not -path "src/ui_gpui/views/*" \
-              -not -path "src/ui_gpui/components/*" \
               -not -path "src/main_gpui.rs" \
               -not -path "src/bin/*" | sort
           )
