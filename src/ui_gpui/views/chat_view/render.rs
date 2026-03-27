@@ -58,7 +58,6 @@ impl ChatView {
             match key.as_str() {
                 "escape" => {
                     self.state.profile_dropdown_open = false;
-                    self.profile_dropdown_anchor_x = None;
                     cx.notify();
                 }
                 "up" => self.move_profile_dropdown_selection(-1, cx),
@@ -116,7 +115,6 @@ impl ChatView {
                 self.state.conversation_title_editing = false;
                 self.state.conversation_title_input.clear();
                 self.state.profile_dropdown_open = false;
-                self.profile_dropdown_anchor_x = None;
                 self.state.chat_autoscroll_enabled = true;
                 self.chat_scroll_handle.scroll_to_bottom();
                 cx.notify();

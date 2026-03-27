@@ -274,7 +274,6 @@ impl ChatView {
                 self.state.streaming = StreamingState::Idle;
                 self.state.thinking_content = None;
                 self.state.conversation_dropdown_open = false;
-                self.profile_dropdown_anchor_x = None;
                 self.state.chat_autoscroll_enabled = true;
                 self.chat_scroll_handle.scroll_to_bottom();
 
@@ -307,7 +306,6 @@ impl ChatView {
                 self.state.conversation_dropdown_open = false;
                 self.state.conversation_title_editing = false;
                 self.state.conversation_title_input.clear();
-                self.profile_dropdown_anchor_x = None;
                 self.state.chat_autoscroll_enabled = true;
                 self.chat_scroll_handle.scroll_to_bottom();
                 self.state.conversation_title = "New Conversation".to_string();
@@ -407,7 +405,6 @@ impl ChatView {
                 }
                 self.state.sync_conversation_dropdown_index();
                 self.state.sync_conversation_title_from_active();
-                self.profile_dropdown_anchor_x = None;
                 cx.notify();
             }
             ViewCommand::ConversationCleared => {
@@ -417,7 +414,6 @@ impl ChatView {
                 self.state.conversation_dropdown_open = false;
                 self.state.conversation_title_editing = false;
                 self.state.conversation_title_input.clear();
-                self.profile_dropdown_anchor_x = None;
                 self.state.chat_autoscroll_enabled = true;
                 self.chat_scroll_handle.scroll_to_bottom();
                 self.state.sync_conversation_title_from_active();

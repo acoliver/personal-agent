@@ -11,7 +11,7 @@ use super::ChatView;
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::{ConversationSummary, ProfileSummary};
 use crate::ui_gpui::theme::Theme;
-use gpui::{div, prelude::*, px, FontWeight, MouseButton, MouseDownEvent, SharedString};
+use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
 
 impl ChatView {
     /// Render the top bar with icon, title, and toolbar buttons
@@ -257,7 +257,6 @@ impl ChatView {
                     this.state.conversation_title_editing = false;
                     this.state.conversation_title_input.clear();
                     this.state.profile_dropdown_open = false;
-                    this.profile_dropdown_anchor_x = None;
                     this.state.chat_autoscroll_enabled = true;
                     this.chat_scroll_handle.scroll_to_bottom();
                     cx.notify();
@@ -316,8 +315,7 @@ impl ChatView {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                    this.set_profile_dropdown_anchor_x(Some(event.position.x), cx);
+                cx.listener(|this, _, _window, cx| {
                     this.toggle_profile_dropdown(cx);
                 }),
             )
@@ -461,7 +459,6 @@ impl ChatView {
                 cx.listener(|this, _, _window, cx| {
                     if this.state.profile_dropdown_open {
                         this.state.profile_dropdown_open = false;
-                        this.profile_dropdown_anchor_x = None;
                         cx.notify();
                     }
                 }),
@@ -472,7 +469,6 @@ impl ChatView {
                     .absolute()
                     .top(px(74.0))
                     .left(Self::compute_profile_dropdown_left(
-                        self.profile_dropdown_anchor_x,
                         window.bounds().size.width,
                     ))
                     .w(px(260.0))
@@ -567,26 +563,20 @@ mod tests {
     use gpui::px;
 
     #[test]
-    fn profile_dropdown_left_falls_back_to_title_bar_right_alignment_without_anchor() {
-        let left = ChatView::compute_profile_dropdown_left(None, px(760.0));
-        assert_eq!(left, px(488.0));
+    fn profile_dropdown_left_aligns_under_trigger_left_edge() {
+        let left = ChatView::compute_profile_dropdown_left(px(760.0));
+        assert_eq!(left, px(276.0));
     }
 
     #[test]
-    fn profile_dropdown_left_centers_on_anchor_and_clamps_to_window_bounds() {
-        let centered = ChatView::compute_profile_dropdown_left(Some(px(520.0)), px(760.0));
-        assert_eq!(centered, px(468.0));
-
-        let clamped_left = ChatView::compute_profile_dropdown_left(Some(px(20.0)), px(760.0));
-        assert_eq!(clamped_left, px(12.0));
-
-        let clamped_right = ChatView::compute_profile_dropdown_left(Some(px(740.0)), px(760.0));
-        assert_eq!(clamped_right, px(488.0));
+    fn profile_dropdown_left_clamps_to_right_bound_on_narrow_windows() {
+        let clamped_right = ChatView::compute_profile_dropdown_left(px(520.0));
+        assert_eq!(clamped_right, px(248.0));
     }
 
     #[test]
     fn profile_dropdown_left_uses_minimum_margin_for_narrow_windows() {
-        let left = ChatView::compute_profile_dropdown_left(None, px(200.0));
+        let left = ChatView::compute_profile_dropdown_left(px(200.0));
         assert_eq!(left, px(12.0));
     }
 }
