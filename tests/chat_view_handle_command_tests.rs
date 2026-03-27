@@ -433,6 +433,13 @@ async fn handle_command_ignores_inactive_updates_and_replaces_active_transcript(
         view.state.streaming = StreamingState::Error("old error".to_string());
         view.state.conversations = vec![conversation(active_id, "Active", 1)];
         view.set_conversation_id(active_id);
+        view.handle_command(
+            ViewCommand::ConversationActivated {
+                id: active_id,
+                selection_generation: 2,
+            },
+            cx,
+        );
 
         view.handle_command(
             ViewCommand::ConversationMessagesLoaded {
@@ -497,6 +504,60 @@ async fn handle_command_ignores_inactive_updates_and_replaces_active_transcript(
         assert_eq!(view.state.streaming, StreamingState::Idle);
         assert_eq!(view.state.thinking_content, None);
         assert!(view.state.chat_autoscroll_enabled);
+    });
+}
+
+#[gpui::test]
+async fn stale_conversation_messages_loaded_generation_is_ignored(cx: &mut TestAppContext) {
+    let active_id = Uuid::new_v4();
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+
+    view.update(cx, |view: &mut ChatView, cx| {
+        view.state.current_model = "claude-3-7-sonnet".to_string();
+        view.state.conversations = vec![conversation(active_id, "Active", 1)];
+        view.handle_command(
+            ViewCommand::ConversationActivated {
+                id: active_id,
+                selection_generation: 2,
+            },
+            cx,
+        );
+
+        view.handle_command(
+            ViewCommand::ConversationMessagesLoaded {
+                conversation_id: active_id,
+                selection_generation: 1,
+                messages: vec![
+                    payload(ViewMessageRole::User, "stale user", None, Some(1)),
+                    payload(ViewMessageRole::Assistant, "stale assistant", None, Some(2)),
+                ],
+            },
+            cx,
+        );
+
+        view.handle_command(
+            ViewCommand::ConversationMessagesLoaded {
+                conversation_id: active_id,
+                selection_generation: 2,
+                messages: vec![
+                    payload(ViewMessageRole::User, "fresh user", None, Some(10)),
+                    payload(
+                        ViewMessageRole::Assistant,
+                        "fresh assistant",
+                        None,
+                        Some(20),
+                    ),
+                ],
+            },
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.state.messages.len(), 2);
+        assert_eq!(view.state.messages[0].content, "fresh user");
+        assert_eq!(view.state.messages[1].content, "fresh assistant");
     });
 }
 

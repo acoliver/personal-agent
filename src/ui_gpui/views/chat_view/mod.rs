@@ -37,6 +37,7 @@ pub struct ChatView {
     pub(super) focus_handle: FocusHandle,
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) conversation_id: Option<Uuid>,
+    pub(super) selection_generation: u64,
     pub(super) chat_scroll_handle: ScrollHandle,
 }
 
@@ -47,6 +48,7 @@ impl ChatView {
             focus_handle: cx.focus_handle(),
             bridge: None,
             conversation_id: None,
+            selection_generation: 0,
             chat_scroll_handle: ScrollHandle::new(),
         }
     }
@@ -192,10 +194,46 @@ impl ChatView {
             ..
         } = snapshot;
 
+        let previous_conversation_id = self.conversation_id;
+        let previous_selection_generation = self.selection_generation;
+
         self.state.conversations = conversations;
         self.state.active_conversation_id = selected_conversation_id;
         self.conversation_id = selected_conversation_id;
         self.state.conversation_title = selected_conversation_title;
+
+        let should_reset_autoscroll = match &load_state {
+            ConversationLoadState::Loading {
+                conversation_id,
+                generation,
+            }
+            | ConversationLoadState::Ready {
+                conversation_id,
+                generation,
+            }
+            | ConversationLoadState::Error {
+                conversation_id,
+                generation,
+                ..
+            } => {
+                let changed = previous_conversation_id != Some(*conversation_id)
+                    || previous_selection_generation != *generation;
+                self.selection_generation = *generation;
+                changed
+            }
+            ConversationLoadState::Idle => {
+                let changed =
+                    previous_conversation_id.is_some() || previous_selection_generation != 0;
+                self.selection_generation = 0;
+                changed
+            }
+        };
+
+        if should_reset_autoscroll {
+            self.state.chat_autoscroll_enabled = true;
+            self.chat_scroll_handle.scroll_to_bottom();
+            self.maybe_scroll_chat_to_bottom(cx);
+        }
 
         match &load_state {
             ConversationLoadState::Ready { .. } => {
@@ -240,6 +278,7 @@ impl ChatView {
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub fn set_conversation_id(&mut self, id: Uuid) {
         self.conversation_id = Some(id);
+        self.selection_generation = 0;
         self.state.active_conversation_id = Some(id);
         self.state.sync_conversation_dropdown_index();
         self.state.sync_conversation_title_from_active();

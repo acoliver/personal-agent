@@ -63,11 +63,20 @@ impl ChatView {
         match cmd {
             ViewCommand::ConversationMessagesLoaded {
                 conversation_id,
+                selection_generation,
                 messages,
-                ..
             } => {
                 if self.state.active_conversation_id != Some(conversation_id) {
                     tracing::info!(%conversation_id, "ChatView: ignoring ConversationMessagesLoaded for inactive conversation");
+                    return;
+                }
+                if selection_generation != self.selection_generation {
+                    tracing::info!(
+                        %conversation_id,
+                        selection_generation,
+                        current_generation = self.selection_generation,
+                        "ChatView: ignoring stale ConversationMessagesLoaded generation"
+                    );
                     return;
                 }
                 let message_count = messages.len();
@@ -255,9 +264,13 @@ impl ChatView {
                 self.apply_conversation_list_refresh(previous_active);
                 cx.notify();
             }
-            ViewCommand::ConversationActivated { id, .. } => {
+            ViewCommand::ConversationActivated {
+                id,
+                selection_generation,
+            } => {
                 self.state.active_conversation_id = Some(id);
                 self.conversation_id = Some(id);
+                self.selection_generation = selection_generation;
                 self.state.streaming = StreamingState::Idle;
                 self.state.thinking_content = None;
                 self.state.conversation_dropdown_open = false;
@@ -286,6 +299,7 @@ impl ChatView {
             ViewCommand::ConversationCreated { id, .. } => {
                 self.state.active_conversation_id = Some(id);
                 self.conversation_id = Some(id);
+                self.selection_generation = 0;
                 self.state.messages.clear();
                 self.state.streaming = StreamingState::Idle;
                 self.state.thinking_content = None;
