@@ -46,7 +46,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: |
+          cargo clippy --all-targets -- \
+            -D warnings \
+            -D clippy::cognitive_complexity \
+            -D clippy::too_many_lines \
+            -D clippy::too_many_arguments \
+            -D clippy::type_complexity \
+            -D clippy::struct_excessive_bools
 
       - name: Install complexity tooling (lizard)
         run: |
