@@ -58,6 +58,7 @@ impl ChatView {
             match key.as_str() {
                 "escape" => {
                     self.state.profile_dropdown_open = false;
+                    self.profile_dropdown_anchor_x = None;
                     cx.notify();
                 }
                 "up" => self.move_profile_dropdown_selection(-1, cx),
@@ -115,6 +116,7 @@ impl ChatView {
                 self.state.conversation_title_editing = false;
                 self.state.conversation_title_input.clear();
                 self.state.profile_dropdown_open = false;
+                self.profile_dropdown_anchor_x = None;
                 self.state.chat_autoscroll_enabled = true;
                 self.chat_scroll_handle.scroll_to_bottom();
                 cx.notify();
@@ -538,7 +540,7 @@ impl ChatView {
 impl gpui::Render for ChatView {
     #[allow(clippy::too_many_lines)]
     #[rustfmt::skip]
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
 
         div()
             .id("chat-view")
@@ -579,7 +581,7 @@ impl gpui::Render for ChatView {
                 d.child(self.render_conversation_dropdown(cx))
             })
             .when(self.state.profile_dropdown_open, |d| {
-                d.child(self.render_profile_dropdown(cx))
+                d.child(self.render_profile_dropdown(window, cx))
             })
     }
 }

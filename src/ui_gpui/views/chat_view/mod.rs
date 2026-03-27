@@ -25,7 +25,7 @@ use crate::presentation::view_command::ConversationMessagePayload;
 use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, StreamingStoreSnapshot};
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
-use gpui::{point, px, FocusHandle, ScrollDelta, ScrollHandle, ScrollWheelEvent};
+use gpui::{point, px, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -39,6 +39,7 @@ pub struct ChatView {
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
     pub(super) chat_scroll_handle: ScrollHandle,
+    pub(super) profile_dropdown_anchor_x: Option<Pixels>,
 }
 
 impl ChatView {
@@ -50,6 +51,7 @@ impl ChatView {
             conversation_id: None,
             selection_generation: 0,
             chat_scroll_handle: ScrollHandle::new(),
+            profile_dropdown_anchor_x: None,
         }
     }
 
@@ -332,6 +334,7 @@ impl ChatView {
         self.state.conversation_dropdown_index = bounded;
         self.state.conversation_dropdown_open = false;
         self.state.conversation_title_editing = false;
+        self.profile_dropdown_anchor_x = None;
         if switching_conversation {
             if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
                 tracing::info!("ChatView: stopping active stream before conversation switch");
@@ -348,6 +351,7 @@ impl ChatView {
         self.state.conversation_dropdown_open = !self.state.conversation_dropdown_open;
         if self.state.conversation_dropdown_open {
             self.state.profile_dropdown_open = false;
+            self.profile_dropdown_anchor_x = None;
             self.state.conversation_title_editing = false;
             self.state.sync_conversation_dropdown_index();
         }
@@ -493,6 +497,7 @@ impl ChatView {
         self.state.profile_dropdown_index = bounded;
         self.state.selected_profile_id = Some(profile_id);
         self.state.profile_dropdown_open = false;
+        self.profile_dropdown_anchor_x = None;
         self.state.sync_current_model_from_profile();
         self.emit(UserEvent::SelectChatProfile { id: profile_id });
         cx.notify();
@@ -503,6 +508,8 @@ impl ChatView {
         if self.state.profile_dropdown_open {
             self.state.conversation_dropdown_open = false;
             self.state.sync_profile_dropdown_index();
+        } else {
+            self.profile_dropdown_anchor_x = None;
         }
         tracing::info!(
             open = self.state.profile_dropdown_open,
@@ -516,6 +523,17 @@ impl ChatView {
     #[must_use]
     pub const fn profile_dropdown_open(&self) -> bool {
         self.state.profile_dropdown_open
+    }
+
+    pub(super) fn set_profile_dropdown_anchor_x(
+        &mut self,
+        anchor_x: Option<Pixels>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.profile_dropdown_anchor_x = anchor_x;
+        if self.state.profile_dropdown_open {
+            cx.notify();
+        }
     }
 
     pub(super) fn active_input_text(&self) -> &str {
@@ -556,6 +574,20 @@ impl ChatView {
     }
 
     /// Handle paste (Cmd+V) - insert clipboard text at cursor
+    pub(super) fn compute_profile_dropdown_left(
+        anchor_x: Option<Pixels>,
+        window_width: Pixels,
+    ) -> Pixels {
+        let min_left = px(12.0);
+        let dropdown_width = px(260.0);
+        let trigger_width = px(104.0);
+        let preferred = anchor_x.map_or(window_width - dropdown_width - min_left, |anchor_x| {
+            anchor_x - trigger_width / 2.0
+        });
+        let max_left = (window_width - dropdown_width - min_left).max(min_left);
+        preferred.max(min_left).min(max_left)
+    }
+
     pub fn handle_paste(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
         if self.state.conversation_title_editing {
             if self.state.rename_replace_on_next_char {
