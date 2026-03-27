@@ -191,18 +191,18 @@ impl PopupWindow {
 mod tests {
     use super::*;
 
+    /// Validate that `PopupWindow::new` fails gracefully when not on the main thread.
+    /// Full main-thread integration tests live in `tests/gui_main_thread.rs`.
     #[test]
-    #[ignore = "Requires macOS main thread GUI context"]
-    fn test_popup_window_creation() {
-        let (user_tx, _user_rx) = flume::unbounded();
-        let (_view_cmd_tx, view_cmd_rx) = flume::unbounded();
-        let gpui_bridge = Arc::new(GpuiBridge::new(user_tx, view_cmd_rx));
+    fn popup_window_rejects_worker_thread() {
+        let (user_tx, _) = flume::unbounded();
+        let (_, view_rx) = flume::unbounded();
+        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
 
-        let popup = PopupWindow::new(gpui_bridge);
-        assert!(popup.is_ok());
-
-        if let Ok(window) = popup {
-            assert!(!window.is_visible());
-        }
+        let result = PopupWindow::new(bridge);
+        assert!(
+            result.is_err(),
+            "PopupWindow::new should fail off main thread"
+        );
     }
 }

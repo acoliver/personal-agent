@@ -87,6 +87,10 @@ tempfile = "3"
 rstest = "0.18"
 wiremock = "0.6"
 
+[[test]]
+name = "gui_main_thread"
+harness = false
+
 [lints.rust]
 unsafe_code = "warn"
 

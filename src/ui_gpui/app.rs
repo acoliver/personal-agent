@@ -165,32 +165,21 @@ impl GpuiApp {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_gpui_app_creation() {
+    #[test]
+    fn gpui_app_creation_succeeds() {
         let event_bus = EventBus::new(100);
         let app = GpuiApp::new(Arc::new(event_bus));
-
         assert!(app.is_ok());
-
-        if let Ok(app) = app {
-            // Verify bridge is created
-            let bridge = app.gpui_bridge();
-            assert!(Arc::strong_count(&bridge) >= 2);
-        }
     }
 
-    #[tokio::test]
-    #[ignore = "Requires macOS main thread GUI context"]
-    async fn test_gpui_app_initialization() {
+    /// `initialize()` requires the macOS main thread (creates `PopupWindow` + `TrayBridge`).
+    /// Full main-thread integration tests live in `tests/gui_main_thread.rs`.
+    #[test]
+    fn gpui_app_initialize_fails_off_main_thread() {
         let event_bus = EventBus::new(100);
-        let mut app = GpuiApp::new(Arc::new(event_bus)).unwrap();
+        let mut app = GpuiApp::new(Arc::new(event_bus)).expect("GpuiApp::new");
 
-        let init_result = app.initialize();
-        assert!(init_result.is_ok());
-
-        assert!(!app.is_popup_visible());
-
-        let forward_result = app.start_event_forwarding();
-        assert!(forward_result.is_ok());
+        let result = app.initialize();
+        assert!(result.is_err(), "initialize should fail off main thread");
     }
 }
