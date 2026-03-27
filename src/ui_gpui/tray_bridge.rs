@@ -140,14 +140,18 @@ impl TrayBridge {
 mod tests {
     use super::*;
 
+    /// Validate that `TrayBridge::new` fails gracefully when not on the main thread.
+    /// Full main-thread integration tests live in `tests/gui_main_thread.rs`.
     #[test]
-    #[ignore = "Requires macOS main thread GUI context"]
-    fn test_tray_bridge_creation() {
-        let (user_tx, _user_rx) = flume::unbounded();
-        let (_view_cmd_tx, view_cmd_rx) = flume::unbounded();
-        let gpui_bridge = Arc::new(GpuiBridge::new(user_tx, view_cmd_rx));
+    fn tray_bridge_rejects_worker_thread() {
+        let (user_tx, _) = flume::unbounded();
+        let (_, view_rx) = flume::unbounded();
+        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
 
-        let tray = TrayBridge::new(gpui_bridge);
-        assert!(tray.is_ok());
+        let result = TrayBridge::new(bridge);
+        assert!(
+            result.is_err(),
+            "TrayBridge::new should fail off main thread"
+        );
     }
 }
