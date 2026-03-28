@@ -99,3 +99,9 @@ all = { level = "deny", priority = -1 }
 pedantic = "warn"
 nursery = "warn"
 cognitive_complexity = "warn"
+
+[profile.dev]
+incremental = false
+
+[profile.test]
+incremental = false
