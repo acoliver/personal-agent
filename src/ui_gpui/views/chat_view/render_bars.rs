@@ -442,7 +442,11 @@ impl ChatView {
     }
 
     /// Render profile dropdown overlay at root level.
-    pub(super) fn render_profile_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    pub(super) fn render_profile_dropdown(
+        &self,
+        window: &gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("chat-profile-dropdown-overlay")
             .absolute()
@@ -464,7 +468,9 @@ impl ChatView {
                     .id("chat-profile-dropdown-menu")
                     .absolute()
                     .top(px(74.0))
-                    .right(px(12.0))
+                    .left(Self::compute_profile_dropdown_left(
+                        window.bounds().size.width,
+                    ))
                     .w(px(260.0))
                     .max_w(px(300.0))
                     .max_h(px(220.0))
@@ -548,5 +554,29 @@ impl ChatView {
                     this.select_profile_at_index(index, cx);
                 }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::px;
+
+    #[test]
+    fn profile_dropdown_left_aligns_under_trigger_left_edge() {
+        let left = ChatView::compute_profile_dropdown_left(px(760.0));
+        assert_eq!(left, px(276.0));
+    }
+
+    #[test]
+    fn profile_dropdown_left_clamps_to_right_bound_on_narrow_windows() {
+        let clamped_right = ChatView::compute_profile_dropdown_left(px(520.0));
+        assert_eq!(clamped_right, px(248.0));
+    }
+
+    #[test]
+    fn profile_dropdown_left_uses_minimum_margin_for_narrow_windows() {
+        let left = ChatView::compute_profile_dropdown_left(px(200.0));
+        assert_eq!(left, px(12.0));
     }
 }

@@ -538,7 +538,7 @@ impl ChatView {
 impl gpui::Render for ChatView {
     #[allow(clippy::too_many_lines)]
     #[rustfmt::skip]
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
 
         div()
             .id("chat-view")
@@ -579,7 +579,7 @@ impl gpui::Render for ChatView {
                 d.child(self.render_conversation_dropdown(cx))
             })
             .when(self.state.profile_dropdown_open, |d| {
-                d.child(self.render_profile_dropdown(cx))
+                d.child(self.render_profile_dropdown(window, cx))
             })
     }
 }

@@ -25,7 +25,7 @@ use crate::presentation::view_command::ConversationMessagePayload;
 use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, StreamingStoreSnapshot};
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
-use gpui::{point, px, FocusHandle, ScrollDelta, ScrollHandle, ScrollWheelEvent};
+use gpui::{point, px, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -556,6 +556,16 @@ impl ChatView {
     }
 
     /// Handle paste (Cmd+V) - insert clipboard text at cursor
+    pub(super) fn compute_profile_dropdown_left(window_width: Pixels) -> Pixels {
+        let min_left = px(12.0);
+        let dropdown_width = px(260.0);
+        // chat-title-bar left padding (12) + conversation selector width (220)
+        // + gap (8) + new button width (28) + gap (8)
+        let preferred = px(276.0);
+        let max_left = (window_width - dropdown_width - min_left).max(min_left);
+        preferred.max(min_left).min(max_left)
+    }
+
     pub fn handle_paste(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
         if self.state.conversation_title_editing {
             if self.state.rename_replace_on_next_char {
