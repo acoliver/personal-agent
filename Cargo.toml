@@ -99,3 +99,10 @@ all = { level = "deny", priority = -1 }
 pedantic = "warn"
 nursery = "warn"
 cognitive_complexity = "warn"
+
+# Disable incremental compilation for local dev/test to avoid large incremental artifact growth (Issue #23).
+[profile.dev]
+incremental = false
+
+[profile.test]
+incremental = false
