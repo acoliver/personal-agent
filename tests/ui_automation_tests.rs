@@ -404,7 +404,7 @@ fn scn_001_tray_open_popup_becomes_frontmost() {
 
     let mut child = launch_gpui();
     assert!(wait_for_log_substring(
-        "All 7 presenters started",
+        "All 8 presenters started",
         Duration::from_secs(12)
     ));
 
@@ -427,7 +427,7 @@ fn scn_002_keyboard_profile_switch_from_chat_emits_event_and_routes_model() {
 
     let mut child = launch_gpui();
     assert!(wait_for_log_substring(
-        "All 7 presenters started",
+        "All 8 presenters started",
         Duration::from_secs(12)
     ));
 
@@ -484,7 +484,7 @@ fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
 
     let mut child = launch_gpui();
     assert!(wait_for_log_substring(
-        "All 7 presenters started",
+        "All 8 presenters started",
         Duration::from_secs(12)
     ));
 
