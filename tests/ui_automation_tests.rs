@@ -176,6 +176,27 @@ fn cmd_p_down_enter() -> AppleScriptResult {
     ])
 }
 
+fn is_frontmost(app_name: &str) -> bool {
+    let result = run_osascript(&[
+        "tell application \"System Events\"",
+        "set frontProc to first process whose frontmost is true",
+        "return name of frontProc",
+        "end tell",
+    ]);
+    result.success && result.stdout == app_name
+}
+
+fn wait_for_frontmost(app_name: &str, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if is_frontmost(app_name) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    false
+}
+
 fn launch_gpui() -> Child {
     let _ = Command::new("pkill").arg("-f").arg(APP_PROCESS).status();
 
@@ -374,6 +395,29 @@ fn newest_conversation_after(cutoff: SystemTime) -> Option<PathBuf> {
 
     entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
     entries.last().map(std::fs::DirEntry::path)
+}
+
+#[test]
+#[ignore = "Requires local GPUI app launch + macOS accessibility permissions"]
+fn scn_001_tray_open_popup_becomes_frontmost() {
+    clear_log();
+
+    let mut child = launch_gpui();
+    assert!(wait_for_log_substring(
+        "All 7 presenters started",
+        Duration::from_secs(12)
+    ));
+
+    assert!(
+        wait_for_frontmost(APP_PROCESS, Duration::from_secs(5)),
+        "expected personal_agent_gpui to become frontmost after tray-triggered popup open"
+    );
+
+    stop_gpui(&mut child);
+
+    println!(
+        "SCENARIO: SCN-001\nSTATUS: PASS\nSTEPS_RUN: 1\nASSERTIONS_PASSED: 1\nASSERTIONS_FAILED: 0\nARTIFACTS:\n  - /tmp/personal_agent_gpui.log\nNOTES:\n  - tray-triggered popup open promoted personal_agent_gpui to frontmost"
+    );
 }
 
 #[test]

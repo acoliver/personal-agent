@@ -194,6 +194,10 @@ impl SystemTray {
     fn open_popup(&mut self, cx: &mut App) {
         self.close_popup(cx);
 
+        // A tray click is an explicit user intent to interact with this app right now.
+        // Force app activation so the popup is not created behind the current foreground app.
+        cx.activate(true);
+
         let menu_width = 780.0_f32;
         let menu_height = 600.0_f32;
 
@@ -238,7 +242,8 @@ impl SystemTray {
                         app_store: state.app_store,
                     });
                 }
-                let _ = handle.update(cx, |main_panel, _window, cx| {
+                let _ = handle.update(cx, |main_panel, window, cx| {
+                    window.activate_window();
                     if !main_panel.is_runtime_started() {
                         tracing::info!("MainPanel: starting runtime from open_popup");
                         main_panel.start_runtime(cx);
