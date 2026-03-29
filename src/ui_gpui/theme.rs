@@ -34,6 +34,30 @@ fn get_active_slug() -> String {
     }
 }
 
+// ── Legacy slug migration ────────────────────────────────────────────────────
+
+/// Map a legacy theme slug to its canonical modern equivalent.
+///
+/// Older app versions stored one of these three values in `app_settings.json`:
+///
+/// | Legacy value | Canonical slug    | Reason                               |
+/// |--------------|-------------------|--------------------------------------|
+/// | `"dark"`     | `"default"`       | Old name for the bundled dark theme  |
+/// | `"light"`    | `"default-light"` | Old name for the bundled light theme |
+/// | `"auto"`     | `"mac-native"`    | Old name for the OS-appearance mode  |
+///
+/// Any other value is returned unchanged.  Callers (startup, tests) are
+/// responsible for applying the result to [`set_active_theme_slug`].
+#[must_use]
+pub fn migrate_legacy_theme_slug(slug: &str) -> &str {
+    match slug {
+        "dark" => "default",
+        "light" => "default-light",
+        "auto" => "mac-native",
+        other => other,
+    }
+}
+
 // ── Public runtime API ───────────────────────────────────────────────────────
 
 /// A theme entry returned by [`available_theme_options`].
