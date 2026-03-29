@@ -86,13 +86,13 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
         .map_err(|e| format!("Failed to initialize ProfileService for startup bootstrap: {e}"))?;
 
     // Apply persisted theme before first render so the UI uses the correct
-    // palette immediately.  Legacy slug values written by older versions of the
+    // palette immediately. Legacy slug values written by older versions of the
     // app are mapped to their canonical equivalents before being applied:
-    //   "dark"  → "default"       (was the default dark theme)
+    //   "dark"  → "green-screen"  (was the old dark-default behavior)
     //   "light" → "default-light" (was the default light theme)
     //   "auto"  → "mac-native"    (was the OS-appearance-following option)
-    // Unknown or missing slugs (after migration) fall back to "default" inside
-    // the theme engine.
+    // Unknown or missing slugs (after migration) fall back to "green-screen"
+    // inside the theme engine.
     //
     // `PA_FORCE_THEME` overrides the persisted slug — used by UI automation
     // tests (scn_004/scn_005) to capture screenshots of each theme without
@@ -103,7 +103,7 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
             .await
             .ok()
             .flatten()
-            .unwrap_or_else(|| "default".to_string())
+            .unwrap_or_else(|| "green-screen".to_string())
     };
 
     let raw_theme = if let Ok(forced) = std::env::var("PA_FORCE_THEME") {
@@ -122,11 +122,11 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
         migrated_theme
     } else {
         tracing::warn!(
-            "Startup: persisted theme '{}' migrated to '{}' is invalid; falling back to 'default'",
+            "Startup: persisted theme '{}' migrated to '{}' is invalid; falling back to 'green-screen'",
             raw_theme,
             migrated_theme
         );
-        "default".to_string()
+        "green-screen".to_string()
     };
 
     set_active_theme_slug(&saved_theme);

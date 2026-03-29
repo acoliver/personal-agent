@@ -19,8 +19,8 @@ static MIGRATION_SWITCH_LOCK: Mutex<()> = Mutex::new(());
 // ── Migration mapping unit tests ─────────────────────────────────────────────
 
 #[test]
-fn legacy_dark_maps_to_default() {
-    assert_eq!(migrate_legacy_theme_slug("dark"), "default");
+fn legacy_dark_maps_to_green_screen() {
+    assert_eq!(migrate_legacy_theme_slug("dark"), "green-screen");
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn startup_restore_applies_persisted_slug() {
 
 /// Simulates the startup path for the legacy `"dark"` value.
 #[test]
-fn startup_restore_migrates_legacy_dark_to_default() {
+fn startup_restore_migrates_legacy_dark_to_green_screen() {
     let _lock = MIGRATION_SWITCH_LOCK.lock().unwrap();
     let prev = active_theme_slug();
 
@@ -141,8 +141,8 @@ fn startup_restore_migrates_legacy_dark_to_default() {
 
     assert_eq!(
         active_theme_slug(),
-        "default",
-        "startup with legacy 'dark' must activate the 'default' theme"
+        "green-screen",
+        "startup with legacy 'dark' must activate the 'green-screen' theme"
     );
 
     set_active_theme_slug(&prev);
@@ -186,21 +186,21 @@ fn startup_restore_migrates_legacy_auto_to_mac_native() {
     set_active_theme_slug(&prev);
 }
 
-/// Simulates the startup path when no theme is persisted (uses default).
+/// Simulates the startup path when no theme is persisted (uses green-screen).
 #[test]
-fn startup_restore_uses_default_when_no_slug_persisted() {
+fn startup_restore_uses_green_screen_when_no_slug_persisted() {
     let _lock = MIGRATION_SWITCH_LOCK.lock().unwrap();
     let prev = active_theme_slug();
 
-    // AppSettingsService returns None → startup falls back to "default"
-    let fallback = "default";
+    // AppSettingsService returns None → startup falls back to "green-screen"
+    let fallback = "green-screen";
     let migrated = migrate_legacy_theme_slug(fallback);
     set_active_theme_slug(migrated);
 
     assert_eq!(
         active_theme_slug(),
-        "default",
-        "startup without a persisted slug must activate the 'default' theme"
+        "green-screen",
+        "startup without a persisted slug must activate the 'green-screen' theme"
     );
 
     set_active_theme_slug(&prev);
@@ -287,7 +287,7 @@ fn migrated_legacy_slugs_are_present_in_available_theme_options() {
     let slugs: Vec<&str> = options.iter().map(|o| o.slug.as_str()).collect();
 
     let cases = [
-        ("dark", "default"),
+        ("dark", "green-screen"),
         ("light", "default-light"),
         ("auto", "mac-native"),
     ];

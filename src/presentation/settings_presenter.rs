@@ -656,7 +656,7 @@ impl SettingsPresenter {
         let selected_slug = selected_override
             .filter(|slug| is_valid_theme_slug(slug))
             .or(persisted_slug)
-            .unwrap_or_else(|| "default".to_string());
+            .unwrap_or_else(|| "green-screen".to_string());
 
         let _ = view_tx.send(ViewCommand::ShowSettingsTheme {
             options,
@@ -691,7 +691,7 @@ impl SettingsPresenter {
             .ok()
             .flatten()
             .filter(|persisted| is_valid_theme_slug(persisted))
-            .unwrap_or_else(|| "default".to_string());
+            .unwrap_or_else(|| "green-screen".to_string());
 
         set_active_theme_slug(&applied_slug);
 

@@ -101,7 +101,8 @@ impl SettingsView {
             .items_center()
             .cursor_pointer()
             .when(is_selected, |d| {
-                d.bg(Theme::accent()).text_color(gpui::white())
+                d.bg(Theme::selection_bg())
+                    .text_color(Theme::selection_fg())
             })
             .when(!is_selected, |d| {
                 d.hover(|s| s.bg(Theme::bg_dark()))
@@ -291,7 +292,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .cursor_pointer()
-            .when(is_selected, |d| d.bg(Theme::accent()))
+            .when(is_selected, |d| d.bg(Theme::selection_bg()))
             .when(!is_selected, |d| d.hover(|s| s.bg(Theme::bg_dark())))
             // Status indicator
             .child(
@@ -307,7 +308,7 @@ impl SettingsView {
                     .flex_1()
                     .text_size(px(12.0))
                     .text_color(if is_selected {
-                        gpui::white()
+                        Theme::selection_fg()
                     } else {
                         Theme::text_primary()
                     })
@@ -323,13 +324,13 @@ impl SettingsView {
                     .py(px(2.0))
                     .rounded(px(4.0))
                     .bg(if enabled {
-                        Theme::accent()
+                        Theme::selection_bg()
                     } else {
                         Theme::bg_dark()
                     })
                     .text_size(px(10.0))
                     .text_color(if enabled {
-                        gpui::white()
+                        Theme::selection_fg()
                     } else {
                         Theme::text_muted()
                     })
@@ -499,40 +500,6 @@ impl SettingsView {
             )
     }
 
-    /// Render the global hotkey section
-    /// @plan PLAN-20250130-GPUIREDUX.P06
-    fn render_hotkey_section(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let hotkey = self.state.hotkey.clone();
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(6.0))
-            // Section header
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(Theme::text_primary())
-                    .child("GLOBAL HOTKEY"),
-            )
-            // Hotkey field
-            .child(
-                div()
-                    .w_full()
-                    .h(px(24.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(6.0))
-                    .flex()
-                    .items_center()
-                    .text_size(px(12.0))
-                    .text_color(Theme::text_primary())
-                    .child(hotkey),
-            )
-    }
-
     /// Render a single row in the theme dropdown list.
     fn render_theme_row(
         &self,
@@ -552,7 +519,8 @@ impl SettingsView {
             .items_center()
             .cursor_pointer()
             .when(is_selected, |d| {
-                d.bg(Theme::accent()).text_color(gpui::white())
+                d.bg(Theme::selection_bg())
+                    .text_color(Theme::selection_fg())
             })
             .when(!is_selected, |d| {
                 d.hover(|s| s.bg(Theme::bg_dark()))
@@ -675,9 +643,7 @@ impl gpui::Render for SettingsView {
                     // MCP Tools section
                     .child(self.render_mcp_section(cx))
                     // Theme section
-                    .child(self.render_theme_section(cx))
-                    // Hotkey section
-                    .child(self.render_hotkey_section(cx)),
+                    .child(self.render_theme_section(cx)),
             )
     }
 }

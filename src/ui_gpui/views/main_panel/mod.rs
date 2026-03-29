@@ -262,7 +262,8 @@ mod tests {
 
     use crate::events::types::UserEvent;
     use crate::presentation::view_command::{
-        ConversationMessagePayload, ConversationSummary, MessageRole, ProfileSummary, ViewCommand,
+        ConversationMessagePayload, ConversationSummary, MessageRole, ProfileSummary, ThemeSummary,
+        ViewCommand,
     };
     use crate::ui_gpui::app_store::{
         BeginSelectionMode, BeginSelectionResult, StartupInputs, StartupMode,
@@ -293,6 +294,13 @@ mod tests {
             provider_id: provider.to_string(),
             model_id: model.to_string(),
             is_default,
+        }
+    }
+
+    fn theme_summary(name: &str, slug: &str) -> ThemeSummary {
+        ThemeSummary {
+            name: name.to_string(),
+            slug: slug.to_string(),
         }
     }
 
@@ -827,6 +835,49 @@ mod tests {
                 &mut targets,
             );
             assert_eq!(targets.mcp_config_saved_count, 1);
+
+            route_view_command(
+                ViewCommand::ShowSettingsTheme {
+                    options: vec![theme_summary("Midnight Nebula", "default")],
+                    selected_slug: "default".to_string(),
+                },
+                &mut targets,
+            );
+            assert_eq!(targets.settings_theme_commands, 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn handle_command_forwards_settings_theme_to_settings_view(cx: &mut TestAppContext) {
+        let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+        cx.set_global(app_state);
+        let panel = cx.new(MainPanel::new);
+
+        panel.update(cx, |panel: &mut MainPanel, cx| {
+            panel.init(cx);
+
+            panel.handle_command(
+                ViewCommand::ShowSettingsTheme {
+                    options: vec![
+                        theme_summary("Midnight Nebula", "default"),
+                        theme_summary("Green Screen", "green-screen"),
+                    ],
+                    selected_slug: "green-screen".to_string(),
+                },
+                cx,
+            );
+
+            let settings_view = panel
+                .settings_view
+                .as_ref()
+                .expect("settings view initialized");
+            settings_view.read_with(cx, |view, _| {
+                let state = view.get_state();
+                assert_eq!(state.available_themes.len(), 2);
+                assert_eq!(state.available_themes[0].slug, "default");
+                assert_eq!(state.available_themes[1].slug, "green-screen");
+                assert_eq!(state.selected_theme_slug, "green-screen");
+            });
         });
     }
 }

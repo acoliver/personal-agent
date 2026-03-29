@@ -126,7 +126,6 @@ pub struct SettingsState {
     pub mcps: Vec<McpItem>,
     pub selected_profile_id: Option<Uuid>,
     pub selected_mcp_id: Option<Uuid>,
-    pub hotkey: String,
     /// Available themes for the dropdown.
     pub available_themes: Vec<ThemeOption>,
     /// Slug of the currently-selected theme.
@@ -147,9 +146,8 @@ impl Default for SettingsState {
             mcps: Vec::new(),
             selected_profile_id: None,
             selected_mcp_id: None,
-            hotkey: "Cmd+Shift+P".to_string(),
             available_themes: Vec::new(),
-            selected_theme_slug: "default".to_string(),
+            selected_theme_slug: "green-screen".to_string(),
         }
     }
 }
@@ -175,6 +173,11 @@ impl SettingsView {
     /// @plan PLAN-20250130-GPUIREDUX.P06
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
+    }
+
+    #[must_use]
+    pub const fn get_state(&self) -> &SettingsState {
+        &self.state
     }
 
     /// Apply theme options from a `ShowSettingsTheme` command.

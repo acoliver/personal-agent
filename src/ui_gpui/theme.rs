@@ -3,7 +3,7 @@
 //! Provides runtime-backed token accessors that resolve colors from the active
 //! theme slug stored in thread-safe global state.  The active slug is set via
 //! [`set_active_theme_slug`] and read via [`active_theme_slug`].
-//! Unknown slugs fall back to the "default" palette.
+//! Unknown slugs fall back to the "green-screen" palette.
 //!
 //! @plan ISSUE12.P02
 //! @plan ISSUE12.P04
@@ -17,7 +17,7 @@ use crate::ui_gpui::theme_catalog::{ThemeCatalog, ThemeColors, ThemeDefinition};
 
 // ── Default slug constant ────────────────────────────────────────────────────
 
-const DEFAULT_SLUG: &str = "default";
+const DEFAULT_SLUG: &str = "green-screen";
 
 // ── Global active theme slug ─────────────────────────────────────────────────
 
@@ -40,18 +40,18 @@ fn get_active_slug() -> String {
 ///
 /// Older app versions stored one of these three values in `app_settings.json`:
 ///
-/// | Legacy value | Canonical slug    | Reason                               |
-/// |--------------|-------------------|--------------------------------------|
-/// | `"dark"`     | `"default"`       | Old name for the bundled dark theme  |
-/// | `"light"`    | `"default-light"` | Old name for the bundled light theme |
-/// | `"auto"`     | `"mac-native"`    | Old name for the OS-appearance mode  |
+/// | Legacy value | Canonical slug    | Reason                                         |
+/// |--------------|-------------------|------------------------------------------------|
+/// | `"dark"`     | `"green-screen"`  | Old name for the bundled dark behavior         |
+/// | `"light"`    | `"default-light"` | Legacy light alias for the light bundled theme |
+/// | `"auto"`     | `"mac-native"`    | Old name for the OS-appearance mode            |
 ///
 /// Any other value is returned unchanged.  Callers (startup, tests) are
 /// responsible for applying the result to [`set_active_theme_slug`].
 #[must_use]
 pub fn migrate_legacy_theme_slug(slug: &str) -> &str {
     match slug {
-        "dark" => "default",
+        "dark" => "green-screen",
         "light" => "default-light",
         "auto" => "mac-native",
         other => other,
@@ -71,9 +71,9 @@ pub struct ThemeOption {
 /// Set the active theme slug used by all [`Theme`] color accessors.
 ///
 /// Returns `true` if the slug actually changed, `false` if it was already set
-/// to the same value.  Unknown slugs are stored as-is; accessors will fall back
-/// to the "default" palette when the catalog contains no entry for the stored
-/// slug.
+/// to the same value. Unknown slugs are stored as-is; accessors will fall back
+/// to the "green-screen" palette when the catalog contains no entry for the
+/// stored slug.
 ///
 /// # Panics
 ///
@@ -95,7 +95,7 @@ pub fn set_active_theme_slug(slug: &str) -> bool {
     true
 }
 
-/// Returns the currently active theme slug (defaults to `"default"`).
+/// Returns the currently active theme slug (defaults to `"green-screen"`).
 #[must_use]
 pub fn active_theme_slug() -> String {
     get_active_slug()
@@ -275,7 +275,7 @@ fn hex_str_to_hsla(hex: &str) -> Option<Hsla> {
     Some(rgb_to_hsla(r, g, b, 1.0))
 }
 
-// ── Fallback palette: "default" dark hard-coded for zero-catalog situations ──
+// ── Fallback palette: hard-coded dark colors for zero-catalog situations ─────
 // These values match the default.json theme file and are used ONLY when the
 // catalog itself cannot be loaded (e.g., missing assets directory in a test
 // build).  Normal runtime always loads from the catalog.
@@ -328,7 +328,7 @@ fn hsla_to_rgb_bytes(color: Hsla) -> (u8, u8, u8) {
 ///
 /// All color methods are runtime-backed: they resolve the active theme slug
 /// from global state, look up the palette from the bundled catalog, and fall
-/// back to the "default" theme on unknown slugs or catalog errors.
+/// back to the default fallback palette on unknown slugs or catalog errors.
 pub struct Theme;
 
 impl Theme {
@@ -504,7 +504,27 @@ impl Theme {
         Self::resolve_with_mac_native(|p| p.border, |c| c.panel.border.as_str(), fallback::BORDER)
     }
 
-    /// User message bubble background – uses the user border color as a tint.
+    /// Selection background (`colors.selection.bg`).
+    #[must_use]
+    pub fn selection_bg() -> Hsla {
+        Self::resolve_with_mac_native(
+            |p| p.accent_primary,
+            |c| c.selection.bg.as_str(),
+            fallback::ACCENT_PRIMARY,
+        )
+    }
+
+    /// Selection foreground (`colors.selection.fg`).
+    #[must_use]
+    pub fn selection_fg() -> Hsla {
+        Self::resolve_with_mac_native(
+            |p| p.text_primary,
+            |c| c.selection.fg.as_str(),
+            fallback::TEXT_PRIMARY,
+        )
+    }
+
+    /// User message bubble background – uses `colors.message.userBorder`.
     #[must_use]
     pub fn user_bubble_bg() -> Hsla {
         Self::resolve_with_mac_native(
@@ -512,6 +532,12 @@ impl Theme {
             |c| c.message.user_border.as_str(),
             fallback::ACCENT_PRIMARY,
         )
+    }
+
+    /// User message bubble foreground (`colors.selection.fg`) for high contrast.
+    #[must_use]
+    pub fn user_bubble_text() -> Hsla {
+        Self::selection_fg()
     }
 
     /// Assistant message bubble background (`colors.input.bg`).

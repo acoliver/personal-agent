@@ -276,7 +276,7 @@ impl ChatView {
                     .rounded(px(12.0))
                     .bg(Theme::user_bubble())
                     .text_size(px(13.0))
-                    .text_color(Theme::text_primary())
+                    .text_color(Theme::user_bubble_text())
                     .cursor_pointer()
                     .on_click(move |_event, _window, cx| {
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));

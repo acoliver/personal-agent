@@ -36,19 +36,14 @@ impl NavigationChannel {
 
     /// Request navigation to a view
     pub fn request_navigate(&self, to: ViewId) {
-        println!(">>> NavigationChannel::request_navigate({to:?}) <<<");
         if let Ok(mut guard) = self.pending_navigation.lock() {
             *guard = Some(to);
             self.has_request.store(true, Ordering::SeqCst);
-            println!(">>> Navigation stored, has_request=true <<<");
         }
         // Trigger notify callback to force GPUI redraw
         if let Ok(guard) = self.notify_callback.lock() {
             if let Some(ref callback) = *guard {
-                println!(">>> Calling notify callback <<<");
                 callback();
-            } else {
-                println!(">>> No notify callback set! <<<");
             }
         }
     }

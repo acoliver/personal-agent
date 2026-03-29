@@ -125,10 +125,10 @@ fn switching_slug_changes_bg_base_color() -> TestResult {
     Ok(())
 }
 
-// ── Phase 02: unknown slug falls back to "default" ───────────────────────────
+// ── Phase 02: unknown slug falls back to the runtime default slug ────────────
 
 #[test]
-fn unknown_slug_falls_back_to_default_deterministically() {
+fn unknown_slug_falls_back_to_green_screen_deterministically() {
     let _lock = THEME_SWITCH_LOCK.lock().unwrap();
     let prev = active_theme_slug();
 
@@ -140,18 +140,18 @@ fn unknown_slug_falls_back_to_default_deterministically() {
         "fallback color lightness must be 0..=1"
     );
 
-    // When slug is unknown, accessor must use default palette
-    set_active_theme_slug("default");
-    let default_primary = Theme::text_primary();
+    // When slug is unknown, accessor must use the green-screen fallback palette.
+    set_active_theme_slug("green-screen");
+    let green_primary = Theme::text_primary();
 
     set_active_theme_slug("this-slug-does-not-exist");
     let unknown_primary = Theme::text_primary();
 
     assert!(
-        approx_eq(default_primary.h, unknown_primary.h)
-            && approx_eq(default_primary.s, unknown_primary.s)
-            && approx_eq(default_primary.l, unknown_primary.l),
-        "unknown slug must fall back to default palette colors"
+        approx_eq(green_primary.h, unknown_primary.h)
+            && approx_eq(green_primary.s, unknown_primary.s)
+            && approx_eq(green_primary.l, unknown_primary.l),
+        "unknown slug must fall back to green-screen palette colors"
     );
 
     set_active_theme_slug(&prev);
@@ -487,17 +487,17 @@ fn unknown_slug_fallback_not_affected_by_mac_native_presence() {
     let _lock = THEME_SWITCH_LOCK.lock().unwrap();
     let prev = active_theme_slug();
 
-    set_active_theme_slug("default");
-    let default_primary = Theme::text_primary();
+    set_active_theme_slug("green-screen");
+    let green_primary = Theme::text_primary();
 
     set_active_theme_slug("totally-unknown-slug-99");
     let unknown_primary = Theme::text_primary();
 
     assert!(
-        approx_eq(default_primary.h, unknown_primary.h)
-            && approx_eq(default_primary.s, unknown_primary.s)
-            && approx_eq(default_primary.l, unknown_primary.l),
-        "unknown slug must still fall back to default palette even after mac-native added"
+        approx_eq(green_primary.h, unknown_primary.h)
+            && approx_eq(green_primary.s, unknown_primary.s)
+            && approx_eq(green_primary.l, unknown_primary.l),
+        "unknown slug must still fall back to green-screen palette even after mac-native added"
     );
 
     set_active_theme_slug(&prev);

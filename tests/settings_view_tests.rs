@@ -271,7 +271,8 @@ fn settings_state_new_uses_expected_defaults() {
     assert!(state.mcps.is_empty());
     assert_eq!(state.selected_profile_id, None);
     assert_eq!(state.selected_mcp_id, None);
-    assert_eq!(state.hotkey, "Cmd+Shift+P");
+    assert!(state.available_themes.is_empty());
+    assert_eq!(state.selected_theme_slug, "green-screen");
 }
 
 #[test]
@@ -469,7 +470,7 @@ fn mcp_commands_and_selection_fallback_cover_real_status_logic() {
 fn theme_dropdown_options_select_expected_entry_and_fallback() {
     let options = vec![
         ThemeOption {
-            name: "Default".to_string(),
+            name: "Midnight Nebula".to_string(),
             slug: "default".to_string(),
         },
         ThemeOption {
@@ -483,7 +484,10 @@ fn theme_dropdown_options_select_expected_entry_and_fallback() {
     ];
 
     let (labels, selected) = apply_theme_options(&options, "green-screen");
-    assert_eq!(labels, vec!["Default", "Green Screen", "Mac Native"]);
+    assert_eq!(
+        labels,
+        vec!["Midnight Nebula", "Green Screen", "Mac Native"]
+    );
     assert_eq!(selected, 1);
 
     let (_labels, fallback_selected) = apply_theme_options(&options, "does-not-exist");
@@ -494,7 +498,7 @@ fn theme_dropdown_options_select_expected_entry_and_fallback() {
 fn settings_state_has_expected_theme_defaults() {
     let state = SettingsState::new();
     assert!(state.available_themes.is_empty());
-    assert_eq!(state.selected_theme_slug, "default");
+    assert_eq!(state.selected_theme_slug, "green-screen");
 }
 
 #[test]
@@ -503,7 +507,7 @@ fn apply_show_settings_theme_updates_options_and_selection() {
 
     let summaries = vec![
         ThemeSummary {
-            name: "Default".to_string(),
+            name: "Midnight Nebula".to_string(),
             slug: "default".to_string(),
         },
         ThemeSummary {
@@ -522,7 +526,7 @@ fn apply_show_settings_theme_updates_options_and_selection() {
     apply_show_settings_theme(&mut state, summaries, "does-not-exist".to_string());
     assert_eq!(
         state.selected_theme_slug, "default",
-        "unknown slug must fall back to first entry"
+        "unknown slug must fall back to first available theme"
     );
 }
 

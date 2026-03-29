@@ -49,6 +49,7 @@ pub struct CommandTargets {
 
     // Settings view counters
     pub settings_profile_commands: usize,
+    pub settings_theme_commands: usize,
     pub settings_mcp_status_updates: usize,
 
     // Model selector state
@@ -103,6 +104,9 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         }
 
         // ── Settings / Profile view ─────────────────────────────────────
+        ViewCommand::ShowSettingsTheme { .. } => {
+            targets.settings_theme_commands += 1;
+        }
         ViewCommand::ShowSettings { .. }
         | ViewCommand::ChatProfilesUpdated { .. }
         | ViewCommand::ProfileCreated { .. }
