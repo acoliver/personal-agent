@@ -7,11 +7,35 @@ use personal_agent::ui_gpui::theme_catalog::ThemeCatalog;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 // Safety: tests that mutate global theme state are serialized with a mutex so
-// they don't interfere with each other.  Each test resets to its previous slug
-// on exit.
-use std::sync::Mutex;
+// they don't interfere with each other. ThemeSwitchGuard restores the previous
+// slug on drop, even during unwinding.
+use std::sync::{Mutex, MutexGuard};
 
 static THEME_SWITCH_LOCK: Mutex<()> = Mutex::new(());
+
+struct ThemeSwitchGuard {
+    _lock: MutexGuard<'static, ()>,
+    prev_slug: String,
+}
+
+impl ThemeSwitchGuard {
+    fn acquire() -> Self {
+        let lock = THEME_SWITCH_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let prev_slug = active_theme_slug();
+        Self {
+            _lock: lock,
+            prev_slug,
+        }
+    }
+}
+
+impl Drop for ThemeSwitchGuard {
+    fn drop(&mut self) {
+        set_active_theme_slug(&self.prev_slug);
+    }
+}
 
 /// Float comparison for GPUI Hsla channel values.
 /// Both values come from the same deterministic hex-to-hsla conversion path, so
@@ -32,8 +56,7 @@ fn static_theme_primary_text_matches_green_screen_theme_file() -> TestResult {
 
     assert_eq!(green.colors.text.primary.to_ascii_lowercase(), "#6a9955");
 
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
     set_active_theme_slug("green-screen");
 
     let from_theme = Theme::text_primary();
@@ -58,7 +81,6 @@ fn static_theme_primary_text_matches_green_screen_theme_file() -> TestResult {
         expected.l
     );
 
-    set_active_theme_slug(&prev);
     Ok(())
 }
 
@@ -66,8 +88,7 @@ fn static_theme_primary_text_matches_green_screen_theme_file() -> TestResult {
 
 #[test]
 fn switching_slug_changes_text_primary_color() {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug("default");
     let default_primary = Theme::text_primary();
@@ -80,14 +101,11 @@ fn switching_slug_changes_text_primary_color() {
         !approx_eq(default_primary.l, green_primary.l),
         "switching theme slug must change text_primary lightness"
     );
-
-    set_active_theme_slug(&prev);
 }
 
 #[test]
 fn switching_slug_changes_bg_base_color() -> TestResult {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug("default");
     let default_bg = Theme::bg_base();
@@ -121,7 +139,6 @@ fn switching_slug_changes_bg_base_color() -> TestResult {
         "bg_base lightness for green-screen should match catalog"
     );
 
-    set_active_theme_slug(&prev);
     Ok(())
 }
 
@@ -129,8 +146,7 @@ fn switching_slug_changes_bg_base_color() -> TestResult {
 
 #[test]
 fn unknown_slug_falls_back_to_green_screen_deterministically() {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     // The key contract: accessors must not panic and must return a valid color.
     set_active_theme_slug("this-slug-does-not-exist");
@@ -153,14 +169,11 @@ fn unknown_slug_falls_back_to_green_screen_deterministically() {
             && approx_eq(green_primary.l, unknown_primary.l),
         "unknown slug must fall back to green-screen palette colors"
     );
-
-    set_active_theme_slug(&prev);
 }
 
 #[test]
 fn set_active_theme_slug_returns_true_when_slug_changes() {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug("default");
     let changed = set_active_theme_slug("green-screen");
@@ -168,24 +181,19 @@ fn set_active_theme_slug_returns_true_when_slug_changes() {
 
     let not_changed = set_active_theme_slug("green-screen");
     assert!(!not_changed, "setting same slug must return false");
-
-    set_active_theme_slug(&prev);
 }
 
 // ── Phase 02: active_theme_slug() returns current selection ──────────────────
 
 #[test]
 fn active_theme_slug_reflects_set_value() {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug("default");
     assert_eq!(active_theme_slug(), "default");
 
     set_active_theme_slug("green-screen");
     assert_eq!(active_theme_slug(), "green-screen");
-
-    set_active_theme_slug(&prev);
 }
 
 // ── Phase 02: available_theme_options returns loaded file-backed themes ───────
@@ -232,8 +240,7 @@ fn available_theme_options_has_name_and_slug_for_each_entry() {
 
 #[test]
 fn green_screen_text_primary_is_file_driven() -> TestResult {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     let catalog = ThemeCatalog::load_bundled()?;
     let green = catalog
@@ -257,14 +264,12 @@ fn green_screen_text_primary_is_file_driven() -> TestResult {
         from_file.l
     );
 
-    set_active_theme_slug(&prev);
     Ok(())
 }
 
 #[test]
 fn green_screen_background_is_file_driven() -> TestResult {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     let catalog = ThemeCatalog::load_bundled()?;
     let green = catalog
@@ -282,14 +287,12 @@ fn green_screen_background_is_file_driven() -> TestResult {
         from_file.l
     );
 
-    set_active_theme_slug(&prev);
     Ok(())
 }
 
 #[test]
 fn green_screen_accent_error_is_file_driven() -> TestResult {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     let catalog = ThemeCatalog::load_bundled()?;
     let green = catalog
@@ -313,7 +316,6 @@ fn green_screen_accent_error_is_file_driven() -> TestResult {
         from_file.l
     );
 
-    set_active_theme_slug(&prev);
     Ok(())
 }
 
@@ -321,8 +323,7 @@ fn green_screen_accent_error_is_file_driven() -> TestResult {
 
 #[test]
 fn switching_to_default_changes_accent_color_from_green_screen() {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug("green-screen");
     let gs_accent = Theme::accent();
@@ -334,8 +335,6 @@ fn switching_to_default_changes_accent_color_from_green_screen() {
         !approx_eq(gs_accent.h, def_accent.h) || !approx_eq(gs_accent.l, def_accent.l),
         "accent color must differ between green-screen and default themes"
     );
-
-    set_active_theme_slug(&prev);
 }
 
 // ── Phase 04: mac-native pseudo-theme ────────────────────────────────────────
@@ -372,8 +371,7 @@ fn mac_native_constants_match_expected_values() {
 
 #[test]
 fn setting_mac_native_slug_is_accepted_and_reflected() {
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug(MAC_NATIVE_SLUG);
     assert_eq!(
@@ -381,8 +379,6 @@ fn setting_mac_native_slug_is_accepted_and_reflected() {
         MAC_NATIVE_SLUG,
         "active_theme_slug must reflect mac-native after set"
     );
-
-    set_active_theme_slug(&prev);
 }
 
 #[test]
@@ -390,8 +386,7 @@ fn mac_native_active_colors_are_valid_hsla() {
     // When mac-native is active, every Theme accessor must return a valid Hsla
     // (not panic, not return NaN).  On macOS the values come from AppKit; on
     // non-macOS or when resolution fails they fall through to the default theme.
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug(MAC_NATIVE_SLUG);
 
@@ -435,20 +430,17 @@ fn mac_native_active_colors_are_valid_hsla() {
             color.a
         );
     }
-
-    set_active_theme_slug(&prev);
 }
 
 #[test]
-fn mac_native_fallback_is_deterministic_and_matches_default() {
+fn mac_native_colors_are_deterministic() {
     // On non-macOS targets (or when AppKit resolution fails), mac-native must
-    // produce the same palette as the default catalog theme — not panic, not
-    // return garbage, and always be consistent on repeated calls.
+    // produce the same palette as the green-screen fallback theme — not panic,
+    // not return garbage, and always be consistent on repeated calls.
     //
-    // On macOS, AppKit colors are used and may differ from default; but they
-    // must still be reproducible on repeated calls (no non-determinism).
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    // On macOS, AppKit colors are used and may differ from green-screen; but
+    // they must still be reproducible on repeated calls (no non-determinism).
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug(MAC_NATIVE_SLUG);
     let first_call_text = Theme::text_primary();
@@ -462,7 +454,18 @@ fn mac_native_fallback_is_deterministic_and_matches_default() {
         "mac-native colors must be deterministic (repeated calls must match)"
     );
 
-    set_active_theme_slug(&prev);
+    #[cfg(not(target_os = "macos"))]
+    {
+        set_active_theme_slug("green-screen");
+        let green_primary = Theme::text_primary();
+
+        assert!(
+            approx_eq(first_call_text.h, green_primary.h)
+                && approx_eq(first_call_text.s, green_primary.s)
+                && approx_eq(first_call_text.l, green_primary.l),
+            "non-mac mac-native fallback must match green-screen palette"
+        );
+    }
 }
 
 #[test]
@@ -484,8 +487,7 @@ fn mac_native_available_options_count_exceeds_catalog_count() {
 fn unknown_slug_fallback_not_affected_by_mac_native_presence() {
     // Confirms that adding mac-native did not break the unknown-slug-fallback
     // behavior that was tested in Phase 02.
-    let _lock = THEME_SWITCH_LOCK.lock().unwrap();
-    let prev = active_theme_slug();
+    let _guard = ThemeSwitchGuard::acquire();
 
     set_active_theme_slug("green-screen");
     let green_primary = Theme::text_primary();
@@ -499,6 +501,4 @@ fn unknown_slug_fallback_not_affected_by_mac_native_presence() {
             && approx_eq(green_primary.l, unknown_primary.l),
         "unknown slug must still fall back to green-screen palette even after mac-native added"
     );
-
-    set_active_theme_slug(&prev);
 }

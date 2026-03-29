@@ -13,11 +13,12 @@ use std::sync::RwLock;
 use gpui::{hsla, rgb, Hsla, Rgba};
 
 use crate::ui_gpui::mac_native::{self, MacNativePalette, MAC_NATIVE_SLUG};
-use crate::ui_gpui::theme_catalog::{ThemeCatalog, ThemeColors, ThemeDefinition};
+use crate::ui_gpui::theme_catalog::{ThemeCatalog, ThemeColors, ThemeDefinition, ThemeKind};
 
 // ── Default slug constant ────────────────────────────────────────────────────
 
 const DEFAULT_SLUG: &str = "green-screen";
+const DEFAULT_THEME_NAME: &str = "Green Screen";
 
 // ── Global active theme slug ─────────────────────────────────────────────────
 
@@ -111,9 +112,10 @@ pub fn is_valid_theme_slug(slug: &str) -> bool {
         return true;
     }
 
-    ThemeCatalog::load_bundled()
-        .ok()
-        .is_some_and(|catalog| catalog.get(slug).is_some())
+    ThemeCatalog::load_bundled().map_or_else(
+        |_| slug == DEFAULT_SLUG,
+        |catalog| catalog.get(slug).is_some(),
+    )
 }
 
 /// Returns theme metadata for all bundled catalog themes plus `mac-native`.
@@ -128,8 +130,14 @@ pub fn available_theme_options() -> Vec<ThemeOption> {
         kind: crate::ui_gpui::theme_catalog::ThemeKind::System,
     };
 
+    let degraded_default_entry = ThemeOption {
+        name: DEFAULT_THEME_NAME.to_string(),
+        slug: DEFAULT_SLUG.to_string(),
+        kind: ThemeKind::Dark,
+    };
+
     let mut options = ThemeCatalog::load_bundled().map_or_else(
-        |_| Vec::new(),
+        |_| vec![degraded_default_entry],
         |catalog| {
             catalog
                 .slugs()
@@ -150,30 +158,29 @@ pub fn available_theme_options() -> Vec<ThemeOption> {
 
 // ── Catalog helpers ──────────────────────────────────────────────────────────
 
-fn load_active_theme() -> Option<ThemeDefinition> {
+fn load_active_theme_for_slug(slug: &str) -> Option<ThemeDefinition> {
     let catalog = ThemeCatalog::load_bundled().ok()?;
-    let slug = get_active_slug();
     // mac-native is synthetic and not stored in the catalog; skip catalog lookup.
     if slug == MAC_NATIVE_SLUG {
         return catalog.get(DEFAULT_SLUG).cloned();
     }
     catalog
-        .get(&slug)
+        .get(slug)
         .or_else(|| catalog.get(DEFAULT_SLUG))
         .cloned()
 }
 
-fn with_active_colors<F, T>(f: F) -> Option<T>
+fn with_active_colors_for_slug<F, T>(slug: &str, f: F) -> Option<T>
 where
     F: FnOnce(&ThemeColors) -> T,
 {
-    load_active_theme().map(|def| f(&def.colors))
+    load_active_theme_for_slug(slug).map(|def| f(&def.colors))
 }
 
 /// Attempt to resolve the mac-native palette, falling back to `None` if
 /// `AppKit` is unavailable or the active slug is not mac-native.
-fn try_mac_native_palette() -> Option<MacNativePalette> {
-    if get_active_slug() == MAC_NATIVE_SLUG {
+fn try_mac_native_palette_for_slug(slug: &str) -> Option<MacNativePalette> {
+    if slug == MAC_NATIVE_SLUG {
         mac_native::resolve_palette()
     } else {
         None
@@ -275,20 +282,20 @@ fn hex_str_to_hsla(hex: &str) -> Option<Hsla> {
     Some(rgb_to_hsla(r, g, b, 1.0))
 }
 
-// ── Fallback palette: hard-coded dark colors for zero-catalog situations ─────
-// These values match the default.json theme file and are used ONLY when the
-// catalog itself cannot be loaded (e.g., missing assets directory in a test
-// build).  Normal runtime always loads from the catalog.
+// ── Fallback palette: hard-coded green-screen colors for zero-catalog situations ──
+// These values mirror assets/themes/green-screen.json and are used ONLY when
+// the catalog itself cannot be loaded (e.g., missing assets directory in a
+// test build). Normal runtime always loads from the catalog.
 
 mod fallback {
-    pub const BG: (f32, f32, f32) = (0.118, 0.118, 0.180); // #1E1E2E
-    pub const TEXT_PRIMARY: (f32, f32, f32) = (0.898, 0.906, 0.922); // #e5e7eb
-    pub const TEXT_MUTED: (f32, f32, f32) = (0.424, 0.439, 0.525); // #6C7086
-    pub const ACCENT_PRIMARY: (f32, f32, f32) = (0.537, 0.706, 0.980); // #89B4FA
-    pub const ACCENT_ERROR: (f32, f32, f32) = (0.953, 0.545, 0.659); // #F38BA8
-    pub const ACCENT_WARNING: (f32, f32, f32) = (0.976, 0.886, 0.686); // #F9E2AF
-    pub const ACCENT_SUCCESS: (f32, f32, f32) = (0.651, 0.890, 0.631); // #A6E3A1
-    pub const BORDER: (f32, f32, f32) = (0.424, 0.439, 0.525); // #6C7086
+    pub const BG: (f32, f32, f32) = (0.0, 0.0, 0.0); // #000000
+    pub const TEXT_PRIMARY: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
+    pub const TEXT_MUTED: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
+    pub const ACCENT_PRIMARY: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
+    pub const ACCENT_ERROR: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
+    pub const ACCENT_WARNING: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
+    pub const ACCENT_SUCCESS: (f32, f32, f32) = (0.0, 1.0, 0.0); // #00ff00
+    pub const BORDER: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
 }
 
 // ── Hsla -> approximate u8 RGB (for Rgba callers) ───────────────────────────
@@ -360,38 +367,24 @@ impl Theme {
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
-    /// Resolve a color token.
-    ///
-    /// Resolution order:
-    /// 1. If the active slug is `mac-native` and `AppKit` is available, use the
-    ///    mac-native palette field selected by `mac_select`.
-    /// 2. Otherwise look up the hex string from the catalog via `select` and
-    ///    parse it.
-    /// 3. Fall back to the hard-coded `fb` RGB triplet if everything else fails.
-    fn resolve_hex_with_fallback(
-        select: impl FnOnce(&ThemeColors) -> &str,
-        fb: (f32, f32, f32),
-    ) -> Hsla {
-        with_active_colors(|colors| hex_str_to_hsla(select(colors)))
-            .flatten()
-            .unwrap_or_else(|| rgb_to_hsla(fb.0, fb.1, fb.2, 1.0))
-    }
-
     /// Resolve a color token with optional mac-native override.
     ///
     /// If the active slug is `mac-native` and `AppKit` color resolution succeeds,
     /// `mac_select` is applied to the resolved palette and that color is
-    /// returned immediately.  Otherwise falls through to the catalog/fallback
-    /// path identical to [`resolve_hex_with_fallback`].
+    /// returned immediately. Otherwise resolves from the active catalog theme and
+    /// falls back to the hard-coded `fb` triplet when parsing/catalog access fails.
     fn resolve_with_mac_native(
         mac_select: impl FnOnce(&MacNativePalette) -> Hsla,
         catalog_select: impl FnOnce(&ThemeColors) -> &str,
         fb: (f32, f32, f32),
     ) -> Hsla {
-        if let Some(palette) = try_mac_native_palette() {
+        let slug = get_active_slug();
+        if let Some(palette) = try_mac_native_palette_for_slug(&slug) {
             return mac_select(&palette);
         }
-        Self::resolve_hex_with_fallback(catalog_select, fb)
+        with_active_colors_for_slug(&slug, |colors| hex_str_to_hsla(catalog_select(colors)))
+            .flatten()
+            .unwrap_or_else(|| rgb_to_hsla(fb.0, fb.1, fb.2, 1.0))
     }
 
     // ── Spacing, radius, and font-size constants (layout; not theme-dependent) ──

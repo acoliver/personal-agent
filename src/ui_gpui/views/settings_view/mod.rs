@@ -380,6 +380,27 @@ impl SettingsView {
         } else if key == "down" && !modifiers.platform {
             self.scroll_profiles(1);
             cx.notify();
+        } else if (key == "enter" || key == "space") && !modifiers.platform {
+            if self.state.available_themes.is_empty() {
+                return;
+            }
+
+            let selected_slug = self
+                .state
+                .available_themes
+                .iter()
+                .find(|theme| theme.slug == self.state.selected_theme_slug)
+                .map(|theme| theme.slug.clone())
+                .or_else(|| {
+                    self.state
+                        .available_themes
+                        .first()
+                        .map(|theme| theme.slug.clone())
+                });
+
+            if let Some(slug) = selected_slug {
+                self.select_theme(slug, cx);
+            }
         }
     }
 
@@ -787,6 +808,13 @@ mod tests {
                 Some(ViewId::McpAdd)
             );
 
+            view.state.available_themes = vec![ThemeOption {
+                name: "Green Screen".to_string(),
+                slug: "green-screen".to_string(),
+            }];
+            view.state.selected_theme_slug = "green-screen".to_string();
+            view.handle_key_down(&settings_key_event("enter"), cx);
+
             view.handle_key_down(&settings_key_event("cmd-w"), cx);
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
@@ -821,6 +849,12 @@ mod tests {
         assert_eq!(
             user_rx.recv().unwrap(),
             UserEvent::EditProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().unwrap(),
+            UserEvent::SelectTheme {
+                slug: "green-screen".to_string()
+            }
         );
         assert!(
             user_rx.try_recv().is_err(),
