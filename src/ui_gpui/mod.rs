@@ -10,11 +10,13 @@ pub mod app_store_types;
 
 pub mod bridge;
 pub mod components;
+pub mod mac_native;
 pub mod navigation;
 pub mod navigation_channel;
 pub mod popup_window;
 pub mod selection_intent_channel;
 pub mod theme;
+pub mod theme_catalog;
 pub mod tray_bridge;
 pub mod views;
 

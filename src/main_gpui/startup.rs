@@ -12,6 +12,9 @@ use personal_agent::services::{
 use personal_agent::ui_gpui::app_store::{
     StartupInputs, StartupMode, StartupSelectedConversation, StartupTranscriptResult,
 };
+use personal_agent::ui_gpui::theme::{
+    is_valid_theme_slug, migrate_legacy_theme_slug, set_active_theme_slug,
+};
 
 // ============================================================================
 // Runtime paths
@@ -81,6 +84,57 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
         .initialize()
         .await
         .map_err(|e| format!("Failed to initialize ProfileService for startup bootstrap: {e}"))?;
+
+    // Apply persisted theme before first render so the UI uses the correct
+    // palette immediately.  Legacy slug values written by older versions of the
+    // app are mapped to their canonical equivalents before being applied:
+    //   "dark"  → "default"       (was the default dark theme)
+    //   "light" → "default-light" (was the default light theme)
+    //   "auto"  → "mac-native"    (was the OS-appearance-following option)
+    // Unknown or missing slugs (after migration) fall back to "default" inside
+    // the theme engine.
+    //
+    // `PA_FORCE_THEME` overrides the persisted slug — used by UI automation
+    // tests (scn_004/scn_005) to capture screenshots of each theme without
+    // modifying real user settings.
+    let get_persisted_theme = || async {
+        app_settings
+            .get_theme()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "default".to_string())
+    };
+
+    let raw_theme = if let Ok(forced) = std::env::var("PA_FORCE_THEME") {
+        if !forced.is_empty() {
+            tracing::info!("Startup: PA_FORCE_THEME override active: '{}'", forced);
+            forced
+        } else {
+            get_persisted_theme().await
+        }
+    } else {
+        get_persisted_theme().await
+    };
+
+    let migrated_theme = migrate_legacy_theme_slug(&raw_theme).to_string();
+    let saved_theme = if is_valid_theme_slug(&migrated_theme) {
+        migrated_theme
+    } else {
+        tracing::warn!(
+            "Startup: persisted theme '{}' migrated to '{}' is invalid; falling back to 'default'",
+            raw_theme,
+            migrated_theme
+        );
+        "default".to_string()
+    };
+
+    set_active_theme_slug(&saved_theme);
+    tracing::info!(
+        "Startup: applied theme '{}' (persisted: '{}')",
+        saved_theme,
+        raw_theme
+    );
 
     let selected_profile_id = match app_settings.get_default_profile_id().await {
         Ok(Some(id)) => Some(id),

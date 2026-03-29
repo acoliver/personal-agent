@@ -25,4 +25,6 @@ pub use model_selector_view::{ModelInfo, ModelSelectorState, ModelSelectorView, 
 pub use profile_editor_view::{
     ApiType, AuthMethod, ProfileEditorData, ProfileEditorState, ProfileEditorView,
 };
-pub use settings_view::{McpItem, McpStatus, ProfileItem, SettingsState, SettingsView};
+pub use settings_view::{
+    McpItem, McpStatus, ProfileItem, SettingsState, SettingsView, ThemeOption,
+};

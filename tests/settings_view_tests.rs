@@ -1,6 +1,21 @@
-use personal_agent::presentation::view_command::{McpStatus as CommandMcpStatus, ProfileSummary};
-use personal_agent::ui_gpui::views::{McpItem, McpStatus, ProfileItem, SettingsState};
+use personal_agent::presentation::view_command::{
+    McpStatus as CommandMcpStatus, ProfileSummary, ThemeSummary,
+};
+use personal_agent::ui_gpui::views::{McpItem, McpStatus, ProfileItem, SettingsState, ThemeOption};
 use uuid::Uuid;
+
+fn apply_theme_options(options: &[ThemeOption], selected_slug: &str) -> (Vec<String>, usize) {
+    let labels = options
+        .iter()
+        .map(|option| option.name.clone())
+        .collect::<Vec<_>>();
+    let selected_index = options
+        .iter()
+        .position(|option| option.slug == selected_slug)
+        .unwrap_or(0);
+
+    (labels, selected_index)
+}
 
 fn profile_summary(
     id: Uuid,
@@ -188,6 +203,30 @@ fn apply_mcp_deleted(state: &mut SettingsState, id: Uuid) {
     state.mcps.retain(|mcp| mcp.id != id);
     if state.selected_mcp_id == Some(id) {
         state.selected_mcp_id = state.mcps.first().map(|mcp| mcp.id);
+    }
+}
+
+fn apply_show_settings_theme(
+    state: &mut SettingsState,
+    options: Vec<ThemeSummary>,
+    selected_slug: String,
+) {
+    state.available_themes = options
+        .into_iter()
+        .map(|t| ThemeOption {
+            name: t.name,
+            slug: t.slug,
+        })
+        .collect();
+
+    if state
+        .available_themes
+        .iter()
+        .any(|t| t.slug == selected_slug)
+    {
+        state.selected_theme_slug = selected_slug;
+    } else if let Some(first) = state.available_themes.first() {
+        state.selected_theme_slug = first.slug.clone();
     }
 }
 
@@ -424,4 +463,76 @@ fn mcp_commands_and_selection_fallback_cover_real_status_logic() {
     let unchanged_selection = state.selected_mcp_id;
     assert_eq!(state.mcps, unchanged_mcps);
     assert_eq!(state.selected_mcp_id, unchanged_selection);
+}
+
+#[test]
+fn theme_dropdown_options_select_expected_entry_and_fallback() {
+    let options = vec![
+        ThemeOption {
+            name: "Default".to_string(),
+            slug: "default".to_string(),
+        },
+        ThemeOption {
+            name: "Green Screen".to_string(),
+            slug: "green-screen".to_string(),
+        },
+        ThemeOption {
+            name: "Mac Native".to_string(),
+            slug: "mac-native".to_string(),
+        },
+    ];
+
+    let (labels, selected) = apply_theme_options(&options, "green-screen");
+    assert_eq!(labels, vec!["Default", "Green Screen", "Mac Native"]);
+    assert_eq!(selected, 1);
+
+    let (_labels, fallback_selected) = apply_theme_options(&options, "does-not-exist");
+    assert_eq!(fallback_selected, 0);
+}
+
+#[test]
+fn settings_state_has_expected_theme_defaults() {
+    let state = SettingsState::new();
+    assert!(state.available_themes.is_empty());
+    assert_eq!(state.selected_theme_slug, "default");
+}
+
+#[test]
+fn apply_show_settings_theme_updates_options_and_selection() {
+    let mut state = SettingsState::new();
+
+    let summaries = vec![
+        ThemeSummary {
+            name: "Default".to_string(),
+            slug: "default".to_string(),
+        },
+        ThemeSummary {
+            name: "Green Screen".to_string(),
+            slug: "green-screen".to_string(),
+        },
+    ];
+
+    apply_show_settings_theme(&mut state, summaries.clone(), "green-screen".to_string());
+    assert_eq!(state.available_themes.len(), 2);
+    assert_eq!(state.selected_theme_slug, "green-screen");
+    assert_eq!(state.available_themes[0].slug, "default");
+    assert_eq!(state.available_themes[1].slug, "green-screen");
+
+    // Unknown slug falls back to first entry
+    apply_show_settings_theme(&mut state, summaries, "does-not-exist".to_string());
+    assert_eq!(
+        state.selected_theme_slug, "default",
+        "unknown slug must fall back to first entry"
+    );
+}
+
+#[test]
+fn apply_show_settings_theme_with_empty_options_leaves_slug_unchanged() {
+    let mut state = SettingsState::new();
+    state.selected_theme_slug = "green-screen".to_string();
+
+    apply_show_settings_theme(&mut state, vec![], "default".to_string());
+    assert!(state.available_themes.is_empty());
+    // With no options the slug stays unchanged because there is no first entry
+    assert_eq!(state.selected_theme_slug, "green-screen");
 }

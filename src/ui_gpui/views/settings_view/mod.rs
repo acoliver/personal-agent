@@ -11,7 +11,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::ProfileSummary;
+use crate::presentation::view_command::{ProfileSummary, ThemeSummary};
 use crate::ui_gpui::bridge::GpuiBridge;
 
 /// Represents a profile in the settings list
@@ -112,6 +112,13 @@ impl McpItem {
     }
 }
 
+/// A theme option as presented in the settings dropdown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThemeOption {
+    pub name: String,
+    pub slug: String,
+}
+
 /// Settings view state
 /// @plan PLAN-20250130-GPUIREDUX.P06
 pub struct SettingsState {
@@ -120,6 +127,10 @@ pub struct SettingsState {
     pub selected_profile_id: Option<Uuid>,
     pub selected_mcp_id: Option<Uuid>,
     pub hotkey: String,
+    /// Available themes for the dropdown.
+    pub available_themes: Vec<ThemeOption>,
+    /// Slug of the currently-selected theme.
+    pub selected_theme_slug: String,
 }
 
 impl SettingsState {
@@ -137,6 +148,8 @@ impl Default for SettingsState {
             selected_profile_id: None,
             selected_mcp_id: None,
             hotkey: "Cmd+Shift+P".to_string(),
+            available_themes: Vec::new(),
+            selected_theme_slug: "default".to_string(),
         }
     }
 }
@@ -162,6 +175,41 @@ impl SettingsView {
     /// @plan PLAN-20250130-GPUIREDUX.P06
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
+    }
+
+    /// Apply theme options from a `ShowSettingsTheme` command.
+    pub(super) fn apply_theme_options(
+        &mut self,
+        options: Vec<ThemeSummary>,
+        selected_slug: String,
+    ) {
+        self.state.available_themes = options
+            .into_iter()
+            .map(|t| ThemeOption {
+                name: t.name,
+                slug: t.slug,
+            })
+            .collect();
+
+        // Use provided slug if it exists in the list; otherwise keep the
+        // first entry or the current selection.
+        if self
+            .state
+            .available_themes
+            .iter()
+            .any(|t| t.slug == selected_slug)
+        {
+            self.state.selected_theme_slug = selected_slug;
+        } else if let Some(first) = self.state.available_themes.first() {
+            self.state.selected_theme_slug = first.slug.clone();
+        }
+    }
+
+    /// Select a theme by slug and emit the event.
+    pub(super) fn select_theme(&mut self, slug: String, cx: &mut gpui::Context<Self>) {
+        self.state.selected_theme_slug.clone_from(&slug);
+        self.emit(&UserEvent::SelectTheme { slug });
+        cx.notify();
     }
 
     /// Set profiles from presenter

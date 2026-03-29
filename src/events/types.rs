@@ -180,6 +180,9 @@ pub enum UserEvent {
     /// @plan PLAN-20250130-GPUIREDUX.P09
     McpAddNext { manual_entry: Option<String> },
 
+    /// User selected a theme from the settings dropdown
+    SelectTheme { slug: String },
+
     // ===== Navigation =====
     /// User clicked to navigate to a view
     Navigate { to: ViewId },
