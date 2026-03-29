@@ -643,6 +643,14 @@ impl ChatView {
         cx.notify();
     }
 
+    pub fn scroll_chat_to_top(&mut self, cx: &mut gpui::Context<Self>) {
+        let current_offset = self.chat_scroll_handle.offset();
+        self.chat_scroll_handle
+            .set_offset(point(current_offset.x, Pixels::ZERO));
+        self.state.chat_autoscroll_enabled = false;
+        cx.notify();
+    }
+
     pub fn scroll_chat_to_end(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.chat_autoscroll_enabled = true;
         self.chat_scroll_handle.scroll_to_bottom();
@@ -754,6 +762,10 @@ mod tests {
                 view.scroll_chat_page_up(cx);
                 assert!(!view.state.chat_autoscroll_enabled);
 
+                view.state.chat_autoscroll_enabled = true;
+                view.scroll_chat_to_top(cx);
+                assert!(!view.state.chat_autoscroll_enabled);
+
                 view.state.chat_autoscroll_enabled = false;
                 view.scroll_chat_to_end(cx);
                 assert!(view.state.chat_autoscroll_enabled);
@@ -762,12 +774,18 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(cx: &mut TestAppContext) {
+    async fn home_pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(
+        cx: &mut TestAppContext,
+    ) {
         let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
         let mut visual_cx = cx.add_empty_window().clone();
 
         visual_cx.update(|_window, app| {
             view.update(app, |view: &mut ChatView, cx| {
+                view.state.chat_autoscroll_enabled = true;
+                view.handle_key_down(&chat_key_event("home"), cx);
+                assert!(!view.state.chat_autoscroll_enabled);
+
                 view.state.chat_autoscroll_enabled = true;
                 view.handle_key_down(&chat_key_event("pageup"), cx);
                 assert!(!view.state.chat_autoscroll_enabled);

@@ -75,7 +75,7 @@ impl ChatView {
         match key.as_str() {
             "left" => self.move_cursor_left(cx),
             "right" => self.move_cursor_right(cx),
-            "home" => self.move_cursor_home(cx),
+            "home" => self.scroll_chat_to_top(cx),
             "end" => self.scroll_chat_to_end(cx),
             "pageup" => self.scroll_chat_page_up(cx),
             "pagedown" => self.scroll_chat_page_down(cx),
