@@ -8,7 +8,8 @@
 
 use personal_agent::ui_gpui::mac_native::MAC_NATIVE_SLUG;
 use personal_agent::ui_gpui::theme::{
-    active_theme_slug, available_theme_options, migrate_legacy_theme_slug, set_active_theme_slug,
+    active_theme_slug, available_theme_options, is_valid_theme_slug, migrate_legacy_theme_slug,
+    set_active_theme_slug,
 };
 
 use std::sync::Mutex;
@@ -82,6 +83,26 @@ fn migration_is_idempotent_for_all_three_legacy_values() {
             "migration is not idempotent for '{legacy}': once→'{once}', twice→'{twice}'"
         );
     }
+}
+
+#[test]
+fn valid_theme_slug_accepts_known_and_rejects_invalid() {
+    assert!(
+        is_valid_theme_slug("default"),
+        "default must be recognized as a valid bundled theme slug"
+    );
+    assert!(
+        is_valid_theme_slug("green-screen"),
+        "green-screen must be recognized as a valid bundled theme slug"
+    );
+    assert!(
+        is_valid_theme_slug(MAC_NATIVE_SLUG),
+        "mac-native must be recognized as a valid synthetic theme slug"
+    );
+    assert!(
+        !is_valid_theme_slug("totally-invalid-theme-slug"),
+        "unknown theme slug must be rejected"
+    );
 }
 
 // ── Startup-restore tests ─────────────────────────────────────────────────────

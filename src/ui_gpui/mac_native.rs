@@ -171,6 +171,8 @@ mod platform {
             let bg = resolve(&NSColor::windowBackgroundColor())?;
             hsla(bg.h, bg.s, (bg.l + 0.04).min(1.0), 1.0)
         };
+        // Keep header/background aligned with the same semantic system surface
+        // so panel chrome remains consistent across light/dark appearances.
         let panel_header_bg = resolve(&NSColor::controlBackgroundColor())?;
         let text_primary = resolve(&NSColor::labelColor())?;
         let text_muted = resolve(&NSColor::secondaryLabelColor())?;

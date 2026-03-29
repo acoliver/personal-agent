@@ -469,7 +469,6 @@ fn mac_native_fallback_is_deterministic_and_matches_default() {
 fn mac_native_available_options_count_exceeds_catalog_count() {
     // available_theme_options must include all file-backed catalog themes PLUS
     // the mac-native pseudo-entry.
-    use personal_agent::ui_gpui::theme_catalog::ThemeCatalog;
     let options = available_theme_options();
     let catalog = ThemeCatalog::load_bundled().expect("bundled catalog must load");
 

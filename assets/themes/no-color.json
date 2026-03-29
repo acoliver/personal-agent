@@ -40,9 +40,9 @@
       "bg": "#e5e7eb"
     },
     "diff": {
-      "addedBg": "#e5e7eb",
+      "addedBg": "#1a2435",
       "addedFg": "#e5e7eb",
-      "removedBg": "#e5e7eb",
+      "removedBg": "#2b1a1a",
       "removedFg": "#e5e7eb"
     },
     "scrollbar": {

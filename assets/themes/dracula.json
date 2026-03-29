@@ -41,9 +41,9 @@
     },
     "diff": {
       "addedBg": "#11431d",
-      "addedFg": "white",
+      "addedFg": "#ffffff",
       "removedBg": "#6e1818",
-      "removedFg": "white"
+      "removedFg": "#ffffff"
     },
     "scrollbar": {
       "thumb": "#8be9fd",

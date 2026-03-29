@@ -13,6 +13,7 @@ use serde::Deserialize;
 pub enum ThemeKind {
     Dark,
     Light,
+    System,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -172,8 +173,16 @@ impl ThemeCatalog {
                 path: dir.to_path_buf(),
                 source,
             })?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
+            .map(|entry_result| {
+                entry_result.map(|entry| entry.path()).map_err(|source| {
+                    ThemeCatalogError::ReadThemeDirectory {
+                        path: dir.to_path_buf(),
+                        source,
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
             .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
             .collect::<Vec<_>>();
 

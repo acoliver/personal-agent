@@ -12,7 +12,9 @@ use personal_agent::services::{
 use personal_agent::ui_gpui::app_store::{
     StartupInputs, StartupMode, StartupSelectedConversation, StartupTranscriptResult,
 };
-use personal_agent::ui_gpui::theme::{migrate_legacy_theme_slug, set_active_theme_slug};
+use personal_agent::ui_gpui::theme::{
+    is_valid_theme_slug, migrate_legacy_theme_slug, set_active_theme_slug,
+};
 
 // ============================================================================
 // Runtime paths
@@ -95,19 +97,7 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
     // `PA_FORCE_THEME` overrides the persisted slug — used by UI automation
     // tests (scn_004/scn_005) to capture screenshots of each theme without
     // modifying real user settings.
-    let raw_theme = if let Ok(forced) = std::env::var("PA_FORCE_THEME") {
-        if !forced.is_empty() {
-            tracing::info!("Startup: PA_FORCE_THEME override active: '{}'", forced);
-            forced
-        } else {
-            app_settings
-                .get_theme()
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "default".to_string())
-        }
-    } else {
+    let get_persisted_theme = || async {
         app_settings
             .get_theme()
             .await
@@ -115,8 +105,31 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
             .flatten()
             .unwrap_or_else(|| "default".to_string())
     };
-    let saved_theme = migrate_legacy_theme_slug(&raw_theme);
-    set_active_theme_slug(saved_theme);
+
+    let raw_theme = if let Ok(forced) = std::env::var("PA_FORCE_THEME") {
+        if !forced.is_empty() {
+            tracing::info!("Startup: PA_FORCE_THEME override active: '{}'", forced);
+            forced
+        } else {
+            get_persisted_theme().await
+        }
+    } else {
+        get_persisted_theme().await
+    };
+
+    let migrated_theme = migrate_legacy_theme_slug(&raw_theme).to_string();
+    let saved_theme = if is_valid_theme_slug(&migrated_theme) {
+        migrated_theme
+    } else {
+        tracing::warn!(
+            "Startup: persisted theme '{}' migrated to '{}' is invalid; falling back to 'default'",
+            raw_theme,
+            migrated_theme
+        );
+        "default".to_string()
+    };
+
+    set_active_theme_slug(&saved_theme);
     tracing::info!(
         "Startup: applied theme '{}' (persisted: '{}')",
         saved_theme,

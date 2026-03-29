@@ -21,7 +21,7 @@ use crate::events::{
     AppEvent, EventBus,
 };
 use crate::services::{AppSettingsService, ProfileService};
-use crate::ui_gpui::theme::{available_theme_options, set_active_theme_slug};
+use crate::ui_gpui::theme::{available_theme_options, is_valid_theme_slug, set_active_theme_slug};
 
 /// `SettingsPresenter` - handles settings and profile management UI
 ///
@@ -116,7 +116,7 @@ impl SettingsPresenter {
         )
         .await;
 
-        Self::emit_theme_snapshot(&self.app_settings_service, &self.view_tx).await;
+        Self::emit_theme_snapshot(&self.app_settings_service, &self.view_tx, None).await;
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -230,7 +230,7 @@ impl SettingsPresenter {
             }
             UserEvent::RefreshProfiles => {
                 Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
-                Self::emit_theme_snapshot(app_settings_service, view_tx).await;
+                Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
             }
             UserEvent::ToggleMcp { id, enabled } => {
                 Self::on_toggle_mcp(view_tx, id, enabled);
@@ -636,6 +636,7 @@ impl SettingsPresenter {
     async fn emit_theme_snapshot(
         app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
+        selected_override: Option<String>,
     ) {
         let options: Vec<ThemeSummary> = available_theme_options()
             .into_iter()
@@ -645,11 +646,16 @@ impl SettingsPresenter {
             })
             .collect();
 
-        let selected_slug = app_settings_service
+        let persisted_slug = app_settings_service
             .get_theme()
             .await
             .ok()
             .flatten()
+            .filter(|slug| is_valid_theme_slug(slug));
+
+        let selected_slug = selected_override
+            .filter(|slug| is_valid_theme_slug(slug))
+            .or(persisted_slug)
             .unwrap_or_else(|| "default".to_string());
 
         let _ = view_tx.send(ViewCommand::ShowSettingsTheme {
@@ -664,13 +670,32 @@ impl SettingsPresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
         slug: String,
     ) {
-        if let Err(e) = app_settings_service.set_theme(slug.clone()).await {
-            tracing::warn!("Failed to persist theme selection '{}': {}", slug, e);
+        if !is_valid_theme_slug(&slug) {
+            tracing::warn!(
+                "Rejected invalid theme selection '{}'; emitting persisted snapshot",
+                slug
+            );
+            Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
+            return;
         }
 
-        set_active_theme_slug(&slug);
+        if let Err(e) = app_settings_service.set_theme(slug.clone()).await {
+            tracing::warn!("Failed to persist theme selection '{}': {}", slug, e);
+            Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
+            return;
+        }
 
-        Self::emit_theme_snapshot(app_settings_service, view_tx).await;
+        let applied_slug = app_settings_service
+            .get_theme()
+            .await
+            .ok()
+            .flatten()
+            .filter(|persisted| is_valid_theme_slug(persisted))
+            .unwrap_or_else(|| "default".to_string());
+
+        set_active_theme_slug(&applied_slug);
+
+        Self::emit_theme_snapshot(app_settings_service, view_tx, Some(applied_slug)).await;
     }
 
     /// Emit the current MCP list from config.json so the settings view

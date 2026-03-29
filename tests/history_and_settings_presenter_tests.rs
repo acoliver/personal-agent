@@ -269,6 +269,7 @@ struct MockAppSettingsState {
     set_default_profile_id_results: VecDeque<Result<(), ServiceError>>,
     theme: Option<String>,
     set_theme_calls: Vec<String>,
+    set_theme_results: VecDeque<Result<(), ServiceError>>,
 }
 
 impl MockAppSettingsService {
@@ -280,6 +281,7 @@ impl MockAppSettingsService {
                 set_default_profile_id_results: VecDeque::new(),
                 theme: None,
                 set_theme_calls: Vec::new(),
+                set_theme_results: VecDeque::new(),
             })),
         }
     }
@@ -292,6 +294,15 @@ impl MockAppSettingsService {
     fn with_theme(self, theme: &str) -> Self {
         self.state.lock().unwrap().theme = Some(theme.to_string());
         self
+    }
+
+    fn with_set_theme_results(self, results: Vec<Result<(), ServiceError>>) -> Self {
+        self.state.lock().unwrap().set_theme_results = results.into();
+        self
+    }
+
+    fn set_current_theme(&self, theme: Option<&str>) {
+        self.state.lock().unwrap().theme = theme.map(ToString::to_string);
     }
 
     fn set_default_profile_id_calls(&self) -> Vec<Uuid> {
@@ -353,9 +364,11 @@ impl AppSettingsService for MockAppSettingsService {
     async fn set_theme(&self, theme: String) -> Result<(), ServiceError> {
         let mut state = self.state.lock().unwrap();
         state.set_theme_calls.push(theme.clone());
-        state.theme = Some(theme);
-        drop(state);
-        Ok(())
+        let result = state.set_theme_results.pop_front().unwrap_or(Ok(()));
+        if result.is_ok() {
+            state.theme = Some(theme);
+        }
+        result
     }
 
     async fn get_setting(&self, _key: &str) -> Result<Option<String>, ServiceError> {
@@ -606,6 +619,34 @@ mod history_presenter_tests {
 
 mod settings_presenter_tests {
     use super::*;
+    use personal_agent::ui_gpui::theme::{active_theme_slug, set_active_theme_slug};
+
+    static THEME_RUNTIME_TEST_LOCK: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
+
+    struct ThemeRuntimeGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        previous_slug: String,
+    }
+
+    impl ThemeRuntimeGuard {
+        fn new() -> Self {
+            let lock = THEME_RUNTIME_TEST_LOCK
+                .lock()
+                .expect("theme runtime test lock poisoned");
+            let previous_slug = active_theme_slug();
+            Self {
+                _lock: lock,
+                previous_slug,
+            }
+        }
+    }
+
+    impl Drop for ThemeRuntimeGuard {
+        fn drop(&mut self) {
+            set_active_theme_slug(&self.previous_slug);
+        }
+    }
 
     fn setup_settings_presenter(
         profile_service: MockProfileService,
@@ -1392,6 +1433,7 @@ mod settings_presenter_tests {
 
     #[tokio::test]
     async fn start_emits_show_settings_theme_snapshot() {
+        let _theme_guard = ThemeRuntimeGuard::new();
         let profile_service = MockProfileService::new(vec![], None);
         let app_settings_service = MockAppSettingsService::new(None).with_theme("green-screen");
         let (mut presenter, _event_tx, mut view_rx, _profile_service, _app_settings_service) =
@@ -1434,6 +1476,7 @@ mod settings_presenter_tests {
 
     #[tokio::test]
     async fn select_theme_persists_and_re_emits_theme_snapshot() {
+        let _theme_guard = ThemeRuntimeGuard::new();
         let profile_service = MockProfileService::new(vec![], None);
         let app_settings_service = MockAppSettingsService::new(None).with_theme("default");
         let (mut presenter, event_tx, mut view_rx, _profile_service, app_settings_service) =
@@ -1477,6 +1520,140 @@ mod settings_presenter_tests {
         assert_eq!(
             app_settings_service.current_theme(),
             Some("green-screen".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn select_theme_rejects_invalid_slug_without_persisting() {
+        let _theme_guard = ThemeRuntimeGuard::new();
+        let profile_service = MockProfileService::new(vec![], None);
+        let app_settings_service = MockAppSettingsService::new(None).with_theme("default");
+        let (mut presenter, event_tx, mut view_rx, _profile_service, app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+
+        send_settings_event(
+            &event_tx,
+            AppEvent::User(UserEvent::SelectTheme {
+                slug: "definitely-not-a-theme".to_string(),
+            }),
+        )
+        .await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        match cmd {
+            ViewCommand::ShowSettingsTheme { selected_slug, .. } => {
+                assert_eq!(selected_slug, "default");
+            }
+            other => panic!("expected ShowSettingsTheme after invalid SelectTheme, got {other:?}"),
+        }
+
+        assert!(
+            app_settings_service.set_theme_calls().is_empty(),
+            "invalid slug must not call set_theme"
+        );
+        assert_eq!(
+            app_settings_service.current_theme(),
+            Some("default".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn select_theme_does_not_apply_runtime_change_when_persist_fails() {
+        let _theme_guard = ThemeRuntimeGuard::new();
+        let profile_service = MockProfileService::new(vec![], None);
+        let app_settings_service = MockAppSettingsService::new(None)
+            .with_theme("default")
+            .with_set_theme_results(vec![Err(ServiceError::Storage("boom".to_string()))]);
+        let (mut presenter, event_tx, mut view_rx, _profile_service, app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+
+        set_active_theme_slug("default");
+
+        send_settings_event(
+            &event_tx,
+            AppEvent::User(UserEvent::SelectTheme {
+                slug: "green-screen".to_string(),
+            }),
+        )
+        .await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        match cmd {
+            ViewCommand::ShowSettingsTheme { selected_slug, .. } => {
+                assert_eq!(selected_slug, "default");
+            }
+            other => panic!("expected ShowSettingsTheme after persist failure, got {other:?}"),
+        }
+
+        assert_eq!(
+            app_settings_service.set_theme_calls(),
+            vec!["green-screen"],
+            "attempted slug should still be sent to persistence layer"
+        );
+        assert_eq!(
+            app_settings_service.current_theme(),
+            Some("default".to_string()),
+            "failed persistence must keep stored theme unchanged"
+        );
+        assert_eq!(
+            active_theme_slug(),
+            "default".to_string(),
+            "runtime active theme must remain unchanged on persist failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn select_theme_applies_selection_when_previous_persisted_theme_is_invalid() {
+        let _theme_guard = ThemeRuntimeGuard::new();
+        let profile_service = MockProfileService::new(vec![], None);
+        let app_settings_service = MockAppSettingsService::new(None).with_theme("default");
+        let (mut presenter, event_tx, mut view_rx, _profile_service, app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+        app_settings_service.set_current_theme(Some("invalid-after-start"));
+
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+
+        send_settings_event(
+            &event_tx,
+            AppEvent::User(UserEvent::SelectTheme {
+                slug: "green-screen".to_string(),
+            }),
+        )
+        .await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        match cmd {
+            ViewCommand::ShowSettingsTheme { selected_slug, .. } => {
+                assert_eq!(selected_slug, "green-screen");
+            }
+            other => panic!("expected ShowSettingsTheme after SelectTheme, got {other:?}"),
+        }
+
+        assert_eq!(
+            app_settings_service.current_theme(),
+            Some("green-screen".to_string()),
+            "successful persistence should replace previous invalid stored theme"
+        );
+        assert_eq!(
+            active_theme_slug(),
+            "green-screen".to_string(),
+            "runtime active theme must match the persisted validated selection"
         );
     }
 

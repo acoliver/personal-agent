@@ -101,6 +101,21 @@ pub fn active_theme_slug() -> String {
     get_active_slug()
 }
 
+/// Returns `true` when `slug` maps to a known selectable theme option.
+///
+/// This includes all bundled catalog slugs and the synthetic `mac-native`
+/// option.
+#[must_use]
+pub fn is_valid_theme_slug(slug: &str) -> bool {
+    if slug == MAC_NATIVE_SLUG {
+        return true;
+    }
+
+    ThemeCatalog::load_bundled()
+        .ok()
+        .is_some_and(|catalog| catalog.get(slug).is_some())
+}
+
 /// Returns theme metadata for all bundled catalog themes plus `mac-native`.
 ///
 /// The synthetic `mac-native` pseudo-entry is appended at the end.
@@ -110,7 +125,7 @@ pub fn available_theme_options() -> Vec<ThemeOption> {
     let mac_native_entry = ThemeOption {
         name: mac_native::MAC_NATIVE_NAME.to_string(),
         slug: MAC_NATIVE_SLUG.to_string(),
-        kind: crate::ui_gpui::theme_catalog::ThemeKind::Dark,
+        kind: crate::ui_gpui::theme_catalog::ThemeKind::System,
     };
 
     let mut options = ThemeCatalog::load_bundled().map_or_else(
@@ -183,6 +198,45 @@ fn parse_hex6(hex: &str) -> Option<(f32, f32, f32)> {
     ))
 }
 
+fn parse_hex3(hex: &str) -> Option<(f32, f32, f32)> {
+    let h = hex.trim().strip_prefix('#').unwrap_or_else(|| hex.trim());
+    if h.len() != 3 {
+        return None;
+    }
+
+    let mut chars = h.chars();
+    let r = chars.next()?.to_digit(16)?;
+    let g = chars.next()?.to_digit(16)?;
+    let b = chars.next()?.to_digit(16)?;
+
+    // Expand #RGB to #RRGGBB by multiplying each nibble by 17.
+    #[allow(clippy::cast_precision_loss)]
+    Some((
+        (r * 17) as f32 / 255.0,
+        (g * 17) as f32 / 255.0,
+        (b * 17) as f32 / 255.0,
+    ))
+}
+
+fn parse_named_color(name: &str) -> Option<(f32, f32, f32)> {
+    let mapped_hex = match name.trim().to_ascii_lowercase().as_str() {
+        "black" => "#000000",
+        "white" => "#ffffff",
+        "gray" | "grey" => "#808080",
+        "blue" => "#0000ff",
+        "bluebright" => "#5555ff",
+        "red" => "#ff0000",
+        "green" => "#00ff00",
+        "yellow" => "#ffff00",
+        "magenta" => "#ff00ff",
+        "orange" => "#ffa500",
+        "purple" => "#800080",
+        _ => return None,
+    };
+
+    parse_hex6(mapped_hex)
+}
+
 fn rgb_to_hsla(r: f32, g: f32, b: f32, a: f32) -> Hsla {
     let max = r.max(g.max(b));
     let min = r.min(g.min(b));
@@ -210,8 +264,14 @@ fn rgb_to_hsla(r: f32, g: f32, b: f32, a: f32) -> Hsla {
     hsla(hue, saturation, lightness, a)
 }
 
+fn parse_color_token(token: &str) -> Option<(f32, f32, f32)> {
+    parse_hex6(token)
+        .or_else(|| parse_hex3(token))
+        .or_else(|| parse_named_color(token))
+}
+
 fn hex_str_to_hsla(hex: &str) -> Option<Hsla> {
-    let (r, g, b) = parse_hex6(hex)?;
+    let (r, g, b) = parse_color_token(hex)?;
     Some(rgb_to_hsla(r, g, b, 1.0))
 }
 
@@ -274,12 +334,16 @@ pub struct Theme;
 impl Theme {
     // ── Public conversion helpers ────────────────────────────────────────────
 
-    /// Parse a 6-digit hex color string (with or without leading `#`) and
-    /// convert it to `Hsla`.
+    /// Parse a theme color token and convert it to `Hsla`.
+    ///
+    /// Supports 6-digit hex (`#RRGGBB`), 3-digit hex (`#RGB`), and a small
+    /// named-color set used by the bundled llxprt themes (`white`, `black`,
+    /// `gray`/`grey`, `blue`, `bluebright`, `red`, `green`, `yellow`,
+    /// `magenta`, `orange`, `purple`).
     ///
     /// # Errors
     ///
-    /// Returns an error string if `hex` is not a valid 6-digit hex color.
+    /// Returns an error string if `hex` is not a recognized color token.
     pub fn hex_to_hsla(hex: &str) -> Result<Hsla, String> {
         hex_str_to_hsla(hex).ok_or_else(|| format!("invalid hex color: {hex}"))
     }
