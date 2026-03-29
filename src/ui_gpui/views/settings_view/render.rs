@@ -532,6 +532,106 @@ impl SettingsView {
                     .child(hotkey),
             )
     }
+
+    /// Render a single row in the theme dropdown list.
+    fn render_theme_row(
+        &self,
+        option: &super::ThemeOption,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        let slug = option.slug.clone();
+        let name = option.name.clone();
+        let is_selected = self.state.selected_theme_slug == slug;
+
+        div()
+            .id(gpui::SharedString::from(format!("theme-{slug}")))
+            .w_full()
+            .h(px(24.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .when(is_selected, |d| {
+                d.bg(Theme::accent()).text_color(gpui::white())
+            })
+            .when(!is_selected, |d| {
+                d.hover(|s| s.bg(Theme::bg_dark()))
+                    .text_color(Theme::text_primary())
+            })
+            .text_size(px(12.0))
+            .child(name)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    tracing::info!("Theme selected: {}", slug);
+                    this.select_theme(slug.clone(), cx);
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// Render the theme selection section.
+    fn render_theme_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let themes = &self.state.available_themes;
+        let selected_name = themes
+            .iter()
+            .find(|t| t.slug == self.state.selected_theme_slug)
+            .map_or_else(
+                || self.state.selected_theme_slug.clone(),
+                |t| t.name.clone(),
+            );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            // Section header
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(Theme::text_primary())
+                    .child("THEME"),
+            )
+            // Current selection indicator
+            .child(
+                div()
+                    .w_full()
+                    .h(px(24.0))
+                    .px(px(8.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .text_size(px(12.0))
+                    .text_color(Theme::text_primary())
+                    .child(selected_name),
+            )
+            // Theme list
+            .child(
+                div()
+                    .id("themes-list")
+                    .w_full()
+                    .h(px(80.0))
+                    .bg(Theme::bg_darker())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .children(themes.iter().map(|t| self.render_theme_row(t, cx)))
+                    .when(themes.is_empty(), |d| {
+                        d.items_center().justify_center().child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(Theme::text_muted())
+                                .child("No themes available"),
+                        )
+                    }),
+            )
+    }
 }
 
 impl gpui::Focusable for SettingsView {
@@ -574,6 +674,8 @@ impl gpui::Render for SettingsView {
                     .child(self.render_profiles_section(cx))
                     // MCP Tools section
                     .child(self.render_mcp_section(cx))
+                    // Theme section
+                    .child(self.render_theme_section(cx))
                     // Hotkey section
                     .child(self.render_hotkey_section(cx)),
             )

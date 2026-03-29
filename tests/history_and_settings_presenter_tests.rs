@@ -267,6 +267,8 @@ struct MockAppSettingsState {
     default_profile_id: Option<Uuid>,
     set_default_profile_id_calls: Vec<Uuid>,
     set_default_profile_id_results: VecDeque<Result<(), ServiceError>>,
+    theme: Option<String>,
+    set_theme_calls: Vec<String>,
 }
 
 impl MockAppSettingsService {
@@ -276,6 +278,8 @@ impl MockAppSettingsService {
                 default_profile_id,
                 set_default_profile_id_calls: Vec::new(),
                 set_default_profile_id_results: VecDeque::new(),
+                theme: None,
+                set_theme_calls: Vec::new(),
             })),
         }
     }
@@ -285,12 +289,25 @@ impl MockAppSettingsService {
         self
     }
 
+    fn with_theme(self, theme: &str) -> Self {
+        self.state.lock().unwrap().theme = Some(theme.to_string());
+        self
+    }
+
     fn set_default_profile_id_calls(&self) -> Vec<Uuid> {
         self.state
             .lock()
             .unwrap()
             .set_default_profile_id_calls
             .clone()
+    }
+
+    fn set_theme_calls(&self) -> Vec<String> {
+        self.state.lock().unwrap().set_theme_calls.clone()
+    }
+
+    fn current_theme(&self) -> Option<String> {
+        self.state.lock().unwrap().theme.clone()
     }
 }
 
@@ -330,10 +347,14 @@ impl AppSettingsService for MockAppSettingsService {
     }
 
     async fn get_theme(&self) -> Result<Option<String>, ServiceError> {
-        Ok(None)
+        Ok(self.state.lock().unwrap().theme.clone())
     }
 
-    async fn set_theme(&self, _theme: String) -> Result<(), ServiceError> {
+    async fn set_theme(&self, theme: String) -> Result<(), ServiceError> {
+        let mut state = self.state.lock().unwrap();
+        state.set_theme_calls.push(theme.clone());
+        state.theme = Some(theme);
+        drop(state);
         Ok(())
     }
 
@@ -640,6 +661,8 @@ mod settings_presenter_tests {
                 selected_profile_id: Some(profile.id),
             }
         );
+        // Drain the ShowSettingsTheme snapshot emitted on startup
+        let _ = recv_broadcast_command(&mut view_rx).await;
 
         presenter
             .start()
@@ -700,6 +723,7 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -752,6 +776,7 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
 
         let id = Uuid::new_v4();
         send_settings_event(&event_tx, AppEvent::User(UserEvent::SelectProfile { id })).await;
@@ -781,6 +806,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
@@ -829,6 +855,7 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
 
         send_settings_event(&event_tx, AppEvent::User(UserEvent::EditProfile { id })).await;
 
@@ -855,6 +882,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
@@ -901,6 +929,7 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -931,6 +960,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
@@ -970,6 +1000,7 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
 
         let id = Uuid::new_v4();
         send_settings_event(
@@ -1001,6 +1032,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
@@ -1141,6 +1173,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
@@ -1305,6 +1338,7 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -1353,6 +1387,130 @@ mod settings_presenter_tests {
             ViewCommand::ShowNotification {
                 message: "Models refreshed: 3 providers, 42 models".to_string(),
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn start_emits_show_settings_theme_snapshot() {
+        let profile_service = MockProfileService::new(vec![], None);
+        let app_settings_service = MockAppSettingsService::new(None).with_theme("green-screen");
+        let (mut presenter, _event_tx, mut view_rx, _profile_service, _app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+
+        // Drain ShowSettings + ChatProfilesUpdated
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        match cmd {
+            ViewCommand::ShowSettingsTheme {
+                options,
+                selected_slug,
+            } => {
+                assert!(
+                    !options.is_empty(),
+                    "ShowSettingsTheme must include at least one theme option"
+                );
+                assert_eq!(
+                    selected_slug, "green-screen",
+                    "selected_slug must match persisted theme"
+                );
+                // Every bundled theme slug must be present
+                let slugs: Vec<&str> = options.iter().map(|o| o.slug.as_str()).collect();
+                assert!(
+                    slugs.contains(&"default"),
+                    "default slug must be present in theme options"
+                );
+                assert!(
+                    slugs.contains(&"green-screen"),
+                    "green-screen slug must be present in theme options"
+                );
+            }
+            other => panic!("expected ShowSettingsTheme, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn select_theme_persists_and_re_emits_theme_snapshot() {
+        let profile_service = MockProfileService::new(vec![], None);
+        let app_settings_service = MockAppSettingsService::new(None).with_theme("default");
+        let (mut presenter, event_tx, mut view_rx, _profile_service, app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+
+        // Drain startup commands (ShowSettings + ChatProfilesUpdated + ShowSettingsTheme)
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+
+        send_settings_event(
+            &event_tx,
+            AppEvent::User(UserEvent::SelectTheme {
+                slug: "green-screen".to_string(),
+            }),
+        )
+        .await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        match cmd {
+            ViewCommand::ShowSettingsTheme {
+                options,
+                selected_slug,
+            } => {
+                assert_eq!(selected_slug, "green-screen");
+                assert!(
+                    !options.is_empty(),
+                    "theme options must be non-empty after switch"
+                );
+            }
+            other => panic!("expected ShowSettingsTheme after SelectTheme, got {other:?}"),
+        }
+
+        assert_eq!(
+            app_settings_service.set_theme_calls(),
+            vec!["green-screen"],
+            "set_theme must be called with the selected slug"
+        );
+        assert_eq!(
+            app_settings_service.current_theme(),
+            Some("green-screen".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_profiles_also_emits_theme_snapshot() {
+        let profile_service = MockProfileService::new(vec![], None);
+        let app_settings_service = MockAppSettingsService::new(None).with_theme("default");
+        let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+
+        // Drain startup commands
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+
+        send_settings_event(&event_tx, AppEvent::User(UserEvent::RefreshProfiles)).await;
+
+        // Should receive ShowSettings + ChatProfilesUpdated + ShowSettingsTheme
+        let first = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(first, ViewCommand::ShowSettings { .. }),
+            "expected ShowSettings, got {first:?}"
+        );
+        let second = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(second, ViewCommand::ChatProfilesUpdated { .. }),
+            "expected ChatProfilesUpdated, got {second:?}"
+        );
+        let third = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(third, ViewCommand::ShowSettingsTheme { .. }),
+            "expected ShowSettingsTheme, got {third:?}"
         );
     }
 }

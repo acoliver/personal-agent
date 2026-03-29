@@ -12,6 +12,7 @@ use personal_agent::services::{
 use personal_agent::ui_gpui::app_store::{
     StartupInputs, StartupMode, StartupSelectedConversation, StartupTranscriptResult,
 };
+use personal_agent::ui_gpui::theme::set_active_theme_slug;
 
 // ============================================================================
 // Runtime paths
@@ -81,6 +82,18 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
         .initialize()
         .await
         .map_err(|e| format!("Failed to initialize ProfileService for startup bootstrap: {e}"))?;
+
+    // Apply persisted theme before first render so the UI uses the correct
+    // palette immediately.  Unknown or missing slugs fall back to "default"
+    // inside the theme engine.
+    let saved_theme = app_settings
+        .get_theme()
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "default".to_string());
+    set_active_theme_slug(&saved_theme);
+    tracing::info!("Startup: applied saved theme '{}'", saved_theme);
 
     let selected_profile_id = match app_settings.get_default_profile_id().await {
         Ok(Some(id)) => Some(id),

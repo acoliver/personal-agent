@@ -18,6 +18,12 @@ impl SettingsView {
             } => {
                 self.apply_profile_summaries(profiles, selected_profile_id);
             }
+            ViewCommand::ShowSettingsTheme {
+                options,
+                selected_slug,
+            } => {
+                self.apply_theme_options(options, selected_slug);
+            }
             ViewCommand::ProfileCreated { id, name } => {
                 self.state.selected_profile_id = Some(id);
                 if self.state.profiles.iter().all(|p| p.id != id) {
