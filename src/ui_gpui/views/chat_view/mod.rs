@@ -617,6 +617,47 @@ impl ChatView {
         }
     }
 
+    pub fn scroll_chat_page_up(&mut self, cx: &mut gpui::Context<Self>) {
+        let current_offset = self.chat_scroll_handle.offset();
+        let viewport_height = self.chat_scroll_handle.bounds().size.height;
+        let page_delta = viewport_height.max(px(80.0));
+        let target_offset = (current_offset.y + page_delta).min(Pixels::ZERO);
+
+        self.chat_scroll_handle
+            .set_offset(point(current_offset.x, target_offset));
+        self.state.chat_autoscroll_enabled = false;
+        cx.notify();
+    }
+
+    pub fn scroll_chat_page_down(&mut self, cx: &mut gpui::Context<Self>) {
+        let current_offset = self.chat_scroll_handle.offset();
+        let viewport_height = self.chat_scroll_handle.bounds().size.height;
+        let page_delta = viewport_height.max(px(80.0));
+        let max_offset = self.chat_scroll_handle.max_offset();
+        let target_offset = (current_offset.y - page_delta).max(-max_offset.height);
+
+        self.chat_scroll_handle
+            .set_offset(point(current_offset.x, target_offset));
+        self.state.chat_autoscroll_enabled =
+            max_offset.height <= Pixels::ZERO || target_offset <= -max_offset.height + px(8.0);
+        cx.notify();
+    }
+
+    pub fn scroll_chat_to_top(&mut self, cx: &mut gpui::Context<Self>) {
+        let current_offset = self.chat_scroll_handle.offset();
+        self.chat_scroll_handle
+            .set_offset(point(current_offset.x, Pixels::ZERO));
+        self.state.chat_autoscroll_enabled = false;
+        cx.notify();
+    }
+
+    pub fn scroll_chat_to_end(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.chat_autoscroll_enabled = true;
+        self.chat_scroll_handle.scroll_to_bottom();
+        self.maybe_scroll_chat_to_bottom(cx);
+        cx.notify();
+    }
+
     /// Move cursor to start of line
     pub fn move_cursor_home(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.cursor_position = 0;
@@ -692,5 +733,87 @@ impl ChatView {
             self.maybe_scroll_chat_to_bottom(cx);
             cx.notify();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::future_not_send)]
+
+    use super::*;
+    use gpui::{AppContext, KeyDownEvent, Keystroke, Modifiers, TestAppContext};
+
+    fn chat_key_event(key: &str) -> KeyDownEvent {
+        KeyDownEvent {
+            keystroke: Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),
+            is_held: false,
+            prefer_character_input: false,
+        }
+    }
+
+    #[gpui::test]
+    async fn page_scroll_helpers_disable_and_reenable_autoscroll(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut ChatView, cx| {
+                view.state.chat_autoscroll_enabled = true;
+                view.scroll_chat_page_up(cx);
+                assert!(!view.state.chat_autoscroll_enabled);
+
+                view.state.chat_autoscroll_enabled = true;
+                view.scroll_chat_to_top(cx);
+                assert!(!view.state.chat_autoscroll_enabled);
+
+                view.state.chat_autoscroll_enabled = false;
+                view.scroll_chat_to_end(cx);
+                assert!(view.state.chat_autoscroll_enabled);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn home_pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut ChatView, cx| {
+                view.state.chat_autoscroll_enabled = true;
+                view.handle_key_down(&chat_key_event("home"), cx);
+                assert!(!view.state.chat_autoscroll_enabled);
+
+                view.state.chat_autoscroll_enabled = true;
+                view.handle_key_down(&chat_key_event("pageup"), cx);
+                assert!(!view.state.chat_autoscroll_enabled);
+
+                view.state.chat_autoscroll_enabled = true;
+                view.handle_key_down(&chat_key_event("pagedown"), cx);
+                assert!(view.state.chat_autoscroll_enabled);
+
+                view.state.chat_autoscroll_enabled = false;
+                view.handle_key_down(&chat_key_event("end"), cx);
+                assert!(view.state.chat_autoscroll_enabled);
+
+                view.state.chat_autoscroll_enabled = false;
+                view.handle_key_down(
+                    &KeyDownEvent {
+                        keystroke: Keystroke {
+                            modifiers: Modifiers {
+                                platform: true,
+                                ..Modifiers::default()
+                            },
+                            ..chat_key_event("right").keystroke
+                        },
+                        ..chat_key_event("right")
+                    },
+                    cx,
+                );
+                assert!(view.state.chat_autoscroll_enabled);
+            });
+        });
     }
 }

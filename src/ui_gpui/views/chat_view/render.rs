@@ -21,7 +21,11 @@ impl ChatView {
     ///
     /// Extracted from `render()` to keep the root Render impl under the
     /// lizard -L 100 length threshold.
-    fn handle_key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut gpui::Context<Self>) {
+    pub(super) fn handle_key_down(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let key = &event.keystroke.key;
         let modifiers = &event.keystroke.modifiers;
 
@@ -71,8 +75,10 @@ impl ChatView {
         match key.as_str() {
             "left" => self.move_cursor_left(cx),
             "right" => self.move_cursor_right(cx),
-            "home" => self.move_cursor_home(cx),
-            "end" => self.move_cursor_end(cx),
+            "home" => self.scroll_chat_to_top(cx),
+            "end" => self.scroll_chat_to_end(cx),
+            "pageup" => self.scroll_chat_page_up(cx),
+            "pagedown" => self.scroll_chat_page_down(cx),
             "backspace" => self.handle_backspace(cx),
             "enter" => self.handle_enter(cx),
             "escape" => {
@@ -165,7 +171,7 @@ impl ChatView {
                 cx.notify();
             }
             "left" => self.move_cursor_home(cx),
-            "right" => self.move_cursor_end(cx),
+            "right" => self.scroll_chat_to_end(cx),
             _ => {}
         }
     }
