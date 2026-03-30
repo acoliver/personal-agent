@@ -48,6 +48,7 @@ impl MainPanel {
             | StreamError { .. }
             | AppendThinking { .. }
             | ToggleThinkingVisibility
+            | ShowConversationExportFormat { .. }
             | ConversationCleared => self.forward_to_chat(cmd, cx),
 
             // ── conversation lifecycle (multi-view) ─────────────────────
@@ -482,9 +483,25 @@ impl MainPanel {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_notification_api_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
             ViewCommand::ShowNotification { message } => {
+                if let Some(ref chat) = self.chat_view {
+                    if message.contains("Conversation saved")
+                        || message.contains("No active conversation to save")
+                    {
+                        let chat_message = message.clone();
+                        chat.update(cx, |view, cx| {
+                            view.handle_command(
+                                ViewCommand::ShowNotification {
+                                    message: chat_message,
+                                },
+                                cx,
+                            );
+                        });
+                    }
+                }
                 if let Some(ref settings) = self.settings_view {
                     settings.update(cx, |view, cx| {
                         view.handle_command(ViewCommand::ShowNotification { message }, cx);
@@ -496,6 +513,22 @@ impl MainPanel {
                 message,
                 severity,
             } => {
+                if let Some(ref chat) = self.chat_view {
+                    if title == "Save Conversation" {
+                        let t = title.clone();
+                        let m = message.clone();
+                        chat.update(cx, |view, cx| {
+                            view.handle_command(
+                                ViewCommand::ShowError {
+                                    title: t,
+                                    message: m,
+                                    severity,
+                                },
+                                cx,
+                            );
+                        });
+                    }
+                }
                 if let Some(ref mcp_add) = self.mcp_add_view {
                     let t = title.clone();
                     let m = message.clone();

@@ -23,7 +23,8 @@ use personal_agent::presentation::{
     view_command::{ErrorSeverity, MessageRole, ViewCommand},
 };
 use personal_agent::services::{
-    ChatService, ChatStreamEvent, ConversationService, ProfileService, ServiceError,
+    AppSettingsService, ChatService, ChatStreamEvent, ConversationService, ProfileService,
+    ServiceError,
 };
 
 struct MockConversationService {
@@ -354,6 +355,55 @@ fn profile() -> ModelProfile {
     )
 }
 
+struct MockAppSettingsService;
+
+#[async_trait]
+impl AppSettingsService for MockAppSettingsService {
+    async fn get_default_profile_id(&self) -> Result<Option<Uuid>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_default_profile_id(&self, _id: Uuid) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_current_conversation_id(&self) -> Result<Option<Uuid>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_current_conversation_id(&self, _id: Uuid) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_hotkey(&self) -> Result<Option<String>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_hotkey(&self, _hotkey: String) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_theme(&self) -> Result<Option<String>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_theme(&self, _theme: String) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_setting(&self, _key: &str) -> Result<Option<String>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_setting(&self, _key: &str, _value: String) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn reset_to_defaults(&self) -> Result<(), ServiceError> {
+        Ok(())
+    }
+}
+
 fn conversation_with_messages(profile_id: Uuid, messages: Vec<Message>) -> Conversation {
     let mut conversation = Conversation::new(profile_id);
     conversation.messages = messages;
@@ -379,12 +429,14 @@ async fn send_message_creates_conversation_and_appends_user_message() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -444,12 +496,14 @@ async fn send_message_reports_chat_service_errors_and_hides_thinking() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -487,12 +541,14 @@ async fn send_message_reports_profile_resolution_errors() {
         .await;
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -529,12 +585,14 @@ async fn stop_streaming_invokes_chat_service_cancel() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service.clone(),
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -557,12 +615,14 @@ async fn new_conversation_creates_and_activates_conversation() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -608,12 +668,14 @@ async fn new_conversation_reports_creation_errors() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -648,12 +710,14 @@ async fn rename_conversation_refreshes_history_after_success() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -694,12 +758,14 @@ async fn rename_conversation_reports_errors() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -754,12 +820,14 @@ async fn select_conversation_replays_messages_and_filters_system_messages() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -818,12 +886,14 @@ async fn select_conversation_reports_message_replay_failures() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -873,12 +943,14 @@ async fn select_conversation_reports_activation_failures() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -925,12 +997,14 @@ async fn conversation_events_map_to_expected_view_commands() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(128);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");
@@ -1013,12 +1087,14 @@ async fn chat_events_surface_errors_and_completion_commands() {
     let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel(128);
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
     presenter.start().await.expect("start presenter");

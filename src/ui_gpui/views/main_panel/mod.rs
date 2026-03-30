@@ -261,6 +261,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::events::types::UserEvent;
+    use crate::models::ConversationExportFormat;
     use crate::presentation::view_command::{
         ConversationMessagePayload, ConversationSummary, MessageRole, ProfileSummary, ThemeSummary,
         ViewCommand,
@@ -758,6 +759,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[allow(clippy::too_many_lines)]
     async fn handle_command_forwards_settings_profiles_and_routes_mcp_commands_to_expected_targets(
         cx: &mut TestAppContext,
     ) {
@@ -818,6 +820,18 @@ mod tests {
                 &mut targets,
             );
             assert_eq!(targets.mcp_error_commands_count, 1);
+            assert_eq!(targets.chat_error_commands, 0);
+
+            route_view_command(
+                ViewCommand::ShowError {
+                    title: "Save Conversation".to_string(),
+                    message: "disk unavailable".to_string(),
+                    severity: crate::presentation::view_command::ErrorSeverity::Error,
+                },
+                &mut targets,
+            );
+            assert_eq!(targets.mcp_error_commands_count, 2);
+            assert_eq!(targets.chat_error_commands, 1);
 
             route_view_command(
                 ViewCommand::ShowNotification {
@@ -826,6 +840,24 @@ mod tests {
                 &mut targets,
             );
             assert_eq!(targets.settings_notifications_count, 1);
+            assert_eq!(targets.chat_notification_commands, 0);
+
+            route_view_command(
+                ViewCommand::ShowNotification {
+                    message: "Conversation saved as /tmp/chat.md (MD)".to_string(),
+                },
+                &mut targets,
+            );
+            assert_eq!(targets.settings_notifications_count, 2);
+            assert_eq!(targets.chat_notification_commands, 1);
+
+            route_view_command(
+                ViewCommand::ShowConversationExportFormat {
+                    format: ConversationExportFormat::Md,
+                },
+                &mut targets,
+            );
+            assert_eq!(targets.chat_export_format_commands, 1);
 
             route_view_command(
                 ViewCommand::McpConfigSaved {
@@ -877,6 +909,87 @@ mod tests {
                 assert_eq!(state.available_themes[0].slug, "default");
                 assert_eq!(state.available_themes[1].slug, "green-screen");
                 assert_eq!(state.selected_theme_slug, "green-screen");
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn handle_command_forwards_export_format_and_export_feedback_to_chat_view(
+        cx: &mut TestAppContext,
+    ) {
+        let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+        cx.set_global(app_state);
+        let panel = cx.new(MainPanel::new);
+
+        panel.update(cx, |panel: &mut MainPanel, cx| {
+            panel.init(cx);
+
+            panel.handle_command(
+                ViewCommand::ShowConversationExportFormat {
+                    format: ConversationExportFormat::Json,
+                },
+                cx,
+            );
+            panel.handle_command(
+                ViewCommand::ShowNotification {
+                    message: "Conversation saved as /tmp/chat.md (MD)".to_string(),
+                },
+                cx,
+            );
+            panel.handle_command(
+                ViewCommand::ShowError {
+                    title: "Save Conversation".to_string(),
+                    message: "disk unavailable".to_string(),
+                    severity: crate::presentation::view_command::ErrorSeverity::Error,
+                },
+                cx,
+            );
+
+            let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
+            chat_view.read_with(cx, |view, _| {
+                assert_eq!(
+                    view.state.conversation_export_format,
+                    ConversationExportFormat::Json
+                );
+                assert_eq!(
+                    view.state.export_feedback_message.as_deref(),
+                    Some("Save Conversation: disk unavailable")
+                );
+                assert!(view.state.export_feedback_is_error);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn handle_command_does_not_forward_non_export_feedback_to_chat_view(
+        cx: &mut TestAppContext,
+    ) {
+        let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+        cx.set_global(app_state);
+        let panel = cx.new(MainPanel::new);
+
+        panel.update(cx, |panel: &mut MainPanel, cx| {
+            panel.init(cx);
+
+            panel.handle_command(
+                ViewCommand::ShowNotification {
+                    message: "settings updated".to_string(),
+                },
+                cx,
+            );
+            panel.handle_command(
+                ViewCommand::ShowError {
+                    title: "MCP auth failed".to_string(),
+                    message: "token expired".to_string(),
+                    severity: crate::presentation::view_command::ErrorSeverity::Error,
+                },
+                cx,
+            );
+
+            let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
+            chat_view.read_with(cx, |view, _| {
+                assert_eq!(view.state.export_feedback_message, None);
+                assert!(!view.state.export_feedback_is_error);
             });
         });
     }

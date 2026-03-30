@@ -5,6 +5,7 @@
 //!
 //! @plan PLAN-20260325-ISSUE11B.P02
 
+use crate::models::ConversationExportFormat;
 use crate::presentation::view_command::{ConversationSummary, ProfileSummary};
 use std::ops::Range;
 use uuid::Uuid;
@@ -84,6 +85,9 @@ pub struct ChatState {
     pub selected_profile_id: Option<Uuid>,
     pub profile_dropdown_open: bool,
     pub profile_dropdown_index: usize,
+    pub conversation_export_format: ConversationExportFormat,
+    pub export_feedback_message: Option<String>,
+    pub export_feedback_is_error: bool,
     pub conversations: Vec<ConversationSummary>,
     pub active_conversation_id: Option<Uuid>,
     pub conversation_dropdown_open: bool,
@@ -120,6 +124,9 @@ impl Default for ChatState {
             selected_profile_id: None,
             profile_dropdown_open: false,
             profile_dropdown_index: 0,
+            conversation_export_format: ConversationExportFormat::Md,
+            export_feedback_message: None,
+            export_feedback_is_error: false,
         }
     }
 }

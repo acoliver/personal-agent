@@ -26,9 +26,9 @@ use personal_agent::{
     models::ModelProfile,
     presentation::{chat_presenter::ChatPresenter, view_command::ViewCommand},
     services::{
-        chat_impl::ChatServiceImpl, conversation_impl::ConversationServiceImpl,
-        profile_impl::ProfileServiceImpl, secrets_impl::SecretsServiceImpl, ChatService,
-        ConversationService,
+        app_settings_impl::AppSettingsServiceImpl, chat_impl::ChatServiceImpl,
+        conversation_impl::ConversationServiceImpl, profile_impl::ProfileServiceImpl,
+        secrets_impl::SecretsServiceImpl, AppSettingsService, ChatService, ConversationService,
     },
     LlmClient,
 };
@@ -94,6 +94,7 @@ async fn test_chat_presenter_receives_stream_events() {
     // Setup: Create data directory for conversation storage
     let home = dirs::home_dir().expect("No home directory");
     let data_dir = home.join(".llxprt/test-data");
+    let app_settings_path = home.join(".llxprt/test-data/app_settings.e2e.json");
     std::fs::create_dir_all(&data_dir).expect("Failed to create test data dir");
 
     // Setup: Create SecretsService
@@ -136,6 +137,10 @@ async fn test_chat_presenter_receives_stream_events() {
         conversation_service.clone(),
         profile_service.clone(),
     ));
+    let app_settings_service: Arc<dyn AppSettingsService> = Arc::new(
+        AppSettingsServiceImpl::new(app_settings_path.clone())
+            .expect("Failed to create AppSettingsService"),
+    );
 
     // Setup: Create ChatPresenter
     let mut presenter = ChatPresenter::new(
@@ -143,6 +148,7 @@ async fn test_chat_presenter_receives_stream_events() {
         conversation_service.clone(),
         chat_service.clone(),
         profile_service.clone(),
+        app_settings_service,
         view_tx,
     );
 
@@ -286,6 +292,7 @@ async fn test_chat_presenter_error_handling() {
 
     let home = dirs::home_dir().expect("No home directory");
     let data_dir = home.join(".llxprt/test-data");
+    let app_settings_path = home.join(".llxprt/test-data/app_settings.e2e.json");
 
     let conversation_service: Arc<dyn ConversationService> = Arc::new(
         ConversationServiceImpl::new(data_dir).expect("Failed to create ConversationService"),
@@ -327,12 +334,17 @@ async fn test_chat_presenter_error_handling() {
     }
 
     let chat_service: Arc<dyn ChatService> = Arc::new(FailingChatService);
+    let app_settings_service: Arc<dyn AppSettingsService> = Arc::new(
+        AppSettingsServiceImpl::new(app_settings_path.clone())
+            .expect("Failed to create AppSettingsService"),
+    );
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service.clone(),
+        app_settings_service,
         view_tx,
     );
 
@@ -379,6 +391,7 @@ async fn test_chat_presenter_manual_events() {
 
     let home = dirs::home_dir().expect("No home directory");
     let data_dir = home.join(".llxprt/test-data");
+    let app_settings_path = home.join(".llxprt/test-data/app_settings.e2e.json");
 
     let conversation_service: Arc<dyn ConversationService> = Arc::new(
         ConversationServiceImpl::new(data_dir).expect("Failed to create ConversationService"),
@@ -396,12 +409,17 @@ async fn test_chat_presenter_manual_events() {
         conversation_service.clone(),
         profile_service.clone(),
     ));
+    let app_settings_service: Arc<dyn AppSettingsService> = Arc::new(
+        AppSettingsServiceImpl::new(app_settings_path.clone())
+            .expect("Failed to create AppSettingsService"),
+    );
 
     let mut presenter = ChatPresenter::new(
         event_bus.clone(),
         conversation_service,
         chat_service,
         profile_service,
+        app_settings_service,
         view_tx,
     );
 

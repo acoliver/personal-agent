@@ -10,6 +10,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::models::ConversationExportFormat;
+
 /// Command from presenter to UI layer
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
@@ -137,6 +139,9 @@ pub enum ViewCommand {
 
     /// Show notification message
     ShowNotification { message: String },
+
+    /// Update chat export format controls in the chat view.
+    ShowConversationExportFormat { format: ConversationExportFormat },
 
     /// Profile was created
     ProfileCreated { id: Uuid, name: String },

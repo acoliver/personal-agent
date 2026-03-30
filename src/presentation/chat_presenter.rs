@@ -11,6 +11,11 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
+use super::conversation_export::{
+    build_export_filename, render_export_content, resolve_export_directory,
+    resolve_unique_export_path, write_export_file, EXPORT_DIR_SETTING_KEY,
+    EXPORT_FORMAT_SETTING_KEY,
+};
 use super::view_command::{
     ConversationMessagePayload, ConversationSummary, ErrorSeverity, MessageRole,
 };
@@ -20,7 +25,10 @@ use crate::events::{
     types::{ConversationEvent, UserEvent},
     AppEvent,
 };
-use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
+use crate::models::ConversationExportFormat;
+use crate::services::{
+    AppSettingsService, ChatService, ConversationService, ProfileService, ServiceError,
+};
 
 /// `ChatPresenter` - handles chat UI events and service coordination
 ///
@@ -40,6 +48,9 @@ pub struct ChatPresenter {
     /// Reference to profile service
     profile_service: Arc<dyn ProfileService>,
 
+    /// Reference to app settings service
+    app_settings_service: Arc<dyn AppSettingsService>,
+
     /// View command sender (mpsc for reliable delivery)
     view_tx: mpsc::Sender<ViewCommand>,
 
@@ -58,6 +69,7 @@ impl ChatPresenter {
         conversation_service: Arc<dyn ConversationService>,
         chat_service: Arc<dyn ChatService>,
         profile_service: Arc<dyn ProfileService>,
+        app_settings_service: Arc<dyn AppSettingsService>,
         view_tx: mpsc::Sender<ViewCommand>,
     ) -> Self {
         Self {
@@ -65,6 +77,7 @@ impl ChatPresenter {
             conversation_service,
             chat_service,
             profile_service,
+            app_settings_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -88,6 +101,7 @@ impl ChatPresenter {
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
         Self::emit_initial_conversation_list(&self.conversation_service, &self.view_tx).await;
+        Self::emit_initial_export_format(&self.app_settings_service, &self.view_tx).await;
         Self::restore_startup_conversation(&self.conversation_service, &self.view_tx).await;
         self.spawn_event_loop();
 
@@ -125,6 +139,7 @@ impl ChatPresenter {
         conversation_service: &Arc<dyn ConversationService>,
         chat_service: &Arc<dyn ChatService>,
         profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: AppEvent,
     ) {
@@ -135,6 +150,7 @@ impl ChatPresenter {
                     conversation_service,
                     chat_service,
                     profile_service,
+                    app_settings_service,
                     view_tx,
                     user_evt,
                 )
@@ -159,6 +175,7 @@ impl ChatPresenter {
         conversation_service: &Arc<dyn ConversationService>,
         chat_service: &Arc<dyn ChatService>,
         profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: UserEvent,
     ) {
@@ -199,6 +216,18 @@ impl ChatPresenter {
             }
             UserEvent::RefreshHistory => {
                 let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
+            }
+            UserEvent::SelectConversationExportFormat { format } => {
+                Self::handle_select_conversation_export_format(
+                    app_settings_service,
+                    view_tx,
+                    format,
+                )
+                .await;
+            }
+            UserEvent::SaveConversation => {
+                Self::handle_save_conversation(conversation_service, app_settings_service, view_tx)
+                    .await;
             }
             _ => {} // Ignore other user events
         }
@@ -290,6 +319,7 @@ impl ChatPresenter {
         let conversation_service = self.conversation_service.clone();
         let chat_service = self.chat_service.clone();
         let profile_service = self.profile_service.clone();
+        let app_settings_service = self.app_settings_service.clone();
         let mut view_tx = self.view_tx.clone();
 
         tokio::spawn(async move {
@@ -300,6 +330,7 @@ impl ChatPresenter {
                             &conversation_service,
                             &chat_service,
                             &profile_service,
+                            &app_settings_service,
                             &mut view_tx,
                             event,
                         )
@@ -343,6 +374,146 @@ impl ChatPresenter {
             .await;
 
         Ok(())
+    }
+
+    async fn emit_initial_export_format(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &mpsc::Sender<ViewCommand>,
+    ) {
+        let view_tx = view_tx.clone();
+        let format = Self::load_conversation_export_format(app_settings_service).await;
+        let _ = view_tx
+            .send(ViewCommand::ShowConversationExportFormat { format })
+            .await;
+    }
+
+    async fn load_conversation_export_format(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+    ) -> ConversationExportFormat {
+        app_settings_service
+            .get_setting(EXPORT_FORMAT_SETTING_KEY)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|raw| ConversationExportFormat::from_setting_value(&raw))
+            .unwrap_or_default()
+    }
+
+    async fn handle_select_conversation_export_format(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        format: ConversationExportFormat,
+    ) {
+        if let Err(error) = app_settings_service
+            .set_setting(
+                EXPORT_FORMAT_SETTING_KEY,
+                format.as_setting_value().to_string(),
+            )
+            .await
+        {
+            tracing::warn!("Failed to persist export format setting: {error}");
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Export Format".to_string(),
+                    message: "Failed to persist export format preference".to_string(),
+                    severity: ErrorSeverity::Warning,
+                })
+                .await;
+        }
+
+        let _ = view_tx
+            .send(ViewCommand::ShowConversationExportFormat { format })
+            .await;
+    }
+
+    async fn handle_save_conversation(
+        conversation_service: &Arc<dyn ConversationService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+    ) {
+        let active = match conversation_service.get_active().await {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                let _ = view_tx
+                    .send(ViewCommand::ShowNotification {
+                        message: "No active conversation to save".to_string(),
+                    })
+                    .await;
+                return;
+            }
+            Err(error) => {
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Save Conversation".to_string(),
+                        message: format!("Failed to load active conversation: {error}"),
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
+                return;
+            }
+        };
+
+        let conversation = match conversation_service.load(active).await {
+            Ok(conversation) => conversation,
+            Err(error) => {
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Save Conversation".to_string(),
+                        message: format!("Failed to load conversation for export: {error}"),
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
+                return;
+            }
+        };
+
+        let format = Self::load_conversation_export_format(app_settings_service).await;
+        let export_body = match render_export_content(&conversation, format) {
+            Ok(body) => body,
+            Err(error) => {
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Save Conversation".to_string(),
+                        message: error,
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
+                return;
+            }
+        };
+
+        let configured_export_dir = app_settings_service
+            .get_setting(EXPORT_DIR_SETTING_KEY)
+            .await
+            .ok()
+            .flatten();
+        let export_dir = resolve_export_directory(configured_export_dir.as_deref());
+        let filename = build_export_filename(&conversation, format);
+        let path = resolve_unique_export_path(&export_dir, &filename);
+
+        if let Err(error) = write_export_file(&path, &export_body) {
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Save Conversation".to_string(),
+                    message: error,
+                    severity: ErrorSeverity::Error,
+                })
+                .await;
+            return;
+        }
+
+        let _ = view_tx
+            .send(ViewCommand::ShowNotification {
+                message: format!(
+                    "Conversation saved as {} ({})",
+                    path.display(),
+                    format.display_label()
+                ),
+            })
+            .await;
+        let _ = view_tx
+            .send(ViewCommand::ShowConversationExportFormat { format })
+            .await;
     }
 
     async fn replay_conversation_messages(
