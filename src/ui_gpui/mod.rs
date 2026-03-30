@@ -20,7 +20,7 @@ pub mod theme_catalog;
 pub mod tray_bridge;
 pub mod views;
 
-pub use app_store::{GpuiAppSnapshot, GpuiAppStore};
+pub use app_store::{is_store_managed, GpuiAppSnapshot, GpuiAppStore};
 
 pub use app::GpuiApp;
 pub use bridge::{spawn_user_event_forwarder, GpuiBridge, ViewCommandSink};

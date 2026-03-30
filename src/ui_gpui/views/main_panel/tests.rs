@@ -48,24 +48,24 @@ fn assert_settings_and_chat_notification_counts(
     assert_eq!(targets.chat_notification_commands, expected_chat);
 }
 
-fn assert_profile_forwarding(
+fn assert_profile_forwarding_via_store(
+    store: &Arc<GpuiAppStore>,
     panel: &mut MainPanel,
     profile_id: Uuid,
     cx: &mut gpui::Context<MainPanel>,
 ) {
-    panel.handle_command(
-        ViewCommand::ShowSettings {
-            profiles: vec![profile_summary(
-                profile_id,
-                "Workspace Default",
-                "openai",
-                "gpt-4.1",
-                true,
-            )],
-            selected_profile_id: Some(profile_id),
-        },
-        cx,
-    );
+    store.reduce_batch(vec![ViewCommand::ChatProfilesUpdated {
+        profiles: vec![profile_summary(
+            profile_id,
+            "Workspace Default",
+            "openai",
+            "gpt-4.1",
+            true,
+        )],
+        selected_profile_id: Some(profile_id),
+    }]);
+    let snapshot = store.current_snapshot();
+    panel.apply_store_snapshot(snapshot, cx);
 
     let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
     chat_view.read_with(cx, |view, _| {
@@ -627,17 +627,16 @@ async fn handle_command_forwards_registry_results_and_errors_to_real_mcp_add_vie
 }
 
 #[gpui::test]
-async fn handle_command_forwards_settings_profiles_and_routes_mcp_commands_to_expected_targets(
-    cx: &mut TestAppContext,
-) {
+async fn handle_command_routes_mcp_commands_to_expected_targets(cx: &mut TestAppContext) {
     let (app_state, _user_rx, _first_id, _second_id, selected_profile_id) = build_app_state();
+    let store = Arc::clone(&app_state.app_store);
     cx.set_global(app_state);
     let panel = cx.new(MainPanel::new);
     let saved_mcp_id = Uuid::new_v4();
 
     panel.update(cx, |panel: &mut MainPanel, cx| {
         panel.init(cx);
-        assert_profile_forwarding(panel, selected_profile_id, cx);
+        assert_profile_forwarding_via_store(&store, panel, selected_profile_id, cx);
         assert_mcp_routing_targets(saved_mcp_id);
         assert_settings_theme_routing_targets();
     });

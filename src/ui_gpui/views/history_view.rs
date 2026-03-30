@@ -184,84 +184,20 @@ impl HistoryView {
             .collect()
     }
 
-    fn refresh_selection_flags(&mut self) {
-        let selected_conversation_id = self.state.selected_conversation_id;
-        for conversation in &mut self.state.conversations {
-            conversation.is_selected = Some(conversation.id) == selected_conversation_id;
+    /// Handle `ViewCommand` from presenter.
+    ///
+    /// Store-managed commands ([`ConversationListRefreshed`], [`ConversationActivated`],
+    /// [`ConversationCreated`], [`ConversationDeleted`], [`ConversationRenamed`]) are handled
+    /// exclusively via [`apply_store_snapshot`](Self::apply_store_snapshot).
+    /// This dispatch is reserved for commands the store does NOT own:
+    ///
+    /// - [`ConversationCleared`] — emits [`RefreshHistory`](UserEvent::RefreshHistory) side-effect.
+    pub fn handle_command(&mut self, command: &ViewCommand, cx: &mut gpui::Context<Self>) {
+        if command == &ViewCommand::ConversationCleared {
+            self.emit(&UserEvent::RefreshHistory);
+            cx.notify();
         }
-    }
-
-    /// Handle `ViewCommand` from presenter
-    /// @plan PLAN-20250130-GPUIREDUX.P05
-    pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
-        match command {
-            ViewCommand::ConversationListRefreshed { conversations } => {
-                let selected_conversation_id = self.state.selected_conversation_id;
-                self.state.conversations = conversations
-                    .into_iter()
-                    .map(|conversation| {
-                        let title = if conversation.title.trim().is_empty() {
-                            "Untitled Conversation".to_string()
-                        } else {
-                            conversation.title
-                        };
-
-                        ConversationItem::new(conversation.id, title)
-                            .with_date(Self::format_date(conversation.updated_at))
-                            .with_message_count(conversation.message_count)
-                            .with_selected(Some(conversation.id) == selected_conversation_id)
-                    })
-                    .collect();
-                cx.notify();
-            }
-            ViewCommand::ConversationActivated {
-                id,
-                selection_generation: _,
-            } => {
-                self.state.selected_conversation_id = Some(id);
-                self.refresh_selection_flags();
-                cx.notify();
-            }
-            ViewCommand::ConversationCreated { id, .. } => {
-                if !self
-                    .state
-                    .conversations
-                    .iter()
-                    .any(|conversation| conversation.id == id)
-                {
-                    self.state.conversations.insert(
-                        0,
-                        ConversationItem::new(id, "New Conversation")
-                            .with_date("Just now")
-                            .with_message_count(0)
-                            .with_selected(Some(id) == self.state.selected_conversation_id),
-                    );
-                }
-                cx.notify();
-            }
-            ViewCommand::ConversationDeleted { id } => {
-                self.state.conversations.retain(|c| c.id != id);
-                if self.state.selected_conversation_id == Some(id) {
-                    self.state.selected_conversation_id =
-                        self.state.conversations.first().map(|c| c.id);
-                    self.refresh_selection_flags();
-                }
-                cx.notify();
-            }
-            ViewCommand::ConversationCleared => {
-                self.emit(&UserEvent::RefreshHistory);
-                cx.notify();
-            }
-            ViewCommand::ConversationRenamed { id, new_title } => {
-                if let Some(conv) = self.state.conversations.iter_mut().find(|c| c.id == id) {
-                    conv.title = new_title;
-                }
-                cx.notify();
-            }
-            _ => {
-                // Other commands not relevant to history view
-            }
-        }
+        // All other commands are store-managed and arrive via apply_store_snapshot
     }
 
     /// Render the top bar with back button and title
@@ -540,26 +476,25 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn list_refresh_and_activation_commands_update_conversations(cx: &mut TestAppContext) {
+    async fn snapshot_delivery_covers_list_refresh_and_activation(cx: &mut TestAppContext) {
         let older_id = Uuid::new_v4();
         let selected_id = Uuid::new_v4();
         let view = cx.new(HistoryView::new);
 
         view.update(cx, |view: &mut HistoryView, cx| {
-            view.handle_command(
-                ViewCommand::ConversationListRefreshed {
-                    conversations: vec![
-                        conversation_summary(older_id, "", Utc::now() - Duration::hours(3), 4),
-                        conversation_summary(
-                            selected_id,
-                            "Selected",
-                            Utc::now() - Duration::minutes(2),
-                            2,
-                        ),
-                    ],
-                },
-                cx,
-            );
+            let snapshot = HistoryStoreSnapshot {
+                conversations: vec![
+                    conversation_summary(older_id, "", Utc::now() - Duration::hours(3), 4),
+                    conversation_summary(
+                        selected_id,
+                        "Selected",
+                        Utc::now() - Duration::minutes(2),
+                        2,
+                    ),
+                ],
+                selected_conversation_id: None,
+            };
+            view.apply_store_snapshot(&snapshot, cx);
 
             let conversations = view.conversations();
             assert_eq!(conversations.len(), 2);
@@ -569,13 +504,12 @@ mod tests {
             assert_eq!(conversations[1].date_display, "2m ago");
             assert!(conversations.iter().all(|c| !c.is_selected));
 
-            view.handle_command(
-                ViewCommand::ConversationActivated {
-                    id: selected_id,
-                    selection_generation: 7,
-                },
-                cx,
-            );
+            // Simulate activation via updated snapshot with selection
+            let snapshot_with_selection = HistoryStoreSnapshot {
+                conversations: snapshot.conversations,
+                selected_conversation_id: Some(selected_id),
+            };
+            view.apply_store_snapshot(&snapshot_with_selection, cx);
             assert_eq!(view.state.selected_conversation_id, Some(selected_id));
             assert!(view.conversations()[1].is_selected);
             assert!(!view.conversations()[0].is_selected);
@@ -583,7 +517,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn created_renamed_deleted_cleared_commands_update_state_and_emit_refresh(
+    async fn snapshot_delivery_covers_create_rename_delete_and_cleared_emits_refresh(
         cx: &mut TestAppContext,
     ) {
         let selected_id = Uuid::new_v4();
@@ -593,54 +527,57 @@ mod tests {
 
         view.update(cx, |view: &mut HistoryView, cx| {
             view.set_bridge(Arc::clone(&bridge));
-            view.state.selected_conversation_id = Some(selected_id);
-            view.state.conversations =
-                vec![ConversationItem::new(selected_id, "Selected").with_selected(true)];
 
-            view.handle_command(
-                ViewCommand::ConversationCreated {
-                    id: created_id,
-                    profile_id: Uuid::new_v4(),
-                },
-                cx,
-            );
+            // Initial state with one conversation
+            let initial_snapshot = HistoryStoreSnapshot {
+                conversations: vec![conversation_summary(selected_id, "Selected", Utc::now(), 0)],
+                selected_conversation_id: Some(selected_id),
+            };
+            view.apply_store_snapshot(&initial_snapshot, cx);
+            assert_eq!(view.conversations().len(), 1);
+            assert_eq!(view.conversations()[0].title, "Selected");
+
+            // New conversation created: store snapshot now includes it
+            let created_snapshot = HistoryStoreSnapshot {
+                conversations: vec![
+                    conversation_summary(created_id, "New Conversation", Utc::now(), 0),
+                    conversation_summary(selected_id, "Selected", Utc::now(), 0),
+                ],
+                selected_conversation_id: Some(created_id),
+            };
+            view.apply_store_snapshot(&created_snapshot, cx);
             assert_eq!(view.conversations()[0].id, created_id);
             assert_eq!(view.conversations()[0].title, "New Conversation");
-            assert_eq!(view.conversations()[0].date_display, "Just now");
             assert_eq!(view.conversations()[0].message_count, 0);
-            assert!(!view.conversations()[0].is_selected);
 
-            // duplicate creation is idempotent
-            view.handle_command(
-                ViewCommand::ConversationCreated {
-                    id: created_id,
-                    profile_id: Uuid::new_v4(),
-                },
-                cx,
-            );
-            assert_eq!(
-                view.conversations()
-                    .iter()
-                    .filter(|c| c.id == created_id)
-                    .count(),
-                1
-            );
-
-            view.handle_command(
-                ViewCommand::ConversationRenamed {
-                    id: created_id,
-                    new_title: "Renamed conversation".to_string(),
-                },
-                cx,
-            );
+            // Renamed conversation: store snapshot reflects the new title
+            let renamed_snapshot = HistoryStoreSnapshot {
+                conversations: vec![
+                    conversation_summary(created_id, "Renamed conversation", Utc::now(), 0),
+                    conversation_summary(selected_id, "Selected", Utc::now(), 0),
+                ],
+                selected_conversation_id: Some(created_id),
+            };
+            view.apply_store_snapshot(&renamed_snapshot, cx);
             assert_eq!(view.conversations()[0].title, "Renamed conversation");
 
-            view.handle_command(ViewCommand::ConversationDeleted { id: selected_id }, cx);
+            // Deleted conversation: store snapshot removes it
+            let deleted_snapshot = HistoryStoreSnapshot {
+                conversations: vec![conversation_summary(
+                    created_id,
+                    "Renamed conversation",
+                    Utc::now(),
+                    0,
+                )],
+                selected_conversation_id: Some(created_id),
+            };
+            view.apply_store_snapshot(&deleted_snapshot, cx);
             assert_eq!(view.state.selected_conversation_id, Some(created_id));
             assert!(view.conversations()[0].is_selected);
             assert!(view.conversations().iter().all(|c| c.id != selected_id));
 
-            view.handle_command(ViewCommand::ConversationCleared, cx);
+            // ConversationCleared is the one command still handled directly
+            view.handle_command(&ViewCommand::ConversationCleared, cx);
         });
 
         assert_eq!(

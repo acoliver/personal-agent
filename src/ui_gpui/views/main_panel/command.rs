@@ -4,8 +4,10 @@
 //! (`ChatView`, `HistoryView`, `SettingsView`, etc.) and handles
 //! navigation transitions triggered by commands.
 //!
-//! The top-level match groups variants by destination view(s) and
-//! delegates to per-group helpers to keep cyclomatic complexity low.
+//! Store-managed commands (conversation lifecycle, streaming, thinking,
+//! profiles, etc.) are NOT forwarded here. They flow exclusively through
+//! the `AppStore` → snapshot subscription → `apply_store_snapshot` path.
+//! Only ephemeral / non-store commands are dispatched through this method.
 //!
 //! @plan PLAN-20260325-ISSUE11B.P02
 //! @plan PLAN-20250130-GPUIREDUX.P11
@@ -26,6 +28,11 @@ impl MainPanel {
 
     /// Handle `ViewCommand` from the presentation layer.
     ///
+    /// Store-managed commands are filtered out in the bridge pump before
+    /// reaching this method. Only non-store commands (navigation, model
+    /// selector, MCP, notifications, export feedback, `ConversationCleared`,
+    /// `ToggleThinkingVisibility`) are dispatched here.
+    ///
     /// @plan PLAN-20250130-GPUIREDUX.P11
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
     /// @requirement REQ-WIRE-002
@@ -45,41 +52,21 @@ impl MainPanel {
                 cx.notify();
             }
 
-            // ── chat-only streaming / lifecycle (forward to chat_view) ─
-            ConversationMessagesLoaded { .. }
-            | MessageAppended { .. }
-            | ShowThinking { .. }
-            | HideThinking { .. }
-            | AppendStream { .. }
-            | FinalizeStream { .. }
-            | StreamCancelled { .. }
-            | StreamError { .. }
-            | AppendThinking { .. }
+            // ── chat-only ephemeral commands (forward to chat_view) ────
+            ConversationCleared
             | ToggleThinkingVisibility
-            | ShowConversationExportFormat { .. }
-            | ConversationCleared => self.forward_to_chat(cmd, cx),
-
-            // ── conversation lifecycle (multi-view) ─────────────────────
-            ConversationListRefreshed { .. }
-            | ConversationActivated { .. }
-            | ConversationCreated { .. }
-            | ConversationRenamed { .. }
-            | ConversationTitleUpdated { .. }
-            | ConversationDeleted { .. } => self.handle_conversation_command(cmd, cx),
+            | ShowConversationExportFormat { .. } => self.forward_to_chat(cmd, cx),
 
             // ── model selector + profile editor ─────────────────────────
             ModelSearchResults { .. } | ModelSelected { .. } | ProfileEditorLoad { .. } => {
                 self.handle_model_profile_command(cmd, cx);
             }
 
-            // ── settings + profiles ─────────────────────────────────────
-            ShowSettings { .. }
-            | ShowSettingsTheme { .. }
-            | ChatProfilesUpdated { .. }
+            // ── settings + profiles (non-store) ────────────────────────
+            ShowSettingsTheme { .. }
             | ProfileCreated { .. }
             | ProfileUpdated { .. }
-            | ProfileDeleted { .. }
-            | DefaultProfileChanged { .. } => self.handle_settings_profile_command(cmd, cx),
+            | ProfileDeleted { .. } => self.handle_settings_profile_command(cmd, cx),
 
             // ── MCP ─────────────────────────────────────────────────────
             McpStatusChanged { .. }
@@ -109,100 +96,6 @@ impl MainPanel {
         if let Some(ref chat) = self.chat_view {
             chat.update(cx, |view, cx| {
                 view.handle_command(cmd, cx);
-            });
-        }
-    }
-
-    fn handle_conversation_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
-        match cmd {
-            ViewCommand::ConversationListRefreshed { conversations } => {
-                tracing::info!(
-                    count = conversations.len(),
-                    chat = self.chat_view.is_some(),
-                    history = self.history_view.is_some(),
-                    "MainPanel: ConversationListRefreshed"
-                );
-                let history_convs = conversations.clone();
-                self.forward_to_history_and_chat(
-                    |_| ViewCommand::ConversationListRefreshed {
-                        conversations: history_convs,
-                    },
-                    ViewCommand::ConversationListRefreshed { conversations },
-                    cx,
-                );
-            }
-            ViewCommand::ConversationActivated {
-                id,
-                selection_generation,
-            } => {
-                if let Some(ref chat) = self.chat_view {
-                    tracing::info!(
-                        chat_view_entity_id = ?chat.entity_id(),
-                        conversation_id = %id,
-                        "MainPanel forwarding ConversationActivated to ChatView"
-                    );
-                }
-                self.forward_to_history_and_chat(
-                    |_| ViewCommand::ConversationActivated {
-                        id,
-                        selection_generation,
-                    },
-                    ViewCommand::ConversationActivated {
-                        id,
-                        selection_generation,
-                    },
-                    cx,
-                );
-            }
-            ViewCommand::ConversationCreated { id, profile_id } => {
-                self.forward_to_chat(ViewCommand::ConversationCreated { id, profile_id }, cx);
-                self.navigation.navigate(ViewId::Chat);
-                cx.notify();
-            }
-            ViewCommand::ConversationRenamed { id, new_title } => {
-                self.forward_to_chat(ViewCommand::ConversationRenamed { id, new_title }, cx);
-            }
-            ViewCommand::ConversationTitleUpdated { id, title } => {
-                let history_title = title.clone();
-                self.forward_to_history_and_chat(
-                    |_| ViewCommand::ConversationTitleUpdated {
-                        id,
-                        title: history_title,
-                    },
-                    ViewCommand::ConversationTitleUpdated { id, title },
-                    cx,
-                );
-            }
-            ViewCommand::ConversationDeleted { id } => {
-                self.forward_to_history_and_chat(
-                    |_| ViewCommand::ConversationDeleted { id },
-                    ViewCommand::ConversationDeleted { id },
-                    cx,
-                );
-            }
-            _ => {}
-        }
-    }
-
-    /// Forward a command to both `history_view` and `chat_view`.
-    ///
-    /// `history_cmd_fn` produces the command for history (called first so
-    /// the chat arm can take ownership of `chat_cmd` without cloning).
-    fn forward_to_history_and_chat(
-        &self,
-        history_cmd_fn: impl FnOnce(&ViewCommand) -> ViewCommand,
-        chat_cmd: ViewCommand,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if let Some(ref history) = self.history_view {
-            let hcmd = history_cmd_fn(&chat_cmd);
-            history.update(cx, |view, cx| {
-                view.handle_command(hcmd, cx);
-            });
-        }
-        if let Some(ref chat) = self.chat_view {
-            chat.update(cx, |view, cx| {
-                view.handle_command(chat_cmd, cx);
             });
         }
     }
@@ -284,45 +177,6 @@ impl MainPanel {
 
     fn handle_settings_profile_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
-            ViewCommand::ShowSettings {
-                profiles,
-                selected_profile_id,
-            }
-            | ViewCommand::ChatProfilesUpdated {
-                profiles,
-                selected_profile_id,
-            } => {
-                tracing::info!(
-                    count = profiles.len(),
-                    default = ?selected_profile_id,
-                    settings = self.settings_view.is_some(),
-                    chat = self.chat_view.is_some(),
-                    "MainPanel: ShowSettings/ChatProfilesUpdated"
-                );
-                if let Some(ref settings) = self.settings_view {
-                    let profiles_clone = profiles.clone();
-                    settings.update(cx, |view, cx| {
-                        view.handle_command(
-                            ViewCommand::ShowSettings {
-                                profiles: profiles_clone,
-                                selected_profile_id,
-                            },
-                            cx,
-                        );
-                    });
-                }
-                if let Some(ref chat) = self.chat_view {
-                    chat.update(cx, |view, cx| {
-                        view.handle_command(
-                            ViewCommand::ChatProfilesUpdated {
-                                profiles,
-                                selected_profile_id,
-                            },
-                            cx,
-                        );
-                    });
-                }
-            }
             ViewCommand::ShowSettingsTheme {
                 options,
                 selected_slug,
@@ -357,18 +211,6 @@ impl MainPanel {
                 if let Some(ref settings) = self.settings_view {
                     settings.update(cx, |view, cx| {
                         view.handle_command(ViewCommand::ProfileDeleted { id }, cx);
-                    });
-                }
-            }
-            ViewCommand::DefaultProfileChanged { profile_id } => {
-                if let Some(ref settings) = self.settings_view {
-                    settings.update(cx, |view, cx| {
-                        view.handle_command(ViewCommand::DefaultProfileChanged { profile_id }, cx);
-                    });
-                }
-                if let Some(ref chat) = self.chat_view {
-                    chat.update(cx, |view, cx| {
-                        view.handle_command(ViewCommand::DefaultProfileChanged { profile_id }, cx);
                     });
                 }
             }
