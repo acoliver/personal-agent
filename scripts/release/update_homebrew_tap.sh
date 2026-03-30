@@ -20,9 +20,14 @@ fi
 
 homebrew_tap_repo="${HOMEBREW_TAP_REPO:-acoliver/homebrew-tap}"
 formula_name="${HOMEBREW_FORMULA_NAME:-personal-agent}"
-formula_class_name="PersonalAgent"
+formula_class_name="$(echo "${formula_name}" | sed -E 's/[^a-zA-Z0-9]+/ /g' | awk '{for(i=1;i<=NF;i++){printf toupper(substr($i,1,1)) tolower(substr($i,2))}}')"
 version="${release_tag#v}"
 release_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/${asset_name}"
+
+if [[ -z "${formula_class_name}" ]]; then
+  echo "unable to derive formula class name from HOMEBREW_FORMULA_NAME=${formula_name}" >&2
+  exit 1
+fi
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -54,7 +59,7 @@ EOF
 
 pushd "${tap_dir}" >/dev/null
 
-if git diff --quiet -- "${formula_path}"; then
+if [[ -z "$(git status --porcelain -- "${formula_path}")" ]]; then
   echo "No changes detected in ${formula_path}; skipping push."
   exit 0
 fi

@@ -51,7 +51,7 @@ Defaults are already wired in the workflow and scripts.
 ## Install command for users
 
 ```bash
-brew tap acoliver/homebrew-tap
+brew tap acoliver/tap
 brew install personal-agent
 ```
 

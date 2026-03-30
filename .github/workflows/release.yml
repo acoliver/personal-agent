@@ -41,12 +41,22 @@ jobs:
             release_tag="${GITHUB_REF_NAME}"
           fi
 
-          if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+          if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Release tag must look like vX.Y.Z (received: ${release_tag})"
             exit 1
           fi
 
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate required secrets
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
+            echo "Missing required secret HOMEBREW_TAP_GITHUB_TOKEN"
+            exit 1
+          fi
 
       - name: Build, sign, and package arm64 artifact
         run: scripts/release/package_macos_arm64.sh "${{ steps.tag.outputs.release_tag }}"
@@ -91,11 +101,6 @@ jobs:
           HOMEBREW_FORMULA_NAME: personal-agent
         run: |
           set -euo pipefail
-          if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
-            echo "Missing required secret HOMEBREW_TAP_GITHUB_TOKEN"
-            exit 1
-          fi
-
           scripts/release/update_homebrew_tap.sh \
             "${{ steps.tag.outputs.release_tag }}" \
             "${{ steps.meta.outputs.asset_name }}" \

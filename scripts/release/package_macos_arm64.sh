@@ -41,9 +41,9 @@ echo "Signing binary with ad-hoc identity..."
 codesign --force --sign - "${binary_path}"
 codesign --verify --verbose=2 "${binary_path}"
 
-if ! file "${binary_path}" | grep -q "arm64"; then
+if ! lipo -archs "${binary_path}" | grep -q "arm64"; then
   echo "release binary is not arm64" >&2
-  file "${binary_path}" >&2
+  lipo -archs "${binary_path}" >&2 || true
   exit 1
 fi
 
