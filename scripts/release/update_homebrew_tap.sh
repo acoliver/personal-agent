@@ -13,8 +13,8 @@ asset_sha256="$3"
 : "${HOMEBREW_TAP_GITHUB_TOKEN:?HOMEBREW_TAP_GITHUB_TOKEN must be set}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 
-if [[ "${release_tag}" != v* ]]; then
-  echo "release tag must start with v (received: ${release_tag})" >&2
+if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "release tag must look like vX.Y.Z (received: ${release_tag})" >&2
   exit 1
 fi
 
