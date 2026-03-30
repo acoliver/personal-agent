@@ -92,10 +92,7 @@ impl MainPanel {
             let settings_snapshot = snapshot.settings.clone();
             chat_view.update(cx, |view, cx| {
                 view.apply_store_snapshot(chat_snapshot, cx);
-                // Apply profile data from store so profiles are available on first render
-                if !settings_snapshot.profiles.is_empty() {
-                    view.apply_settings_snapshot(settings_snapshot);
-                }
+                view.apply_settings_snapshot(settings_snapshot);
             });
         }
 

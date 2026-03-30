@@ -671,10 +671,8 @@ fn reduce_default_profile_changed(inner: &mut AppStoreInner, profile_id: Option<
         return false;
     }
     inner.snapshot.settings.selected_profile_id = profile_id;
-    if let Some(new_default_id) = profile_id {
-        for profile in &mut inner.snapshot.settings.profiles {
-            profile.is_default = profile.id == new_default_id;
-        }
+    for profile in &mut inner.snapshot.settings.profiles {
+        profile.is_default = profile_id == Some(profile.id);
     }
     true
 }
