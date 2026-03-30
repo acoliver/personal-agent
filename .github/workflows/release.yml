@@ -1,0 +1,102 @@
+name: Release (Homebrew arm64)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (vX.Y.Z)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  release:
+    name: Build + sign + publish + update tap
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            release_tag="${{ inputs.release_tag }}"
+          else
+            release_tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "Release tag must look like vX.Y.Z (received: ${release_tag})"
+            exit 1
+          fi
+
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build, sign, and package arm64 artifact
+        run: scripts/release/package_macos_arm64.sh "${{ steps.tag.outputs.release_tag }}"
+
+      - name: Gather artifact metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          artifact_dir="artifacts/release"
+          asset_name="$(cat "${artifact_dir}/asset_name.txt")"
+          asset_path="$(cat "${artifact_dir}/asset_path.txt")"
+          sha256="$(cat "${artifact_dir}/sha256.txt")"
+
+          echo "asset_name=${asset_name}" >> "$GITHUB_OUTPUT"
+          echo "asset_path=${asset_path}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.tag.outputs.release_tag }}"
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release upload "${release_tag}" \
+              "${{ steps.meta.outputs.asset_path }}" \
+              artifacts/release/SHA256SUMS.txt \
+              --clobber
+          else
+            gh release create "${release_tag}" \
+              "${{ steps.meta.outputs.asset_path }}" \
+              artifacts/release/SHA256SUMS.txt \
+              --title "${release_tag}" \
+              --generate-notes
+          fi
+
+      - name: Update Homebrew tap formula
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_REPO: acoliver/homebrew-tap
+          HOMEBREW_FORMULA_NAME: personal-agent
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
+            echo "Missing required secret HOMEBREW_TAP_GITHUB_TOKEN"
+            exit 1
+          fi
+
+          scripts/release/update_homebrew_tap.sh \
+            "${{ steps.tag.outputs.release_tag }}" \
+            "${{ steps.meta.outputs.asset_name }}" \
+            "${{ steps.meta.outputs.sha256 }}"
