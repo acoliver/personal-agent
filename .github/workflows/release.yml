@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -87,6 +89,7 @@ jobs:
               --clobber
           else
             gh release create "${release_tag}" \
+              --verify-tag \
               "${{ steps.meta.outputs.asset_path }}" \
               artifacts/release/SHA256SUMS.txt \
               --title "${release_tag}" \
