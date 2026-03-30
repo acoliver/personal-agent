@@ -650,6 +650,7 @@ async fn start_all_presenters(
         services.conversation.clone(),
         services.chat.clone(),
         services.profile.clone(),
+        services.app_settings.clone(),
         view_tx.clone(),
     );
     let mut history = HistoryPresenter::new(

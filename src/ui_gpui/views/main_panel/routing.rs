@@ -42,6 +42,9 @@ pub struct CommandTargets {
     pub chat_messages_received: usize,
     pub chat_stream_chunks_received: usize,
     pub chat_stream_finalized: bool,
+    pub chat_export_format_commands: usize,
+    pub chat_notification_commands: usize,
+    pub chat_error_commands: usize,
 
     // History view state
     pub history_conversations_received: usize,
@@ -91,6 +94,23 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         ViewCommand::FinalizeStream { .. } => {
             targets.chat_stream_finalized = true;
         }
+        ViewCommand::ShowConversationExportFormat { .. } => {
+            targets.chat_export_format_commands += 1;
+        }
+        ViewCommand::ShowNotification { message } => {
+            if message.contains("Conversation saved")
+                || message.contains("No active conversation to save")
+            {
+                targets.chat_notification_commands += 1;
+            }
+            targets.settings_notifications_count += 1;
+        }
+        ViewCommand::ShowError { title, .. } => {
+            if title == "Save Conversation" {
+                targets.chat_error_commands += 1;
+            }
+            targets.mcp_error_commands_count += 1;
+        }
 
         // ── History view ────────────────────────────────────────────────
         ViewCommand::ConversationListRefreshed { conversations } => {
@@ -125,12 +145,6 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         }
         ViewCommand::McpDeleted { .. } => {
             targets.mcp_deleted_count += 1;
-        }
-        ViewCommand::ShowNotification { .. } => {
-            targets.settings_notifications_count += 1;
-        }
-        ViewCommand::ShowError { .. } => {
-            targets.mcp_error_commands_count += 1;
         }
         ViewCommand::McpRegistrySearchResults { results } => {
             targets.mcp_registry_results_count += results.len();

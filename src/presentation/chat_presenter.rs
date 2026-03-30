@@ -20,7 +20,10 @@ use crate::events::{
     types::{ConversationEvent, UserEvent},
     AppEvent,
 };
-use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
+use crate::models::ConversationExportFormat;
+use crate::services::{
+    AppSettingsService, ChatService, ConversationService, ProfileService, ServiceError,
+};
 
 /// `ChatPresenter` - handles chat UI events and service coordination
 ///
@@ -40,11 +43,17 @@ pub struct ChatPresenter {
     /// Reference to profile service
     profile_service: Arc<dyn ProfileService>,
 
+    /// Reference to app settings service
+    app_settings_service: Arc<dyn AppSettingsService>,
+
     /// View command sender (mpsc for reliable delivery)
     view_tx: mpsc::Sender<ViewCommand>,
 
     /// Running flag for event loop
     running: Arc<std::sync::atomic::AtomicBool>,
+
+    /// In-session export format selection used for save operations.
+    current_export_format: Arc<std::sync::Mutex<crate::models::ConversationExportFormat>>,
 }
 
 impl ChatPresenter {
@@ -58,6 +67,7 @@ impl ChatPresenter {
         conversation_service: Arc<dyn ConversationService>,
         chat_service: Arc<dyn ChatService>,
         profile_service: Arc<dyn ProfileService>,
+        app_settings_service: Arc<dyn AppSettingsService>,
         view_tx: mpsc::Sender<ViewCommand>,
     ) -> Self {
         Self {
@@ -65,8 +75,12 @@ impl ChatPresenter {
             conversation_service,
             chat_service,
             profile_service,
+            app_settings_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            current_export_format: Arc::new(std::sync::Mutex::new(
+                ConversationExportFormat::default(),
+            )),
         }
     }
 
@@ -88,6 +102,12 @@ impl ChatPresenter {
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
         Self::emit_initial_conversation_list(&self.conversation_service, &self.view_tx).await;
+        Self::emit_initial_export_format(
+            &self.app_settings_service,
+            &self.current_export_format,
+            &self.view_tx,
+        )
+        .await;
         Self::restore_startup_conversation(&self.conversation_service, &self.view_tx).await;
         self.spawn_event_loop();
 
@@ -121,10 +141,13 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
+    #[allow(clippy::too_many_arguments)]
     async fn handle_event(
         conversation_service: &Arc<dyn ConversationService>,
         chat_service: &Arc<dyn ChatService>,
         profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        current_export_format: &Arc<std::sync::Mutex<ConversationExportFormat>>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: AppEvent,
     ) {
@@ -135,6 +158,8 @@ impl ChatPresenter {
                     conversation_service,
                     chat_service,
                     profile_service,
+                    app_settings_service,
+                    current_export_format,
                     view_tx,
                     user_evt,
                 )
@@ -155,10 +180,13 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
+    #[allow(clippy::too_many_arguments)]
     async fn handle_user_event(
         conversation_service: &Arc<dyn ConversationService>,
         chat_service: &Arc<dyn ChatService>,
         profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        current_export_format: &Arc<std::sync::Mutex<ConversationExportFormat>>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: UserEvent,
     ) {
@@ -199,6 +227,24 @@ impl ChatPresenter {
             }
             UserEvent::RefreshHistory => {
                 let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
+            }
+            UserEvent::SelectConversationExportFormat { format } => {
+                Self::handle_select_conversation_export_format(
+                    app_settings_service,
+                    current_export_format,
+                    view_tx,
+                    format,
+                )
+                .await;
+            }
+            UserEvent::SaveConversation => {
+                Self::handle_save_conversation(
+                    conversation_service,
+                    app_settings_service,
+                    current_export_format,
+                    view_tx,
+                )
+                .await;
             }
             _ => {} // Ignore other user events
         }
@@ -290,6 +336,8 @@ impl ChatPresenter {
         let conversation_service = self.conversation_service.clone();
         let chat_service = self.chat_service.clone();
         let profile_service = self.profile_service.clone();
+        let app_settings_service = self.app_settings_service.clone();
+        let current_export_format = self.current_export_format.clone();
         let mut view_tx = self.view_tx.clone();
 
         tokio::spawn(async move {
@@ -300,6 +348,8 @@ impl ChatPresenter {
                             &conversation_service,
                             &chat_service,
                             &profile_service,
+                            &app_settings_service,
+                            &current_export_format,
                             &mut view_tx,
                             event,
                         )

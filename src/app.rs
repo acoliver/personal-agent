@@ -215,6 +215,7 @@ impl App {
                 Arc::clone(&services.conversation),
                 Arc::clone(&services.chat),
                 Arc::clone(&services.profile),
+                Arc::clone(&services.app_settings),
                 chat_view_tx,
             ),
         };

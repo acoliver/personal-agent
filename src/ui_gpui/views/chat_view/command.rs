@@ -13,6 +13,14 @@ use crate::presentation::view_command::{ConversationSummary, ViewCommand};
 use uuid::Uuid;
 
 impl ChatView {
+    fn is_export_notification(message: &str) -> bool {
+        message.contains("Conversation saved") || message.contains("No active conversation to save")
+    }
+
+    fn is_export_error(title: &str) -> bool {
+        title == "Save Conversation"
+    }
+
     /// Handle incoming `ViewCommands`.
     ///
     /// @plan PLAN-20250130-GPUIREDUX.P04
@@ -51,6 +59,11 @@ impl ChatView {
             // ── profiles ────────────────────────────────────────────────
             ChatProfilesUpdated { .. } | ShowSettings { .. } | DefaultProfileChanged { .. } => {
                 self.handle_profile_command(cmd, cx);
+            }
+
+            // ── export controls and save feedback ──────────────────────
+            ShowConversationExportFormat { .. } | ShowNotification { .. } | ShowError { .. } => {
+                self.handle_export_feedback_command(cmd, cx);
             }
 
             _ => {}
@@ -414,6 +427,8 @@ impl ChatView {
                 self.state.conversation_dropdown_open = false;
                 self.state.conversation_title_editing = false;
                 self.state.conversation_title_input.clear();
+                self.state.export_feedback_message = None;
+                self.state.export_feedback_is_error = false;
                 self.state.chat_autoscroll_enabled = true;
                 self.chat_scroll_handle.scroll_to_bottom();
                 self.state.sync_conversation_title_from_active();
@@ -459,6 +474,34 @@ impl ChatView {
                 self.state.sync_current_model_from_profile();
                 self.state.sync_profile_dropdown_index();
                 cx.notify();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_export_feedback_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        match cmd {
+            ViewCommand::ShowConversationExportFormat { format } => {
+                self.state.conversation_export_format = format;
+                cx.notify();
+            }
+            ViewCommand::ShowNotification { message } => {
+                if Self::is_export_notification(&message) {
+                    self.state.export_feedback_message = Some(message);
+                    self.state.export_feedback_is_error = false;
+                    cx.notify();
+                }
+            }
+            ViewCommand::ShowError {
+                title,
+                message,
+                severity: _,
+            } => {
+                if Self::is_export_error(&title) {
+                    self.state.export_feedback_message = Some(format!("{title}: {message}"));
+                    self.state.export_feedback_is_error = true;
+                    cx.notify();
+                }
             }
             _ => {}
         }

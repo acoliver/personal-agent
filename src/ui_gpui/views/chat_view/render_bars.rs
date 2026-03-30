@@ -13,6 +13,27 @@ use crate::presentation::view_command::{ConversationSummary, ProfileSummary};
 use crate::ui_gpui::theme::Theme;
 use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
 
+macro_rules! icon_btn {
+    ($id:expr, $label:expr, $active:expr, $handler:expr) => {
+        div()
+            .id($id)
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when($active, |d| d.bg(Theme::bg_dark()))
+            .when(!$active, |d| {
+                d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+            })
+            .text_size(px(14.0))
+            .text_color(Theme::text_primary())
+            .child($label)
+            .on_mouse_down(MouseButton::Left, $handler)
+    };
+}
+
 impl ChatView {
     /// Render the top bar with icon, title, and toolbar buttons
     /// @plan PLAN-20250130-GPUIREDUX.P04
@@ -40,30 +61,9 @@ impl ChatView {
             .child(self.render_toolbar_buttons(cx))
     }
 
-    /// Right-side toolbar: [T][R][H][Settings][Exit]
+    /// Right-side toolbar: [T][R][H][MD/TXT/JSON][Save][Settings][Exit]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
-
-        macro_rules! icon_btn {
-            ($id:expr, $label:expr, $active:expr, $handler:expr) => {
-                div()
-                    .id($id)
-                    .size(px(28.0))
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .when($active, |d| d.bg(Theme::bg_dark()))
-                    .when(!$active, |d| {
-                        d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
-                    })
-                    .text_size(px(14.0))
-                    .text_color(Theme::text_primary())
-                    .child($label)
-                    .on_mouse_down(MouseButton::Left, $handler)
-            };
-        }
 
         div()
             .flex()
@@ -97,6 +97,23 @@ impl ChatView {
                 })
             ))
             .child(icon_btn!(
+                "btn-export-format",
+                self.state.conversation_export_format.display_label(),
+                false,
+                cx.listener(|this, _, _window, _cx| {
+                    let format = this.state.conversation_export_format.next();
+                    this.emit(UserEvent::SelectConversationExportFormat { format });
+                })
+            ))
+            .child(icon_btn!(
+                "btn-save-conversation",
+                "\u{2B07}",
+                false,
+                cx.listener(|this, _, _window, _cx| {
+                    this.emit(UserEvent::SaveConversation);
+                })
+            ))
+            .child(icon_btn!(
                 "btn-settings",
                 "\u{2699}",
                 false,
@@ -127,6 +144,38 @@ impl ChatView {
                             std::process::exit(0);
                         }),
                     ),
+            )
+    }
+
+    pub(super) fn render_export_feedback_bar(&self) -> impl IntoElement {
+        let message = self
+            .state
+            .export_feedback_message
+            .clone()
+            .unwrap_or_default();
+        let text_color = if self.state.export_feedback_is_error {
+            Theme::error()
+        } else {
+            Theme::text_secondary()
+        };
+
+        div()
+            .id("chat-export-feedback")
+            .h(px(24.0))
+            .w_full()
+            .bg(Theme::bg_darker())
+            .px(px(12.0))
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .w_full()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(11.0))
+                    .text_color(text_color)
+                    .child(message),
             )
     }
 

@@ -63,6 +63,14 @@ pub enum UserEvent {
     /// User toggled thinking display
     ToggleThinking,
 
+    /// User requested conversation export with the currently selected format.
+    SaveConversation,
+
+    /// User selected an export format for conversation save.
+    SelectConversationExportFormat {
+        format: crate::models::ConversationExportFormat,
+    },
+
     /// User started renaming conversation
     StartRenameConversation { id: Uuid },
 

@@ -345,6 +345,7 @@ async fn select_conversation_emits_activation_and_replays_messages() {
 
     let chat_service = Arc::new(MockChatService) as Arc<dyn ChatService>;
     let profile_service = Arc::new(EmptyProfileService) as Arc<dyn ProfileService>;
+    let app_settings = Arc::new(MockAppSettings) as Arc<dyn AppSettingsService>;
 
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(64);
@@ -354,6 +355,7 @@ async fn select_conversation_emits_activation_and_replays_messages() {
         conversation_service,
         chat_service,
         profile_service,
+        app_settings,
         view_tx,
     );
     presenter.start().await.expect("start chat presenter");
@@ -550,6 +552,7 @@ async fn selection_generation_protocol_is_present() {
 
     let chat_service = Arc::new(MockChatService) as Arc<dyn ChatService>;
     let profile_service = Arc::new(EmptyProfileService) as Arc<dyn ProfileService>;
+    let app_settings = Arc::new(MockAppSettings) as Arc<dyn AppSettingsService>;
 
     let event_bus = Arc::new(EventBus::new(64));
     let (user_tx, user_rx) = flume::bounded::<UserEvent>(16);
@@ -566,6 +569,7 @@ async fn selection_generation_protocol_is_present() {
         conversation_service,
         chat_service,
         profile_service,
+        app_settings,
         presenter_view_tx,
     );
     presenter.start().await.expect("start chat presenter");

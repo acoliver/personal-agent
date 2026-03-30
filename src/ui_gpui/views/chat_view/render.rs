@@ -576,6 +576,10 @@ impl gpui::Render for ChatView {
             .child(self.render_top_bar(cx))
             // Title bar (32px)
             .child(self.render_title_bar(cx))
+            // Export feedback row
+            .when(self.state.export_feedback_message.is_some(), |d| {
+                d.child(self.render_export_feedback_bar())
+            })
             // Chat area (flex)
             .child(self.render_chat_area(cx))
             // Input bar (50px)
