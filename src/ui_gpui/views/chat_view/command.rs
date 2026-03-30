@@ -13,6 +13,14 @@ use crate::presentation::view_command::{ConversationSummary, ViewCommand};
 use uuid::Uuid;
 
 impl ChatView {
+    fn is_export_notification(message: &str) -> bool {
+        message.contains("Conversation saved") || message.contains("No active conversation to save")
+    }
+
+    fn is_export_error(title: &str) -> bool {
+        title == "Save Conversation"
+    }
+
     /// Handle incoming `ViewCommands`.
     ///
     /// @plan PLAN-20250130-GPUIREDUX.P04
@@ -478,18 +486,22 @@ impl ChatView {
                 cx.notify();
             }
             ViewCommand::ShowNotification { message } => {
-                self.state.export_feedback_message = Some(message);
-                self.state.export_feedback_is_error = false;
-                cx.notify();
+                if Self::is_export_notification(&message) {
+                    self.state.export_feedback_message = Some(message);
+                    self.state.export_feedback_is_error = false;
+                    cx.notify();
+                }
             }
             ViewCommand::ShowError {
                 title,
                 message,
                 severity: _,
             } => {
-                self.state.export_feedback_message = Some(format!("{title}: {message}"));
-                self.state.export_feedback_is_error = true;
-                cx.notify();
+                if Self::is_export_error(&title) {
+                    self.state.export_feedback_message = Some(format!("{title}: {message}"));
+                    self.state.export_feedback_is_error = true;
+                    cx.notify();
+                }
             }
             _ => {}
         }

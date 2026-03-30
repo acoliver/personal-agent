@@ -1,4 +1,6 @@
 use std::fmt::Write as _;
+use std::fs::OpenOptions;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::models::{Conversation, ConversationExportFormat, MessageRole};
@@ -137,15 +139,35 @@ fn render_markdown(conversation: &Conversation) -> String {
         if let Some(thinking) = message.thinking_content.as_deref() {
             let thinking = thinking.trim();
             if !thinking.is_empty() {
+                let fence = markdown_fence(thinking);
                 output.push_str("### Thinking\n\n");
-                output.push_str("```text\n");
+                output.push_str(&fence);
+                output.push_str("text\n");
                 output.push_str(thinking);
-                output.push_str("\n```\n\n");
+                output.push('\n');
+                output.push_str(&fence);
+                output.push_str("\n\n");
             }
         }
     }
 
     output
+}
+
+fn markdown_fence(content: &str) -> String {
+    let mut max_run = 0usize;
+    let mut current = 0usize;
+
+    for ch in content.chars() {
+        if ch == '`' {
+            current += 1;
+            max_run = max_run.max(current);
+        } else {
+            current = 0;
+        }
+    }
+
+    "`".repeat((max_run + 1).max(3))
 }
 
 const fn role_label(role: &MessageRole) -> &'static str {
@@ -173,7 +195,7 @@ pub fn resolve_unique_export_path(directory: &Path, filename: &str) -> PathBuf {
         .and_then(|value| value.to_str())
         .map(str::to_string);
 
-    for index in 1..1000 {
+    for index in 1.. {
         let candidate = extension.as_deref().map_or_else(
             || directory.join(format!("{stem}-{index}")),
             |ext| directory.join(format!("{stem}-{index}.{ext}")),
@@ -184,21 +206,16 @@ pub fn resolve_unique_export_path(directory: &Path, filename: &str) -> PathBuf {
         }
     }
 
-    directory.join(filename)
+    unreachable!("unbounded candidate search must eventually return")
 }
 
-pub fn write_export_file(path: &Path, content: &str) -> Result<(), String> {
+pub fn write_export_file(path: &Path, content: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "failed to create export directory {}: {error}",
-                parent.display()
-            )
-        })?;
+        std::fs::create_dir_all(parent)?;
     }
 
-    std::fs::write(path, content)
-        .map_err(|error| format!("failed to write export file {}: {error}", path.display()))
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(content.as_bytes())
 }
 
 #[cfg(test)]
@@ -257,6 +274,19 @@ mod tests {
     }
 
     #[test]
+    fn markdown_render_uses_dynamic_fence_for_thinking_with_backticks() {
+        let mut conversation = fixture_conversation();
+        conversation.messages[1].thinking_content =
+            Some("```rust\nfn main() { println!(\"hi\"); }\n```".to_string());
+
+        let content = render_export_content(&conversation, ConversationExportFormat::Md)
+            .expect("md render should succeed");
+
+        assert!(content.contains("````text"));
+        assert!(content.contains("\n````\n\n"));
+    }
+
+    #[test]
     fn json_render_serializes_messages() {
         let content =
             render_export_content(&fixture_conversation(), ConversationExportFormat::Json)
@@ -283,5 +313,17 @@ mod tests {
             resolved,
             temp_dir.path().join("20260109-110807-sprint-1.md")
         );
+    }
+
+    #[test]
+    fn write_export_file_uses_create_new_and_refuses_existing_target() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let export_path = temp_dir.path().join("conversation.md");
+
+        write_export_file(&export_path, "first").expect("initial write should succeed");
+        let error =
+            write_export_file(&export_path, "second").expect_err("second write should fail");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
     }
 }
