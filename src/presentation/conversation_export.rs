@@ -222,13 +222,30 @@ pub fn write_export_file_retrying_collisions(
     initial_path: PathBuf,
     content: &str,
 ) -> std::io::Result<PathBuf> {
+    let parent = initial_path
+        .parent()
+        .map_or_else(PathBuf::new, PathBuf::from);
+    let stem = initial_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("conversation")
+        .to_string();
+    let extension = initial_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_string);
+
     let mut path = initial_path;
 
-    for _ in 0..1000 {
+    for attempt in 0..1000 {
         match write_export_file(&path, content) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                path = next_export_candidate(&path);
+                let index = attempt + 1;
+                path = extension.as_deref().map_or_else(
+                    || parent.join(format!("{stem}-{index}")),
+                    |ext| parent.join(format!("{stem}-{index}.{ext}")),
+                );
             }
             Err(error) => return Err(error),
         }
@@ -238,30 +255,6 @@ pub fn write_export_file_retrying_collisions(
         std::io::ErrorKind::AlreadyExists,
         "exhausted unique filename attempts",
     ))
-}
-
-fn next_export_candidate(path: &Path) -> PathBuf {
-    let parent = path.parent().map_or_else(PathBuf::new, PathBuf::from);
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("conversation");
-    let extension = path.extension().and_then(|value| value.to_str());
-
-    let (base_stem, next_index) = match stem.rsplit_once('-') {
-        Some((base, suffix)) => suffix.parse::<usize>().map_or_else(
-            |_| (stem.to_string(), 1),
-            |index| (base.to_string(), index + 1),
-        ),
-        None => (stem.to_string(), 1),
-    };
-
-    let filename = extension.map_or_else(
-        || format!("{base_stem}-{next_index}"),
-        |ext| format!("{base_stem}-{next_index}.{ext}"),
-    );
-
-    parent.join(filename)
 }
 
 #[cfg(test)]
@@ -388,5 +381,20 @@ mod tests {
         assert_eq!(written, temp_dir.path().join("conversation-2.md"));
         let body = std::fs::read_to_string(&written).expect("written file should be readable");
         assert_eq!(body, "payload");
+    }
+
+    #[test]
+    fn write_export_file_retrying_collisions_keeps_numeric_title_suffix() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let first = temp_dir.path().join("sprint-2.md");
+        let second = temp_dir.path().join("sprint-2-1.md");
+
+        std::fs::write(&first, "existing").expect("seed existing file");
+        std::fs::write(&second, "existing").expect("seed second existing file");
+
+        let written = write_export_file_retrying_collisions(first, "payload")
+            .expect("retry helper should find next available file");
+
+        assert_eq!(written, temp_dir.path().join("sprint-2-2.md"));
     }
 }
