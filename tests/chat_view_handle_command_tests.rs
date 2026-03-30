@@ -417,44 +417,46 @@ async fn input_editing_and_ime_composition_follow_real_cursor_and_dropdown_rules
     });
 }
 
+/// After the store reduces `ConversationMessagesLoaded` for the active conversation
+/// and `MessageAppended` for the active conversation, the snapshot contains the
+/// correct transcript. The view must faithfully render it via `apply_store_snapshot`.
+/// Messages targeting inactive conversations are filtered out by the store reducer,
+/// so they never appear in the snapshot.
 #[gpui::test]
-async fn handle_command_ignores_inactive_updates_and_replaces_active_transcript(
+async fn apply_store_snapshot_renders_active_transcript_ignoring_inactive_conversations(
     cx: &mut TestAppContext,
 ) {
     let active_id = Uuid::new_v4();
-    let inactive_id = Uuid::new_v4();
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
 
     view.update(cx, |view: &mut ChatView, cx| {
-        view.state.current_model = "claude-3-7-sonnet".to_string();
-        view.state.messages =
-            vec![personal_agent::ui_gpui::views::chat_view::ChatMessage::user("stale")];
-        view.state.thinking_content = Some("old".to_string());
-        view.state.streaming = StreamingState::Error("old error".to_string());
-        view.state.conversations = vec![conversation(active_id, "Active", 1)];
-        view.set_conversation_id(active_id);
-        view.handle_command(
-            ViewCommand::ConversationActivated {
-                id: active_id,
-                selection_generation: 2,
-            },
-            cx,
-        );
+        view.apply_settings_snapshot(SettingsStoreSnapshot {
+            profiles: vec![profile(
+                Uuid::new_v4(),
+                "Default",
+                "anthropic",
+                "claude-3-7-sonnet",
+                true,
+            )],
+            selected_profile_id: None,
+            settings_visible: false,
+        });
 
-        view.handle_command(
-            ViewCommand::ConversationMessagesLoaded {
-                conversation_id: inactive_id,
-                selection_generation: 1,
-                messages: vec![payload(ViewMessageRole::User, "ignored", None, None)],
-            },
-            cx,
-        );
-
-        view.handle_command(
-            ViewCommand::ConversationMessagesLoaded {
-                conversation_id: active_id,
+        // The store would have reduced: ConversationActivated(active_id, gen=2),
+        // ConversationMessagesLoaded(active_id, gen=2, [hi, hello]),
+        // MessageAppended(active_id, Assistant, "follow-up").
+        // The inactive-id messages are dropped by the store, so the snapshot
+        // only contains the active conversation's messages.
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(active_id),
+                selected_conversation_title: "Active".to_string(),
                 selection_generation: 2,
-                messages: vec![
+                load_state: ConversationLoadState::Ready {
+                    conversation_id: active_id,
+                    generation: 2,
+                },
+                transcript: vec![
                     payload(ViewMessageRole::User, "hi", None, Some(10)),
                     payload(
                         ViewMessageRole::Assistant,
@@ -462,25 +464,10 @@ async fn handle_command_ignores_inactive_updates_and_replaces_active_transcript(
                         Some("reasoning"),
                         Some(20),
                     ),
+                    payload(ViewMessageRole::Assistant, "follow-up", None, None),
                 ],
-            },
-            cx,
-        );
-
-        view.handle_command(
-            ViewCommand::MessageAppended {
-                conversation_id: inactive_id,
-                role: ViewMessageRole::Assistant,
-                content: "ignored again".to_string(),
-            },
-            cx,
-        );
-
-        view.handle_command(
-            ViewCommand::MessageAppended {
-                conversation_id: active_id,
-                role: ViewMessageRole::Assistant,
-                content: "follow-up".to_string(),
+                streaming: StreamingStoreSnapshot::default(),
+                conversations: vec![conversation(active_id, "Active", 3)],
             },
             cx,
         );
@@ -507,39 +494,28 @@ async fn handle_command_ignores_inactive_updates_and_replaces_active_transcript(
     });
 }
 
+/// The store's `reduce_messages_loaded` rejects stale generation numbers.
+/// The snapshot delivered to the view only contains the fresh (matching-generation)
+/// messages, so `apply_store_snapshot` renders the correct transcript.
 #[gpui::test]
-async fn stale_conversation_messages_loaded_generation_is_ignored(cx: &mut TestAppContext) {
+async fn apply_store_snapshot_uses_freshest_generation_transcript(cx: &mut TestAppContext) {
     let active_id = Uuid::new_v4();
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
 
     view.update(cx, |view: &mut ChatView, cx| {
-        view.state.current_model = "claude-3-7-sonnet".to_string();
-        view.state.conversations = vec![conversation(active_id, "Active", 1)];
-        view.handle_command(
-            ViewCommand::ConversationActivated {
-                id: active_id,
+        // The store reduced ConversationActivated(active_id, gen=2) then
+        // ConversationMessagesLoaded(active_id, gen=2, fresh messages).
+        // A stale gen=1 load would have been rejected by the store.
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(active_id),
+                selected_conversation_title: "Active".to_string(),
                 selection_generation: 2,
-            },
-            cx,
-        );
-
-        view.handle_command(
-            ViewCommand::ConversationMessagesLoaded {
-                conversation_id: active_id,
-                selection_generation: 1,
-                messages: vec![
-                    payload(ViewMessageRole::User, "stale user", None, Some(1)),
-                    payload(ViewMessageRole::Assistant, "stale assistant", None, Some(2)),
-                ],
-            },
-            cx,
-        );
-
-        view.handle_command(
-            ViewCommand::ConversationMessagesLoaded {
-                conversation_id: active_id,
-                selection_generation: 2,
-                messages: vec![
+                load_state: ConversationLoadState::Ready {
+                    conversation_id: active_id,
+                    generation: 2,
+                },
+                transcript: vec![
                     payload(ViewMessageRole::User, "fresh user", None, Some(10)),
                     payload(
                         ViewMessageRole::Assistant,
@@ -548,6 +524,8 @@ async fn stale_conversation_messages_loaded_generation_is_ignored(cx: &mut TestA
                         Some(20),
                     ),
                 ],
+                streaming: StreamingStoreSnapshot::default(),
+                conversations: vec![conversation(active_id, "Active", 2)],
             },
             cx,
         );
@@ -561,80 +539,168 @@ async fn stale_conversation_messages_loaded_generation_is_ignored(cx: &mut TestA
     });
 }
 
+/// Streaming, thinking, and profile state are store-managed. The store reduces
+/// `ShowThinking`, `AppendThinking`, `AppendStream`, `FinalizeStream`, `StreamCancelled`,
+/// `StreamError`, `ChatProfilesUpdated`, and `DefaultProfileChanged` into snapshots.
+/// The view renders them via `apply_store_snapshot` and `apply_settings_snapshot`.
+/// Only `ToggleThinkingVisibility` remains a view-local command.
 #[gpui::test]
-async fn handle_command_streaming_and_profile_updates_follow_visible_contract(
-    cx: &mut TestAppContext,
-) {
+#[allow(clippy::too_many_lines)]
+async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestAppContext) {
     let first_profile_id = Uuid::new_v4();
     let second_profile_id = Uuid::new_v4();
     let conversation_id = Uuid::new_v4();
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
 
     view.update(cx, |view: &mut ChatView, cx| {
-        view.state.current_model = "claude-3-7-sonnet".to_string();
-        view.state.active_conversation_id = Some(conversation_id);
-        view.state.conversations = vec![conversation(conversation_id, "Current", 0)];
+        // Snapshot after: ShowThinking + AppendThinking("plan") + AppendStream("partial")
+        // The store has accumulated thinking buffer and stream buffer.
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(conversation_id),
+                selected_conversation_title: "Current".to_string(),
+                selection_generation: 1,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id,
+                    generation: 1,
+                },
+                transcript: vec![],
+                streaming: StreamingStoreSnapshot {
+                    thinking_visible: true,
+                    thinking_buffer: "plan".to_string(),
+                    stream_buffer: "partial".to_string(),
+                    last_error: None,
+                    active_target: Some(conversation_id),
+                },
+                conversations: vec![conversation(conversation_id, "Current", 0)],
+            },
+            cx,
+        );
 
-        view.handle_command(ViewCommand::ShowThinking { conversation_id }, cx);
-        view.handle_command(
-            ViewCommand::AppendThinking {
-                conversation_id,
-                content: "plan".to_string(),
+        // Snapshot after: FinalizeStream consumed the stream buffer into the transcript.
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(conversation_id),
+                selected_conversation_title: "Current".to_string(),
+                selection_generation: 1,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id,
+                    generation: 1,
+                },
+                transcript: vec![payload(
+                    ViewMessageRole::Assistant,
+                    "partial",
+                    Some("plan"),
+                    None,
+                )],
+                streaming: StreamingStoreSnapshot {
+                    thinking_visible: true,
+                    thinking_buffer: String::new(),
+                    stream_buffer: String::new(),
+                    last_error: None,
+                    active_target: None,
+                },
+                conversations: vec![conversation(conversation_id, "Current", 1)],
             },
             cx,
         );
-        view.handle_command(
-            ViewCommand::AppendStream {
-                conversation_id,
-                chunk: "partial".to_string(),
-            },
-            cx,
-        );
-        view.handle_command(
-            ViewCommand::FinalizeStream {
-                conversation_id,
-                tokens: 42,
-            },
-            cx,
-        );
-        view.handle_command(
-            ViewCommand::StreamCancelled {
-                conversation_id,
-                partial_content: "leftover".to_string(),
-            },
-            cx,
-        );
-        view.handle_command(
-            ViewCommand::StreamError {
-                conversation_id,
-                error: "boom".to_string(),
-                recoverable: false,
-            },
-            cx,
-        );
-        view.handle_command(ViewCommand::ToggleThinkingVisibility, cx);
-        view.handle_command(
-            ViewCommand::ChatProfilesUpdated {
-                profiles: vec![
-                    profile(
-                        first_profile_id,
-                        "Default",
-                        "anthropic",
-                        "claude-3-7-sonnet",
-                        true,
+
+        // Snapshot after: StreamCancelled (partial content goes into transcript as cancelled)
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(conversation_id),
+                selected_conversation_title: "Current".to_string(),
+                selection_generation: 1,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id,
+                    generation: 1,
+                },
+                transcript: vec![
+                    payload(ViewMessageRole::Assistant, "partial", Some("plan"), None),
+                    payload(
+                        ViewMessageRole::Assistant,
+                        "leftover [cancelled]",
+                        None,
+                        None,
                     ),
-                    profile(second_profile_id, "GPT", "openai", "gpt-4.1", false),
                 ],
-                selected_profile_id: None,
+                streaming: StreamingStoreSnapshot {
+                    thinking_visible: true,
+                    thinking_buffer: String::new(),
+                    stream_buffer: String::new(),
+                    last_error: None,
+                    active_target: None,
+                },
+                conversations: vec![conversation(conversation_id, "Current", 2)],
             },
             cx,
         );
-        view.handle_command(
-            ViewCommand::DefaultProfileChanged {
-                profile_id: Some(second_profile_id),
+
+        // Snapshot after: StreamError("boom")
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(conversation_id),
+                selected_conversation_title: "Current".to_string(),
+                selection_generation: 1,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id,
+                    generation: 1,
+                },
+                transcript: vec![
+                    payload(ViewMessageRole::Assistant, "partial", Some("plan"), None),
+                    payload(
+                        ViewMessageRole::Assistant,
+                        "leftover [cancelled]",
+                        None,
+                        None,
+                    ),
+                ],
+                streaming: StreamingStoreSnapshot {
+                    thinking_visible: true,
+                    thinking_buffer: String::new(),
+                    stream_buffer: String::new(),
+                    last_error: Some("boom".to_string()),
+                    active_target: None,
+                },
+                conversations: vec![conversation(conversation_id, "Current", 2)],
             },
             cx,
         );
+
+        // ToggleThinkingVisibility is view-local, NOT store-managed
+        view.handle_command(ViewCommand::ToggleThinkingVisibility, cx);
+
+        // Profile updates come through settings snapshot
+        view.apply_settings_snapshot(SettingsStoreSnapshot {
+            profiles: vec![
+                profile(
+                    first_profile_id,
+                    "Default",
+                    "anthropic",
+                    "claude-3-7-sonnet",
+                    true,
+                ),
+                profile(second_profile_id, "GPT", "openai", "gpt-4.1", false),
+            ],
+            selected_profile_id: None,
+            settings_visible: false,
+        });
+
+        // DefaultProfileChanged would update the settings snapshot via the store:
+        view.apply_settings_snapshot(SettingsStoreSnapshot {
+            profiles: vec![
+                profile(
+                    first_profile_id,
+                    "Default",
+                    "anthropic",
+                    "claude-3-7-sonnet",
+                    false,
+                ),
+                profile(second_profile_id, "GPT", "openai", "gpt-4.1", true),
+            ],
+            selected_profile_id: Some(second_profile_id),
+            settings_visible: false,
+        });
     });
     cx.run_until_parked();
 
@@ -656,8 +722,12 @@ async fn handle_command_streaming_and_profile_updates_follow_visible_contract(
     });
 }
 
+/// Conversation lifecycle (create, delete, rename, list refresh) is store-managed.
+/// The store reduces these commands and publishes snapshots that the view renders.
+/// `ConversationCleared` is the one remaining view-local command.
 #[gpui::test]
-async fn handle_command_conversation_lifecycle_maintains_selection_title_and_clear_state(
+#[allow(clippy::too_many_lines)]
+async fn conversation_lifecycle_via_store_snapshots_and_cleared_resets_ephemeral_state(
     cx: &mut TestAppContext,
 ) {
     let first_id = Uuid::new_v4();
@@ -666,51 +736,117 @@ async fn handle_command_conversation_lifecycle_maintains_selection_title_and_cle
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
 
     view.update(cx, |view: &mut ChatView, cx| {
-        view.state.conversations = vec![
-            conversation(first_id, "First", 1),
-            conversation(second_id, "", 0),
-        ];
-        view.set_conversation_id(first_id);
-        view.state.messages =
-            vec![personal_agent::ui_gpui::views::chat_view::ChatMessage::user("existing")];
-        view.state.streaming = StreamingState::Streaming {
-            content: "partial".to_string(),
-            done: false,
-        };
-        view.state.thinking_content = Some("thinking".to_string());
+        // Initial state: first_id selected
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(first_id),
+                selected_conversation_title: "First".to_string(),
+                selection_generation: 1,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id: first_id,
+                    generation: 1,
+                },
+                transcript: vec![payload(ViewMessageRole::User, "existing", None, None)],
+                streaming: StreamingStoreSnapshot::default(),
+                conversations: vec![
+                    conversation(first_id, "First", 1),
+                    conversation(second_id, "", 0),
+                ],
+            },
+            cx,
+        );
 
-        view.handle_command(
-            ViewCommand::ConversationActivated {
-                id: second_id,
+        // Store reduces ConversationActivated(second_id, gen=4)
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(second_id),
+                selected_conversation_title: "Untitled Conversation".to_string(),
                 selection_generation: 4,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id: second_id,
+                    generation: 4,
+                },
+                transcript: vec![],
+                streaming: StreamingStoreSnapshot::default(),
+                conversations: vec![
+                    conversation(first_id, "First", 1),
+                    conversation(second_id, "", 0),
+                ],
             },
             cx,
         );
-        view.handle_command(
-            ViewCommand::ConversationCreated {
-                id: third_id,
-                profile_id: Uuid::new_v4(),
+
+        // Store reduces ConversationCreated(third_id) + ConversationTitleUpdated(third_id, "Fresh")
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(third_id),
+                selected_conversation_title: "Fresh".to_string(),
+                selection_generation: 5,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id: third_id,
+                    generation: 5,
+                },
+                transcript: vec![],
+                streaming: StreamingStoreSnapshot::default(),
+                conversations: vec![
+                    conversation(third_id, "Fresh", 0),
+                    conversation(first_id, "First", 1),
+                    conversation(second_id, "", 0),
+                ],
             },
             cx,
         );
-        view.handle_command(
-            ViewCommand::ConversationTitleUpdated {
-                id: third_id,
-                title: "Fresh".to_string(),
+
+        // Store reduces ConversationDeleted(third_id) → falls back to first conversation
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(first_id),
+                selected_conversation_title: "First".to_string(),
+                selection_generation: 5,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id: first_id,
+                    generation: 5,
+                },
+                transcript: vec![payload(ViewMessageRole::User, "existing", None, None)],
+                streaming: StreamingStoreSnapshot::default(),
+                conversations: vec![
+                    conversation(first_id, "First", 1),
+                    conversation(second_id, "", 0),
+                ],
             },
             cx,
         );
-        view.handle_command(ViewCommand::ConversationDeleted { id: third_id }, cx);
+
+        // ConversationCleared is the one command still handled directly
         view.handle_command(ViewCommand::ConversationCleared, cx);
-        view.handle_command(
-            ViewCommand::ConversationListRefreshed {
+
+        // Store reduces ConversationListRefreshed([second_id])
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: Some(first_id),
+                selected_conversation_title: "First".to_string(),
+                selection_generation: 5,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id: first_id,
+                    generation: 5,
+                },
+                transcript: vec![payload(ViewMessageRole::User, "existing", None, None)],
+                streaming: StreamingStoreSnapshot::default(),
                 conversations: vec![conversation(second_id, "", 0)],
             },
             cx,
         );
-        view.handle_command(
-            ViewCommand::ConversationListRefreshed {
-                conversations: Vec::new(),
+
+        // Store reduces ConversationListRefreshed([]) — no conversations left
+        view.apply_store_snapshot(
+            ChatStoreSnapshot {
+                selected_conversation_id: None,
+                selected_conversation_title: "New Conversation".to_string(),
+                selection_generation: 5,
+                load_state: ConversationLoadState::Idle,
+                transcript: vec![],
+                streaming: StreamingStoreSnapshot::default(),
+                conversations: vec![],
             },
             cx,
         );

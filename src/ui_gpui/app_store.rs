@@ -278,6 +278,37 @@ impl GpuiAppStore {
     }
 }
 
+/// Returns `true` when the `AppStore` owns the given command's state.
+///
+/// Store-managed commands flow through `reduce_batch` and are delivered to
+/// views exclusively via snapshot subscription. They must NOT be forwarded
+/// directly through `MainPanel::handle_command` to avoid dual-path races.
+#[must_use]
+pub const fn is_store_managed(cmd: &ViewCommand) -> bool {
+    matches!(
+        cmd,
+        ViewCommand::ConversationListRefreshed { .. }
+            | ViewCommand::ConversationActivated { .. }
+            | ViewCommand::ConversationCreated { .. }
+            | ViewCommand::ConversationDeleted { .. }
+            | ViewCommand::ConversationRenamed { .. }
+            | ViewCommand::ConversationTitleUpdated { .. }
+            | ViewCommand::ConversationMessagesLoaded { .. }
+            | ViewCommand::ConversationLoadFailed { .. }
+            | ViewCommand::MessageAppended { .. }
+            | ViewCommand::ShowThinking { .. }
+            | ViewCommand::HideThinking { .. }
+            | ViewCommand::AppendThinking { .. }
+            | ViewCommand::AppendStream { .. }
+            | ViewCommand::FinalizeStream { .. }
+            | ViewCommand::StreamCancelled { .. }
+            | ViewCommand::StreamError { .. }
+            | ViewCommand::ChatProfilesUpdated { .. }
+            | ViewCommand::ShowSettings { .. }
+            | ViewCommand::DefaultProfileChanged { .. }
+    )
+}
+
 /// @plan PLAN-20260304-GPUIREMEDIATE.P06
 /// @requirement REQ-ARCH-002.1
 /// @requirement REQ-ARCH-002.2

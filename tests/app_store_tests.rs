@@ -1339,3 +1339,186 @@ fn public_snapshot_type_is_observable_from_store() {
 
     assert_eq!(snapshot.revision, 0);
 }
+
+/// Every command variant that `reduce_view_command_without_publish` handles
+/// must be declared store-managed so the bridge pump filters it from the
+/// direct-forward path. This test prevents regressions (e.g. the
+/// `ConversationLoadFailed` gap that was caught during review).
+mod is_store_managed_covers_all_reduced_variants {
+    use personal_agent::presentation::view_command::ViewCommand;
+    use personal_agent::ui_gpui::app_store::is_store_managed;
+    use uuid::Uuid;
+
+    fn id() -> Uuid {
+        Uuid::new_v4()
+    }
+
+    #[test]
+    fn conversation_list_refreshed_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ConversationListRefreshed {
+            conversations: Vec::new()
+        }));
+    }
+
+    #[test]
+    fn conversation_activated_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ConversationActivated {
+            id: id(),
+            selection_generation: 1,
+        }));
+    }
+
+    #[test]
+    fn conversation_created_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ConversationCreated {
+            id: id(),
+            profile_id: id(),
+        }));
+    }
+
+    #[test]
+    fn conversation_deleted_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ConversationDeleted {
+            id: id()
+        }));
+    }
+
+    #[test]
+    fn conversation_renamed_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ConversationRenamed {
+            id: id(),
+            new_title: "x".to_string(),
+        }));
+    }
+
+    #[test]
+    fn conversation_title_updated_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ConversationTitleUpdated {
+            id: id(),
+            title: "x".to_string(),
+        }));
+    }
+
+    #[test]
+    fn conversation_messages_loaded_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ConversationMessagesLoaded {
+            conversation_id: id(),
+            selection_generation: 1,
+            messages: Vec::new(),
+        }));
+    }
+
+    #[test]
+    fn conversation_load_failed_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ConversationLoadFailed {
+            conversation_id: id(),
+            selection_generation: 1,
+            message: "err".to_string(),
+        }));
+    }
+
+    #[test]
+    fn message_appended_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::MessageAppended {
+            conversation_id: id(),
+            role: personal_agent::presentation::view_command::MessageRole::User,
+            content: "hi".to_string(),
+        }));
+    }
+
+    #[test]
+    fn show_thinking_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ShowThinking {
+            conversation_id: id(),
+        }));
+    }
+
+    #[test]
+    fn hide_thinking_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::HideThinking {
+            conversation_id: id(),
+        }));
+    }
+
+    #[test]
+    fn append_thinking_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::AppendThinking {
+            conversation_id: id(),
+            content: "x".to_string(),
+        }));
+    }
+
+    #[test]
+    fn append_stream_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::AppendStream {
+            conversation_id: id(),
+            chunk: "x".to_string(),
+        }));
+    }
+
+    #[test]
+    fn finalize_stream_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::FinalizeStream {
+            conversation_id: id(),
+            tokens: 1,
+        }));
+    }
+
+    #[test]
+    fn stream_cancelled_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::StreamCancelled {
+            conversation_id: id(),
+            partial_content: String::new(),
+        }));
+    }
+
+    #[test]
+    fn stream_error_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::StreamError {
+            conversation_id: id(),
+            error: "x".to_string(),
+            recoverable: false,
+        }));
+    }
+
+    #[test]
+    fn chat_profiles_updated_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ChatProfilesUpdated {
+            profiles: Vec::new(),
+            selected_profile_id: None,
+        }));
+    }
+
+    #[test]
+    fn show_settings_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::ShowSettings {
+            profiles: Vec::new(),
+            selected_profile_id: None,
+        }));
+    }
+
+    #[test]
+    fn default_profile_changed_is_store_managed() {
+        assert!(is_store_managed(&ViewCommand::DefaultProfileChanged {
+            profile_id: Some(id()),
+        }));
+    }
+
+    #[test]
+    fn non_store_commands_are_not_managed() {
+        assert!(!is_store_managed(&ViewCommand::ConversationCleared));
+        assert!(!is_store_managed(&ViewCommand::ToggleThinkingVisibility));
+        assert!(!is_store_managed(&ViewCommand::NavigateTo {
+            view: personal_agent::presentation::view_command::ViewId::Chat
+        }));
+        assert!(!is_store_managed(&ViewCommand::NavigateBack));
+        assert!(!is_store_managed(&ViewCommand::ShowNotification {
+            message: "hi".to_string()
+        }));
+        assert!(!is_store_managed(&ViewCommand::ShowError {
+            title: "t".to_string(),
+            message: "m".to_string(),
+            severity: personal_agent::presentation::view_command::ErrorSeverity::Error,
+        }));
+    }
+}

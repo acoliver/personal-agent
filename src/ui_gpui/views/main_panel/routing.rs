@@ -3,6 +3,10 @@
 //! Contains the GPUI action definitions, the `CommandTargets` observable
 //! struct, and the `route_view_command` pure dispatch function.
 //!
+//! Store-managed commands (conversation lifecycle, streaming, thinking,
+//! profiles, etc.) are NOT routed through `MainPanel::handle_command`.
+//! They flow exclusively through the `AppStore` snapshot subscription.
+//!
 //! @plan PLAN-20260325-ISSUE11B.P02
 //! @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
 //! @requirement REQ-WIRE-002
@@ -38,17 +42,10 @@ pub use _actions::*;
 /// @pseudocode component-002-main-panel-routing.md lines 089-171
 #[derive(Debug, Default)]
 pub struct CommandTargets {
-    // Chat view counters
-    pub chat_messages_received: usize,
-    pub chat_stream_chunks_received: usize,
-    pub chat_stream_finalized: bool,
+    // Chat view counters (ephemeral commands only)
     pub chat_export_format_commands: usize,
     pub chat_notification_commands: usize,
     pub chat_error_commands: usize,
-
-    // History view state
-    pub history_conversations_received: usize,
-    pub history_activated_id: Option<uuid::Uuid>,
 
     // Settings view counters
     pub settings_profile_commands: usize,
@@ -73,27 +70,15 @@ pub struct CommandTargets {
 /// Route a single `ViewCommand` to the correct target view state.
 ///
 /// This function forms the core of the `MainPanel` command dispatch matrix
-/// (REQ-WIRE-002). In the live GPUI render loop it is called inline;
-/// in tests it drives `CommandTargets` observable state directly.
+/// (REQ-WIRE-002). Store-managed commands are no longer routed here.
+/// Only ephemeral/non-store commands contribute to target counts.
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
 /// @requirement REQ-WIRE-002
 /// @pseudocode component-002-main-panel-routing.md lines 089-171
 pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
     match cmd {
-        // ── Chat view ───────────────────────────────────────────────────
-        ViewCommand::ConversationMessagesLoaded { messages, .. } => {
-            targets.chat_messages_received += messages.len();
-        }
-        ViewCommand::MessageAppended { .. } => {
-            targets.chat_messages_received += 1;
-        }
-        ViewCommand::AppendStream { .. } => {
-            targets.chat_stream_chunks_received += 1;
-        }
-        ViewCommand::FinalizeStream { .. } => {
-            targets.chat_stream_finalized = true;
-        }
+        // ── Chat view (ephemeral only) ──────────────────────────────────
         ViewCommand::ShowConversationExportFormat { .. } => {
             targets.chat_export_format_commands += 1;
         }
@@ -112,27 +97,13 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
             targets.mcp_error_commands_count += 1;
         }
 
-        // ── History view ────────────────────────────────────────────────
-        ViewCommand::ConversationListRefreshed { conversations } => {
-            targets.history_conversations_received += conversations.len();
-        }
-        ViewCommand::ConversationActivated {
-            id,
-            selection_generation: _,
-        } => {
-            targets.history_activated_id = Some(id);
-        }
-
         // ── Settings / Profile view ─────────────────────────────────────
         ViewCommand::ShowSettingsTheme { .. } => {
             targets.settings_theme_commands += 1;
         }
-        ViewCommand::ShowSettings { .. }
-        | ViewCommand::ChatProfilesUpdated { .. }
-        | ViewCommand::ProfileCreated { .. }
+        ViewCommand::ProfileCreated { .. }
         | ViewCommand::ProfileUpdated { .. }
-        | ViewCommand::ProfileDeleted { .. }
-        | ViewCommand::DefaultProfileChanged { .. } => {
+        | ViewCommand::ProfileDeleted { .. } => {
             targets.settings_profile_commands += 1;
         }
         ViewCommand::McpStatusChanged { .. }
@@ -163,7 +134,7 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
             targets.profile_prefill_selected_count += 1;
         }
 
-        // All other commands are navigation or ancillary; not counted here
+        // All other commands are store-managed, navigation, or ancillary
         _ => {}
     }
 }

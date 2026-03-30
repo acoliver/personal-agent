@@ -248,25 +248,6 @@ fn drain_selection_intents(app_state: &AppState) {
 /// @requirement REQ-ARCH-003.4
 /// @requirement REQ-ARCH-004.1
 /// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-036
-fn publish_store_snapshot_to_main_panel(app_store: &GpuiAppStore, cx: &mut AsyncApp) {
-    let snapshot = app_store.current_snapshot();
-
-    let popup_window = cx
-        .try_read_global::<MainPanelAppState, _>(|state, _| state.popup_window)
-        .flatten();
-
-    if let Some(window_handle) = popup_window {
-        let _ = window_handle.update(cx, |main_panel: &mut MainPanel, _, cx| {
-            main_panel.apply_store_snapshot(snapshot.clone(), cx);
-            cx.notify();
-        });
-    }
-}
-
-/// @plan PLAN-20260304-GPUIREMEDIATE.P05
-/// @requirement REQ-ARCH-003.4
-/// @requirement REQ-ARCH-004.1
-/// @pseudocode analysis/pseudocode/03-main-panel-integration.md:014-036
 fn forward_runtime_commands_to_main_panel(commands: Vec<ViewCommand>, cx: &mut AsyncApp) {
     if commands.is_empty() {
         return;
@@ -300,12 +281,13 @@ fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
         drain_selection_intents(&app_state);
 
         let commands = app_state.gpui_bridge.drain_commands();
-        let forwarded_commands = commands.clone();
-        let changed = app_state.app_store.reduce_batch(commands);
-        if changed {
-            publish_store_snapshot_to_main_panel(&app_state.app_store, cx);
-        }
-        forward_runtime_commands_to_main_panel(forwarded_commands, cx);
+        let non_store_commands: Vec<ViewCommand> = commands
+            .iter()
+            .filter(|cmd| !personal_agent::ui_gpui::is_store_managed(cmd))
+            .cloned()
+            .collect();
+        let _changed = app_state.app_store.reduce_batch(commands);
+        forward_runtime_commands_to_main_panel(non_store_commands, cx);
     })
     .detach();
 }
