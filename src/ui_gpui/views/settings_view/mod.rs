@@ -838,30 +838,22 @@ mod tests {
                 Some(ViewId::McpAdd)
             );
 
-            view.state.available_themes = vec![ThemeOption {
-                name: "Green Screen".to_string(),
-                slug: "green-screen".to_string(),
-            }];
+            view.state.available_themes = vec![
+                ThemeOption {
+                    name: "Green Screen".to_string(),
+                    slug: "green-screen".to_string(),
+                },
+                ThemeOption {
+                    name: "Midnight Nebula".to_string(),
+                    slug: "default".to_string(),
+                },
+            ];
             view.state.selected_theme_slug = "green-screen".to_string();
+            view.handle_key_down(&settings_key_event("down"), cx);
+            assert_eq!(view.state.selected_theme_slug, "default");
             view.handle_key_down(&settings_key_event("enter"), cx);
 
             view.handle_key_down(&settings_key_event("cmd-w"), cx);
-            assert_eq!(
-                crate::ui_gpui::navigation_channel().take_pending(),
-                Some(ViewId::Chat)
-            );
-
-            SettingsView::navigate_to_profile_editor();
-            assert_eq!(
-                crate::ui_gpui::navigation_channel().take_pending(),
-                Some(ViewId::ProfileEditor)
-            );
-            SettingsView::navigate_to_mcp_add();
-            assert_eq!(
-                crate::ui_gpui::navigation_channel().take_pending(),
-                Some(ViewId::McpAdd)
-            );
-            SettingsView::navigate_to_chat();
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::Chat)
@@ -882,13 +874,40 @@ mod tests {
         );
         assert_eq!(
             user_rx.recv().unwrap(),
+            UserEvent::SelectProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().unwrap(),
             UserEvent::SelectTheme {
-                slug: "green-screen".to_string()
+                slug: "default".to_string()
             }
         );
         assert!(
             user_rx.try_recv().is_err(),
             "unexpected additional settings events"
+        );
+    }
+
+    #[gpui::test]
+    async fn static_navigation_helpers_route_to_expected_views(_cx: &mut TestAppContext) {
+        clear_navigation_requests();
+
+        SettingsView::navigate_to_profile_editor();
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(ViewId::ProfileEditor)
+        );
+
+        SettingsView::navigate_to_mcp_add();
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(ViewId::McpAdd)
+        );
+
+        SettingsView::navigate_to_chat();
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(ViewId::Chat)
         );
     }
 }
