@@ -121,7 +121,7 @@ pub fn is_valid_theme_slug(slug: &str) -> bool {
 /// Returns theme metadata for all bundled catalog themes plus `mac-native`.
 ///
 /// The synthetic `mac-native` pseudo-entry is appended at the end.
-/// Falls back to only the mac-native entry on catalog load failure.
+/// Falls back to the degraded default entry plus `mac-native` on catalog load failure.
 #[must_use]
 pub fn available_theme_options() -> Vec<ThemeOption> {
     let mac_native_entry = ThemeOption {
