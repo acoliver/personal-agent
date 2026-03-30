@@ -1161,19 +1161,19 @@ mod reduce_batch_profiles_and_settings {
     }
 
     #[test]
-    fn show_settings_when_not_visible_only_sets_visible() {
+    fn show_settings_when_not_visible_sets_visible_and_profiles() {
         let store = GpuiAppStore::from_startup_inputs(startup_inputs());
         let profile = make_profile(Uuid::new_v4(), "Visible", true);
 
         let changed = store.reduce_batch(vec![ViewCommand::ShowSettings {
-            profiles: vec![profile],
+            profiles: vec![profile.clone()],
             selected_profile_id: None,
         }]);
 
         assert!(changed);
         let snapshot = current_snapshot(&store);
         assert!(snapshot.settings.settings_visible);
-        assert!(snapshot.settings.profiles.is_empty());
+        assert_eq!(snapshot.settings.profiles, vec![profile]);
         assert_eq!(snapshot.settings.selected_profile_id, None);
     }
 

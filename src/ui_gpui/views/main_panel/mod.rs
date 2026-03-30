@@ -106,6 +106,13 @@ impl MainPanel {
             });
         }
 
+        if let Some(ref settings_view) = self.settings_view {
+            let settings = snapshot.settings;
+            settings_view.update(cx, |view, _cx| {
+                view.apply_profile_summaries(settings.profiles, settings.selected_profile_id);
+            });
+        }
+
         cx.notify();
     }
 

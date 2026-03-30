@@ -220,7 +220,7 @@ impl SettingsView {
         self.state.profiles = profiles;
     }
 
-    pub(super) fn apply_profile_summaries(
+    pub fn apply_profile_summaries(
         &mut self,
         profiles: Vec<ProfileSummary>,
         selected_profile_id: Option<Uuid>,
