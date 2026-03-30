@@ -89,6 +89,10 @@ fn render_txt(conversation: &Conversation) -> String {
     );
 
     for message in &conversation.messages {
+        if matches!(message.role, MessageRole::System) {
+            continue;
+        }
+
         let _ = writeln!(
             output,
             "[{}] {}",
@@ -128,6 +132,10 @@ fn render_markdown(conversation: &Conversation) -> String {
     );
 
     for message in &conversation.messages {
+        if matches!(message.role, MessageRole::System) {
+            continue;
+        }
+
         let _ = writeln!(
             output,
             "## {} ({})\n",
@@ -303,6 +311,20 @@ mod tests {
     }
 
     #[test]
+    fn txt_render_skips_system_messages() {
+        let mut conversation = fixture_conversation();
+        let mut system = Message::system("hidden policy".to_string());
+        system.timestamp = Utc.with_ymd_and_hms(2026, 1, 9, 10, 59, 0).unwrap();
+        conversation.messages.insert(0, system);
+
+        let content = render_export_content(&conversation, ConversationExportFormat::Txt)
+            .expect("txt render should succeed");
+
+        assert!(!content.contains("hidden policy"));
+        assert!(!content.contains("System"));
+    }
+
+    #[test]
     fn markdown_render_contains_heading_and_code_block() {
         let content = render_export_content(&fixture_conversation(), ConversationExportFormat::Md)
             .expect("md render should succeed");
@@ -310,6 +332,20 @@ mod tests {
         assert!(content.contains("# Sprint Planning / Q1"));
         assert!(content.contains("## Assistant"));
         assert!(content.contains("```text"));
+    }
+
+    #[test]
+    fn markdown_render_skips_system_messages() {
+        let mut conversation = fixture_conversation();
+        let mut system = Message::system("hidden policy".to_string());
+        system.timestamp = Utc.with_ymd_and_hms(2026, 1, 9, 10, 59, 0).unwrap();
+        conversation.messages.insert(0, system);
+
+        let content = render_export_content(&conversation, ConversationExportFormat::Md)
+            .expect("md render should succeed");
+
+        assert!(!content.contains("hidden policy"));
+        assert!(!content.contains("## System"));
     }
 
     #[test]
