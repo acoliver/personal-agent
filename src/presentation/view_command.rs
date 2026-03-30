@@ -129,6 +129,12 @@ pub enum ViewCommand {
         selected_profile_id: Option<Uuid>,
     },
 
+    /// Provide theme options and the currently-selected slug to the settings view.
+    ShowSettingsTheme {
+        options: Vec<ThemeSummary>,
+        selected_slug: String,
+    },
+
     /// Show notification message
     ShowNotification { message: String },
 
@@ -318,6 +324,15 @@ pub struct ProfileSummary {
     pub provider_id: String,
     pub model_id: String,
     pub is_default: bool,
+}
+
+/// Theme summary for the settings theme dropdown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThemeSummary {
+    /// Human-readable display name (e.g. "Green Screen").
+    pub name: String,
+    /// URL-safe slug used as the identifier (e.g. "green-screen").
+    pub slug: String,
 }
 
 /// MCP tool information

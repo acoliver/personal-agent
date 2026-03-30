@@ -11,7 +11,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::ProfileSummary;
+use crate::presentation::view_command::{ProfileSummary, ThemeSummary};
 use crate::ui_gpui::bridge::GpuiBridge;
 
 /// Represents a profile in the settings list
@@ -112,6 +112,13 @@ impl McpItem {
     }
 }
 
+/// A theme option as presented in the settings dropdown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThemeOption {
+    pub name: String,
+    pub slug: String,
+}
+
 /// Settings view state
 /// @plan PLAN-20250130-GPUIREDUX.P06
 pub struct SettingsState {
@@ -119,7 +126,10 @@ pub struct SettingsState {
     pub mcps: Vec<McpItem>,
     pub selected_profile_id: Option<Uuid>,
     pub selected_mcp_id: Option<Uuid>,
-    pub hotkey: String,
+    /// Available themes for the dropdown.
+    pub available_themes: Vec<ThemeOption>,
+    /// Slug of the currently-selected theme.
+    pub selected_theme_slug: String,
 }
 
 impl SettingsState {
@@ -136,7 +146,8 @@ impl Default for SettingsState {
             mcps: Vec::new(),
             selected_profile_id: None,
             selected_mcp_id: None,
-            hotkey: "Cmd+Shift+P".to_string(),
+            available_themes: Vec::new(),
+            selected_theme_slug: "green-screen".to_string(),
         }
     }
 }
@@ -162,6 +173,46 @@ impl SettingsView {
     /// @plan PLAN-20250130-GPUIREDUX.P06
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
+    }
+
+    #[must_use]
+    pub const fn get_state(&self) -> &SettingsState {
+        &self.state
+    }
+
+    /// Apply theme options from a `ShowSettingsTheme` command.
+    pub(super) fn apply_theme_options(
+        &mut self,
+        options: Vec<ThemeSummary>,
+        selected_slug: String,
+    ) {
+        self.state.available_themes = options
+            .into_iter()
+            .map(|t| ThemeOption {
+                name: t.name,
+                slug: t.slug,
+            })
+            .collect();
+
+        // Use provided slug if it exists in the list; otherwise keep the
+        // first entry or the current selection.
+        if self
+            .state
+            .available_themes
+            .iter()
+            .any(|t| t.slug == selected_slug)
+        {
+            self.state.selected_theme_slug = selected_slug;
+        } else if let Some(first) = self.state.available_themes.first() {
+            self.state.selected_theme_slug = first.slug.clone();
+        }
+    }
+
+    /// Select a theme by slug and emit the event.
+    pub(super) fn select_theme(&mut self, slug: String, cx: &mut gpui::Context<Self>) {
+        self.state.selected_theme_slug.clone_from(&slug);
+        self.emit(&UserEvent::SelectTheme { slug });
+        cx.notify();
     }
 
     /// Set profiles from presenter
@@ -228,6 +279,13 @@ impl SettingsView {
         })
     }
 
+    fn selected_theme_index(&self) -> Option<usize> {
+        self.state
+            .available_themes
+            .iter()
+            .position(|theme| theme.slug == self.state.selected_theme_slug)
+    }
+
     fn select_profile_by_index(&mut self, index: usize, emit_event: bool) {
         if let Some(profile) = self.state.profiles.get(index) {
             self.state.selected_profile_id = Some(profile.id);
@@ -253,6 +311,27 @@ impl SettingsView {
             (current as i32 + delta_steps).clamp(0, max_index) as usize
         };
         self.select_profile_by_index(next, true);
+    }
+
+    fn scroll_themes(&mut self, delta_steps: i32) {
+        if self.state.available_themes.is_empty() || delta_steps == 0 {
+            return;
+        }
+
+        let current = self.selected_theme_index().unwrap_or(0);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_possible_wrap,
+            clippy::cast_sign_loss
+        )]
+        let next = {
+            let max_index = self.state.available_themes.len().saturating_sub(1) as i32;
+            (current as i32 + delta_steps).clamp(0, max_index) as usize
+        };
+
+        if let Some(theme) = self.state.available_themes.get(next) {
+            self.state.selected_theme_slug = theme.slug.clone();
+        }
     }
 
     pub(super) fn select_profile(&mut self, profile_id: Uuid, cx: &mut gpui::Context<Self>) {
@@ -325,10 +404,33 @@ impl SettingsView {
             Self::navigate_to_mcp_add();
         } else if key == "up" && !modifiers.platform {
             self.scroll_profiles(-1);
+            self.scroll_themes(-1);
             cx.notify();
         } else if key == "down" && !modifiers.platform {
             self.scroll_profiles(1);
+            self.scroll_themes(1);
             cx.notify();
+        } else if (key == "enter" || key == "space") && !modifiers.platform {
+            if self.state.available_themes.is_empty() {
+                return;
+            }
+
+            let selected_slug = self
+                .state
+                .available_themes
+                .iter()
+                .find(|theme| theme.slug == self.state.selected_theme_slug)
+                .map(|theme| theme.slug.clone())
+                .or_else(|| {
+                    self.state
+                        .available_themes
+                        .first()
+                        .map(|theme| theme.slug.clone())
+                });
+
+            if let Some(slug) = selected_slug {
+                self.select_theme(slug, cx);
+            }
         }
     }
 
@@ -736,23 +838,22 @@ mod tests {
                 Some(ViewId::McpAdd)
             );
 
-            view.handle_key_down(&settings_key_event("cmd-w"), cx);
-            assert_eq!(
-                crate::ui_gpui::navigation_channel().take_pending(),
-                Some(ViewId::Chat)
-            );
+            view.state.available_themes = vec![
+                ThemeOption {
+                    name: "Green Screen".to_string(),
+                    slug: "green-screen".to_string(),
+                },
+                ThemeOption {
+                    name: "Midnight Nebula".to_string(),
+                    slug: "default".to_string(),
+                },
+            ];
+            view.state.selected_theme_slug = "green-screen".to_string();
+            view.handle_key_down(&settings_key_event("down"), cx);
+            assert_eq!(view.state.selected_theme_slug, "default");
+            view.handle_key_down(&settings_key_event("enter"), cx);
 
-            SettingsView::navigate_to_profile_editor();
-            assert_eq!(
-                crate::ui_gpui::navigation_channel().take_pending(),
-                Some(ViewId::ProfileEditor)
-            );
-            SettingsView::navigate_to_mcp_add();
-            assert_eq!(
-                crate::ui_gpui::navigation_channel().take_pending(),
-                Some(ViewId::McpAdd)
-            );
-            SettingsView::navigate_to_chat();
+            view.handle_key_down(&settings_key_event("cmd-w"), cx);
             assert_eq!(
                 crate::ui_gpui::navigation_channel().take_pending(),
                 Some(ViewId::Chat)
@@ -771,9 +872,42 @@ mod tests {
             user_rx.recv().unwrap(),
             UserEvent::EditProfile { id: profile_b }
         );
+        assert_eq!(
+            user_rx.recv().unwrap(),
+            UserEvent::SelectProfile { id: profile_b }
+        );
+        assert_eq!(
+            user_rx.recv().unwrap(),
+            UserEvent::SelectTheme {
+                slug: "default".to_string()
+            }
+        );
         assert!(
             user_rx.try_recv().is_err(),
             "unexpected additional settings events"
+        );
+    }
+
+    #[gpui::test]
+    async fn static_navigation_helpers_route_to_expected_views(_cx: &mut TestAppContext) {
+        clear_navigation_requests();
+
+        SettingsView::navigate_to_profile_editor();
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(ViewId::ProfileEditor)
+        );
+
+        SettingsView::navigate_to_mcp_add();
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(ViewId::McpAdd)
+        );
+
+        SettingsView::navigate_to_chat();
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(ViewId::Chat)
         );
     }
 }

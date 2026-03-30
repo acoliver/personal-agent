@@ -65,6 +65,7 @@ impl MainPanel {
 
             // ── settings + profiles ─────────────────────────────────────
             ShowSettings { .. }
+            | ShowSettingsTheme { .. }
             | ChatProfilesUpdated { .. }
             | ProfileCreated { .. }
             | ProfileUpdated { .. }
@@ -307,6 +308,22 @@ impl MainPanel {
                             ViewCommand::ChatProfilesUpdated {
                                 profiles,
                                 selected_profile_id,
+                            },
+                            cx,
+                        );
+                    });
+                }
+            }
+            ViewCommand::ShowSettingsTheme {
+                options,
+                selected_slug,
+            } => {
+                if let Some(ref settings) = self.settings_view {
+                    settings.update(cx, |view, cx| {
+                        view.handle_command(
+                            ViewCommand::ShowSettingsTheme {
+                                options,
+                                selected_slug,
                             },
                             cx,
                         );
