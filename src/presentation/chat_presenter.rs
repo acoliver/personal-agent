@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::conversation_export::{
     build_export_filename, render_export_content, resolve_export_directory,
-    resolve_unique_export_path, write_export_file, EXPORT_DIR_SETTING_KEY,
+    resolve_unique_export_path, write_export_file_retrying_collisions, EXPORT_DIR_SETTING_KEY,
     EXPORT_FORMAT_SETTING_KEY,
 };
 use super::view_command::{
@@ -59,58 +59,6 @@ pub struct ChatPresenter {
 }
 
 impl ChatPresenter {
-    fn next_export_candidate(path: &std::path::Path) -> std::path::PathBuf {
-        let parent = path
-            .parent()
-            .map_or_else(std::path::PathBuf::new, std::path::PathBuf::from);
-        let stem = path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("conversation");
-        let extension = path.extension().and_then(|value| value.to_str());
-
-        let (base_stem, next_index) = match stem.rsplit_once('-') {
-            Some((base, suffix)) => suffix.parse::<usize>().map_or_else(
-                |_| (stem.to_string(), 1),
-                |index| (base.to_string(), index + 1),
-            ),
-            None => (stem.to_string(), 1),
-        };
-
-        let filename = extension.map_or_else(
-            || format!("{base_stem}-{next_index}"),
-            |ext| format!("{base_stem}-{next_index}.{ext}"),
-        );
-
-        parent.join(filename)
-    }
-
-    fn format_export_write_error(path: &std::path::Path, error: &std::io::Error) -> String {
-        format!("failed to write export file {}: {error}", path.display())
-    }
-
-    fn write_export_file_retrying_collisions(
-        initial_path: std::path::PathBuf,
-        export_body: &str,
-    ) -> Result<std::path::PathBuf, String> {
-        let mut path = initial_path;
-
-        for _ in 0..1000 {
-            match write_export_file(&path, export_body) {
-                Ok(()) => return Ok(path),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    path = Self::next_export_candidate(&path);
-                }
-                Err(error) => return Err(Self::format_export_write_error(&path, &error)),
-            }
-        }
-
-        Err(format!(
-            "failed to write export file {}: exhausted unique filename attempts",
-            path.display()
-        ))
-    }
-
     /// Create a new `ChatPresenter`
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
@@ -543,13 +491,13 @@ impl ChatPresenter {
         let filename = build_export_filename(&conversation, format);
         let initial_path = resolve_unique_export_path(&export_dir, &filename);
 
-        let path = match Self::write_export_file_retrying_collisions(initial_path, &export_body) {
+        let path = match write_export_file_retrying_collisions(initial_path, &export_body) {
             Ok(path) => path,
             Err(error) => {
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
                         title: "Save Conversation".to_string(),
-                        message: error,
+                        message: format!("failed to write export file {filename}: {error}"),
                         severity: ErrorSeverity::Error,
                     })
                     .await;
