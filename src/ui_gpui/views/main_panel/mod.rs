@@ -273,6 +273,148 @@ mod tests {
     use crate::ui_gpui::bridge::GpuiBridge;
     use crate::ui_gpui::GpuiAppStore;
 
+    fn assert_route_count(
+        cmd: ViewCommand,
+        expected: usize,
+        read_count: impl Fn(&CommandTargets) -> usize,
+    ) {
+        let mut targets = CommandTargets::default();
+        route_view_command(cmd, &mut targets);
+        assert_eq!(read_count(&targets), expected);
+    }
+
+    fn assert_mcp_and_chat_error_counts(
+        cmd: ViewCommand,
+        expected_mcp: usize,
+        expected_chat: usize,
+    ) {
+        let mut targets = CommandTargets::default();
+        route_view_command(cmd, &mut targets);
+        assert_eq!(targets.mcp_error_commands_count, expected_mcp);
+        assert_eq!(targets.chat_error_commands, expected_chat);
+    }
+
+    fn assert_settings_and_chat_notification_counts(
+        cmd: ViewCommand,
+        expected_settings: usize,
+        expected_chat: usize,
+    ) {
+        let mut targets = CommandTargets::default();
+        route_view_command(cmd, &mut targets);
+        assert_eq!(targets.settings_notifications_count, expected_settings);
+        assert_eq!(targets.chat_notification_commands, expected_chat);
+    }
+
+    fn assert_profile_forwarding(
+        panel: &mut MainPanel,
+        profile_id: Uuid,
+        cx: &mut gpui::Context<MainPanel>,
+    ) {
+        panel.handle_command(
+            ViewCommand::ShowSettings {
+                profiles: vec![profile_summary(
+                    profile_id,
+                    "Workspace Default",
+                    "openai",
+                    "gpt-4.1",
+                    true,
+                )],
+                selected_profile_id: Some(profile_id),
+            },
+            cx,
+        );
+
+        let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
+        chat_view.read_with(cx, |view, _| {
+            assert_eq!(view.state.profiles.len(), 1);
+            assert_eq!(view.state.selected_profile_id, Some(profile_id));
+            assert_eq!(view.state.current_model, "gpt-4.1");
+        });
+    }
+
+    fn assert_mcp_routing_targets(saved_mcp_id: Uuid) {
+        assert_route_count(
+            ViewCommand::McpConfigureDraftLoaded {
+                id: saved_mcp_id.to_string(),
+                name: "Workspace MCP".to_string(),
+                package: "@example/workspace-mcp".to_string(),
+                package_type: crate::mcp::McpPackageType::Npm,
+                runtime_hint: Some("npx".to_string()),
+                env_var_name: "WORKSPACE_TOKEN".to_string(),
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@example/workspace-mcp".to_string()],
+                env: Some(vec![("WORKSPACE_TOKEN".to_string(), String::new())]),
+                url: None,
+            },
+            1,
+            |targets| targets.mcp_configure_draft_loaded_count,
+        );
+
+        assert_mcp_and_chat_error_counts(
+            ViewCommand::ShowError {
+                title: "MCP auth failed".to_string(),
+                message: "token expired".to_string(),
+                severity: crate::presentation::view_command::ErrorSeverity::Error,
+            },
+            1,
+            0,
+        );
+
+        assert_mcp_and_chat_error_counts(
+            ViewCommand::ShowError {
+                title: "Save Conversation".to_string(),
+                message: "disk unavailable".to_string(),
+                severity: crate::presentation::view_command::ErrorSeverity::Error,
+            },
+            1,
+            1,
+        );
+
+        assert_settings_and_chat_notification_counts(
+            ViewCommand::ShowNotification {
+                message: "connected-user".to_string(),
+            },
+            1,
+            0,
+        );
+
+        assert_settings_and_chat_notification_counts(
+            ViewCommand::ShowNotification {
+                message: "Conversation saved as /tmp/chat.md (MD)".to_string(),
+            },
+            1,
+            1,
+        );
+
+        assert_route_count(
+            ViewCommand::ShowConversationExportFormat {
+                format: ConversationExportFormat::Md,
+            },
+            1,
+            |targets| targets.chat_export_format_commands,
+        );
+
+        assert_route_count(
+            ViewCommand::McpConfigSaved {
+                id: saved_mcp_id,
+                name: Some("Workspace MCP Saved".to_string()),
+            },
+            1,
+            |targets| targets.mcp_config_saved_count,
+        );
+    }
+
+    fn assert_settings_theme_routing_targets() {
+        assert_route_count(
+            ViewCommand::ShowSettingsTheme {
+                options: vec![theme_summary("Midnight Nebula", "default")],
+                selected_slug: "default".to_string(),
+            },
+            1,
+            |targets| targets.settings_theme_commands,
+        );
+    }
+
     fn conversation_summary(id: Uuid, title: &str, message_count: usize) -> ConversationSummary {
         ConversationSummary {
             id,
@@ -759,7 +901,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[allow(clippy::too_many_lines)]
     async fn handle_command_forwards_settings_profiles_and_routes_mcp_commands_to_expected_targets(
         cx: &mut TestAppContext,
     ) {
@@ -770,112 +911,9 @@ mod tests {
 
         panel.update(cx, |panel: &mut MainPanel, cx| {
             panel.init(cx);
-
-            let profile_id = selected_profile_id;
-            panel.handle_command(
-                ViewCommand::ShowSettings {
-                    profiles: vec![profile_summary(
-                        profile_id,
-                        "Workspace Default",
-                        "openai",
-                        "gpt-4.1",
-                        true,
-                    )],
-                    selected_profile_id: Some(profile_id),
-                },
-                cx,
-            );
-
-            let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
-            chat_view.read_with(cx, |view, _| {
-                assert_eq!(view.state.profiles.len(), 1);
-                assert_eq!(view.state.selected_profile_id, Some(profile_id));
-                assert_eq!(view.state.current_model, "gpt-4.1");
-            });
-
-            let mut targets = CommandTargets::default();
-            route_view_command(
-                ViewCommand::McpConfigureDraftLoaded {
-                    id: saved_mcp_id.to_string(),
-                    name: "Workspace MCP".to_string(),
-                    package: "@example/workspace-mcp".to_string(),
-                    package_type: crate::mcp::McpPackageType::Npm,
-                    runtime_hint: Some("npx".to_string()),
-                    env_var_name: "WORKSPACE_TOKEN".to_string(),
-                    command: "npx".to_string(),
-                    args: vec!["-y".to_string(), "@example/workspace-mcp".to_string()],
-                    env: Some(vec![("WORKSPACE_TOKEN".to_string(), String::new())]),
-                    url: None,
-                },
-                &mut targets,
-            );
-            assert_eq!(targets.mcp_configure_draft_loaded_count, 1);
-
-            route_view_command(
-                ViewCommand::ShowError {
-                    title: "MCP auth failed".to_string(),
-                    message: "token expired".to_string(),
-                    severity: crate::presentation::view_command::ErrorSeverity::Error,
-                },
-                &mut targets,
-            );
-            assert_eq!(targets.mcp_error_commands_count, 1);
-            assert_eq!(targets.chat_error_commands, 0);
-
-            route_view_command(
-                ViewCommand::ShowError {
-                    title: "Save Conversation".to_string(),
-                    message: "disk unavailable".to_string(),
-                    severity: crate::presentation::view_command::ErrorSeverity::Error,
-                },
-                &mut targets,
-            );
-            assert_eq!(targets.mcp_error_commands_count, 2);
-            assert_eq!(targets.chat_error_commands, 1);
-
-            route_view_command(
-                ViewCommand::ShowNotification {
-                    message: "connected-user".to_string(),
-                },
-                &mut targets,
-            );
-            assert_eq!(targets.settings_notifications_count, 1);
-            assert_eq!(targets.chat_notification_commands, 0);
-
-            route_view_command(
-                ViewCommand::ShowNotification {
-                    message: "Conversation saved as /tmp/chat.md (MD)".to_string(),
-                },
-                &mut targets,
-            );
-            assert_eq!(targets.settings_notifications_count, 2);
-            assert_eq!(targets.chat_notification_commands, 1);
-
-            route_view_command(
-                ViewCommand::ShowConversationExportFormat {
-                    format: ConversationExportFormat::Md,
-                },
-                &mut targets,
-            );
-            assert_eq!(targets.chat_export_format_commands, 1);
-
-            route_view_command(
-                ViewCommand::McpConfigSaved {
-                    id: saved_mcp_id,
-                    name: Some("Workspace MCP Saved".to_string()),
-                },
-                &mut targets,
-            );
-            assert_eq!(targets.mcp_config_saved_count, 1);
-
-            route_view_command(
-                ViewCommand::ShowSettingsTheme {
-                    options: vec![theme_summary("Midnight Nebula", "default")],
-                    selected_slug: "default".to_string(),
-                },
-                &mut targets,
-            );
-            assert_eq!(targets.settings_theme_commands, 1);
+            assert_profile_forwarding(panel, selected_profile_id, cx);
+            assert_mcp_routing_targets(saved_mcp_id);
+            assert_settings_theme_routing_targets();
         });
     }
 

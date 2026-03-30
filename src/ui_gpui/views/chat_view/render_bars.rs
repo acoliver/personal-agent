@@ -13,6 +13,27 @@ use crate::presentation::view_command::{ConversationSummary, ProfileSummary};
 use crate::ui_gpui::theme::Theme;
 use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
 
+macro_rules! icon_btn {
+    ($id:expr, $label:expr, $active:expr, $handler:expr) => {
+        div()
+            .id($id)
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when($active, |d| d.bg(Theme::bg_dark()))
+            .when(!$active, |d| {
+                d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+            })
+            .text_size(px(14.0))
+            .text_color(Theme::text_primary())
+            .child($label)
+            .on_mouse_down(MouseButton::Left, $handler)
+    };
+}
+
 impl ChatView {
     /// Render the top bar with icon, title, and toolbar buttons
     /// @plan PLAN-20250130-GPUIREDUX.P04
@@ -40,31 +61,9 @@ impl ChatView {
             .child(self.render_toolbar_buttons(cx))
     }
 
-    /// Right-side toolbar: [T][R][H][Settings][Exit]
-    #[allow(clippy::too_many_lines)]
+    /// Right-side toolbar: [T][R][H][MD/TXT/JSON][Save][Settings][Exit]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
-
-        macro_rules! icon_btn {
-            ($id:expr, $label:expr, $active:expr, $handler:expr) => {
-                div()
-                    .id($id)
-                    .size(px(28.0))
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .when($active, |d| d.bg(Theme::bg_dark()))
-                    .when(!$active, |d| {
-                        d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
-                    })
-                    .text_size(px(14.0))
-                    .text_color(Theme::text_primary())
-                    .child($label)
-                    .on_mouse_down(MouseButton::Left, $handler)
-            };
-        }
 
         div()
             .flex()

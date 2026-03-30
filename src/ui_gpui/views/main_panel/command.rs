@@ -16,6 +16,14 @@ use super::MainPanel;
 use crate::presentation::view_command::{ViewCommand, ViewId};
 
 impl MainPanel {
+    fn is_export_notification(message: &str) -> bool {
+        message.contains("Conversation saved") || message.contains("No active conversation to save")
+    }
+
+    fn is_export_error(title: &str) -> bool {
+        title == "Save Conversation"
+    }
+
     /// Handle `ViewCommand` from the presentation layer.
     ///
     /// @plan PLAN-20250130-GPUIREDUX.P11
@@ -483,78 +491,113 @@ impl MainPanel {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    fn forward_export_notification_to_chat(&self, message: &str, cx: &mut gpui::Context<Self>) {
+        if let Some(ref chat) = self.chat_view {
+            if Self::is_export_notification(message) {
+                let chat_message = message.to_string();
+                chat.update(cx, |view, cx| {
+                    view.handle_command(
+                        ViewCommand::ShowNotification {
+                            message: chat_message,
+                        },
+                        cx,
+                    );
+                });
+            }
+        }
+    }
+
+    fn forward_notification_to_settings(&self, message: String, cx: &mut gpui::Context<Self>) {
+        if let Some(ref settings) = self.settings_view {
+            settings.update(cx, |view, cx| {
+                view.handle_command(ViewCommand::ShowNotification { message }, cx);
+            });
+        }
+    }
+
+    fn forward_export_error_to_chat(
+        &self,
+        title: &str,
+        message: &str,
+        severity: crate::presentation::view_command::ErrorSeverity,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(ref chat) = self.chat_view {
+            if Self::is_export_error(title) {
+                let t = title.to_string();
+                let m = message.to_string();
+                chat.update(cx, |view, cx| {
+                    view.handle_command(
+                        ViewCommand::ShowError {
+                            title: t,
+                            message: m,
+                            severity,
+                        },
+                        cx,
+                    );
+                });
+            }
+        }
+    }
+
+    fn forward_error_to_mcp_add(
+        &self,
+        title: &str,
+        message: &str,
+        severity: crate::presentation::view_command::ErrorSeverity,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(ref mcp_add) = self.mcp_add_view {
+            let t = title.to_string();
+            let m = message.to_string();
+            mcp_add.update(cx, |view, cx| {
+                view.handle_command(
+                    ViewCommand::ShowError {
+                        title: t,
+                        message: m,
+                        severity,
+                    },
+                    cx,
+                );
+            });
+        }
+    }
+
+    fn forward_error_to_mcp_configure(
+        &self,
+        title: String,
+        message: String,
+        severity: crate::presentation::view_command::ErrorSeverity,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(ref mcp_configure) = self.mcp_configure_view {
+            mcp_configure.update(cx, |view, cx| {
+                view.handle_command(
+                    ViewCommand::ShowError {
+                        title,
+                        message,
+                        severity,
+                    },
+                    cx,
+                );
+            });
+        }
+    }
+
     fn handle_notification_api_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
             ViewCommand::ShowNotification { message } => {
-                if let Some(ref chat) = self.chat_view {
-                    if message.contains("Conversation saved")
-                        || message.contains("No active conversation to save")
-                    {
-                        let chat_message = message.clone();
-                        chat.update(cx, |view, cx| {
-                            view.handle_command(
-                                ViewCommand::ShowNotification {
-                                    message: chat_message,
-                                },
-                                cx,
-                            );
-                        });
-                    }
-                }
-                if let Some(ref settings) = self.settings_view {
-                    settings.update(cx, |view, cx| {
-                        view.handle_command(ViewCommand::ShowNotification { message }, cx);
-                    });
-                }
+                self.forward_export_notification_to_chat(&message, cx);
+                self.forward_notification_to_settings(message, cx);
             }
             ViewCommand::ShowError {
                 title,
                 message,
                 severity,
             } => {
-                if let Some(ref chat) = self.chat_view {
-                    if title == "Save Conversation" {
-                        let t = title.clone();
-                        let m = message.clone();
-                        chat.update(cx, |view, cx| {
-                            view.handle_command(
-                                ViewCommand::ShowError {
-                                    title: t,
-                                    message: m,
-                                    severity,
-                                },
-                                cx,
-                            );
-                        });
-                    }
-                }
-                if let Some(ref mcp_add) = self.mcp_add_view {
-                    let t = title.clone();
-                    let m = message.clone();
-                    mcp_add.update(cx, |view, cx| {
-                        view.handle_command(
-                            ViewCommand::ShowError {
-                                title: t,
-                                message: m,
-                                severity,
-                            },
-                            cx,
-                        );
-                    });
-                }
-                if let Some(ref mcp_configure) = self.mcp_configure_view {
-                    mcp_configure.update(cx, |view, cx| {
-                        view.handle_command(
-                            ViewCommand::ShowError {
-                                title,
-                                message,
-                                severity,
-                            },
-                            cx,
-                        );
-                    });
-                }
+                self.forward_export_error_to_chat(&title, &message, severity, cx);
+                self.forward_error_to_mcp_add(&title, &message, severity, cx);
+                self.forward_error_to_mcp_configure(title, message, severity, cx);
             }
             ViewCommand::ApiKeysListed { keys } => {
                 tracing::info!(
