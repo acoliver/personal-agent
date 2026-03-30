@@ -8,7 +8,7 @@
 //! @plan ISSUE12.P02
 //! @plan ISSUE12.P04
 
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 
 use gpui::{hsla, rgb, Hsla, Rgba};
 
@@ -112,8 +112,8 @@ pub fn is_valid_theme_slug(slug: &str) -> bool {
         return true;
     }
 
-    ThemeCatalog::load_bundled().map_or_else(
-        |_| slug == DEFAULT_SLUG,
+    catalog_cache().map_or_else(
+        || slug == DEFAULT_SLUG,
         |catalog| catalog.get(slug).is_some(),
     )
 }
@@ -136,8 +136,8 @@ pub fn available_theme_options() -> Vec<ThemeOption> {
         kind: ThemeKind::Dark,
     };
 
-    let mut options = ThemeCatalog::load_bundled().map_or_else(
-        |_| vec![degraded_default_entry],
+    let mut options = catalog_cache().map_or_else(
+        || vec![degraded_default_entry],
         |catalog| {
             catalog
                 .slugs()
@@ -158,8 +158,15 @@ pub fn available_theme_options() -> Vec<ThemeOption> {
 
 // ── Catalog helpers ──────────────────────────────────────────────────────────
 
+fn catalog_cache() -> Option<&'static ThemeCatalog> {
+    static CATALOG_CACHE: OnceLock<Option<ThemeCatalog>> = OnceLock::new();
+    CATALOG_CACHE
+        .get_or_init(|| ThemeCatalog::load_bundled().ok())
+        .as_ref()
+}
+
 fn load_active_theme_for_slug(slug: &str) -> Option<ThemeDefinition> {
-    let catalog = ThemeCatalog::load_bundled().ok()?;
+    let catalog = catalog_cache()?;
     // mac-native is synthetic and not stored in the catalog; skip catalog lookup.
     if slug == MAC_NATIVE_SLUG {
         return catalog.get(DEFAULT_SLUG).cloned();

@@ -279,6 +279,13 @@ impl SettingsView {
         })
     }
 
+    fn selected_theme_index(&self) -> Option<usize> {
+        self.state
+            .available_themes
+            .iter()
+            .position(|theme| theme.slug == self.state.selected_theme_slug)
+    }
+
     fn select_profile_by_index(&mut self, index: usize, emit_event: bool) {
         if let Some(profile) = self.state.profiles.get(index) {
             self.state.selected_profile_id = Some(profile.id);
@@ -304,6 +311,27 @@ impl SettingsView {
             (current as i32 + delta_steps).clamp(0, max_index) as usize
         };
         self.select_profile_by_index(next, true);
+    }
+
+    fn scroll_themes(&mut self, delta_steps: i32) {
+        if self.state.available_themes.is_empty() || delta_steps == 0 {
+            return;
+        }
+
+        let current = self.selected_theme_index().unwrap_or(0);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_possible_wrap,
+            clippy::cast_sign_loss
+        )]
+        let next = {
+            let max_index = self.state.available_themes.len().saturating_sub(1) as i32;
+            (current as i32 + delta_steps).clamp(0, max_index) as usize
+        };
+
+        if let Some(theme) = self.state.available_themes.get(next) {
+            self.state.selected_theme_slug = theme.slug.clone();
+        }
     }
 
     pub(super) fn select_profile(&mut self, profile_id: Uuid, cx: &mut gpui::Context<Self>) {
@@ -376,9 +404,11 @@ impl SettingsView {
             Self::navigate_to_mcp_add();
         } else if key == "up" && !modifiers.platform {
             self.scroll_profiles(-1);
+            self.scroll_themes(-1);
             cx.notify();
         } else if key == "down" && !modifiers.platform {
             self.scroll_profiles(1);
+            self.scroll_themes(1);
             cx.notify();
         } else if (key == "enter" || key == "space") && !modifiers.platform {
             if self.state.available_themes.is_empty() {
