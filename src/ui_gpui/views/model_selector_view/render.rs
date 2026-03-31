@@ -500,7 +500,11 @@ impl gpui::Render for ModelSelectorView {
         let filtered = self.state.filtered_models();
         let providers = self.state.all_providers();
         let model_count = filtered.len();
-        let provider_count = providers.len();
+        let provider_count = filtered
+            .iter()
+            .map(|m| m.provider_id.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
 
         let root = div()
             .id("model-selector-view")
