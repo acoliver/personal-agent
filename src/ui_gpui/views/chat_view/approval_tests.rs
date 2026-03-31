@@ -33,7 +33,7 @@ async fn handle_tool_approval_request_adds_pending_bubble(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn handle_tool_approval_resolved_approved(cx: &mut TestAppContext) {
+async fn handle_tool_approval_resolved_approved_removes_bubble(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();
 
@@ -47,6 +47,8 @@ async fn handle_tool_approval_resolved_approved(cx: &mut TestAppContext) {
                 },
                 cx,
             );
+            assert_eq!(view.state.approval_bubbles.len(), 1);
+
             view.handle_command(
                 ViewCommand::ToolApprovalResolved {
                     request_id: "req-2".into(),
@@ -55,16 +57,16 @@ async fn handle_tool_approval_resolved_approved(cx: &mut TestAppContext) {
                 cx,
             );
 
-            assert_eq!(
-                view.state.approval_bubbles[0].state,
-                ApprovalBubbleState::Approved
+            assert!(
+                view.state.approval_bubbles.is_empty(),
+                "resolved bubble should be removed"
             );
         });
     });
 }
 
 #[gpui::test]
-async fn handle_tool_approval_resolved_denied(cx: &mut TestAppContext) {
+async fn handle_tool_approval_resolved_denied_removes_bubble(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();
 
@@ -78,6 +80,8 @@ async fn handle_tool_approval_resolved_denied(cx: &mut TestAppContext) {
                 },
                 cx,
             );
+            assert_eq!(view.state.approval_bubbles.len(), 1);
+
             view.handle_command(
                 ViewCommand::ToolApprovalResolved {
                     request_id: "req-3".into(),
@@ -86,9 +90,9 @@ async fn handle_tool_approval_resolved_denied(cx: &mut TestAppContext) {
                 cx,
             );
 
-            assert_eq!(
-                view.state.approval_bubbles[0].state,
-                ApprovalBubbleState::Denied
+            assert!(
+                view.state.approval_bubbles.is_empty(),
+                "denied bubble should be removed"
             );
         });
     });
@@ -155,7 +159,7 @@ async fn conversation_cleared_also_clears_approval_bubbles(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-async fn multiple_approval_bubbles_tracked_independently(cx: &mut TestAppContext) {
+async fn resolving_one_bubble_retains_other_pending_bubbles(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();
 
@@ -188,12 +192,11 @@ async fn multiple_approval_bubbles_tracked_independently(cx: &mut TestAppContext
                 cx,
             );
 
+            // Resolved bubble "a" is removed; only pending "b" remains.
+            assert_eq!(view.state.approval_bubbles.len(), 1);
+            assert_eq!(view.state.approval_bubbles[0].request_id, "b");
             assert_eq!(
                 view.state.approval_bubbles[0].state,
-                ApprovalBubbleState::Approved
-            );
-            assert_eq!(
-                view.state.approval_bubbles[1].state,
                 ApprovalBubbleState::Pending
             );
         });

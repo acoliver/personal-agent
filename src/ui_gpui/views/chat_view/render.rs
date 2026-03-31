@@ -353,6 +353,9 @@ impl ChatView {
     }
 
     /// Render a single inline approval bubble with action button callbacks.
+    ///
+    /// A shared `AtomicBool` guard prevents duplicate responses from rapid
+    /// clicks — once any button fires, all four become no-ops.
     fn render_approval_bubble(
         &self,
         bubble: &super::state::ToolApprovalBubble,
@@ -370,10 +373,15 @@ impl ChatView {
 
         if matches!(bubble.state, ApprovalBubbleState::Pending) {
             let bridge = self.bridge.clone();
+            let decided = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
             let rid = request_id.clone();
             let b1 = bridge.clone();
+            let d1 = decided.clone();
             approval = approval.on_yes(move || {
+                if d1.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    return;
+                }
                 if let Some(ref bridge) = b1 {
                     bridge.emit(UserEvent::ToolApprovalResponse {
                         request_id: rid.clone(),
@@ -384,7 +392,11 @@ impl ChatView {
 
             let rid = request_id.clone();
             let b2 = bridge.clone();
+            let d2 = decided.clone();
             approval = approval.on_session(move || {
+                if d2.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    return;
+                }
                 if let Some(ref bridge) = b2 {
                     bridge.emit(UserEvent::ToolApprovalResponse {
                         request_id: rid.clone(),
@@ -395,7 +407,11 @@ impl ChatView {
 
             let rid = request_id.clone();
             let b3 = bridge.clone();
+            let d3 = decided.clone();
             approval = approval.on_always(move || {
+                if d3.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    return;
+                }
                 if let Some(ref bridge) = b3 {
                     bridge.emit(UserEvent::ToolApprovalResponse {
                         request_id: rid.clone(),
@@ -406,7 +422,11 @@ impl ChatView {
 
             let rid = request_id;
             let b4 = bridge;
+            let d4 = decided;
             approval = approval.on_no(move || {
+                if d4.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    return;
+                }
                 if let Some(ref bridge) = b4 {
                     bridge.emit(UserEvent::ToolApprovalResponse {
                         request_id: rid.clone(),

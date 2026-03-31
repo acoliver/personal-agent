@@ -103,6 +103,10 @@ impl ChatView {
                         ApprovalBubbleState::Denied
                     };
                 }
+                // Remove resolved bubbles so they don't accumulate.
+                self.state
+                    .approval_bubbles
+                    .retain(|b| b.state == ApprovalBubbleState::Pending);
                 cx.notify();
             }
             ViewCommand::YoloModeChanged { active } => {
