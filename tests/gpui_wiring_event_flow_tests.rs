@@ -845,16 +845,16 @@ async fn test_model_selector_presenter_emits_prefill_and_navigation_on_select_mo
     );
 }
 
-/// REQ-WIRE-001: `ModelSelectorPresenter` emits `ModelSearchResults` for `SearchModels` input
+/// Issue #30: `SearchModels` is now handled locally in the view — presenter ignores it.
 ///
 /// GIVEN: `ModelSelectorPresenter` subscribed to `EventBus` with view command receiver
 /// WHEN:  `SearchModels` user event is published
-/// THEN:  presenter emits `ModelSearchResults` (possibly empty list)
+/// THEN:  presenter does NOT emit any view command (filtering is local)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
 #[tokio::test]
-async fn test_model_selector_presenter_handles_search_models() {
+async fn test_model_selector_presenter_ignores_search_models() {
     let event_bus_sender: broadcast::Sender<AppEvent> = broadcast::channel::<AppEvent>(32).0;
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(32);
 
@@ -879,27 +879,23 @@ async fn test_model_selector_presenter_handles_search_models() {
         }))
         .ok();
 
-    let cmd = tokio::time::timeout(Duration::from_millis(250), view_rx.recv())
-        .await
-        .expect("timed out waiting for search command")
-        .expect("view channel closed");
-
+    let result = tokio::time::timeout(Duration::from_millis(150), view_rx.recv()).await;
     assert!(
-        matches!(cmd, ViewCommand::ModelSearchResults { .. }),
-        "SearchModels should emit ModelSearchResults, got {cmd:?}"
+        result.is_err(),
+        "SearchModels should be ignored by presenter, got {result:?}"
     );
 }
 
-/// REQ-WIRE-001: `ModelSelectorPresenter` emits `ModelSearchResults` for provider filter input
+/// Issue #30: `FilterModelsByProvider` is now handled locally in the view — presenter ignores it.
 ///
 /// GIVEN: `ModelSelectorPresenter` subscribed to `EventBus` with view command receiver
 /// WHEN:  `FilterModelsByProvider` user event is published
-/// THEN:  presenter emits `ModelSearchResults` (possibly empty list)
+/// THEN:  presenter does NOT emit any view command (filtering is local)
 ///
 /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P04
 /// @requirement REQ-WIRE-001
 #[tokio::test]
-async fn test_model_selector_presenter_handles_filter_models_by_provider() {
+async fn test_model_selector_presenter_ignores_filter_models_by_provider() {
     let event_bus_sender: broadcast::Sender<AppEvent> = broadcast::channel::<AppEvent>(32).0;
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(32);
 
@@ -924,14 +920,10 @@ async fn test_model_selector_presenter_handles_filter_models_by_provider() {
         }))
         .ok();
 
-    let cmd = tokio::time::timeout(Duration::from_millis(250), view_rx.recv())
-        .await
-        .expect("timed out waiting for filter command")
-        .expect("view channel closed");
-
+    let result = tokio::time::timeout(Duration::from_millis(150), view_rx.recv()).await;
     assert!(
-        matches!(cmd, ViewCommand::ModelSearchResults { .. }),
-        "FilterModelsByProvider should emit ModelSearchResults, got {cmd:?}"
+        result.is_err(),
+        "FilterModelsByProvider should be ignored by presenter, got {result:?}"
     );
 }
 

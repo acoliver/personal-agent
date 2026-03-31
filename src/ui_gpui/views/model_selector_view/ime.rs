@@ -69,7 +69,6 @@ impl gpui::EntityInputHandler for ModelSelectorView {
         if !text.is_empty() {
             self.state.search_query.push_str(text);
         }
-        self.emit_filter_events_if_changed();
         cx.notify();
     }
 
@@ -92,7 +91,6 @@ impl gpui::EntityInputHandler for ModelSelectorView {
             self.state.search_query.push_str(new_text);
             self.ime_marked_byte_count = new_text.len();
         }
-        self.emit_filter_events_if_changed();
         cx.notify();
     }
 

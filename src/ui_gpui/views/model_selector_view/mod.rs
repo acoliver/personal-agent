@@ -115,11 +115,6 @@ pub struct ModelSelectorState {
     pub filter_reasoning: bool,
     pub filter_vision: bool,
     pub show_provider_dropdown: bool,
-
-    /// Last search query emitted to presenter, used to avoid redundant events.
-    pub last_emitted_search_query: String,
-    /// Last provider filter emitted to presenter, used to avoid redundant events.
-    pub last_emitted_provider: Option<String>,
 }
 
 impl ModelSelectorState {
@@ -212,13 +207,6 @@ impl ModelSelectorView {
         self.state.selected_provider = provider;
     }
 
-    /// Emit `SearchModels` event for current query.
-    pub fn emit_search_models(&self) {
-        self.emit(&UserEvent::SearchModels {
-            query: self.state.search_query.clone(),
-        });
-    }
-
     /// Get current state for testing
     #[must_use]
     pub const fn get_state(&self) -> &ModelSelectorState {
@@ -243,6 +231,7 @@ mod tests {
     #![allow(clippy::future_not_send)]
 
     use super::*;
+    use crate::events::types::UserEvent;
     use crate::presentation::view_command::ViewCommand;
     use flume;
     use gpui::{AppContext, EntityInputHandler, TestAppContext};
@@ -307,9 +296,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn handle_command_maps_models_and_filter_events_emit_only_on_changes(
-        cx: &mut TestAppContext,
-    ) {
+    async fn handle_command_maps_models_and_request_emits_open_selector(cx: &mut TestAppContext) {
         let (user_tx, user_rx) = flume::bounded(16);
         let (_view_tx, view_rx) = flume::bounded(16);
         let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
@@ -334,43 +321,26 @@ mod tests {
             assert_eq!(view.state.models[0].context, 200_000);
             assert_eq!(view.state.models[2].context, 128_000);
 
+            // Filtering is now local-only; no SearchModels / FilterModelsByProvider
+            // events are emitted.  Verify the state-level filter logic still works.
             view.state.search_query = "claude".to_string();
-            view.emit_filter_events_if_changed();
-            view.emit_filter_events_if_changed();
+            let filtered = view.state.filtered_models();
+            assert_eq!(filtered.len(), 2);
 
             view.state.selected_provider = Some("anthropic".to_string());
-            view.emit_filter_events_if_changed();
-            view.emit_filter_events_if_changed();
+            let filtered = view.state.filtered_models();
+            assert_eq!(filtered.len(), 2);
 
             view.request_models();
-            view.emit_search_models();
         });
 
-        assert_eq!(
-            user_rx.recv().expect("search event"),
-            UserEvent::SearchModels {
-                query: "claude".to_string(),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("provider filter event"),
-            UserEvent::FilterModelsByProvider {
-                provider_id: Some("anthropic".to_string()),
-            }
-        );
         assert_eq!(
             user_rx.recv().expect("open selector event"),
             UserEvent::OpenModelSelector
         );
-        assert_eq!(
-            user_rx.recv().expect("manual search emit"),
-            UserEvent::SearchModels {
-                query: "claude".to_string(),
-            }
-        );
         assert!(
             user_rx.try_recv().is_err(),
-            "duplicate filter events should not be emitted"
+            "no filter/search events should be emitted"
         );
     }
 
@@ -473,16 +443,7 @@ mod tests {
             assert!(!view.get_state().show_provider_dropdown);
         });
 
-        assert_eq!(
-            user_rx.recv().expect("provider filter event"),
-            UserEvent::FilterModelsByProvider {
-                provider_id: Some("anthropic".to_string()),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("clear provider filter event"),
-            UserEvent::FilterModelsByProvider { provider_id: None }
-        );
+        // Only SelectModel should be emitted — filter changes are local-only now.
         assert_eq!(
             user_rx.recv().expect("select model event"),
             UserEvent::SelectModel {
@@ -497,25 +458,18 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn key_handling_closes_dropdown_navigates_and_backspaces_search_once(
-        cx: &mut TestAppContext,
-    ) {
+    async fn key_handling_closes_dropdown_navigates_and_backspaces_search(cx: &mut TestAppContext) {
         while crate::ui_gpui::navigation_channel()
             .take_pending()
             .is_some()
         {}
-        let (user_tx, user_rx) = flume::bounded(16);
-        let (_view_tx, view_rx) = flume::bounded(16);
-        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
         let view = cx.new(ModelSelectorView::new);
         let mut visual_cx = cx.add_empty_window().clone();
 
         visual_cx.update(|window, app| {
             view.update(app, |view: &mut ModelSelectorView, cx| {
-                view.set_bridge(Arc::clone(&bridge));
                 view.state.show_provider_dropdown = true;
                 view.state.search_query = "claude".to_string();
-                view.state.last_emitted_search_query = "claude".to_string();
 
                 view.handle_key_down(
                     &gpui::KeyDownEvent {
@@ -560,28 +514,6 @@ mod tests {
                 assert_eq!(view.marked_text_range(window, cx), None);
             });
         });
-
-        assert_eq!(
-            user_rx.recv().expect("backspace search event"),
-            UserEvent::SearchModels {
-                query: "claud".to_string(),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("composition search event"),
-            UserEvent::SearchModels {
-                query: "claude".to_string(),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("composition replace search event"),
-            UserEvent::SearchModels {
-                query: "claude-3".to_string(),
-            }
-        );
-        assert!(
-            user_rx.try_recv().is_err(),
-            "unexpected additional key-handling events"
-        );
+        // No SearchModels events emitted — filtering is local-only.
     }
 }

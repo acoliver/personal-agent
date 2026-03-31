@@ -4,14 +4,18 @@ use super::{ModelInfo, ModelSelectorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
-    Pixels, ScrollWheelEvent, SharedString,
+    Pixels, SharedString,
 };
+
+/// Layout height constants — used for both rendering and dropdown positioning.
+const TOP_BAR_H: f32 = 44.0;
+const FILTER_BAR_H: f32 = 36.0;
 
 impl ModelSelectorView {
     fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("top-bar")
-            .h(px(44.0))
+            .h(px(TOP_BAR_H))
             .w_full()
             .bg(Theme::bg_darker())
             .border_b_1()
@@ -68,7 +72,7 @@ impl ModelSelectorView {
 
         div()
             .id("filter-bar")
-            .h(px(36.0))
+            .h(px(FILTER_BAR_H))
             .w_full()
             .bg(Theme::bg_darkest())
             .px(px(12.0))
@@ -354,10 +358,11 @@ impl ModelSelectorView {
 
     /// Render the model list (scrollable)
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_model_list(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let filtered = self.state.filtered_models();
-        let providers = self.state.all_providers();
-
+    fn render_model_list(
+        filtered: &[&ModelInfo],
+        providers: &[&str],
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("model-list")
             .flex_1()
@@ -399,12 +404,7 @@ impl ModelSelectorView {
 
     /// Render the status bar
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_status_bar(&self) -> impl IntoElement {
-        let filtered = self.state.filtered_models();
-        let providers = self.state.all_providers();
-        let model_count = filtered.len();
-        let provider_count = providers.len();
-
+    fn render_status_bar(model_count: usize, provider_count: usize) -> impl IntoElement {
         div()
             .id("status-bar")
             .h(px(24.0))
@@ -423,13 +423,14 @@ impl ModelSelectorView {
     }
 
     /// Render the provider dropdown overlay
-    fn render_provider_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let providers = self.state.all_providers();
-
+    fn render_provider_dropdown(
+        providers: &[&str],
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("provider-menu-overlay")
             .absolute()
-            .top(px(80.0 + 28.0))
+            .top(px(TOP_BAR_H + FILTER_BAR_H))
             .right(px(12.0))
             .min_w(px(180.0))
             .max_w(px(320.0))
@@ -459,7 +460,7 @@ impl ModelSelectorView {
                     .child("All"),
             )
             // Provider options
-            .children(providers.into_iter().map(|p| {
+            .children(providers.iter().map(|p| {
                 let provider_id = p.to_string();
                 let provider_name = p.to_string();
                 div()
@@ -494,6 +495,12 @@ impl gpui::Render for ModelSelectorView {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let show_dropdown = self.state.show_provider_dropdown;
+
+        // Compute filtered data once per render cycle.
+        let filtered = self.state.filtered_models();
+        let providers = self.state.all_providers();
+        let model_count = filtered.len();
+        let provider_count = providers.len();
 
         let root = div()
             .id("model-selector-view")
@@ -530,20 +537,22 @@ impl gpui::Render for ModelSelectorView {
                     // All other printable chars fall through to EntityInputHandler
                 }),
             )
-            // Top bar (44px)
+            // Top bar
             .child(Self::render_top_bar(cx))
-            // Filter bar (36px)
+            // Filter bar
             .child(self.render_filter_bar(cx))
             // Capability toggles (28px)
             .child(self.render_capability_toggles(cx))
             // Column header (20px)
             .child(Self::render_column_header())
             // Model list (flex, scrollable)
-            .child(self.render_model_list(cx))
+            .child(Self::render_model_list(&filtered, &providers, cx))
             // Status bar (24px)
-            .child(self.render_status_bar());
+            .child(Self::render_status_bar(model_count, provider_count));
 
-        // Dropdown overlay isolation: when open, capture background clicks and close only.
+        // Dropdown overlay: backdrop blocks ALL mouse events (including scroll) from
+        // reaching the content behind it.  The dropdown menu is rendered as a separate
+        // child *after* the backdrop so it sits on top in z-order.
         if show_dropdown {
             root.child(
                 div()
@@ -553,21 +562,16 @@ impl gpui::Render for ModelSelectorView {
                     .left(px(0.0))
                     .right(px(0.0))
                     .bottom(px(0.0))
-                    .block_mouse_except_scroll()
-                    .on_scroll_wheel(cx.listener(
-                        |_this, _event: &ScrollWheelEvent, _window, cx| {
-                            cx.stop_propagation();
-                        },
-                    ))
+                    .occlude()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {
                             this.state.show_provider_dropdown = false;
                             cx.notify();
                         }),
-                    )
-                    .child(self.render_provider_dropdown(cx)),
+                    ),
             )
+            .child(Self::render_provider_dropdown(&providers, cx))
         } else {
             root
         }

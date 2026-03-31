@@ -55,28 +55,6 @@ impl MockModelsRegistryService {
         self
     }
 
-    fn with_search_response(self, query: &str, response: ServiceResult<Vec<ModelInfo>>) -> Self {
-        self.state
-            .lock()
-            .expect("state poisoned")
-            .search_responses
-            .insert(query.to_string(), response);
-        self
-    }
-
-    fn with_provider_response(
-        self,
-        provider: &str,
-        response: ServiceResult<Vec<ModelInfo>>,
-    ) -> Self {
-        self.state
-            .lock()
-            .expect("state poisoned")
-            .provider_responses
-            .insert(provider.to_string(), response);
-        self
-    }
-
     fn with_provider_api_url_response(
         self,
         provider: &str,
@@ -402,16 +380,8 @@ async fn open_model_selector_emits_error_when_loading_fails_after_refresh() {
 }
 
 #[tokio::test]
-async fn search_models_emits_mapped_results() {
-    let service_impl = MockModelsRegistryService::new().with_search_response(
-        "claude",
-        Ok(vec![registry_model(
-            "claude-3-7-sonnet",
-            "Claude 3.7 Sonnet",
-            Some("anthropic"),
-            Some(1_000_000),
-        )]),
-    );
+async fn search_models_events_are_ignored_by_presenter() {
+    let service_impl = MockModelsRegistryService::new();
     let snapshot_handle = service_impl.clone();
     let service: Arc<dyn ModelsRegistryService> = Arc::new(service_impl);
     let (_presenter, event_tx, mut view_rx) = start_presenter(service).await;
@@ -422,61 +392,17 @@ async fn search_models_emits_mapped_results() {
         }))
         .expect("send should succeed");
 
-    let command = recv_view_command(&mut view_rx).await;
-    assert_eq!(
-        command,
-        ViewCommand::ModelSearchResults {
-            models: vec![ViewModelInfo {
-                provider_id: "anthropic".to_string(),
-                model_id: "claude-3-7-sonnet".to_string(),
-                name: "Claude 3.7 Sonnet".to_string(),
-                context_length: Some(1_000_000),
-            }],
-        }
-    );
-    assert_eq!(
-        snapshot_handle.snapshot().search_queries,
-        vec!["claude".to_string()]
+    // Presenter no longer round-trips search to the registry (issue #30).
+    expect_no_view_command(&mut view_rx).await;
+    assert!(
+        snapshot_handle.snapshot().search_queries.is_empty(),
+        "search should not hit the registry"
     );
 }
 
 #[tokio::test]
-async fn search_models_emits_warning_on_error() {
-    let service: Arc<dyn ModelsRegistryService> =
-        Arc::new(MockModelsRegistryService::new().with_search_response(
-            "bad query",
-            Err(ServiceError::Network("query failed".to_string())),
-        ));
-    let (_presenter, event_tx, mut view_rx) = start_presenter(service).await;
-
-    event_tx
-        .send(AppEvent::User(UserEvent::SearchModels {
-            query: "bad query".to_string(),
-        }))
-        .expect("send should succeed");
-
-    let command = recv_view_command(&mut view_rx).await;
-    assert_eq!(
-        command,
-        ViewCommand::ShowError {
-            title: "Model Search Failed".to_string(),
-            message: "Network error: query failed".to_string(),
-            severity: ErrorSeverity::Warning,
-        }
-    );
-}
-
-#[tokio::test]
-async fn provider_filter_uses_specific_provider_lookup() {
-    let service_impl = MockModelsRegistryService::new().with_provider_response(
-        "openai",
-        Ok(vec![registry_model(
-            "gpt-4o",
-            "GPT-4o",
-            Some("openai"),
-            Some(128_000),
-        )]),
-    );
+async fn provider_filter_events_are_ignored_by_presenter() {
+    let service_impl = MockModelsRegistryService::new();
     let snapshot_handle = service_impl.clone();
     let service: Arc<dyn ModelsRegistryService> = Arc::new(service_impl);
     let (_presenter, event_tx, mut view_rx) = start_presenter(service).await;
@@ -487,31 +413,17 @@ async fn provider_filter_uses_specific_provider_lookup() {
         }))
         .expect("send should succeed");
 
-    let command = recv_view_command(&mut view_rx).await;
-    assert_eq!(
-        command,
-        ViewCommand::ModelSearchResults {
-            models: vec![ViewModelInfo {
-                provider_id: "openai".to_string(),
-                model_id: "gpt-4o".to_string(),
-                name: "GPT-4o".to_string(),
-                context_length: Some(128_000),
-            }],
-        }
-    );
-    assert_eq!(
-        snapshot_handle.snapshot().provider_queries,
-        vec!["openai".to_string()]
+    // Presenter no longer round-trips provider filter to the registry (issue #30).
+    expect_no_view_command(&mut view_rx).await;
+    assert!(
+        snapshot_handle.snapshot().provider_queries.is_empty(),
+        "provider filter should not hit the registry"
     );
 }
 
 #[tokio::test]
-async fn provider_filter_with_none_lists_all_models() {
-    let service: Arc<dyn ModelsRegistryService> = Arc::new(
-        MockModelsRegistryService::new().with_list_all_responses(vec![Ok(vec![registry_model(
-            "kimi-k2", "Kimi K2", None, None,
-        )])]),
-    );
+async fn provider_filter_none_also_ignored_by_presenter() {
+    let service: Arc<dyn ModelsRegistryService> = Arc::new(MockModelsRegistryService::new());
     let (_presenter, event_tx, mut view_rx) = start_presenter(service).await;
 
     event_tx
@@ -520,44 +432,7 @@ async fn provider_filter_with_none_lists_all_models() {
         }))
         .expect("send should succeed");
 
-    let command = recv_view_command(&mut view_rx).await;
-    assert_eq!(
-        command,
-        ViewCommand::ModelSearchResults {
-            models: vec![ViewModelInfo {
-                provider_id: "unknown".to_string(),
-                model_id: "kimi-k2".to_string(),
-                name: "Kimi K2".to_string(),
-                context_length: None,
-            }],
-        }
-    );
-}
-
-#[tokio::test]
-async fn provider_filter_emits_error_on_failure() {
-    let service: Arc<dyn ModelsRegistryService> =
-        Arc::new(MockModelsRegistryService::new().with_provider_response(
-            "anthropic",
-            Err(ServiceError::Internal("provider failed".to_string())),
-        ));
-    let (_presenter, event_tx, mut view_rx) = start_presenter(service).await;
-
-    event_tx
-        .send(AppEvent::User(UserEvent::FilterModelsByProvider {
-            provider_id: Some("anthropic".to_string()),
-        }))
-        .expect("send should succeed");
-
-    let command = recv_view_command(&mut view_rx).await;
-    assert_eq!(
-        command,
-        ViewCommand::ShowError {
-            title: "Model Filter Failed".to_string(),
-            message: "Internal error: provider failed".to_string(),
-            severity: ErrorSeverity::Warning,
-        }
-    );
+    expect_no_view_command(&mut view_rx).await;
 }
 
 #[tokio::test]

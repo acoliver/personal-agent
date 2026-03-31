@@ -57,23 +57,6 @@ impl ModelSelectorView {
         self.emit(&UserEvent::OpenModelSelector);
     }
 
-    /// Emit search/filter events when local filter state changes.
-    pub(super) fn emit_filter_events_if_changed(&mut self) {
-        if self.state.search_query != self.state.last_emitted_search_query {
-            self.emit(&UserEvent::SearchModels {
-                query: self.state.search_query.clone(),
-            });
-            self.state.last_emitted_search_query = self.state.search_query.clone();
-        }
-
-        if self.state.selected_provider != self.state.last_emitted_provider {
-            self.emit(&UserEvent::FilterModelsByProvider {
-                provider_id: self.state.selected_provider.clone(),
-            });
-            self.state.last_emitted_provider = self.state.selected_provider.clone();
-        }
-    }
-
     pub(super) fn toggle_provider_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.show_provider_dropdown = !self.state.show_provider_dropdown;
         cx.notify();
@@ -92,7 +75,6 @@ impl ModelSelectorView {
     pub(super) fn clear_provider_filter(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.selected_provider = None;
         self.state.show_provider_dropdown = false;
-        self.emit_filter_events_if_changed();
         cx.notify();
     }
 
@@ -103,7 +85,6 @@ impl ModelSelectorView {
     ) {
         self.state.selected_provider = Some(provider_id);
         self.state.show_provider_dropdown = false;
-        self.emit_filter_events_if_changed();
         cx.notify();
     }
 
@@ -143,7 +124,6 @@ impl ModelSelectorView {
 
         if !modifiers.platform && !modifiers.control && key == "backspace" {
             self.state.search_query.pop();
-            self.emit_filter_events_if_changed();
             cx.notify();
         }
     }

@@ -154,6 +154,7 @@ impl ModelSelectorPresenter {
     /// Handle user events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
+    #[allow(clippy::match_same_arms)]
     async fn handle_user_event(
         models_registry_service: &Arc<dyn ModelsRegistryService>,
         view_tx: &broadcast::Sender<ViewCommand>,
@@ -163,12 +164,9 @@ impl ModelSelectorPresenter {
             UserEvent::OpenModelSelector => {
                 Self::on_open_selector(models_registry_service, view_tx).await;
             }
-            UserEvent::SearchModels { query } => {
-                Self::on_search_models(models_registry_service, view_tx, query).await;
-            }
-            UserEvent::FilterModelsByProvider { provider_id } => {
-                Self::on_filter_by_provider(models_registry_service, view_tx, provider_id).await;
-            }
+            // SearchModels / FilterModelsByProvider are handled locally in the view —
+            // no presenter round-trip needed (see issue #30).
+            UserEvent::SearchModels { .. } | UserEvent::FilterModelsByProvider { .. } => {}
             UserEvent::SelectModel {
                 provider_id,
                 model_id,
@@ -176,7 +174,7 @@ impl ModelSelectorPresenter {
                 Self::on_select_model(models_registry_service, view_tx, provider_id, model_id)
                     .await;
             }
-            _ => {} // Ignore other user events
+            _ => {}
         }
     }
 
@@ -242,59 +240,6 @@ impl ModelSelectorPresenter {
         let _ = view_tx.send(ViewCommand::ModelSearchResults {
             models: model_infos,
         });
-    }
-
-    /// Search models by query and emit `ModelSearchResults`.
-    async fn on_search_models(
-        models_registry_service: &Arc<dyn ModelsRegistryService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        query: String,
-    ) {
-        tracing::info!("Searching models for: {}", query);
-
-        match models_registry_service.search(&query).await {
-            Ok(models) => {
-                let mapped = Self::map_models_to_view(models);
-                let _ = view_tx.send(ViewCommand::ModelSearchResults { models: mapped });
-            }
-            Err(e) => {
-                tracing::error!("Model search failed: {:?}", e);
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Model Search Failed".to_string(),
-                    message: e.to_string(),
-                    severity: super::view_command::ErrorSeverity::Warning,
-                });
-            }
-        }
-    }
-
-    /// Filter models by provider and emit `ModelSearchResults`.
-    async fn on_filter_by_provider(
-        models_registry_service: &Arc<dyn ModelsRegistryService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        provider_id: Option<String>,
-    ) {
-        tracing::info!("Filtering models by provider: {:?}", provider_id);
-
-        let result = match provider_id {
-            Some(provider) => models_registry_service.get_provider(&provider).await,
-            None => models_registry_service.list_all().await,
-        };
-
-        match result {
-            Ok(models) => {
-                let mapped = Self::map_models_to_view(models);
-                let _ = view_tx.send(ViewCommand::ModelSearchResults { models: mapped });
-            }
-            Err(e) => {
-                tracing::error!("Model provider filter failed: {:?}", e);
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Model Filter Failed".to_string(),
-                    message: e.to_string(),
-                    severity: super::view_command::ErrorSeverity::Warning,
-                });
-            }
-        }
     }
 
     /// Handle select model event
