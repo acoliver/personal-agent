@@ -356,50 +356,59 @@ impl ModelSelectorView {
             .child(provider_id.to_string())
     }
 
-    /// Render the model list (scrollable)
+    /// Render the model list (scrollable unless the provider dropdown is open).
     /// @plan PLAN-20250130-GPUIREDUX.P07
     fn render_model_list(
         filtered: &[&ModelInfo],
         providers: &[&str],
+        dropdown_open: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        div()
+        let list = div()
             .id("model-list")
             .flex_1()
             .w_full()
-            .bg(Theme::bg_darkest())
-            .overflow_y_scroll()
-            .child(
-                div().flex().flex_col().children(
-                    providers
-                        .iter()
-                        .filter_map(|provider| {
-                            let provider_models: Vec<_> = filtered
-                                .iter()
-                                .filter(|m| m.provider_id == *provider)
-                                .collect();
+            .bg(Theme::bg_darkest());
 
-                            if provider_models.is_empty() {
-                                return None;
-                            }
+        // Disable scroll on the model list while the provider dropdown is open
+        // to prevent dual-scroll (both the dropdown and the list scrolling at once).
+        let list = if dropdown_open {
+            list.overflow_hidden()
+        } else {
+            list.overflow_y_scroll()
+        };
 
-                            let provider_id = provider.to_string();
-                            Some(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(Self::render_provider_header(&provider_id))
-                                    .children(
-                                        provider_models
-                                            .into_iter()
-                                            .map(|model| Self::render_model_row(model, cx))
-                                            .collect::<Vec<_>>(),
-                                    ),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-            )
+        list.child(
+            div().flex().flex_col().children(
+                providers
+                    .iter()
+                    .filter_map(|provider| {
+                        let provider_models: Vec<_> = filtered
+                            .iter()
+                            .filter(|m| m.provider_id == *provider)
+                            .collect();
+
+                        if provider_models.is_empty() {
+                            return None;
+                        }
+
+                        let provider_id = provider.to_string();
+                        Some(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(Self::render_provider_header(&provider_id))
+                                .children(
+                                    provider_models
+                                        .into_iter()
+                                        .map(|model| Self::render_model_row(model, cx))
+                                        .collect::<Vec<_>>(),
+                                ),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        )
     }
 
     /// Render the status bar
@@ -499,12 +508,8 @@ impl gpui::Render for ModelSelectorView {
         // Compute filtered data once per render cycle.
         let filtered = self.state.filtered_models();
         let providers = self.state.all_providers();
-        let model_count = filtered.len();
-        let provider_count = filtered
-            .iter()
-            .map(|m| m.provider_id.as_str())
-            .collect::<std::collections::BTreeSet<_>>()
-            .len();
+        let model_count = self.state.cached_filtered_model_count();
+        let provider_count = self.state.cached_visible_provider_count();
 
         let root = div()
             .id("model-selector-view")
@@ -549,14 +554,28 @@ impl gpui::Render for ModelSelectorView {
             .child(self.render_capability_toggles(cx))
             // Column header (20px)
             .child(Self::render_column_header())
-            // Model list (flex, scrollable)
-            .child(Self::render_model_list(&filtered, &providers, cx))
+            // Model list (flex, scrollable — disabled when dropdown is open)
+            .child(Self::render_model_list(
+                &filtered,
+                &providers,
+                show_dropdown,
+                cx,
+            ))
             // Status bar (24px)
             .child(Self::render_status_bar(model_count, provider_count));
 
-        // Dropdown overlay: backdrop blocks ALL mouse events (including scroll) from
-        // reaching the content behind it.  The dropdown menu is rendered as a separate
-        // child *after* the backdrop so it sits on top in z-order.
+        // Dropdown overlay — two *siblings*, NOT parent-child.
+        //
+        // The backdrop blocks clicks from reaching the content behind it and
+        // closes the dropdown on click.  Scroll events pass through the
+        // backdrop (via `block_mouse_except_scroll`), but the model list has
+        // `overflow_hidden` while the dropdown is open so nothing scrolls.
+        //
+        // The dropdown menu is a separate element rendered AFTER the backdrop,
+        // which gives it higher z-order.  Because it is NOT a child of the
+        // backdrop, GPUI's hit-tester finds the dropdown first for any pointer
+        // events in its bounds — including scroll — so `overflow_y_scroll` on
+        // the dropdown works correctly.
         if show_dropdown {
             root.child(
                 div()
@@ -566,7 +585,7 @@ impl gpui::Render for ModelSelectorView {
                     .left(px(0.0))
                     .right(px(0.0))
                     .bottom(px(0.0))
-                    .occlude()
+                    .block_mouse_except_scroll()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {

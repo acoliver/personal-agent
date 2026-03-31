@@ -7,7 +7,7 @@ mod command;
 mod ime;
 mod render;
 
-use gpui::FocusHandle;
+use gpui::{FocusHandle, UniformListScrollHandle};
 use std::sync::Arc;
 
 use crate::events::types::UserEvent;
@@ -104,10 +104,32 @@ impl ProviderInfo {
     }
 }
 
+/// Row in the pre-computed display list for the model selector.
+///
+/// `Model(usize)` indices are valid only for the current `cached_display_rows`.
+/// They are rebuilt atomically in `rebuild_display_rows()`. The render callback
+/// uses `.get(ix)` to guard against stale reads.
+#[derive(Clone, Debug)]
+pub(super) enum DisplayRow {
+    ProviderHeader(#[allow(dead_code)] String),
+    Model(usize),
+}
+
+/// Pre-lowercased wrapper for fast case-insensitive search.
+/// Invariant: `searchable_models[i]` corresponds to `models[i]`.
+/// Both are built atomically in `load_models()`.
+#[derive(Clone, Debug)]
+pub(super) struct SearchableModelInfo {
+    pub info: ModelInfo,
+    pub id_lower: String,
+    pub provider_lower: String,
+}
+
 /// Model Selector view state
 /// @plan PLAN-20250130-GPUIREDUX.P07
 #[derive(Clone, Default)]
 pub struct ModelSelectorState {
+    // NOTE: unused for rendering — see cached_providers
     pub providers: Vec<ProviderInfo>,
     pub models: Vec<ModelInfo>,
     pub search_query: String,
@@ -115,6 +137,11 @@ pub struct ModelSelectorState {
     pub filter_reasoning: bool,
     pub filter_vision: bool,
     pub show_provider_dropdown: bool,
+    pub(super) searchable_models: Vec<SearchableModelInfo>,
+    pub(super) cached_providers: Vec<String>,
+    pub(super) cached_display_rows: Vec<DisplayRow>,
+    pub(super) cached_model_count: usize,
+    pub(super) cached_provider_count: usize,
 }
 
 impl ModelSelectorState {
@@ -123,46 +150,143 @@ impl ModelSelectorState {
         Self::default()
     }
 
-    /// Get filtered models based on current filters
-    #[must_use]
-    pub fn filtered_models(&self) -> Vec<&ModelInfo> {
-        self.models
+    /// Load models and providers, rebuilding all cached display state.
+    pub fn load_models(&mut self, providers: Vec<ProviderInfo>, models: Vec<ModelInfo>) {
+        self.providers = providers;
+        self.models.clone_from(&models);
+
+        // Build searchable models with pre-lowered fields
+        self.searchable_models = models
+            .into_iter()
+            .map(|m| {
+                let id_lower = m.id.to_lowercase();
+                let provider_lower = m.provider_id.to_lowercase();
+                SearchableModelInfo {
+                    info: m,
+                    id_lower,
+                    provider_lower,
+                }
+            })
+            .collect();
+
+        // Build sorted, deduped provider list from model data
+        let mut provider_ids: Vec<String> = self
+            .searchable_models
             .iter()
-            .filter(|m| {
-                // Provider filter
-                if let Some(ref provider) = self.selected_provider {
-                    if &m.provider_id != provider {
+            .map(|s| s.info.provider_id.clone())
+            .collect();
+        provider_ids.sort_unstable();
+        provider_ids.dedup();
+        self.cached_providers = provider_ids;
+
+        // Clear selected_provider if it's no longer valid
+        if let Some(ref provider) = self.selected_provider {
+            if !self.cached_providers.contains(provider) {
+                self.selected_provider = None;
+            }
+        }
+
+        self.rebuild_display_rows();
+    }
+
+    /// Rebuild the cached display rows from current filters.
+    pub fn rebuild_display_rows(&mut self) {
+        let query_lower = self.search_query.to_lowercase();
+        self.cached_display_rows.clear();
+
+        for provider in &self.cached_providers {
+            // Skip providers that don't match the selected provider filter
+            if let Some(ref selected) = self.selected_provider {
+                if provider != selected {
+                    continue;
+                }
+            }
+
+            // Collect matching model indices for this provider
+            let mut matching: Vec<usize> = self
+                .searchable_models
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    // Provider must match
+                    if &s.info.provider_id != provider {
                         return false;
                     }
-                }
-                // Search filter
-                if !self.search_query.is_empty() {
-                    let query = self.search_query.to_lowercase();
-                    if !m.id.to_lowercase().contains(&query)
-                        && !m.provider_id.to_lowercase().contains(&query)
+                    // Search filter
+                    if !query_lower.is_empty()
+                        && !s.id_lower.contains(&query_lower)
+                        && !s.provider_lower.contains(&query_lower)
                     {
                         return false;
                     }
+                    // Capability filters
+                    if self.filter_reasoning && !s.info.reasoning {
+                        return false;
+                    }
+                    if self.filter_vision && !s.info.vision {
+                        return false;
+                    }
+                    true
+                })
+                .map(|(i, _)| i)
+                .collect();
+
+            // Sort matching models within provider by model ID (alphabetical)
+            matching.sort_by(|&a, &b| {
+                self.searchable_models[a]
+                    .info
+                    .id
+                    .cmp(&self.searchable_models[b].info.id)
+            });
+
+            if !matching.is_empty() {
+                self.cached_display_rows
+                    .push(DisplayRow::ProviderHeader(provider.clone()));
+                for idx in matching {
+                    self.cached_display_rows.push(DisplayRow::Model(idx));
                 }
-                // Capability filters
-                if self.filter_reasoning && !m.reasoning {
-                    return false;
-                }
-                if self.filter_vision && !m.vision {
-                    return false;
-                }
-                true
+            }
+        }
+
+        // Update counts from built rows
+        self.cached_model_count = self
+            .cached_display_rows
+            .iter()
+            .filter(|r| matches!(r, DisplayRow::Model(_)))
+            .count();
+        self.cached_provider_count = self
+            .cached_display_rows
+            .iter()
+            .filter(|r| matches!(r, DisplayRow::ProviderHeader(_)))
+            .count();
+    }
+
+    /// Get filtered models based on current filters (delegates to cache).
+    #[must_use]
+    pub fn filtered_models(&self) -> Vec<&ModelInfo> {
+        self.cached_display_rows
+            .iter()
+            .filter_map(|row| match row {
+                DisplayRow::Model(idx) => self.models.get(*idx),
+                DisplayRow::ProviderHeader(_) => None,
             })
             .collect()
     }
 
-    /// Get unique providers from all models (not just filtered)
+    /// Get unique providers from all models (delegates to cache).
     #[must_use]
     pub fn all_providers(&self) -> Vec<&str> {
-        let mut providers: Vec<&str> = self.models.iter().map(|m| m.provider_id.as_str()).collect();
-        providers.sort_unstable();
-        providers.dedup();
-        providers
+        self.cached_providers.iter().map(String::as_str).collect()
+    }
+
+    /// Number of models in the current filtered view.
+    pub(super) const fn cached_filtered_model_count(&self) -> usize {
+        self.cached_model_count
+    }
+
+    /// Number of providers visible in the current filtered view.
+    pub(super) const fn cached_visible_provider_count(&self) -> usize {
+        self.cached_provider_count
     }
 }
 
@@ -173,6 +297,7 @@ pub struct ModelSelectorView {
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) focus_handle: FocusHandle,
     pub(super) ime_marked_byte_count: usize,
+    pub(super) scroll_handle: UniformListScrollHandle,
 }
 
 impl ModelSelectorView {
@@ -182,6 +307,7 @@ impl ModelSelectorView {
             bridge: None,
             focus_handle: cx.focus_handle(),
             ime_marked_byte_count: 0,
+            scroll_handle: UniformListScrollHandle::default(),
         }
     }
 
@@ -193,8 +319,9 @@ impl ModelSelectorView {
 
     /// Set models from presenter
     pub fn set_models(&mut self, providers: Vec<ProviderInfo>, models: Vec<ModelInfo>) {
-        self.state.providers = providers;
-        self.state.models = models;
+        self.state.load_models(providers, models);
+        self.scroll_handle
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
     }
 
     /// Set search query programmatically (for testing)
@@ -266,28 +393,32 @@ mod tests {
         assert_eq!(vision.context_display(), "1M");
 
         let mut state = ModelSelectorState::new();
-        state.models = vec![free, vision];
+        state.load_models(vec![], vec![free, vision]);
         assert_eq!(state.filtered_models().len(), 2);
 
         state.selected_provider = Some("anthropic".to_string());
+        state.rebuild_display_rows();
         let filtered = state.filtered_models();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].provider_id, "anthropic");
 
         state.selected_provider = None;
         state.search_query = "4o".to_string();
+        state.rebuild_display_rows();
         let filtered = state.filtered_models();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, "gpt-4o");
 
         state.search_query.clear();
         state.filter_reasoning = true;
+        state.rebuild_display_rows();
         let filtered = state.filtered_models();
         assert_eq!(filtered.len(), 1);
         assert!(filtered[0].reasoning);
 
         state.filter_reasoning = false;
         state.filter_vision = true;
+        state.rebuild_display_rows();
         let filtered = state.filtered_models();
         assert_eq!(filtered.len(), 1);
         assert!(filtered[0].vision);
@@ -324,10 +455,12 @@ mod tests {
             // Filtering is now local-only; no SearchModels / FilterModelsByProvider
             // events are emitted.  Verify the state-level filter logic still works.
             view.state.search_query = "claude".to_string();
+            view.state.rebuild_display_rows();
             let filtered = view.state.filtered_models();
             assert_eq!(filtered.len(), 2);
 
             view.state.selected_provider = Some("anthropic".to_string());
+            view.state.rebuild_display_rows();
             let filtered = view.state.filtered_models();
             assert_eq!(filtered.len(), 2);
 
@@ -515,5 +648,433 @@ mod tests {
             });
         });
         // No SearchModels events emitted — filtering is local-only.
+    }
+
+    fn test_models() -> (Vec<ProviderInfo>, Vec<ModelInfo>) {
+        let providers = vec![
+            ProviderInfo::new("anthropic", "Anthropic"),
+            ProviderInfo::new("openai", "OpenAI"),
+            ProviderInfo::new("google", "Google"),
+        ];
+        let models = vec![
+            ModelInfo::new("claude-3-5-sonnet", "anthropic").with_capabilities(true, false),
+            ModelInfo::new("claude-haiku", "anthropic"),
+            ModelInfo::new("gpt-4o", "openai").with_capabilities(false, true),
+            ModelInfo::new("gpt-4-mini", "openai"),
+            ModelInfo::new("gemini-pro", "google").with_capabilities(true, true),
+            ModelInfo::new("gemini-flash", "google"),
+        ];
+        (providers, models)
+    }
+
+    // --- Test 1: load_models builds searchable_models and cached_providers ---
+    #[test]
+    fn test_load_models_builds_searchable_models_and_cached_providers() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        assert_eq!(state.models.len(), 6);
+        assert_eq!(state.searchable_models.len(), 6);
+        // cached_providers sorted, deduped
+        assert_eq!(
+            state.cached_providers,
+            vec!["anthropic", "google", "openai"]
+        );
+    }
+
+    // --- Test 2: load_models clears stale selected_provider ---
+    #[test]
+    fn test_load_models_clears_stale_selected_provider() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.selected_provider = Some("nonexistent".to_string());
+        state.load_models(providers, models);
+        assert_eq!(state.selected_provider, None);
+    }
+
+    // --- Test 3: load_models preserves valid selected_provider ---
+    #[test]
+    fn test_load_models_preserves_valid_selected_provider() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.selected_provider = Some("openai".to_string());
+        state.load_models(providers, models);
+        assert_eq!(state.selected_provider.as_deref(), Some("openai"));
+    }
+
+    // --- Test 4: rebuild_display_rows empty query returns all ---
+    #[test]
+    fn test_rebuild_display_rows_empty_query_returns_all() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        assert_eq!(state.cached_model_count, 6);
+        assert_eq!(state.cached_provider_count, 3);
+        assert_eq!(state.filtered_models().len(), 6);
+    }
+
+    // --- Test 5: rebuild_display_rows search query filters ---
+    #[test]
+    fn test_rebuild_display_rows_search_query_filters() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.search_query = "claude".to_string();
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_model_count, 2);
+        let filtered = state.filtered_models();
+        assert!(filtered.iter().all(|m| m.id.contains("claude")));
+    }
+
+    // --- Test 6: rebuild_display_rows provider filter ---
+    #[test]
+    fn test_rebuild_display_rows_provider_filter() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.selected_provider = Some("openai".to_string());
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_model_count, 2);
+        let filtered = state.filtered_models();
+        assert!(filtered.iter().all(|m| m.provider_id == "openai"));
+    }
+
+    // --- Test 7: rebuild_display_rows reasoning filter ---
+    #[test]
+    fn test_rebuild_display_rows_reasoning_filter() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.filter_reasoning = true;
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_model_count, 2);
+        let filtered = state.filtered_models();
+        assert!(filtered.iter().all(|m| m.reasoning));
+    }
+
+    // --- Test 8: rebuild_display_rows vision filter ---
+    #[test]
+    fn test_rebuild_display_rows_vision_filter() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.filter_vision = true;
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_model_count, 2);
+        let filtered = state.filtered_models();
+        assert!(filtered.iter().all(|m| m.vision));
+    }
+
+    // --- Test 9: rebuild_display_rows combined filters ---
+    #[test]
+    fn test_rebuild_display_rows_combined_filters() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.selected_provider = Some("google".to_string());
+        state.filter_reasoning = true;
+        state.rebuild_display_rows();
+        // Only gemini-pro has reasoning=true in google
+        assert_eq!(state.cached_model_count, 1);
+        assert_eq!(state.filtered_models()[0].id, "gemini-pro");
+    }
+
+    // --- Test 10: rebuild_display_rows no match returns empty ---
+    #[test]
+    fn test_rebuild_display_rows_no_match_returns_empty() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.search_query = "zzzzz".to_string();
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_model_count, 0);
+        assert_eq!(state.cached_provider_count, 0);
+        assert!(state.filtered_models().is_empty());
+    }
+
+    // --- Test 11: display_rows_ordering ---
+    #[test]
+    fn test_display_rows_ordering_by_provider_then_model() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        // Verify rows: provider headers interleaved with model rows,
+        // providers in alphabetical order, models within provider alphabetical
+        let row_kinds: Vec<&str> = state
+            .cached_display_rows
+            .iter()
+            .map(|r| match r {
+                DisplayRow::ProviderHeader(p) => p.as_str(),
+                DisplayRow::Model(_) => "model",
+            })
+            .collect();
+
+        assert_eq!(
+            row_kinds,
+            vec![
+                "anthropic",
+                "model", // claude-3-5-sonnet
+                "model", // claude-haiku
+                "google",
+                "model", // gemini-flash
+                "model", // gemini-pro
+                "openai",
+                "model", // gpt-4-mini
+                "model", // gpt-4o
+            ]
+        );
+    }
+
+    // --- Test 12: all_providers returns sorted deduped ---
+    #[test]
+    fn test_all_providers_returns_sorted_deduped() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        let providers = state.all_providers();
+        assert_eq!(providers, vec!["anthropic", "google", "openai"]);
+    }
+
+    // --- Test 13: searchable_models_pre_lowercase ---
+    #[test]
+    fn test_searchable_models_pre_lowercase() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        for s in &state.searchable_models {
+            assert_eq!(s.id_lower, s.info.id.to_lowercase());
+            assert_eq!(s.provider_lower, s.info.provider_id.to_lowercase());
+        }
+    }
+
+    // --- Test 14: case_insensitive_search ---
+    #[test]
+    fn test_case_insensitive_search() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.search_query = "GPT".to_string();
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_model_count, 2);
+
+        state.search_query = "Claude".to_string();
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_model_count, 2);
+    }
+
+    // --- Test 15: cached_counts_match_filtered ---
+    #[test]
+    fn test_cached_counts_match_filtered() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.search_query = "gemini".to_string();
+        state.rebuild_display_rows();
+
+        assert_eq!(
+            state.cached_filtered_model_count(),
+            state.filtered_models().len()
+        );
+        assert_eq!(state.cached_visible_provider_count(), 1);
+    }
+
+    // --- Test 16: load_models_empty ---
+    #[test]
+    fn test_load_models_empty() {
+        let mut state = ModelSelectorState::new();
+        state.load_models(vec![], vec![]);
+
+        assert_eq!(state.cached_model_count, 0);
+        assert_eq!(state.cached_provider_count, 0);
+        assert!(state.filtered_models().is_empty());
+        assert!(state.all_providers().is_empty());
+    }
+
+    // --- Test 17: rebuild_after_query_change ---
+    #[test]
+    fn test_rebuild_after_query_change() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        state.search_query = "flash".to_string();
+        state.rebuild_display_rows();
+
+        // "flash" only matches gemini-flash
+        let filtered = state.filtered_models();
+        let names: Vec<&str> = filtered.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(names, vec!["gemini-flash"]);
+        assert_eq!(state.cached_model_count, 1);
+        assert_eq!(state.cached_provider_count, 1);
+    }
+
+    // --- Test 18: display_row_indices_valid ---
+    #[test]
+    fn test_display_row_indices_valid() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+
+        // Every Model(idx) must be a valid index into state.models
+        for row in &state.cached_display_rows {
+            if let DisplayRow::Model(idx) = row {
+                assert!(
+                    state.models.get(*idx).is_some(),
+                    "Invalid model index {idx}"
+                );
+            }
+        }
+    }
+
+    // --- Test 19 (GPUI): set_models_populates_cache ---
+    #[gpui::test]
+    async fn test_set_models_populates_cache(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+
+        view.update(cx, |view: &mut ModelSelectorView, _cx| {
+            view.set_models(providers, models);
+            assert_eq!(view.state.models.len(), 6);
+            assert_eq!(view.state.cached_providers.len(), 3);
+            assert_eq!(view.state.cached_model_count, 6);
+        });
+    }
+
+    // --- Test 20 (GPUI): toggle_reasoning_rebuilds_cache ---
+    #[gpui::test]
+    async fn test_toggle_reasoning_rebuilds_cache(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.set_models(providers, models);
+            assert_eq!(view.state.cached_model_count, 6);
+
+            view.toggle_reasoning_filter(cx);
+            assert_eq!(view.state.cached_model_count, 2);
+        });
+    }
+
+    // --- Test 21 (GPUI): toggle_vision_rebuilds_cache ---
+    #[gpui::test]
+    async fn test_toggle_vision_rebuilds_cache(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.set_models(providers, models);
+            view.toggle_vision_filter(cx);
+            assert_eq!(view.state.cached_model_count, 2);
+        });
+    }
+
+    // --- Test 22 (GPUI): select_provider_rebuilds_cache ---
+    #[gpui::test]
+    async fn test_select_provider_rebuilds_cache(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.set_models(providers, models);
+            view.select_provider_filter("google".to_string(), cx);
+            assert_eq!(view.state.cached_model_count, 2);
+            assert_eq!(view.state.cached_provider_count, 1);
+        });
+    }
+
+    // --- Test 23 (GPUI): clear_provider_rebuilds_cache ---
+    #[gpui::test]
+    async fn test_clear_provider_rebuilds_cache(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.set_models(providers, models);
+            view.select_provider_filter("google".to_string(), cx);
+            assert_eq!(view.state.cached_model_count, 2);
+
+            view.clear_provider_filter(cx);
+            assert_eq!(view.state.cached_model_count, 6);
+        });
+    }
+
+    // --- Test 24 (GPUI): backspace_rebuilds_cache ---
+    #[gpui::test]
+    async fn test_backspace_rebuilds_cache(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut ModelSelectorView, cx| {
+                view.set_models(providers, models);
+                view.state.search_query = "claude".to_string();
+                view.state.rebuild_display_rows();
+                assert_eq!(view.state.cached_model_count, 2);
+
+                view.handle_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("backspace")
+                            .expect("backspace keystroke"),
+                        is_held: false,
+                        prefer_character_input: false,
+                    },
+                    cx,
+                );
+                assert_eq!(view.state.search_query, "claud");
+                // After backspace, "claud" still only matches claude models
+                assert_eq!(view.state.cached_model_count, 2);
+            });
+        });
+    }
+
+    // --- Test 25 (GPUI): ime_replace_text_rebuilds_cache ---
+    #[gpui::test]
+    async fn test_ime_replace_text_rebuilds_cache(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut ModelSelectorView, cx| {
+                view.set_models(providers, models);
+                assert_eq!(view.state.cached_model_count, 6);
+
+                view.replace_text_in_range(None, "gemini", window, cx);
+                assert_eq!(view.state.search_query, "gemini");
+                assert_eq!(view.state.cached_model_count, 2);
+            });
+        });
+    }
+
+    // --- Test 26 (GPUI): ime_replace_and_mark_rebuilds_cache ---
+    #[gpui::test]
+    async fn test_ime_replace_and_mark_rebuilds_cache(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut ModelSelectorView, cx| {
+                view.set_models(providers, models);
+
+                view.replace_and_mark_text_in_range(None, "gpt", None, window, cx);
+                assert_eq!(view.state.search_query, "gpt");
+                assert_eq!(view.state.cached_model_count, 2);
+            });
+        });
     }
 }

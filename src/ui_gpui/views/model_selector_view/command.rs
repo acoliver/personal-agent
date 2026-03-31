@@ -7,10 +7,6 @@ use crate::presentation::view_command::ViewCommand;
 impl ModelSelectorView {
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         if let ViewCommand::ModelSearchResults { models } = command {
-            println!(
-                ">>> ModelSelectorView::handle_command received {} models <<<",
-                models.len()
-            );
             tracing::info!("ModelSelectorView received {} models", models.len());
 
             // Extract unique providers from the models
@@ -26,8 +22,6 @@ impl ModelSelectorView {
                 })
                 .collect();
 
-            println!(">>> Providers extracted: {} <<<", providers.len());
-
             let local_models: Vec<ModelInfo> = models
                 .into_iter()
                 .map(|m| ModelInfo {
@@ -41,12 +35,7 @@ impl ModelSelectorView {
                 })
                 .collect();
 
-            println!(">>> Setting {} models on view <<<", local_models.len());
             self.set_models(providers, local_models);
-            println!(
-                ">>> Models set, state.models.len() = {} <<<",
-                self.state.models.len()
-            );
         }
         cx.notify();
     }
@@ -64,18 +53,18 @@ impl ModelSelectorView {
 
     pub(super) fn toggle_reasoning_filter(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.filter_reasoning = !self.state.filter_reasoning;
-        cx.notify();
+        self.rebuild_and_reset_scroll(cx);
     }
 
     pub(super) fn toggle_vision_filter(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.filter_vision = !self.state.filter_vision;
-        cx.notify();
+        self.rebuild_and_reset_scroll(cx);
     }
 
     pub(super) fn clear_provider_filter(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.selected_provider = None;
         self.state.show_provider_dropdown = false;
-        cx.notify();
+        self.rebuild_and_reset_scroll(cx);
     }
 
     pub(super) fn select_provider_filter(
@@ -85,11 +74,11 @@ impl ModelSelectorView {
     ) {
         self.state.selected_provider = Some(provider_id);
         self.state.show_provider_dropdown = false;
-        cx.notify();
+        self.rebuild_and_reset_scroll(cx);
     }
 
     pub(super) fn select_model(&mut self, provider_id: String, model_id: String) {
-        println!(">>> Model selected: {model_id} from {provider_id} <<<");
+        tracing::info!("Model selected: {model_id} from {provider_id}");
         self.emit(&UserEvent::SelectModel {
             provider_id,
             model_id,
@@ -124,7 +113,14 @@ impl ModelSelectorView {
 
         if !modifiers.platform && !modifiers.control && key == "backspace" {
             self.state.search_query.pop();
-            cx.notify();
+            self.rebuild_and_reset_scroll(cx);
         }
+    }
+
+    pub(super) fn rebuild_and_reset_scroll(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.rebuild_display_rows();
+        self.scroll_handle
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+        cx.notify();
     }
 }
