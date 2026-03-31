@@ -253,6 +253,20 @@ pub enum ViewCommand {
         system_prompt: String,
     },
 
+    // ===== Tool Approval Commands =====
+    /// Display an inline approval bubble for a tool call.
+    ToolApprovalRequest {
+        request_id: String,
+        tool_name: String,
+        tool_argument: String,
+    },
+
+    /// Update an existing approval bubble to reflect the user's decision.
+    ToolApprovalResolved { request_id: String, approved: bool },
+
+    /// Inform the UI whether YOLO mode is currently active.
+    YoloModeChanged { active: bool },
+
     // ===== Error Commands =====
     /// Show error to user
     ShowError {

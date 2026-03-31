@@ -12,6 +12,7 @@
 //!
 //! @plan PLAN-20250130-GPUIREDUX.P04
 
+use super::state::{ApprovalBubbleState, ToolApprovalBubble};
 use super::ChatView;
 use crate::presentation::view_command::ViewCommand;
 
@@ -40,6 +41,7 @@ impl ChatView {
                 self.state.conversation_title_input.clear();
                 self.state.export_feedback_message = None;
                 self.state.export_feedback_is_error = false;
+                self.state.approval_bubbles.clear();
                 self.state.chat_autoscroll_enabled = true;
                 self.chat_scroll_handle.scroll_to_bottom();
                 self.state.sync_conversation_title_from_active();
@@ -70,6 +72,46 @@ impl ChatView {
                     self.state.export_feedback_is_error = true;
                     cx.notify();
                 }
+            }
+            ViewCommand::ToolApprovalRequest {
+                request_id,
+                tool_name,
+                tool_argument,
+            } => {
+                self.state.approval_bubbles.push(ToolApprovalBubble {
+                    request_id,
+                    tool_name,
+                    tool_argument,
+                    state: ApprovalBubbleState::Pending,
+                });
+                self.maybe_scroll_chat_to_bottom(cx);
+                cx.notify();
+            }
+            ViewCommand::ToolApprovalResolved {
+                request_id,
+                approved,
+            } => {
+                if let Some(bubble) = self
+                    .state
+                    .approval_bubbles
+                    .iter_mut()
+                    .find(|b| b.request_id == request_id)
+                {
+                    bubble.state = if approved {
+                        ApprovalBubbleState::Approved
+                    } else {
+                        ApprovalBubbleState::Denied
+                    };
+                }
+                // Remove resolved bubbles so they don't accumulate.
+                self.state
+                    .approval_bubbles
+                    .retain(|b| b.state == ApprovalBubbleState::Pending);
+                cx.notify();
+            }
+            ViewCommand::YoloModeChanged { active } => {
+                self.state.yolo_mode = active;
+                cx.notify();
             }
             _ => {}
         }

@@ -191,6 +191,13 @@ pub enum UserEvent {
     /// User selected a theme from the settings dropdown
     SelectTheme { slug: String },
 
+    // ===== Tool Approval Actions =====
+    /// User responded to a tool approval request.
+    ToolApprovalResponse {
+        request_id: String,
+        decision: ToolApprovalResponseAction,
+    },
+
     // ===== Navigation =====
     /// User clicked to navigate to a view
     Navigate { to: ViewId },
@@ -200,6 +207,19 @@ pub enum UserEvent {
 
     /// User clicked back
     NavigateBack,
+}
+
+/// Actions a user can take on a tool approval request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum ToolApprovalResponseAction {
+    /// Approve this single invocation.
+    ProceedOnce,
+    /// Approve for the remainder of this session.
+    ProceedSession,
+    /// Permanently add to the allowlist.
+    ProceedAlways,
+    /// Deny this invocation.
+    Denied,
 }
 
 /// View identifiers for navigation

@@ -35,9 +35,11 @@ macro_rules! icon_btn {
 }
 
 impl ChatView {
-    /// Render the top bar with icon, title, and toolbar buttons
+    /// Render the top bar with icon, title, YOLO badge, and toolbar buttons
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub(super) fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let yolo_active = self.state.yolo_mode;
+
         div()
             .id("chat-top-bar")
             .h(px(44.0))
@@ -50,20 +52,40 @@ impl ChatView {
             .items_center()
             .justify_between()
             .child(
-                div().flex().items_center().child(
-                    div()
-                        .text_size(px(14.0))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(Theme::text_primary())
-                        .child("PersonalAgent"),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(Theme::text_primary())
+                            .child("PersonalAgent"),
+                    )
+                    .when(yolo_active, |d| d.child(Self::render_yolo_badge())),
             )
             .child(self.render_toolbar_buttons(cx))
+    }
+
+    /// Persistent YOLO mode indicator badge.
+    fn render_yolo_badge() -> impl IntoElement {
+        div()
+            .id("yolo-badge")
+            .px(px(6.0))
+            .py(px(2.0))
+            .rounded(px(Theme::RADIUS_SM))
+            .bg(Theme::warning())
+            .text_size(px(Theme::FONT_SIZE_XS))
+            .text_color(Theme::bg_darkest())
+            .font_weight(FontWeight::BOLD)
+            .child("YOLO")
     }
 
     /// Right-side toolbar: [T][R][H][MD/TXT/JSON][Save][Settings][Exit]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
+        let yolo_active = self.state.yolo_mode;
 
         div()
             .flex()
@@ -76,6 +98,15 @@ impl ChatView {
                 cx.listener(|this, _, _window, _cx| {
                     tracing::info!("Toggle thinking clicked - emitting UserEvent");
                     this.emit(UserEvent::ToggleThinking);
+                })
+            ))
+            .child(icon_btn!(
+                "btn-yolo",
+                "Y",
+                yolo_active,
+                cx.listener(|this, _, _window, cx| {
+                    this.state.yolo_mode = !this.state.yolo_mode;
+                    cx.notify();
                 })
             ))
             .child(icon_btn!(

@@ -18,7 +18,9 @@ mod state;
 
 // ── Re-exports so downstream consumers (mod.rs, tests, main_panel.rs) ──
 // see the same type paths as before extraction.
-pub use state::{ChatMessage, ChatState, MessageRole, StreamingState};
+pub use state::{
+    ApprovalBubbleState, ChatMessage, ChatState, MessageRole, StreamingState, ToolApprovalBubble,
+};
 
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ConversationMessagePayload;
@@ -196,6 +198,11 @@ impl ChatView {
 
         let previous_conversation_id = self.conversation_id;
         let previous_selection_generation = self.selection_generation;
+
+        // Clear approval bubbles when switching to a different conversation.
+        if previous_conversation_id != selected_conversation_id {
+            self.state.approval_bubbles.clear();
+        }
 
         self.state.conversations = conversations;
         self.state.active_conversation_id = selected_conversation_id;
@@ -735,6 +742,10 @@ impl ChatView {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "approval_tests.rs"]
+mod approval_tests;
 
 #[cfg(test)]
 mod tests {

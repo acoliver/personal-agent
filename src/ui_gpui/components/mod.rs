@@ -3,11 +3,13 @@
 //! @plan PLAN-20250130-GPUIREDUX.P02
 
 // Existing components
+pub mod approval_bubble;
 pub mod button;
 pub mod input_bar;
 pub mod message_bubble;
 pub mod tab_bar;
 
+pub use approval_bubble::ApprovalBubble;
 pub use button::Button;
 pub use input_bar::InputBar;
 pub use message_bubble::{AssistantBubble, UserBubble};
