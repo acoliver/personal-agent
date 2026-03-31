@@ -6,10 +6,10 @@
 //!
 //! @plan PLAN-20260325-ISSUE11B.P02
 
-use super::state::{ChatMessage, MessageRole, StreamingState};
+use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
 use super::ChatView;
-use crate::events::types::UserEvent;
-use crate::ui_gpui::components::AssistantBubble;
+use crate::events::types::{ToolApprovalResponseAction, UserEvent};
+use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels,
@@ -231,6 +231,22 @@ impl ChatView {
                         .child(Self::render_message(&msg, show_thinking))
                 }))
             })
+            // Approval bubbles (inline in message stream)
+            .children(
+                self.state
+                    .approval_bubbles
+                    .iter()
+                    .enumerate()
+                    .map(|(i, bubble)| {
+                        let id = SharedString::from(format!("approval-{i}"));
+                        div()
+                            .id(id)
+                            .w_full()
+                            .flex()
+                            .justify_start()
+                            .child(self.render_approval_bubble(bubble, cx))
+                    }),
+            )
             // Streaming message
             .when(matches!(streaming, StreamingState::Streaming { .. }), |d| {
                 let (content, _done) = match &streaming {
@@ -334,6 +350,75 @@ impl ChatView {
                     .child(content)
             })
             .into_any_element()
+    }
+
+    /// Render a single inline approval bubble with action button callbacks.
+    fn render_approval_bubble(
+        &self,
+        bubble: &super::state::ToolApprovalBubble,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let request_id = bubble.request_id.clone();
+        let state = bubble.state.clone();
+
+        let mut approval = ApprovalBubble::new(
+            &bubble.request_id,
+            &bubble.tool_name,
+            &bubble.tool_argument,
+            state,
+        );
+
+        if matches!(bubble.state, ApprovalBubbleState::Pending) {
+            let bridge = self.bridge.clone();
+
+            let rid = request_id.clone();
+            let b1 = bridge.clone();
+            approval = approval.on_yes(move || {
+                if let Some(ref bridge) = b1 {
+                    bridge.emit(UserEvent::ToolApprovalResponse {
+                        request_id: rid.clone(),
+                        decision: ToolApprovalResponseAction::ProceedOnce,
+                    });
+                }
+            });
+
+            let rid = request_id.clone();
+            let b2 = bridge.clone();
+            approval = approval.on_session(move || {
+                if let Some(ref bridge) = b2 {
+                    bridge.emit(UserEvent::ToolApprovalResponse {
+                        request_id: rid.clone(),
+                        decision: ToolApprovalResponseAction::ProceedSession,
+                    });
+                }
+            });
+
+            let rid = request_id.clone();
+            let b3 = bridge.clone();
+            approval = approval.on_always(move || {
+                if let Some(ref bridge) = b3 {
+                    bridge.emit(UserEvent::ToolApprovalResponse {
+                        request_id: rid.clone(),
+                        decision: ToolApprovalResponseAction::ProceedAlways,
+                    });
+                }
+            });
+
+            let rid = request_id;
+            let b4 = bridge;
+            approval = approval.on_no(move || {
+                if let Some(ref bridge) = b4 {
+                    bridge.emit(UserEvent::ToolApprovalResponse {
+                        request_id: rid.clone(),
+                        decision: ToolApprovalResponseAction::Denied,
+                    });
+                }
+            });
+        }
+
+        // Use cx to mark the closure as capturing the context lifetime
+        let _ = cx;
+        approval
     }
 
     /// Render thinking block with blue tint

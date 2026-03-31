@@ -69,6 +69,26 @@ pub enum StreamingState {
     Error(String),
 }
 
+/// Lifecycle state of a tool approval request bubble.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApprovalBubbleState {
+    /// Waiting for the user to respond.
+    Pending,
+    /// User approved the tool call.
+    Approved,
+    /// User denied the tool call.
+    Denied,
+}
+
+/// A single inline tool approval request displayed in the chat stream.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolApprovalBubble {
+    pub request_id: String,
+    pub tool_name: String,
+    pub tool_argument: String,
+    pub state: ApprovalBubbleState,
+}
+
 /// Main chat state container
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
@@ -98,6 +118,10 @@ pub struct ChatState {
     pub chat_autoscroll_enabled: bool,
     /// IME marked (composing) text range in UTF-16 offsets, if any.
     pub marked_range: Option<Range<usize>>,
+    /// Inline tool approval bubbles pending or resolved in this session.
+    pub approval_bubbles: Vec<ToolApprovalBubble>,
+    /// Whether YOLO mode (auto-approve all) is currently active.
+    pub yolo_mode: bool,
 }
 
 impl Default for ChatState {
@@ -119,6 +143,8 @@ impl Default for ChatState {
             rename_replace_on_next_char: false,
             chat_autoscroll_enabled: true,
             marked_range: None,
+            approval_bubbles: Vec::new(),
+            yolo_mode: false,
             current_model: "No profile selected".to_string(),
             profiles: Vec::new(),
             selected_profile_id: None,
@@ -369,5 +395,95 @@ mod tests {
         state.profiles.clear();
         state.sync_profile_dropdown_index();
         assert_eq!(state.profile_dropdown_index, 0);
+    }
+
+    // ── Tool Approval State Tests ────────────────────────────────────────
+
+    #[test]
+    fn chat_state_default_has_empty_approval_bubbles_and_yolo_off() {
+        let state = ChatState::default();
+        assert!(state.approval_bubbles.is_empty());
+        assert!(!state.yolo_mode);
+    }
+
+    #[test]
+    fn tool_approval_bubble_pending_state() {
+        let bubble = ToolApprovalBubble {
+            request_id: "req-1".into(),
+            tool_name: "shell".into(),
+            tool_argument: "git push".into(),
+            state: ApprovalBubbleState::Pending,
+        };
+        assert_eq!(bubble.state, ApprovalBubbleState::Pending);
+        assert_eq!(bubble.request_id, "req-1");
+        assert_eq!(bubble.tool_name, "shell");
+        assert_eq!(bubble.tool_argument, "git push");
+    }
+
+    #[test]
+    fn tool_approval_bubble_transitions_to_approved() {
+        let mut bubble = ToolApprovalBubble {
+            request_id: "req-2".into(),
+            tool_name: "write".into(),
+            tool_argument: "/tmp/f.txt".into(),
+            state: ApprovalBubbleState::Pending,
+        };
+        bubble.state = ApprovalBubbleState::Approved;
+        assert_eq!(bubble.state, ApprovalBubbleState::Approved);
+    }
+
+    #[test]
+    fn tool_approval_bubble_transitions_to_denied() {
+        let mut bubble = ToolApprovalBubble {
+            request_id: "req-3".into(),
+            tool_name: "shell".into(),
+            tool_argument: "rm -rf /".into(),
+            state: ApprovalBubbleState::Pending,
+        };
+        bubble.state = ApprovalBubbleState::Denied;
+        assert_eq!(bubble.state, ApprovalBubbleState::Denied);
+    }
+
+    #[test]
+    fn approval_bubbles_can_be_pushed_to_state() {
+        let mut state = ChatState::default();
+        state.approval_bubbles.push(ToolApprovalBubble {
+            request_id: "r1".into(),
+            tool_name: "shell".into(),
+            tool_argument: "ls".into(),
+            state: ApprovalBubbleState::Pending,
+        });
+        state.approval_bubbles.push(ToolApprovalBubble {
+            request_id: "r2".into(),
+            tool_name: "write".into(),
+            tool_argument: "/tmp/a.txt".into(),
+            state: ApprovalBubbleState::Approved,
+        });
+        assert_eq!(state.approval_bubbles.len(), 2);
+        assert_eq!(
+            state.approval_bubbles[0].state,
+            ApprovalBubbleState::Pending
+        );
+        assert_eq!(
+            state.approval_bubbles[1].state,
+            ApprovalBubbleState::Approved
+        );
+    }
+
+    #[test]
+    fn approval_bubble_state_equality() {
+        assert_eq!(ApprovalBubbleState::Pending, ApprovalBubbleState::Pending);
+        assert_ne!(ApprovalBubbleState::Pending, ApprovalBubbleState::Approved);
+        assert_ne!(ApprovalBubbleState::Approved, ApprovalBubbleState::Denied);
+    }
+
+    #[test]
+    fn yolo_mode_toggling() {
+        let mut state = ChatState::default();
+        assert!(!state.yolo_mode);
+        state.yolo_mode = true;
+        assert!(state.yolo_mode);
+        state.yolo_mode = false;
+        assert!(!state.yolo_mode);
     }
 }
