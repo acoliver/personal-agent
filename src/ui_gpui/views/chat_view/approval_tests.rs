@@ -1,6 +1,7 @@
 //! Tool approval command handler tests for `ChatView`.
 
 #![allow(clippy::future_not_send)]
+#![allow(unused_imports)]
 
 use crate::presentation::view_command::ViewCommand;
 use crate::ui_gpui::views::chat_view::{ApprovalBubbleState, ChatState, ChatView};
