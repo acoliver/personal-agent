@@ -259,7 +259,12 @@ impl ToolApprovalPolicy {
             "AstGrep",
             "StructuralAnalysis",
         ];
-        const READ_VERBS: &[&str] = &["read", "get", "list", "search", "fetch", "query"];
+        const READ_TOKENS: &[&str] = &["read", "get", "list", "search", "fetch", "query"];
+        const MUTATING_TOKENS: &[&str] = &[
+            "create", "write", "update", "delete", "remove", "set", "apply", "run", "exec",
+            "insert", "patch", "post", "put", "send", "start", "stop", "restart", "install",
+            "save", "edit", "rename", "move", "copy", "clear",
+        ];
 
         if READ_TOOL_NAMES
             .iter()
@@ -273,13 +278,30 @@ impl ToolApprovalPolicy {
             .map_or(tool_identifier, |(_, tool)| tool)
             .to_ascii_lowercase();
 
-        if READ_VERBS.iter().any(|verb| candidate.starts_with(verb)) {
+        let segments: Vec<&str> = candidate
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .filter(|segment| !segment.is_empty())
+            .collect();
+
+        if segments
+            .iter()
+            .any(|segment| MUTATING_TOKENS.contains(segment))
+        {
+            return false;
+        }
+
+        if segments.iter().any(|segment| READ_TOKENS.contains(segment)) {
             return true;
         }
 
-        candidate
-            .split(|character: char| !character.is_ascii_alphanumeric())
-            .any(|segment| READ_VERBS.contains(&segment))
+        ["read", "list", "search", "fetch", "query"]
+            .iter()
+            .any(|verb| candidate.starts_with(verb))
+            || candidate == "get"
+            || candidate.starts_with("get_")
+            || candidate.starts_with("get-")
+            || candidate.starts_with("get/")
+            || candidate.starts_with("get.")
     }
 
     #[must_use]
@@ -506,6 +528,23 @@ mod tests {
         assert_eq!(
             policy.evaluate("examcp/list_resources"),
             ToolApprovalDecision::Allow
+        );
+    }
+
+    #[test]
+    fn evaluate_auto_approve_reads_does_not_allow_mutating_names() {
+        let policy = ToolApprovalPolicy {
+            auto_approve_reads: true,
+            ..ToolApprovalPolicy::default()
+        };
+
+        assert_eq!(
+            policy.evaluate("examcp/get_or_create_user"),
+            ToolApprovalDecision::AskUser
+        );
+        assert_eq!(
+            policy.evaluate("examcp/fetch_and_update_profile"),
+            ToolApprovalDecision::AskUser
         );
     }
 
