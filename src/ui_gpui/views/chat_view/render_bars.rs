@@ -85,6 +85,7 @@ impl ChatView {
     /// Right-side toolbar: [T][R][H][MD/TXT/JSON][Save][Settings][Exit]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
+        let yolo_active = self.state.yolo_mode;
 
         div()
             .flex()
@@ -97,6 +98,15 @@ impl ChatView {
                 cx.listener(|this, _, _window, _cx| {
                     tracing::info!("Toggle thinking clicked - emitting UserEvent");
                     this.emit(UserEvent::ToggleThinking);
+                })
+            ))
+            .child(icon_btn!(
+                "btn-yolo",
+                "Y",
+                yolo_active,
+                cx.listener(|this, _, _window, cx| {
+                    this.state.yolo_mode = !this.state.yolo_mode;
+                    cx.notify();
                 })
             ))
             .child(icon_btn!(
