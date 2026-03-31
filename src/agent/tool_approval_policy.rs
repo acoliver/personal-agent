@@ -165,10 +165,11 @@ impl ToolApprovalPolicy {
         app_settings: &dyn AppSettingsService,
     ) -> ServiceResult<()> {
         let identifier = identifier.into();
-        if !identifier.is_empty() && !self.persistent_allowlist.contains(&identifier) {
-            self.persistent_allowlist.push(identifier);
+        if identifier.is_empty() || self.persistent_allowlist.contains(&identifier) {
+            return Ok(());
         }
 
+        self.persistent_allowlist.push(identifier);
         self.save_to_settings(app_settings).await
     }
 
@@ -627,6 +628,56 @@ mod tests {
 
         assert_eq!(
             loaded.persistent_allowlist,
+            vec!["examcp/web_search".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn allow_persistently_noops_for_empty_identifier_without_saving() {
+        let (service, _temp_dir) = create_settings_service();
+        let mut policy = ToolApprovalPolicy::default();
+
+        policy
+            .allow_persistently("", &service)
+            .await
+            .expect("empty identifier should be a no-op");
+
+        let stored = service
+            .get_setting(TOOL_APPROVAL_POLICY_SETTINGS_KEY)
+            .await
+            .expect("reading setting should succeed");
+
+        assert!(stored.is_none());
+    }
+
+    #[tokio::test]
+    async fn allow_persistently_noops_for_duplicate_identifier_without_resaving() {
+        let (service, _temp_dir) = create_settings_service();
+        let mut policy = ToolApprovalPolicy::default();
+
+        policy
+            .allow_persistently("examcp/web_search", &service)
+            .await
+            .expect("initial allow should persist");
+        let first_saved = service
+            .get_setting(TOOL_APPROVAL_POLICY_SETTINGS_KEY)
+            .await
+            .expect("reading first saved policy should succeed")
+            .expect("first save should exist");
+
+        policy
+            .allow_persistently("examcp/web_search", &service)
+            .await
+            .expect("duplicate allow should be a no-op");
+        let second_saved = service
+            .get_setting(TOOL_APPROVAL_POLICY_SETTINGS_KEY)
+            .await
+            .expect("reading second saved policy should succeed")
+            .expect("existing save should still exist");
+
+        assert_eq!(first_saved, second_saved);
+        assert_eq!(
+            policy.persistent_allowlist,
             vec!["examcp/web_search".to_string()]
         );
     }
