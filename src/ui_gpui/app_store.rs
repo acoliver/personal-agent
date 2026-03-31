@@ -486,6 +486,9 @@ fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewC
         }
         ViewCommand::ConversationDeleted { id } => reduce_conversation_deleted(inner, id),
         ViewCommand::ConversationCreated { id, .. } => reduce_conversation_created(inner, id),
+        ViewCommand::DefaultProfileChanged { profile_id } => {
+            reduce_default_profile_changed(inner, profile_id)
+        }
         _ => false,
     }
 }
@@ -653,12 +656,25 @@ fn reduce_show_settings(
     profiles: Vec<ProfileSummary>,
     selected_profile_id: Option<Uuid>,
 ) -> bool {
-    if inner.snapshot.settings.settings_visible {
-        mutate_profiles_snapshot(inner, profiles, selected_profile_id)
+    let was_visible = inner.snapshot.settings.settings_visible;
+    let profiles_changed = mutate_profiles_snapshot(inner, profiles, selected_profile_id);
+    if was_visible {
+        profiles_changed
     } else {
         inner.snapshot.settings.settings_visible = true;
         true
     }
+}
+
+fn reduce_default_profile_changed(inner: &mut AppStoreInner, profile_id: Option<Uuid>) -> bool {
+    if inner.snapshot.settings.selected_profile_id == profile_id {
+        return false;
+    }
+    inner.snapshot.settings.selected_profile_id = profile_id;
+    for profile in &mut inner.snapshot.settings.profiles {
+        profile.is_default = profile_id == Some(profile.id);
+    }
+    true
 }
 
 fn reduce_conversation_renamed(inner: &mut AppStoreInner, id: Uuid, new_title: &str) -> bool {
