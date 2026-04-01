@@ -21,4 +21,19 @@ mod tests {
     fn bug_char_is_non_empty() {
         assert!(!BUG_CHAR.is_empty());
     }
+
+    #[test]
+    fn bug_char_is_exclamation_mark() {
+        assert_eq!(BUG_CHAR, "!");
+    }
+
+    #[test]
+    fn bug_char_is_single_character() {
+        assert_eq!(BUG_CHAR.chars().count(), 1);
+    }
+
+    #[test]
+    fn bug_char_is_ascii() {
+        assert!(BUG_CHAR.is_ascii());
+    }
 }

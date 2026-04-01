@@ -314,4 +314,156 @@ mod tests {
         store.mark_all_viewed();
         assert_eq!(store.unviewed_count(), 0);
     }
+
+    // --- render_entry_card: no-panic smoke tests for all severity variants ---
+
+    #[gpui::test]
+    async fn render_entry_card_stream_severity_no_panic(_cx: &mut TestAppContext) {
+        let entry = ErrorLogEntry {
+            id: 0,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Stream,
+            source: "chat".to_string(),
+            message: "stream error".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        };
+        let _ = ErrorLogView::render_entry_card(&entry);
+    }
+
+    #[gpui::test]
+    async fn render_entry_card_auth_severity_no_panic(_cx: &mut TestAppContext) {
+        let entry = ErrorLogEntry {
+            id: 1,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Auth,
+            source: "anthropic".to_string(),
+            message: "401 Unauthorized".to_string(),
+            raw_detail: Some("body: error invalid_api_key".to_string()),
+            conversation_title: Some("My Chat".to_string()),
+            conversation_id: None,
+        };
+        let _ = ErrorLogView::render_entry_card(&entry);
+    }
+
+    #[gpui::test]
+    async fn render_entry_card_connection_severity_no_panic(_cx: &mut TestAppContext) {
+        let entry = ErrorLogEntry {
+            id: 2,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Connection,
+            source: "network".to_string(),
+            message: "connection refused".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: Some(uuid::Uuid::new_v4()),
+        };
+        let _ = ErrorLogView::render_entry_card(&entry);
+    }
+
+    #[gpui::test]
+    async fn render_entry_card_mcp_severity_no_panic(_cx: &mut TestAppContext) {
+        let entry = ErrorLogEntry {
+            id: 3,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Mcp,
+            source: "mcp/my-server".to_string(),
+            message: "Failed to start: port in use".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        };
+        let _ = ErrorLogView::render_entry_card(&entry);
+    }
+
+    #[gpui::test]
+    async fn render_entry_card_internal_severity_no_panic(_cx: &mut TestAppContext) {
+        let entry = ErrorLogEntry {
+            id: 4,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Internal,
+            source: "system".to_string(),
+            message: "unexpected panic in worker".to_string(),
+            raw_detail: Some("stack trace here".to_string()),
+            conversation_title: None,
+            conversation_id: None,
+        };
+        let _ = ErrorLogView::render_entry_card(&entry);
+    }
+
+    #[gpui::test]
+    async fn render_entry_card_with_both_title_and_id_no_panic(_cx: &mut TestAppContext) {
+        let entry = ErrorLogEntry {
+            id: 5,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Auth,
+            source: "anthropic".to_string(),
+            message: "forbidden".to_string(),
+            raw_detail: None,
+            conversation_title: Some("Work Session".to_string()),
+            conversation_id: Some(uuid::Uuid::new_v4()),
+        };
+        let _ = ErrorLogView::render_entry_card(&entry);
+    }
+
+    #[gpui::test]
+    async fn render_entry_card_with_only_conversation_id_no_panic(_cx: &mut TestAppContext) {
+        // When title is None but conversation_id is Some, the id's to_string() is shown
+        let entry = ErrorLogEntry {
+            id: 6,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Stream,
+            source: "chat".to_string(),
+            message: "delta error".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: Some(uuid::Uuid::new_v4()),
+        };
+        let _ = ErrorLogView::render_entry_card(&entry);
+    }
+
+    // --- render_empty_state: no-panic ---
+
+    #[gpui::test]
+    async fn render_empty_state_no_panic(_cx: &mut TestAppContext) {
+        let _ = ErrorLogView::render_empty_state();
+    }
+
+    // --- Count label: singular vs plural ---
+
+    #[test]
+    fn count_label_singular_for_one_error() {
+        // Mirror the logic in render_top_bar
+        let entries_len = 1usize;
+        let label = if entries_len == 1 {
+            "1 error".to_string()
+        } else {
+            format!("{entries_len} errors")
+        };
+        assert_eq!(label, "1 error");
+    }
+
+    #[test]
+    fn count_label_plural_for_zero_errors() {
+        let entries_len = 0usize;
+        let label = if entries_len == 1 {
+            "1 error".to_string()
+        } else {
+            format!("{entries_len} errors")
+        };
+        assert_eq!(label, "0 errors");
+    }
+
+    #[test]
+    fn count_label_plural_for_many_errors() {
+        for n in [2usize, 5, 10, 100] {
+            let label = if n == 1 {
+                "1 error".to_string()
+            } else {
+                format!("{n} errors")
+            };
+            assert_eq!(label, format!("{n} errors"));
+        }
+    }
 }

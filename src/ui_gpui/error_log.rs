@@ -460,4 +460,179 @@ mod tests {
         use super::classify_error_severity;
         assert_eq!(classify_error_severity(""), ErrorSeverityTag::Stream);
     }
+
+    // --- classify_error_severity: MCP branch ---
+
+    #[test]
+    fn test_classify_mcp_patterns() {
+        use super::classify_error_severity;
+        assert_eq!(
+            classify_error_severity("mcp server failed to start"),
+            ErrorSeverityTag::Mcp
+        );
+        assert_eq!(
+            classify_error_severity("MCP server timed out"),
+            // "timed out" is a connection keyword, so Connection wins over Mcp
+            ErrorSeverityTag::Connection
+        );
+        assert_eq!(
+            classify_error_severity("tool call error: invalid input"),
+            ErrorSeverityTag::Mcp
+        );
+        assert_eq!(
+            classify_error_severity("Tool Call returned unexpected result"),
+            ErrorSeverityTag::Mcp
+        );
+    }
+
+    #[test]
+    fn test_classify_timed_out_pattern() {
+        use super::classify_error_severity;
+        // "timed out" should match Connection
+        assert_eq!(
+            classify_error_severity("operation timed out"),
+            ErrorSeverityTag::Connection
+        );
+    }
+
+    // --- ErrorSeverityTag Display ---
+
+    #[test]
+    fn test_severity_display_stream() {
+        assert_eq!(ErrorSeverityTag::Stream.to_string(), "STREAM");
+    }
+
+    #[test]
+    fn test_severity_display_auth() {
+        assert_eq!(ErrorSeverityTag::Auth.to_string(), "AUTH");
+    }
+
+    #[test]
+    fn test_severity_display_connection() {
+        assert_eq!(ErrorSeverityTag::Connection.to_string(), "CONN");
+    }
+
+    #[test]
+    fn test_severity_display_mcp() {
+        assert_eq!(ErrorSeverityTag::Mcp.to_string(), "MCP");
+    }
+
+    #[test]
+    fn test_severity_display_internal() {
+        assert_eq!(ErrorSeverityTag::Internal.to_string(), "INTERNAL");
+    }
+
+    // --- ErrorLogEntry with all optional fields populated ---
+
+    #[test]
+    fn test_entry_with_all_fields_round_trips_through_store() {
+        let store = fresh_store();
+        let conv_id = uuid::Uuid::new_v4();
+
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Auth,
+            source: "anthropic / claude-sonnet".to_string(),
+            message: "401 Unauthorized".to_string(),
+            raw_detail: Some(r#"{"error":"invalid_api_key"}"#.to_string()),
+            conversation_title: Some("My Test Conversation".to_string()),
+            conversation_id: Some(conv_id),
+        });
+
+        let entries = store.entries();
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!(e.severity, ErrorSeverityTag::Auth);
+        assert_eq!(e.source, "anthropic / claude-sonnet");
+        assert_eq!(e.message, "401 Unauthorized");
+        assert_eq!(
+            e.raw_detail.as_deref(),
+            Some(r#"{"error":"invalid_api_key"}"#)
+        );
+        assert_eq!(
+            e.conversation_title.as_deref(),
+            Some("My Test Conversation")
+        );
+        assert_eq!(e.conversation_id, Some(conv_id));
+    }
+
+    #[test]
+    fn test_entry_severity_variants_all_stored() {
+        let severities = [
+            ErrorSeverityTag::Stream,
+            ErrorSeverityTag::Auth,
+            ErrorSeverityTag::Connection,
+            ErrorSeverityTag::Mcp,
+            ErrorSeverityTag::Internal,
+        ];
+
+        for severity in severities {
+            let store = fresh_store();
+            let sev_clone = severity.clone();
+            store.push(|id| ErrorLogEntry {
+                id,
+                timestamp: chrono::Utc::now(),
+                severity: sev_clone,
+                source: "test".to_string(),
+                message: "test message".to_string(),
+                raw_detail: None,
+                conversation_title: None,
+                conversation_id: None,
+            });
+            let entries = store.entries();
+            assert_eq!(entries[0].severity, severity);
+        }
+    }
+
+    #[test]
+    fn test_entry_with_conversation_id_only_no_title() {
+        let store = fresh_store();
+        let conv_id = uuid::Uuid::new_v4();
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Stream,
+            source: "chat".to_string(),
+            message: "stream error".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: Some(conv_id),
+        });
+        let entries = store.entries();
+        assert_eq!(entries[0].conversation_id, Some(conv_id));
+        assert!(entries[0].conversation_title.is_none());
+    }
+
+    #[test]
+    fn test_entry_raw_detail_none_and_some() {
+        let store = fresh_store();
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Internal,
+            source: "sys".to_string(),
+            message: "error without detail".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        });
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Internal,
+            source: "sys".to_string(),
+            message: "error with detail".to_string(),
+            raw_detail: Some(
+                "HTTP/1.1 500 Internal Server Error
+body: {}"
+                    .to_string(),
+            ),
+            conversation_title: None,
+            conversation_id: None,
+        });
+        let entries = store.entries();
+        assert!(entries[0].raw_detail.is_some()); // newest first
+        assert!(entries[1].raw_detail.is_none());
+    }
 }
