@@ -138,6 +138,15 @@ fn assert_mcp_routing_targets(saved_mcp_id: Uuid) {
     );
 
     assert_route_count(
+        ViewCommand::ExportCompleted {
+            path: "/tmp/chat.md".to_string(),
+            format_label: "Markdown".to_string(),
+        },
+        1,
+        |targets| targets.chat_export_completed_commands,
+    );
+
+    assert_route_count(
         ViewCommand::McpConfigSaved {
             id: saved_mcp_id,
             name: Some("Workspace MCP Saved".to_string()),
@@ -691,16 +700,9 @@ async fn handle_command_forwards_export_format_and_export_feedback_to_chat_view(
             cx,
         );
         panel.handle_command(
-            ViewCommand::ShowNotification {
-                message: "Conversation saved as /tmp/chat.md (MD)".to_string(),
-            },
-            cx,
-        );
-        panel.handle_command(
-            ViewCommand::ShowError {
-                title: "Save Conversation".to_string(),
-                message: "disk unavailable".to_string(),
-                severity: crate::presentation::view_command::ErrorSeverity::Error,
+            ViewCommand::ExportCompleted {
+                path: "/tmp/chat.md".to_string(),
+                format_label: "Markdown".to_string(),
             },
             cx,
         );
@@ -713,9 +715,33 @@ async fn handle_command_forwards_export_format_and_export_feedback_to_chat_view(
             );
             assert_eq!(
                 view.state.export_feedback_message.as_deref(),
+                Some("Conversation saved as /tmp/chat.md (Markdown)")
+            );
+            assert!(!view.state.export_feedback_is_error);
+            assert_eq!(
+                view.state.export_feedback_path.as_deref(),
+                Some("/tmp/chat.md")
+            );
+        });
+
+        // Error feedback clears the path
+        panel.handle_command(
+            ViewCommand::ShowError {
+                title: "Save Conversation".to_string(),
+                message: "disk unavailable".to_string(),
+                severity: crate::presentation::view_command::ErrorSeverity::Error,
+            },
+            cx,
+        );
+
+        let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
+        chat_view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.state.export_feedback_message.as_deref(),
                 Some("Save Conversation: disk unavailable")
             );
             assert!(view.state.export_feedback_is_error);
+            assert!(view.state.export_feedback_path.is_none());
         });
     });
 }

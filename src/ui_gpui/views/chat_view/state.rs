@@ -108,6 +108,7 @@ pub struct ChatState {
     pub conversation_export_format: ConversationExportFormat,
     pub export_feedback_message: Option<String>,
     pub export_feedback_is_error: bool,
+    pub export_feedback_path: Option<String>,
     pub conversations: Vec<ConversationSummary>,
     pub active_conversation_id: Option<Uuid>,
     pub conversation_dropdown_open: bool,
@@ -153,6 +154,7 @@ impl Default for ChatState {
             conversation_export_format: ConversationExportFormat::Md,
             export_feedback_message: None,
             export_feedback_is_error: false,
+            export_feedback_path: None,
         }
     }
 }
@@ -286,6 +288,7 @@ mod tests {
         assert!(matches!(state.streaming, StreamingState::Idle));
         assert!(!state.show_thinking);
         assert!(state.thinking_content.is_none());
+        assert!(state.export_feedback_path.is_none());
     }
 
     #[test]

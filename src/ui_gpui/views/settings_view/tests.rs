@@ -703,13 +703,16 @@ async fn cycle_active_field_rotates_through_fields(cx: &mut TestAppContext) {
         assert!(view.state.active_field.is_none());
 
         view.cycle_active_field();
+        assert_eq!(view.state.active_field, Some(ActiveField::ExportDirInput));
+
+        view.cycle_active_field();
         assert_eq!(view.state.active_field, Some(ActiveField::AllowlistInput));
 
         view.cycle_active_field();
         assert_eq!(view.state.active_field, Some(ActiveField::DenylistInput));
 
         view.cycle_active_field();
-        assert_eq!(view.state.active_field, Some(ActiveField::AllowlistInput));
+        assert_eq!(view.state.active_field, Some(ActiveField::ExportDirInput));
     });
 }
 
@@ -827,7 +830,93 @@ async fn active_field_text_returns_correct_buffer(cx: &mut TestAppContext) {
         view.set_active_field(Some(ActiveField::DenylistInput));
         assert_eq!(view.active_field_text(), "deny");
 
+        view.state.export_dir_input = "/tmp/exports".to_string();
+        view.set_active_field(Some(ActiveField::ExportDirInput));
+        assert_eq!(view.active_field_text(), "/tmp/exports");
+
         view.set_active_field(None);
         assert_eq!(view.active_field_text(), "");
+    });
+}
+
+#[gpui::test]
+async fn save_export_directory_emits_set_export_directory_event(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut v = SettingsView::new(cx);
+        v.bridge = Some(bridge);
+        v
+    });
+
+    view.update(cx, |view, _cx| {
+        view.state.export_dir_input = "/tmp/exports".to_string();
+        view.save_export_directory();
+    });
+
+    let event = user_rx.try_recv().unwrap();
+    assert_eq!(
+        event,
+        UserEvent::SetExportDirectory {
+            path: "/tmp/exports".to_string()
+        }
+    );
+}
+
+#[gpui::test]
+async fn reset_export_directory_emits_empty_path(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut v = SettingsView::new(cx);
+        v.bridge = Some(bridge);
+        v
+    });
+
+    view.update(cx, |view, _cx| {
+        view.state.export_dir_input = "/tmp/exports".to_string();
+        view.state.export_dir_input.clear();
+        view.save_export_directory();
+    });
+
+    let event = user_rx.try_recv().unwrap();
+    assert_eq!(
+        event,
+        UserEvent::SetExportDirectory {
+            path: String::new()
+        }
+    );
+}
+
+#[gpui::test]
+async fn export_dir_input_field_append_and_backspace(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+
+    view.update(cx, |view, _cx| {
+        view.set_active_field(Some(ActiveField::ExportDirInput));
+        view.append_to_active_field("/tmp/test");
+        assert_eq!(view.state.export_dir_input, "/tmp/test");
+
+        view.backspace_active_field();
+        assert_eq!(view.state.export_dir_input, "/tmp/tes");
+    });
+}
+
+#[gpui::test]
+async fn cycle_active_field_includes_export_dir(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+
+    view.update(cx, |view, _cx| {
+        assert_eq!(view.state.active_field, None);
+
+        view.cycle_active_field();
+        assert_eq!(view.state.active_field, Some(ActiveField::ExportDirInput));
+
+        view.cycle_active_field();
+        assert_eq!(view.state.active_field, Some(ActiveField::AllowlistInput));
+
+        view.cycle_active_field();
+        assert_eq!(view.state.active_field, Some(ActiveField::DenylistInput));
+
+        view.cycle_active_field();
+        assert_eq!(view.state.active_field, Some(ActiveField::ExportDirInput));
     });
 }

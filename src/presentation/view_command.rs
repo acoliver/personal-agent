@@ -144,6 +144,12 @@ pub enum ViewCommand {
     /// Update chat export format controls in the chat view.
     ShowConversationExportFormat { format: ConversationExportFormat },
 
+    /// Provide the persisted export directory to the settings view.
+    ExportDirectoryLoaded { path: String },
+
+    /// Conversation was successfully exported to disk.
+    ExportCompleted { path: String, format_label: String },
+
     /// Profile was created
     ProfileCreated { id: Uuid, name: String },
 

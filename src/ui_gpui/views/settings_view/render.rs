@@ -541,6 +541,115 @@ impl SettingsView {
             .into_any_element()
     }
 
+    /// Render the export directory setting section.
+    fn render_export_dir_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let is_active = self.state.active_field == Some(super::ActiveField::ExportDirInput);
+        let input_text = if self.state.export_dir_input.is_empty() {
+            "System Downloads (default)".to_string()
+        } else {
+            self.state.export_dir_input.clone()
+        };
+        let text_color = if self.state.export_dir_input.is_empty() {
+            Theme::text_muted()
+        } else {
+            Theme::text_primary()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(Theme::text_primary())
+                    .child("EXPORT DIRECTORY"),
+            )
+            .child(
+                div()
+                    .id("export-dir-input")
+                    .w_full()
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .bg(Theme::bg_darker())
+                    .border_1()
+                    .border_color(if is_active {
+                        Theme::accent()
+                    } else {
+                        Theme::border()
+                    })
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .text_size(px(12.0))
+                    .text_color(text_color)
+                    .child(input_text)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.set_active_field(Some(super::ActiveField::ExportDirInput));
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(self.render_export_dir_toolbar(cx))
+    }
+
+    /// Toolbar row for the export directory section: [Save] [Reset] + help text.
+    #[allow(clippy::unused_self)] // cx.listener borrows the entity, not &self directly
+    fn render_export_dir_toolbar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .id("btn-save-export-dir")
+                    .px(px(12.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::bg_dark()))
+                    .text_size(px(11.0))
+                    .text_color(Theme::text_primary())
+                    .child("Save")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.save_export_directory();
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("btn-reset-export-dir")
+                    .px(px(12.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::bg_dark()))
+                    .text_size(px(11.0))
+                    .text_color(Theme::text_secondary())
+                    .child("Reset")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.export_dir_input.clear();
+                            this.save_export_directory();
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(Theme::text_muted())
+                    .child("Enter a directory path, or reset for system Downloads"),
+            )
+    }
+
     /// Render the theme selection section.
     fn render_theme_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let themes = &self.state.available_themes;
@@ -669,6 +778,8 @@ impl gpui::Render for SettingsView {
                     .child(self.render_mcp_section(cx))
                     // Tool approval section
                     .child(self.render_tool_approval_section(cx))
+                    // Export directory section
+                    .child(self.render_export_dir_section(cx))
                     // Theme section
                     .child(self.render_theme_section(cx)),
             )

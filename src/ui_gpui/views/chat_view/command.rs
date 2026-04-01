@@ -41,6 +41,7 @@ impl ChatView {
                 self.state.conversation_title_input.clear();
                 self.state.export_feedback_message = None;
                 self.state.export_feedback_is_error = false;
+                self.state.export_feedback_path = None;
                 self.state.approval_bubbles.clear();
                 self.state.chat_autoscroll_enabled = true;
                 self.chat_scroll_handle.scroll_to_bottom();
@@ -55,10 +56,18 @@ impl ChatView {
                 self.state.conversation_export_format = format;
                 cx.notify();
             }
+            ViewCommand::ExportCompleted { path, format_label } => {
+                self.state.export_feedback_message =
+                    Some(format!("Conversation saved as {path} ({format_label})"));
+                self.state.export_feedback_is_error = false;
+                self.state.export_feedback_path = Some(path);
+                cx.notify();
+            }
             ViewCommand::ShowNotification { message } => {
                 if Self::is_export_notification(&message) {
                     self.state.export_feedback_message = Some(message);
                     self.state.export_feedback_is_error = false;
+                    self.state.export_feedback_path = None;
                     cx.notify();
                 }
             }
@@ -70,6 +79,7 @@ impl ChatView {
                 if Self::is_export_error(&title) {
                     self.state.export_feedback_message = Some(format!("{title}: {message}"));
                     self.state.export_feedback_is_error = true;
+                    self.state.export_feedback_path = None;
                     cx.notify();
                 }
             }

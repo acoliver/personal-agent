@@ -125,9 +125,11 @@ pub struct ThemeOption {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub(super) enum ActiveField {
     AllowlistInput,
     DenylistInput,
+    ExportDirInput,
 }
 
 /// Settings view state
@@ -148,6 +150,7 @@ pub struct SettingsState {
     pub persistent_denylist: Vec<String>,
     pub allowlist_input: String,
     pub denylist_input: String,
+    pub export_dir_input: String,
     pub(super) active_field: Option<ActiveField>,
     pub status_message: Option<String>,
     pub status_is_error: bool,
@@ -176,6 +179,7 @@ impl Default for SettingsState {
             persistent_denylist: Vec::new(),
             allowlist_input: String::new(),
             denylist_input: String::new(),
+            export_dir_input: String::new(),
             active_field: None,
             status_message: None,
             status_is_error: false,
@@ -327,6 +331,7 @@ impl SettingsView {
         match self.state.active_field {
             Some(ActiveField::AllowlistInput) => self.state.allowlist_input.push_str(text),
             Some(ActiveField::DenylistInput) => self.state.denylist_input.push_str(text),
+            Some(ActiveField::ExportDirInput) => self.state.export_dir_input.push_str(text),
             None => {}
         }
     }
@@ -338,6 +343,9 @@ impl SettingsView {
             }
             Some(ActiveField::DenylistInput) => {
                 self.state.denylist_input.pop();
+            }
+            Some(ActiveField::ExportDirInput) => {
+                self.state.export_dir_input.pop();
             }
             None => {}
         }
@@ -361,6 +369,12 @@ impl SettingsView {
                     .denylist_input
                     .truncate(len.saturating_sub(byte_count));
             }
+            Some(ActiveField::ExportDirInput) => {
+                let len = self.state.export_dir_input.len();
+                self.state
+                    .export_dir_input
+                    .truncate(len.saturating_sub(byte_count));
+            }
             None => {}
         }
     }
@@ -369,6 +383,7 @@ impl SettingsView {
         match self.state.active_field {
             Some(ActiveField::AllowlistInput) => &self.state.allowlist_input,
             Some(ActiveField::DenylistInput) => &self.state.denylist_input,
+            Some(ActiveField::ExportDirInput) => &self.state.export_dir_input,
             None => "",
         }
     }
@@ -380,8 +395,9 @@ impl SettingsView {
 
     const fn cycle_active_field(&mut self) {
         let next = match self.state.active_field {
+            Some(ActiveField::ExportDirInput) => ActiveField::AllowlistInput,
             Some(ActiveField::AllowlistInput) => ActiveField::DenylistInput,
-            Some(ActiveField::DenylistInput) | None => ActiveField::AllowlistInput,
+            Some(ActiveField::DenylistInput) | None => ActiveField::ExportDirInput,
         };
         self.set_active_field(Some(next));
     }
@@ -614,9 +630,19 @@ impl SettingsView {
                 cx.notify();
                 return;
             }
+            Some(ActiveField::ExportDirInput) => {
+                self.save_export_directory();
+                cx.notify();
+                return;
+            }
             None => {}
         }
         self.apply_selected_theme(cx);
+    }
+
+    fn save_export_directory(&self) {
+        let path = self.state.export_dir_input.trim().to_string();
+        self.emit(&UserEvent::SetExportDirectory { path });
     }
 
     fn apply_selected_theme(&mut self, cx: &mut gpui::Context<Self>) {

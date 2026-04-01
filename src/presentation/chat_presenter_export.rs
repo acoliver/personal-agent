@@ -4,8 +4,8 @@ use tokio::sync::mpsc;
 
 use super::conversation_export::{
     build_export_filename, render_export_content, resolve_export_directory,
-    resolve_unique_export_path, write_export_file_retrying_collisions, EXPORT_DIR_SETTING_KEY,
-    EXPORT_FORMAT_SETTING_KEY,
+    resolve_unique_export_path, validate_export_directory, write_export_file_retrying_collisions,
+    EXPORT_DIR_SETTING_KEY, EXPORT_FORMAT_SETTING_KEY,
 };
 use super::view_command::ErrorSeverity;
 use super::{ChatPresenter, ViewCommand};
@@ -25,6 +25,16 @@ impl ChatPresenter {
             .expect("export format mutex poisoned") = format;
         let _ = view_tx
             .send(ViewCommand::ShowConversationExportFormat { format })
+            .await;
+
+        let export_dir = app_settings_service
+            .get_setting(EXPORT_DIR_SETTING_KEY)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let _ = view_tx
+            .send(ViewCommand::ExportDirectoryLoaded { path: export_dir })
             .await;
     }
 
@@ -155,16 +165,86 @@ impl ChatPresenter {
         };
 
         let _ = view_tx
-            .send(ViewCommand::ShowNotification {
-                message: format!(
-                    "Conversation saved as {} ({})",
-                    path.display(),
-                    format.display_label()
-                ),
+            .send(ViewCommand::ExportCompleted {
+                path: path.display().to_string(),
+                format_label: format.display_label().to_string(),
             })
             .await;
         let _ = view_tx
             .send(ViewCommand::ShowConversationExportFormat { format })
+            .await;
+    }
+
+    pub(crate) async fn handle_set_export_directory(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        path: String,
+    ) {
+        let trimmed = path.trim().to_string();
+
+        if trimmed.is_empty() {
+            if let Err(error) = app_settings_service
+                .set_setting(EXPORT_DIR_SETTING_KEY, String::new())
+                .await
+            {
+                tracing::warn!("Failed to clear export directory setting: {error}");
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Export Directory".to_string(),
+                        message: "Failed to reset export directory preference".to_string(),
+                        severity: ErrorSeverity::Warning,
+                    })
+                    .await;
+                return;
+            }
+            let _ = view_tx
+                .send(ViewCommand::ExportDirectoryLoaded {
+                    path: String::new(),
+                })
+                .await;
+            let _ = view_tx
+                .send(ViewCommand::ShowNotification {
+                    message: "Export directory reset to system Downloads".to_string(),
+                })
+                .await;
+            return;
+        }
+
+        if let Err(reason) = validate_export_directory(&trimmed) {
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Export Directory".to_string(),
+                    message: reason,
+                    severity: ErrorSeverity::Warning,
+                })
+                .await;
+            return;
+        }
+
+        if let Err(error) = app_settings_service
+            .set_setting(EXPORT_DIR_SETTING_KEY, trimmed.clone())
+            .await
+        {
+            tracing::warn!("Failed to persist export directory setting: {error}");
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Export Directory".to_string(),
+                    message: "Failed to persist export directory preference".to_string(),
+                    severity: ErrorSeverity::Warning,
+                })
+                .await;
+            return;
+        }
+
+        let _ = view_tx
+            .send(ViewCommand::ExportDirectoryLoaded {
+                path: trimmed.clone(),
+            })
+            .await;
+        let _ = view_tx
+            .send(ViewCommand::ShowNotification {
+                message: format!("Export directory set to {trimmed}"),
+            })
             .await;
     }
 }
