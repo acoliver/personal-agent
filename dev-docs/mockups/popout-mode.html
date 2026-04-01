@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - Popout Mode Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .section-label {
+    font-size: 13px;
+    color: #6a9955;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .annotation {
+    font-size: 11px;
+    color: #6a9955;
+    font-style: italic;
+    margin-top: 8px;
+  }
+
+  /* -- Current popup (compact mode) */
+  .popup-frame {
+    width: 400px;
+    height: 520px;
+    background: #121212;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  /* -- Popout window (expanded mode) */
+  .popout-frame {
+    width: 900px;
+    height: 580px;
+    background: #121212;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .popout-frame::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 14px;
+    height: 14px;
+    cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 50%, #555 50%, transparent 55%,
+                transparent 60%, #555 60%, transparent 65%,
+                transparent 70%, #555 70%);
+    border-radius: 0 0 10px 0;
+  }
+
+  /* -- Top bar */
+  .top-bar {
+    height: 44px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #333;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    flex-shrink: 0;
+  }
+  .top-bar .app-title { font-size: 14px; font-weight: 700; color: #e5e5e5; }
+  .toolbar-buttons { display: flex; gap: 6px; align-items: center; }
+  .tb-btn {
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; color: #e5e5e5; background: transparent;
+    cursor: pointer; border: none; transition: background 0.15s; flex-shrink: 0;
+  }
+  .tb-btn:hover { background: #333; }
+  .tb-btn.active { background: #333; }
+  .tb-btn.exit:hover { background: #8B0000; }
+  .tb-btn.new-btn { background: #1a1a1a; color: #6a9955; font-size: 14px; font-weight: bold; }
+  .tb-btn.popout-btn { position: relative; }
+  .tb-btn.popout-btn.highlight { background: #6a9955; color: #000; }
+  .tb-btn.popin-btn { position: relative; }
+  .tb-btn.sidebar-toggle { position: relative; }
+
+  /* -- Callout */
+  .callout {
+    position: absolute; background: #6a9955; color: #000;
+    font-size: 11px; font-weight: 600; padding: 4px 10px;
+    border-radius: 4px; white-space: nowrap; z-index: 10; pointer-events: none;
+  }
+  .callout::after { content: ''; position: absolute; border: 6px solid transparent; }
+  .callout.below::after {
+    top: -11px; left: 50%; transform: translateX(-50%); border-bottom-color: #6a9955;
+  }
+
+  /* -- Title bar */
+  .title-bar {
+    height: 32px; background: #1a1a1a; padding: 0 12px;
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  }
+  .conv-dropdown {
+    min-width: 180px; padding: 4px 8px; border-radius: 4px;
+    background: #252525; border: 1px solid #444; font-size: 13px;
+    color: #e5e5e5; display: flex; align-items: center;
+    justify-content: space-between; cursor: pointer;
+  }
+  .conv-dropdown .arrow { font-size: 10px; color: #888; margin-left: 8px; }
+  .profile-pill {
+    padding: 4px 8px; border-radius: 4px; background: #252525;
+    border: 1px solid #444; font-size: 11px; color: #e5e5e5;
+    display: flex; align-items: center; gap: 6px; cursor: pointer;
+  }
+  .profile-pill .arrow { font-size: 9px; color: #888; }
+
+  /* -- Chat area */
+  .chat-area {
+    flex: 1; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 8px; background: #121212;
+  }
+  .msg-row { display: flex; }
+  .msg-row.user { justify-content: flex-end; }
+  .msg-row.assistant { justify-content: flex-start; flex-direction: column; gap: 2px; }
+  .model-label { font-size: 10px; color: #888; }
+  .bubble {
+    max-width: 300px; padding: 10px; border-radius: 12px;
+    font-size: 13px; line-height: 1.45; word-wrap: break-word;
+  }
+  .bubble.user-bubble { background: #2a4a2a; color: #e5e5e5; }
+  .bubble.assistant-bubble { background: #1a1a1a; color: #e5e5e5; }
+  .popout-frame .bubble { max-width: 480px; }
+
+  /* -- Input bar */
+  .input-bar {
+    height: 50px; background: #1a1a1a; border-top: 1px solid #333;
+    padding: 0 12px; display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  }
+  .input-field {
+    flex: 1; height: 32px; background: #2a2a2a; border: 1px solid #444;
+    border-radius: 6px; padding: 0 12px; font-size: 13px; color: #666;
+    display: flex; align-items: center;
+  }
+  .send-btn {
+    width: 60px; height: 32px; border-radius: 6px; border: none;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .send-btn.disabled { background: #333; color: #666; }
+
+  /* -- Sidebar */
+  .popout-body { flex: 1; display: flex; overflow: hidden; }
+  .sidebar {
+    width: 260px; background: #161616; border-right: 1px solid #333;
+    display: flex; flex-direction: column; flex-shrink: 0;
+  }
+  .sidebar-header { padding: 10px 12px 8px; flex-shrink: 0; }
+  .search-bar {
+    width: 100%; height: 30px; background: #222; border: 1px solid #444;
+    border-radius: 6px; padding: 0 10px 0 30px; font-size: 12px; color: #aaa;
+  }
+  .search-wrapper { position: relative; }
+  .search-wrapper::before {
+    content: '\2315'; position: absolute; left: 10px; top: 50%;
+    transform: translateY(-50%); font-size: 14px; color: #666; z-index: 1;
+  }
+  .conv-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+
+  /* -- Conversation items */
+  .conv-item {
+    padding: 8px 10px; border-radius: 6px; margin-bottom: 2px;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .conv-item:hover { background: #222; }
+  .conv-item.selected { background: #2a4a2a; }
+  .conv-item .title-row {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .conv-item .conv-title {
+    font-size: 12px; font-weight: 600; color: #e5e5e5;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .conv-item .conv-meta { font-size: 10px; color: #888; margin-top: 2px; padding-left: 22px; }
+  .conv-item .conv-preview {
+    font-size: 10px; color: #666; margin-top: 3px; padding-left: 22px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* -- Delete x button (always visible, left of title, red) */
+  .conv-item .delete-x {
+    font-size: 11px; color: #ff6b6b; cursor: pointer; flex-shrink: 0;
+    background: transparent; border: none; line-height: 1;
+    width: 16px; height: 16px; border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+  }
+  .conv-item .delete-x:hover { background: #4a2a2a; color: #ff4444; }
+
+  /* -- Main panel */
+  .main-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .resize-badge {
+    position: absolute; bottom: 10px; right: 26px;
+    font-size: 10px; color: #555; letter-spacing: 0.5px;
+  }
+  .mockup-wrapper { display: flex; flex-direction: column; align-items: center; }
+  .divider { width: 80%; height: 1px; background: #444; margin: 10px 0; }
+  .search-match { color: #6a9955; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>PersonalAgent - Popout Mode Design</h1>
+<h2>Mockup &amp; Interaction Spec</h2>
+
+<!-- ================================================================ -->
+<!-- SECTION 1: Current popup with new button added                   -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">1. Current Popup Mode - New Button Added</div>
+
+  <div class="popup-frame" style="position:relative;">
+    <div class="top-bar">
+      <span class="app-title">PersonalAgent</span>
+      <div class="toolbar-buttons">
+        <button class="tb-btn active">T</button>
+        <button class="tb-btn">R</button>
+        <button class="tb-btn">H</button>
+        <button class="tb-btn">MD</button>
+        <button class="tb-btn">&darr;</button>
+        <button class="tb-btn popout-btn highlight" title="Pop out to window">
+          <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
+            <rect x="1" y="3" width="12" height="9" rx="1.5" stroke="#000" stroke-width="1.5" fill="none"/>
+            <rect x="1" y="3" width="12" height="3" rx="1" fill="#000" opacity="0.5"/>
+            <path d="M10 1L14 1L14 5" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M14 1L9 6" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="tb-btn">&#x2699;</button>
+        <button class="tb-btn exit">&#x23FB;</button>
+      </div>
+    </div>
+
+    <div class="callout below" style="position:absolute; top:48px; right:52px; z-index:20;">
+      NEW - Pop out to resizable window
+    </div>
+
+    <div class="title-bar">
+      <div class="conv-dropdown">Rust async patterns <span class="arrow">&darr;</span></div>
+      <button class="tb-btn new-btn">+</button>
+      <div class="profile-pill">claude-sonnet <span class="arrow">&darr;</span></div>
+    </div>
+
+    <div class="chat-area">
+      <div class="msg-row user">
+        <div class="bubble user-bubble">How do I handle cancellation in tokio tasks?</div>
+      </div>
+      <div class="msg-row assistant">
+        <span class="model-label">claude-sonnet-4-20250514</span>
+        <div class="bubble assistant-bubble">
+          There are several approaches to cancellation in tokio. The most common pattern uses
+          <code>tokio::select!</code> with a cancellation token...
+        </div>
+      </div>
+      <div class="msg-row user">
+        <div class="bubble user-bubble">Can you show me a concrete example?</div>
+      </div>
+      <div class="msg-row assistant">
+        <span class="model-label">claude-sonnet-4-20250514</span>
+        <div class="bubble assistant-bubble">
+          Sure! Here's a pattern using <code>CancellationToken</code> from <code>tokio_util</code>...
+        </div>
+      </div>
+    </div>
+
+    <div class="input-bar">
+      <div class="input-field">Type a message...</div>
+      <button class="send-btn disabled">Send</button>
+    </div>
+  </div>
+
+  <div class="annotation">
+    The popout button uses a window-with-arrow icon.<br>
+    Position: between save and settings in the toolbar.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 2: Popped-out window                                     -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">2. Popped-Out Mode - Resizable Window with Sidebar</div>
+
+  <div class="popout-frame" style="position:relative;">
+    <div class="top-bar">
+      <span class="app-title">PersonalAgent</span>
+      <div class="toolbar-buttons">
+        <button class="tb-btn active">T</button>
+        <button class="tb-btn">R</button>
+        <button class="tb-btn">MD</button>
+        <button class="tb-btn">&darr;</button>
+        <button class="tb-btn popin-btn" title="Return to popup mode" style="background:#333;">
+          <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
+            <rect x="1" y="3" width="12" height="9" rx="1.5" stroke="#e5e5e5" stroke-width="1.5" fill="none"/>
+            <rect x="1" y="3" width="12" height="3" rx="1" fill="#e5e5e5" opacity="0.4"/>
+            <path d="M14 5L10 5L10 1" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M10 5L15 0" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="tb-btn">&#x2699;</button>
+        <button class="tb-btn exit">&#x23FB;</button>
+      </div>
+    </div>
+
+    <div class="popout-body">
+      <!-- Left Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <div class="search-wrapper">
+            <input type="text" class="search-bar" placeholder="Search conversations..." disabled>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+            <span style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:1px;">Conversations</span>
+            <button class="tb-btn new-btn" style="width:22px;height:22px;font-size:13px;">+</button>
+          </div>
+        </div>
+
+        <div class="conv-list">
+          <div class="conv-item selected">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">Rust async patterns</div>
+            </div>
+            <div class="conv-meta">5m ago &middot; 47 messages</div>
+            <div class="conv-preview">How do I handle cancellation in tokio...</div>
+          </div>
+
+          <div class="conv-item">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">MCP architecture research</div>
+            </div>
+            <div class="conv-meta">2h ago &middot; 23 messages</div>
+            <div class="conv-preview">What's the best approach for tool...</div>
+          </div>
+
+          <div class="conv-item">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">GPUI rendering pipeline</div>
+            </div>
+            <div class="conv-meta">1d ago &middot; 31 messages</div>
+            <div class="conv-preview">Can you explain the GPUI render cycle...</div>
+          </div>
+
+          <div class="conv-item">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">Theme system design</div>
+            </div>
+            <div class="conv-meta">2d ago &middot; 15 messages</div>
+            <div class="conv-preview">I want to add theme support with...</div>
+          </div>
+
+          <div class="conv-item">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">EventBus refactoring</div>
+            </div>
+            <div class="conv-meta">3d ago &middot; 8 messages</div>
+            <div class="conv-preview">The broadcast channel is causing...</div>
+          </div>
+
+          <div class="conv-item">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">Profile editor bugs</div>
+            </div>
+            <div class="conv-meta">5d ago &middot; 12 messages</div>
+            <div class="conv-preview">When I try to save a new profile...</div>
+          </div>
+
+          <div class="conv-item">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">Untitled Conversation</div>
+            </div>
+            <div class="conv-meta">Jan 19 &middot; 5 messages</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Main Chat Panel -->
+      <div class="main-panel">
+        <div class="title-bar" style="justify-content:flex-start;">
+          <button class="tb-btn sidebar-toggle active" title="Toggle sidebar">
+            <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
+              <rect x="0.5" y="0.5" width="15" height="13" rx="1.5" stroke="#e5e5e5" stroke-width="1" fill="none"/>
+              <line x1="5.5" y1="0.5" x2="5.5" y2="13.5" stroke="#e5e5e5" stroke-width="1"/>
+              <line x1="0.5" y1="3.5" x2="15.5" y2="3.5" stroke="#e5e5e5" stroke-width="1"/>
+              <rect x="1.5" y="5" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.6"/>
+              <rect x="1.5" y="7.5" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.4"/>
+              <rect x="1.5" y="10" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.3"/>
+            </svg>
+          </button>
+          <div class="profile-pill">claude-sonnet <span class="arrow">&darr;</span></div>
+        </div>
+
+        <div class="chat-area">
+          <div class="msg-row user">
+            <div class="bubble user-bubble">How do I handle cancellation in tokio tasks?</div>
+          </div>
+          <div class="msg-row assistant">
+            <span class="model-label">claude-sonnet-4-20250514</span>
+            <div class="bubble assistant-bubble">
+              There are several approaches to cancellation in tokio. The most common pattern uses
+              <code style="background:#2a2a2a;padding:1px 4px;border-radius:3px;">tokio::select!</code>
+              with a cancellation token. The key insight is that dropping a future in Rust cancels it,
+              so <code style="background:#2a2a2a;padding:1px 4px;border-radius:3px;">select!</code> gives you
+              cooperative cancellation by racing your task against a signal.
+            </div>
+          </div>
+          <div class="msg-row user">
+            <div class="bubble user-bubble">Can you show me a concrete example?</div>
+          </div>
+          <div class="msg-row assistant">
+            <span class="model-label">claude-sonnet-4-20250514</span>
+            <div class="bubble assistant-bubble">
+              Sure! Here's a pattern using
+              <code style="background:#2a2a2a;padding:1px 4px;border-radius:3px;">CancellationToken</code>
+              from <code style="background:#2a2a2a;padding:1px 4px;border-radius:3px;">tokio_util</code>:<br><br>
+              <code style="background:#2a2a2a;padding:4px 8px;border-radius:4px;display:block;font-size:12px;line-height:1.6;color:#6a9955;">
+              let token = CancellationToken::new();<br>
+              let cloned = token.clone();<br>
+              <br>
+              tokio::spawn(async move {<br>
+              &nbsp;&nbsp;select! {<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;_ = cloned.cancelled() =&gt; {}<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;result = do_work() =&gt; {<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;handle(result);<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;}<br>
+              &nbsp;&nbsp;}<br>
+              });<br>
+              <br>
+              // Cancel the task later:<br>
+              token.cancel();
+              </code>
+              <br>
+              This pattern is clean and composable...
+            </div>
+          </div>
+        </div>
+
+        <div class="input-bar">
+          <div class="input-field">Type a message...</div>
+          <button class="send-btn disabled">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="resize-badge">resizable</div>
+  </div>
+
+  <div class="annotation">
+    Window is freely resizable. Sidebar width is fixed at ~260px.<br>
+    The [H] button is removed in popout mode (sidebar replaces it).<br>
+    The popout icon becomes a "pop-in" icon (arrow pointing inward) to return to popup mode.<br>
+    The red x is always visible to the left of each conversation title.<br>
+    The sidebar toggle sits in the title bar, left of the model selector, right next to the sidebar edge.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 3: Search active state                                   -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">3. Search Active - Title Matches First, Then Content</div>
+
+  <div class="popout-frame" style="position:relative;">
+    <div class="top-bar">
+      <span class="app-title">PersonalAgent</span>
+      <div class="toolbar-buttons">
+        <button class="tb-btn active">T</button>
+        <button class="tb-btn">R</button>
+        <button class="tb-btn">MD</button>
+        <button class="tb-btn">&darr;</button>
+        <button class="tb-btn popin-btn" style="background:#333;">
+          <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
+            <rect x="1" y="3" width="12" height="9" rx="1.5" stroke="#e5e5e5" stroke-width="1.5" fill="none"/>
+            <rect x="1" y="3" width="12" height="3" rx="1" fill="#e5e5e5" opacity="0.4"/>
+            <path d="M14 5L10 5L10 1" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M10 5L15 0" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="tb-btn">&#x2699;</button>
+        <button class="tb-btn exit">&#x23FB;</button>
+      </div>
+    </div>
+
+    <div class="popout-body">
+      <!-- Left Sidebar with active search -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <div class="search-wrapper">
+            <input type="text" class="search-bar" value="  tokio" style="color:#e5e5e5; border-color:#6a9955;" disabled>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+            <span style="font-size:10px; color:#6a9955; letter-spacing:1px;">3 results</span>
+          </div>
+        </div>
+
+        <div class="conv-list">
+          <div style="padding:4px 10px 4px; font-size:9px; color:#555; text-transform:uppercase; letter-spacing:1px;">
+            Title matches
+          </div>
+          <div class="conv-item selected">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">Rust async patterns</div>
+            </div>
+            <div class="conv-meta">5m ago &middot; 47 messages</div>
+            <div class="conv-preview">...cancellation in <span class="search-match">tokio</span> tasks?</div>
+          </div>
+
+          <div style="padding:8px 10px 4px; font-size:9px; color:#555; text-transform:uppercase; letter-spacing:1px;">
+            Content matches
+          </div>
+          <div class="conv-item">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">EventBus refactoring</div>
+            </div>
+            <div class="conv-meta">3d ago &middot; 8 messages</div>
+            <div class="conv-preview">...switching from <span class="search-match">tokio</span> broadcast to flume...</div>
+          </div>
+
+          <div class="conv-item">
+            <div class="title-row">
+              <button class="delete-x">x</button>
+              <div class="conv-title">Profile editor bugs</div>
+            </div>
+            <div class="conv-meta">5d ago &middot; 12 messages</div>
+            <div class="conv-preview">...<span class="search-match">tokio</span> runtime panics when saving...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Chat Panel showing selected search result -->
+      <div class="main-panel">
+        <div class="title-bar" style="justify-content:flex-start;">
+          <button class="tb-btn sidebar-toggle active" title="Toggle sidebar">
+            <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
+              <rect x="0.5" y="0.5" width="15" height="13" rx="1.5" stroke="#e5e5e5" stroke-width="1" fill="none"/>
+              <line x1="5.5" y1="0.5" x2="5.5" y2="13.5" stroke="#e5e5e5" stroke-width="1"/>
+              <line x1="0.5" y1="3.5" x2="15.5" y2="3.5" stroke="#e5e5e5" stroke-width="1"/>
+              <rect x="1.5" y="5" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.6"/>
+              <rect x="1.5" y="7.5" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.4"/>
+              <rect x="1.5" y="10" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.3"/>
+            </svg>
+          </button>
+          <div class="profile-pill">claude-sonnet <span class="arrow">&darr;</span></div>
+        </div>
+
+        <div class="chat-area">
+          <div class="msg-row user">
+            <div class="bubble user-bubble">How do I handle cancellation in tokio tasks?</div>
+          </div>
+          <div class="msg-row assistant">
+            <span class="model-label">claude-sonnet-4-20250514</span>
+            <div class="bubble assistant-bubble">
+              There are several approaches to cancellation in tokio...
+            </div>
+          </div>
+        </div>
+
+        <div class="input-bar">
+          <div class="input-field">Type a message...</div>
+          <button class="send-btn disabled">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Search groups results: title matches appear first, then content matches.<br>
+    Matching terms are highlighted in green. Preview shows surrounding context.<br>
+    The result count updates live as you type. Clearing search restores full list.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 4: Icon detail                                           -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">4. Icon Design - Popout / Pop-in Toggle</div>
+
+  <div style="display:flex; gap:60px; align-items:center; margin-top:12px;">
+    <div style="text-align:center;">
+      <div style="width:56px;height:56px;background:#1a1a1a;border-radius:8px;display:flex;align-items:center;justify-content:center;margin:0 auto 8px;">
+        <svg width="32" height="28" viewBox="0 0 16 14" fill="none">
+          <rect x="1" y="3" width="12" height="9" rx="1.5" stroke="#e5e5e5" stroke-width="1.5" fill="none"/>
+          <rect x="1" y="3" width="12" height="3" rx="1" fill="#e5e5e5" opacity="0.4"/>
+          <path d="M10 1L14 1L14 5" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M14 1L9 6" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div style="font-size:11px; color:#888;">Pop Out</div>
+      <div style="font-size:10px; color:#555;">(popup to window)</div>
+    </div>
+
+    <div style="font-size:24px;color:#555;">&harr;</div>
+
+    <div style="text-align:center;">
+      <div style="width:56px;height:56px;background:#1a1a1a;border-radius:8px;display:flex;align-items:center;justify-content:center;margin:0 auto 8px;">
+        <svg width="32" height="28" viewBox="0 0 16 14" fill="none">
+          <rect x="1" y="3" width="12" height="9" rx="1.5" stroke="#e5e5e5" stroke-width="1.5" fill="none"/>
+          <rect x="1" y="3" width="12" height="3" rx="1" fill="#e5e5e5" opacity="0.4"/>
+          <path d="M14 5L10 5L10 1" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M10 5L15 0" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div style="font-size:11px; color:#888;">Pop In</div>
+      <div style="font-size:10px; color:#555;">(window to popup)</div>
+    </div>
+  </div>
+
+    <div style="font-size:24px;color:#555;">&harr;</div>
+
+    <!-- Sidebar toggle icon -->
+    <div style="text-align:center;">
+      <div style="width:56px;height:56px;background:#1a1a1a;border-radius:8px;display:flex;align-items:center;justify-content:center;margin:0 auto 8px;">
+        <svg width="32" height="28" viewBox="0 0 16 14" fill="none">
+          <rect x="0.5" y="0.5" width="15" height="13" rx="1.5" stroke="#e5e5e5" stroke-width="1" fill="none"/>
+          <line x1="5.5" y1="0.5" x2="5.5" y2="13.5" stroke="#e5e5e5" stroke-width="1"/>
+          <line x1="0.5" y1="3.5" x2="15.5" y2="3.5" stroke="#e5e5e5" stroke-width="1"/>
+          <rect x="1.5" y="5" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.6"/>
+          <rect x="1.5" y="7.5" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.4"/>
+          <rect x="1.5" y="10" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.3"/>
+        </svg>
+      </div>
+      <div style="font-size:11px; color:#888;">Sidebar Toggle</div>
+      <div style="font-size:10px; color:#555;">(show/hide panel)</div>
+    </div>
+  </div>
+
+  <div class="annotation" style="margin-top:16px;">
+    Pop Out / Pop In: same window frame, arrow direction indicates action.<br>
+    Sidebar Toggle: window with left panel and list rows. Highlighted when sidebar is visible.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 5: Delete confirmation                                   -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">5. Delete Confirmation - Inline</div>
+
+  <div style="width:260px; background:#161616; border-radius:8px; padding:12px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);">
+    <div class="conv-item" style="margin-bottom:2px; opacity:0.4;">
+      <div class="title-row">
+        <button class="delete-x">x</button>
+        <div class="conv-title">Rust async patterns</div>
+      </div>
+      <div class="conv-meta">5m ago &middot; 47 messages</div>
+    </div>
+
+    <div class="conv-item" style="margin-bottom:2px; background:#1a1a1a; border:1px solid #4a2a2a; border-radius:6px;">
+      <div class="conv-title" style="color:#ff6b6b; font-size:11px;">Delete "MCP architecture research"?</div>
+      <div style="display:flex; gap:8px; margin-top:6px;">
+        <button style="padding:3px 14px; border-radius:4px; background:#4a2a2a; color:#ff6b6b; border:1px solid #6b3333; font-size:10px; font-weight:600; cursor:pointer;">Delete</button>
+        <button style="padding:3px 14px; border-radius:4px; background:#333; color:#aaa; border:1px solid #444; font-size:10px; cursor:pointer;">Cancel</button>
+      </div>
+    </div>
+
+    <div class="conv-item" style="margin-bottom:0; opacity:0.4;">
+      <div class="title-row">
+        <button class="delete-x">x</button>
+        <div class="conv-title">GPUI rendering pipeline</div>
+      </div>
+      <div class="conv-meta">1d ago &middot; 31 messages</div>
+    </div>
+  </div>
+
+  <div class="annotation" style="margin-top:8px;">
+    Clicking x replaces that conversation row with an inline confirmation.<br>
+    No modal dialog - stays in context. Cancel restores the row.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 6: Popout with sidebar hidden                            -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">6. Popout Mode - Sidebar Hidden</div>
+
+  <div class="popout-frame" style="position:relative;">
+    <div class="top-bar">
+      <span class="app-title">PersonalAgent</span>
+      <div class="toolbar-buttons">
+        <button class="tb-btn active">T</button>
+        <button class="tb-btn">R</button>
+        <button class="tb-btn">MD</button>
+        <button class="tb-btn">&darr;</button>
+        <button class="tb-btn popin-btn" title="Return to popup mode" style="background:#333;">
+          <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
+            <rect x="1" y="3" width="12" height="9" rx="1.5" stroke="#e5e5e5" stroke-width="1.5" fill="none"/>
+            <rect x="1" y="3" width="12" height="3" rx="1" fill="#e5e5e5" opacity="0.4"/>
+            <path d="M14 5L10 5L10 1" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M10 5L15 0" stroke="#e5e5e5" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="tb-btn">&#x2699;</button>
+        <button class="tb-btn exit">&#x23FB;</button>
+      </div>
+    </div>
+
+    <!-- No sidebar - title bar gets sidebar toggle + conversation dropdown -->
+    <div class="title-bar">
+      <button class="tb-btn sidebar-toggle" title="Toggle sidebar">
+        <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
+          <rect x="0.5" y="0.5" width="15" height="13" rx="1.5" stroke="#e5e5e5" stroke-width="1" fill="none"/>
+          <line x1="5.5" y1="0.5" x2="5.5" y2="13.5" stroke="#e5e5e5" stroke-width="1"/>
+          <line x1="0.5" y1="3.5" x2="15.5" y2="3.5" stroke="#e5e5e5" stroke-width="1"/>
+          <rect x="1.5" y="5" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.6"/>
+          <rect x="1.5" y="7.5" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.4"/>
+          <rect x="1.5" y="10" width="2.5" height="1" rx="0.5" fill="#e5e5e5" opacity="0.3"/>
+        </svg>
+      </button>
+      <div class="conv-dropdown">Rust async patterns <span class="arrow">&darr;</span></div>
+      <button class="tb-btn new-btn">+</button>
+      <div class="profile-pill">claude-sonnet <span class="arrow">&darr;</span></div>
+    </div>
+
+
+    <div class="chat-area">
+      <div class="msg-row user">
+        <div class="bubble user-bubble">How do I handle cancellation in tokio tasks?</div>
+      </div>
+      <div class="msg-row assistant">
+        <span class="model-label">claude-sonnet-4-20250514</span>
+        <div class="bubble assistant-bubble">
+          There are several approaches to cancellation in tokio. The most common pattern uses
+          <code style="background:#2a2a2a;padding:1px 4px;border-radius:3px;">tokio::select!</code>
+          with a cancellation token. The key insight is that dropping a future in Rust cancels it,
+          so <code style="background:#2a2a2a;padding:1px 4px;border-radius:3px;">select!</code> gives you
+          cooperative cancellation by racing your task against a signal.
+        </div>
+      </div>
+      <div class="msg-row user">
+        <div class="bubble user-bubble">Can you show me a concrete example?</div>
+      </div>
+      <div class="msg-row assistant">
+        <span class="model-label">claude-sonnet-4-20250514</span>
+        <div class="bubble assistant-bubble">
+          Sure! Here's a pattern using
+          <code style="background:#2a2a2a;padding:1px 4px;border-radius:3px;">CancellationToken</code>
+          from <code style="background:#2a2a2a;padding:1px 4px;border-radius:3px;">tokio_util</code>:<br><br>
+          <code style="background:#2a2a2a;padding:4px 8px;border-radius:4px;display:block;font-size:12px;line-height:1.6;color:#6a9955;">
+          let token = CancellationToken::new();<br>
+          let cloned = token.clone();<br>
+          <br>
+          tokio::spawn(async move {<br>
+          &nbsp;&nbsp;select! {<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;_ = cloned.cancelled() =&gt; {}<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;result = do_work() =&gt; {<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;handle(result);<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;}<br>
+          &nbsp;&nbsp;}<br>
+          });<br>
+          <br>
+          // Cancel the task later:<br>
+          token.cancel();
+          </code>
+          <br>
+          This pattern is clean and composable...
+        </div>
+      </div>
+    </div>
+
+    <div class="input-bar">
+      <div class="input-field">Type a message...</div>
+      <button class="send-btn disabled">Send</button>
+    </div>
+
+    <div class="resize-badge">resizable</div>
+  </div>
+
+  <div class="annotation">
+    Sidebar hidden: toggle button is NOT highlighted (inactive).<br>
+    The conversation dropdown and [+] button return to the title bar.<br>
+    This is also the view when the window is resized narrow enough.<br>
+    Click the sidebar toggle again to restore the conversation panel.
+  </div>
+</div>
+
+</body>
+</html>
