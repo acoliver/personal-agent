@@ -1,39 +1,34 @@
-//! Bug icon indicator for the error log.
+//! Bug icon component for the error log indicator.
 //!
-//! Uses the `"!"` exclamation character styled consistently with the existing
-//! single-character toolbar button pattern (see `icon_btn!` in `render_bars.rs`).
-//!
-//! The character is surfaced as the public constant [`BUG_CHAR`] so that both
-//! the title-bar button and the inline error indicator share a single source of
-//! truth for the icon glyph.
+//! Renders a beetle SVG via GPUI's `svg()` element, loading the embedded
+//! `icons/bug.svg` asset registered through [`crate::ui_gpui::app_assets::AppAssets`].
 
-/// The character used for the bug/error indicator throughout the UI.
+use gpui::{prelude::*, px, svg, Svg};
+
+/// Asset path for the embedded bug SVG icon.
+const BUG_SVG_PATH: &str = "icons/bug.svg";
+
+/// Create a bug icon SVG element at the given pixel size.
 ///
-/// Consistent with the codebase pattern of using single characters for toolbar
-/// icons ("T", "Y", "R", "H", "!", …).
-pub const BUG_CHAR: &str = "!";
+/// The SVG inherits `text_color` from its parent for fill/stroke coloring.
+#[must_use]
+pub fn bug_icon(size_px: f32) -> Svg {
+    svg().path(BUG_SVG_PATH).size(px(size_px))
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn bug_char_is_non_empty() {
-        assert!(!BUG_CHAR.is_empty());
+    fn bug_svg_path_is_non_empty() {
+        assert!(!BUG_SVG_PATH.is_empty());
     }
 
     #[test]
-    fn bug_char_is_exclamation_mark() {
-        assert_eq!(BUG_CHAR, "!");
-    }
-
-    #[test]
-    fn bug_char_is_single_character() {
-        assert_eq!(BUG_CHAR.chars().count(), 1);
-    }
-
-    #[test]
-    fn bug_char_is_ascii() {
-        assert!(BUG_CHAR.is_ascii());
+    fn bug_svg_path_ends_with_svg_extension() {
+        assert!(std::path::Path::new(BUG_SVG_PATH)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("svg")));
     }
 }

@@ -99,8 +99,19 @@ impl ErrorLogStore {
     pub fn push(&self, entry_builder: impl FnOnce(u64) -> ErrorLogEntry) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let entry = entry_builder(id);
+
         {
             let mut guard = self.entries.lock().expect("error log mutex poisoned");
+
+            // Deduplicate: skip if the most recent entry has the same message
+            // and was pushed within 2 seconds (handles chat_impl.rs triple-fire).
+            if let Some(last) = guard.front() {
+                let elapsed = entry.timestamp - last.timestamp;
+                if last.message == entry.message && elapsed < chrono::Duration::seconds(2) {
+                    return;
+                }
+            }
+
             guard.push_front(entry);
             if guard.len() > Self::MAX_ENTRIES {
                 guard.pop_back();
@@ -639,5 +650,112 @@ body: {}"
         let entries = store.entries();
         assert!(entries[0].raw_detail.is_some()); // newest first
         assert!(entries[1].raw_detail.is_none());
+    }
+
+    // --- Deduplication ---
+
+    #[test]
+    fn test_dedup_skips_same_message_within_window() {
+        let store = fresh_store();
+        let now = chrono::Utc::now();
+
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: now,
+            severity: ErrorSeverityTag::Stream,
+            source: "test".to_string(),
+            message: "connection failed".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        });
+
+        // Same message, same timestamp — should be deduped
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: now,
+            severity: ErrorSeverityTag::Stream,
+            source: "test".to_string(),
+            message: "connection failed".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        });
+
+        assert_eq!(store.entries().len(), 1, "duplicate should be skipped");
+        assert_eq!(
+            store.unviewed_count(),
+            1,
+            "unviewed count should not increment for deduped entry"
+        );
+    }
+
+    #[test]
+    fn test_dedup_allows_different_messages() {
+        let store = fresh_store();
+        let now = chrono::Utc::now();
+
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: now,
+            severity: ErrorSeverityTag::Stream,
+            source: "test".to_string(),
+            message: "error A".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        });
+
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: now,
+            severity: ErrorSeverityTag::Stream,
+            source: "test".to_string(),
+            message: "error B".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        });
+
+        assert_eq!(
+            store.entries().len(),
+            2,
+            "different messages should not be deduped"
+        );
+    }
+
+    #[test]
+    fn test_dedup_allows_same_message_after_window() {
+        let store = fresh_store();
+        let old = chrono::Utc::now() - chrono::Duration::seconds(5);
+        let now = chrono::Utc::now();
+
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: old,
+            severity: ErrorSeverityTag::Stream,
+            source: "test".to_string(),
+            message: "connection failed".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        });
+
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: now,
+            severity: ErrorSeverityTag::Stream,
+            source: "test".to_string(),
+            message: "connection failed".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        });
+
+        assert_eq!(
+            store.entries().len(),
+            2,
+            "same message outside window should not be deduped"
+        );
     }
 }

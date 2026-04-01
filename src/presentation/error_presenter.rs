@@ -52,6 +52,23 @@ impl ErrorPresenter {
         }
     }
 
+    /// Create a new `ErrorPresenter` from an `EventBus` reference.
+    ///
+    /// Matches the constructor pattern used by other presenters in
+    /// `main_gpui.rs`'s `start_all_presenters`.
+    #[must_use]
+    pub fn new_with_event_bus(
+        event_bus: &Arc<crate::events::EventBus>,
+        view_tx: mpsc::Sender<ViewCommand>,
+    ) -> Self {
+        let rx = event_bus.subscribe();
+        Self {
+            rx,
+            view_tx,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
     /// Start the presenter event loop
     ///
     /// # Errors

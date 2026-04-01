@@ -276,13 +276,7 @@ impl ChatView {
                         }),
                     )
             })
-            .child(
-                div()
-                    .text_size(px(14.0))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(Theme::error())
-                    .child(crate::ui_gpui::components::bug_icon::BUG_CHAR),
-            )
+            .child(crate::ui_gpui::components::bug_icon::bug_icon(14.0).text_color(Theme::error()))
             // Count badge — top-right corner, styled like the YOLO badge
             .when(unviewed > 0, |d| {
                 d.child(

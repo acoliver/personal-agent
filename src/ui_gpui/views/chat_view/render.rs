@@ -264,62 +264,6 @@ impl ChatView {
                 }
                 d.child(div().id("streaming-msg").child(bubble))
             })
-            // Inline error indicator — rendered when StreamingState::Error is active
-            .when(matches!(streaming, StreamingState::Error(..)), |d| {
-                let error_msg = match &streaming {
-                    StreamingState::Error(msg) => msg.clone(),
-                    _ => String::new(),
-                };
-                d.child(Self::render_inline_error(&error_msg))
-            })
-    }
-
-    /// Render the inline error indicator box shown when `StreamingState::Error` is active.
-    fn render_inline_error(error_msg: &str) -> impl IntoElement {
-        let err = Theme::error();
-        let err_bg = gpui::hsla(err.h, err.s, err.l, 0.08);
-        let err_border = gpui::hsla(err.h, err.s, err.l, 0.4);
-        div()
-            .id("stream-error-inline")
-            .w_full()
-            .flex()
-            .flex_row()
-            .items_start()
-            .gap(px(8.0))
-            .px(px(12.0))
-            .py(px(10.0))
-            .rounded(px(Theme::RADIUS_LG))
-            .bg(err_bg)
-            .border_1()
-            .border_color(err_border)
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .mt(px(1.0))
-                    .text_size(px(14.0))
-                    .text_color(Theme::error())
-                    .child(crate::ui_gpui::components::bug_icon::BUG_CHAR),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.0))
-                    .min_w(px(0.0))
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(Theme::error())
-                            .child("Stream Error"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(Theme::text_secondary())
-                            .child(error_msg.to_string()),
-                    ),
-            )
     }
 
     /// Render a single message
