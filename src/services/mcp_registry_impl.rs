@@ -46,10 +46,16 @@ impl McpRegistryServiceImpl {
     /// Create a new `McpRegistryServiceImpl` with a specific cache directory
     #[must_use]
     pub fn with_cache_dir(cache_dir: PathBuf) -> Self {
+        Self::with_registry(cache_dir, McpRegistry::new())
+    }
+
+    /// Create a new `McpRegistryServiceImpl` with a pre-configured registry (useful for testing)
+    #[must_use]
+    pub fn with_registry(cache_dir: PathBuf, registry: McpRegistry) -> Self {
         Self {
             cache_dir,
             cached_results: Arc::new(RwLock::new(Vec::new())),
-            registry: McpRegistry::new(),
+            registry,
             last_refresh: Arc::new(RwLock::new(None)),
         }
     }
@@ -572,5 +578,21 @@ mod tests {
         assert_eq!(entry.name, "test-server");
         assert_eq!(entry.display_name, "test-server");
         assert!(entry.description.contains("test-server"));
+    }
+
+    #[tokio::test]
+    async fn test_with_registry_uses_injected_registry() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = McpRegistry::with_url("http://localhost:1/fake");
+        let service =
+            McpRegistryServiceImpl::with_registry(temp_dir.path().to_path_buf(), registry);
+
+        // Verify the service works for cache operations (disk-level, no network)
+        let wrappers = vec![create_test_wrapper("injected-test")];
+        service.save_to_disk(&wrappers).unwrap();
+
+        let loaded = service.load_from_disk().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].server.name, "injected-test");
     }
 }

@@ -32,7 +32,7 @@ fn resolve_smithery_key(key_or_path: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_smithery_key;
+    use super::{resolve_smithery_key, McpRegistry};
     use tempfile::TempDir;
 
     #[test]
@@ -43,6 +43,12 @@ mod tests {
 
         let key = resolve_smithery_key(&key_path.to_string_lossy()).unwrap();
         assert_eq!(key, "secret");
+    }
+
+    #[test]
+    fn with_url_creates_registry_with_custom_endpoint() {
+        let registry = McpRegistry::with_url("http://localhost:9999/v1/servers");
+        assert_eq!(registry.official_url, "http://localhost:9999/v1/servers");
     }
 }
 
@@ -184,6 +190,15 @@ impl McpRegistry {
         Self {
             http_client: reqwest::Client::new(),
             official_url: "https://registry.modelcontextprotocol.io/v0.1/servers".to_string(),
+        }
+    }
+
+    /// Create a registry client pointing at a custom URL (useful for testing)
+    #[must_use]
+    pub fn with_url(official_url: impl Into<String>) -> Self {
+        Self {
+            http_client: reqwest::Client::new(),
+            official_url: official_url.into(),
         }
     }
 

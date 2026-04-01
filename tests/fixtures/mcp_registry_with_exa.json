@@ -1,0 +1,66 @@
+{
+  "servers": [
+    {
+      "server": {
+        "name": "exa-search",
+        "description": "Exa AI search MCP server — web search powered by Exa",
+        "repository": {
+          "url": "https://github.com/exa-labs/exa-mcp-server",
+          "source": "github"
+        },
+        "version": "1.0.6",
+        "packages": [
+          {
+            "registryType": "npm",
+            "identifier": "@exa/mcp-server",
+            "transport": {
+              "type": "stdio"
+            },
+            "environmentVariables": [
+              {
+                "name": "EXA_API_KEY",
+                "description": "Exa API key for authentication",
+                "isSecret": true,
+                "isRequired": true
+              }
+            ],
+            "packageArguments": []
+          }
+        ],
+        "remotes": []
+      },
+      "_meta": {}
+    },
+    {
+      "server": {
+        "name": "filesystem",
+        "description": "Node.js server implementing Model Context Protocol for filesystem operations",
+        "repository": {
+          "url": "https://github.com/modelcontextprotocol/servers",
+          "source": "github"
+        },
+        "version": "0.6.2",
+        "packages": [
+          {
+            "registryType": "npm",
+            "identifier": "@modelcontextprotocol/server-filesystem",
+            "transport": {
+              "type": "stdio"
+            },
+            "environmentVariables": [],
+            "packageArguments": [
+              {
+                "type": "positional",
+                "name": "allowed_dir",
+                "description": "Directory to allow access to",
+                "isRequired": true
+              }
+            ]
+          }
+        ],
+        "remotes": []
+      },
+      "_meta": {}
+    }
+  ]
+}

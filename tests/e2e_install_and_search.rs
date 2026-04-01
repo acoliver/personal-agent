@@ -18,9 +18,11 @@
 //! - `PA_E2E_API_KEY` (recommended for non-interactive runs)
 
 use personal_agent::llm::AgentClientExt;
-use personal_agent::mcp::McpService;
+use personal_agent::mcp::{McpRegistry, McpService};
 use personal_agent::services::{McpRegistryService, McpRegistryServiceImpl};
 use personal_agent::{LlmClient, ModelProfile, StreamEvent};
+use wiremock::matchers::any;
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod support;
 
@@ -34,9 +36,24 @@ fn load_e2e_profile() -> ModelProfile {
 async fn test_install_exa_and_search() {
     println!("=== E2E Test: Install Exa and Search ===\n");
 
-    // Step 1: Install Exa from registry
-    println!("Step 1: Installing Exa MCP from registry...");
-    let registry = McpRegistryServiceImpl::new().expect("Failed to create registry");
+    // Step 1: Install Exa from registry (via mock registry)
+    println!("Step 1: Installing Exa MCP from registry (mock)...");
+
+    let mock_server = MockServer::start().await;
+    let fixture = include_str!("fixtures/mcp_registry_with_exa.json");
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(fixture)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let mock_registry = McpRegistry::with_url(mock_server.uri());
+    let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+    let registry =
+        McpRegistryServiceImpl::with_registry(temp_dir.path().to_path_buf(), mock_registry);
 
     // Refresh to get latest catalog
     registry
