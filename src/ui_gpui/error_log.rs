@@ -175,7 +175,7 @@ static GLOBAL_ERROR_LOG: once_cell::sync::Lazy<ErrorLogStore> =
 /// - Auth: "401", "403", "unauthorized", "forbidden", "invalid api key", "`invalid_api_key`", "authentication"
 /// - Connection: "timeout", "connection refused", "ECONNREFUSED", "dns", "network", "ETIMEDOUT", "connection reset"
 /// - MCP: "mcp", "tool call"
-/// - Stream: default for anything not matching above
+/// - Internal: default for anything not matching above (call sites remap to domain-appropriate tag)
 #[must_use]
 pub fn classify_error_severity(error_msg: &str) -> ErrorSeverityTag {
     let lower = error_msg.to_ascii_lowercase();
@@ -202,7 +202,7 @@ pub fn classify_error_severity(error_msg: &str) -> ErrorSeverityTag {
     } else if lower.contains("mcp") || lower.contains("tool call") {
         ErrorSeverityTag::Mcp
     } else {
-        ErrorSeverityTag::Stream
+        ErrorSeverityTag::Internal
     }
 }
 
@@ -444,26 +444,26 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_generic_errors_match_stream() {
+    fn test_classify_generic_errors_match_internal() {
         use super::classify_error_severity;
         assert_eq!(
             classify_error_severity("Unexpected response from model"),
-            ErrorSeverityTag::Stream
+            ErrorSeverityTag::Internal
         );
         assert_eq!(
             classify_error_severity("Rate limit exceeded"),
-            ErrorSeverityTag::Stream
+            ErrorSeverityTag::Internal
         );
         assert_eq!(
             classify_error_severity("Something went wrong"),
-            ErrorSeverityTag::Stream
+            ErrorSeverityTag::Internal
         );
     }
 
     #[test]
-    fn test_classify_empty_string_matches_stream() {
+    fn test_classify_empty_string_matches_internal() {
         use super::classify_error_severity;
-        assert_eq!(classify_error_severity(""), ErrorSeverityTag::Stream);
+        assert_eq!(classify_error_severity(""), ErrorSeverityTag::Internal);
     }
 
     // --- classify_error_severity: MCP branch ---

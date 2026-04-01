@@ -150,15 +150,10 @@ impl ErrorPresenter {
                 |ctx| format!("{source}: {error}\n\nContext: {ctx}"),
             );
 
-            let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
-                ErrorSeverityTag::Stream => ErrorSeverityTag::Internal,
-                other => other,
-            };
-
             ErrorLogStore::global().push(|id| ErrorLogEntry {
                 id,
                 timestamp: chrono::Utc::now(),
-                severity,
+                severity: crate::ui_gpui::error_log::classify_error_severity(&error),
                 source: source.clone(),
                 message: message.clone(),
                 raw_detail: None,
@@ -187,10 +182,15 @@ impl ErrorPresenter {
             recoverable,
         } = event
         {
+            let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
+                ErrorSeverityTag::Internal => ErrorSeverityTag::Stream,
+                other => other,
+            };
+
             ErrorLogStore::global().push(|id| ErrorLogEntry {
                 id,
                 timestamp: chrono::Utc::now(),
-                severity: crate::ui_gpui::error_log::classify_error_severity(&error),
+                severity,
                 source: "chat".to_string(),
                 message: error.clone(),
                 raw_detail: None,
@@ -220,7 +220,7 @@ impl ErrorPresenter {
         match event {
             McpEvent::StartFailed { id: _, name, error } => {
                 let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
-                    ErrorSeverityTag::Stream => ErrorSeverityTag::Mcp,
+                    ErrorSeverityTag::Internal => ErrorSeverityTag::Mcp,
                     other => other,
                 };
 
@@ -245,7 +245,7 @@ impl ErrorPresenter {
             }
             McpEvent::Unhealthy { id: _, name, error } => {
                 let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
-                    ErrorSeverityTag::Stream => ErrorSeverityTag::Mcp,
+                    ErrorSeverityTag::Internal => ErrorSeverityTag::Mcp,
                     other => other,
                 };
 
@@ -593,31 +593,43 @@ mod tests {
     }
 
     /// System error with a generic message falls back to Internal (Stream → Internal mapping).
+    /// System errors with generic (unrecognised) messages classify as Internal directly.
     ///
-    /// Verified via `classify_error_severity` + the `handle_system_event` Stream→Internal mapping
-    /// rather than querying the shared global store (avoids race with other log-clearing tests).
+    /// The classifier now defaults to Internal, and the system handler passes the
+    /// result through without remapping, so the final severity for a generic
+    /// system error is Internal.
     /// @plan PLAN-20250125-REFACTOR.P12
     #[test]
     fn test_system_error_generic_message_gets_internal_severity() {
         use crate::ui_gpui::error_log::{classify_error_severity, ErrorSeverityTag};
 
-        // The handle_system_event implementation maps Stream → Internal for system errors.
-        // Verify that a generic message is first classified as Stream, then remapped.
-        let raw = classify_error_severity("something went wrong unexpectedly");
+        let severity = classify_error_severity("something went wrong unexpectedly");
         assert_eq!(
-            raw,
-            ErrorSeverityTag::Stream,
-            "generic message should classify as Stream before remapping"
+            severity,
+            ErrorSeverityTag::Internal,
+            "generic message should classify as Internal"
         );
-        // The remap logic: Stream → Internal (all other tags pass through)
+    }
+
+    /// Chat errors with generic (unrecognised) messages classify as Stream.
+    ///
+    /// The classifier defaults to Internal, but the chat handler remaps
+    /// Internal → Stream since chat errors are inherently stream errors.
+    #[test]
+    fn test_chat_error_generic_message_gets_stream_severity() {
+        use crate::ui_gpui::error_log::{classify_error_severity, ErrorSeverityTag};
+
+        let raw = classify_error_severity("LLM unavailable");
+        assert_eq!(raw, ErrorSeverityTag::Internal);
+
         let remapped = match raw {
-            ErrorSeverityTag::Stream => ErrorSeverityTag::Internal,
+            ErrorSeverityTag::Internal => ErrorSeverityTag::Stream,
             other => other,
         };
         assert_eq!(
             remapped,
-            ErrorSeverityTag::Internal,
-            "Stream should remap to Internal for system errors"
+            ErrorSeverityTag::Stream,
+            "Internal should remap to Stream for chat errors"
         );
     }
 
@@ -651,7 +663,7 @@ mod tests {
         );
     }
 
-    /// MCP `StartFailed` with generic error falls back to Mcp (Stream → Mcp mapping).
+    /// MCP `StartFailed` with generic error falls back to Mcp (Internal → Mcp mapping).
     /// @plan PLAN-20250125-REFACTOR.P12
     #[tokio::test]
     async fn test_mcp_start_failed_generic_error_gets_mcp_severity() {
@@ -677,7 +689,7 @@ mod tests {
         assert_eq!(
             our_entry.severity,
             ErrorSeverityTag::Mcp,
-            "generic MCP error (Stream fallback) should map to Mcp"
+            "generic MCP error (Internal fallback) should map to Mcp"
         );
     }
 
