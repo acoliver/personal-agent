@@ -178,7 +178,6 @@ impl ChatView {
 
     /// Render the chat area with messages
     /// @plan PLAN-20250130-GPUIREDUX.P03
-    #[allow(clippy::too_many_lines)]
     pub(super) fn render_chat_area(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let messages = self.state.messages.clone();
         let streaming = self.state.streaming.clone();
@@ -271,55 +270,56 @@ impl ChatView {
                     StreamingState::Error(msg) => msg.clone(),
                     _ => String::new(),
                 };
-                let err = Theme::error();
-                // Semi-transparent tints for background and border
-                let err_bg = gpui::hsla(err.h, err.s, err.l, 0.08);
-                let err_border = gpui::hsla(err.h, err.s, err.l, 0.4);
-                d.child(
-                    div()
-                        .id("stream-error-inline")
-                        .w_full()
-                        .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap(px(8.0))
-                        .px(px(12.0))
-                        .py(px(10.0))
-                        .rounded(px(Theme::RADIUS_LG))
-                        .bg(err_bg)
-                        .border_1()
-                        .border_color(err_border)
-                        .child(
-                            // Bug icon indicator
-                            div()
-                                .flex_shrink_0()
-                                .mt(px(1.0))
-                                .text_size(px(14.0))
-                                .text_color(Theme::error())
-                                .child(crate::ui_gpui::components::bug_icon::BUG_CHAR),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(2.0))
-                                .min_w(px(0.0))
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_color(Theme::error())
-                                        .child("Stream Error"),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(11.0))
-                                        .text_color(Theme::text_secondary())
-                                        .child(error_msg),
-                                ),
-                        ),
-                )
+                d.child(Self::render_inline_error(&error_msg))
             })
+    }
+
+    /// Render the inline error indicator box shown when `StreamingState::Error` is active.
+    fn render_inline_error(error_msg: &str) -> impl IntoElement {
+        let err = Theme::error();
+        let err_bg = gpui::hsla(err.h, err.s, err.l, 0.08);
+        let err_border = gpui::hsla(err.h, err.s, err.l, 0.4);
+        div()
+            .id("stream-error-inline")
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap(px(8.0))
+            .px(px(12.0))
+            .py(px(10.0))
+            .rounded(px(Theme::RADIUS_LG))
+            .bg(err_bg)
+            .border_1()
+            .border_color(err_border)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .mt(px(1.0))
+                    .text_size(px(14.0))
+                    .text_color(Theme::error())
+                    .child(crate::ui_gpui::components::bug_icon::BUG_CHAR),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .min_w(px(0.0))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(Theme::error())
+                            .child("Stream Error"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(Theme::text_secondary())
+                            .child(error_msg.to_string()),
+                    ),
+            )
     }
 
     /// Render a single message
