@@ -23,6 +23,7 @@ use gpui::{prelude::*, Entity, FocusHandle, Subscription, Task};
 
 use crate::ui_gpui::views::api_key_manager_view::ApiKeyManagerView;
 use crate::ui_gpui::views::chat_view::{ChatState, ChatView};
+use crate::ui_gpui::views::error_log_view::ErrorLogView;
 use crate::ui_gpui::views::history_view::HistoryView;
 use crate::ui_gpui::views::mcp_add_view::McpAddView;
 use crate::ui_gpui::views::mcp_configure_view::McpConfigureView;
@@ -43,6 +44,7 @@ pub struct MainPanel {
     pub(super) mcp_add_view: Option<Entity<McpAddView>>,
     pub(super) mcp_configure_view: Option<Entity<McpConfigureView>>,
     pub(super) api_key_manager_view: Option<Entity<ApiKeyManagerView>>,
+    pub(super) error_log_view: Option<Entity<ErrorLogView>>,
     pub(super) runtime_started: bool,
     pub store_snapshot_revision: u64,
 
@@ -66,6 +68,7 @@ impl MainPanel {
             mcp_add_view: None,
             mcp_configure_view: None,
             api_key_manager_view: None,
+            error_log_view: None,
             runtime_started: false,
             store_snapshot_revision: 0,
             store_subscription_task: None,
@@ -197,6 +200,9 @@ impl MainPanel {
             view
         }));
 
+        // Error Log view (reads from global ErrorLogStore, no bridge needed)
+        self.error_log_view = Some(cx.new(ErrorLogView::new));
+
         self.apply_startup_state(cx);
     }
 
@@ -210,6 +216,7 @@ impl MainPanel {
             && self.mcp_add_view.is_some()
             && self.mcp_configure_view.is_some()
             && self.api_key_manager_view.is_some()
+            && self.error_log_view.is_some()
     }
 
     #[must_use]

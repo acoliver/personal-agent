@@ -16,6 +16,7 @@ use crate::events::{
     types::{ChatEvent, McpEvent, SystemEvent},
     AppEvent,
 };
+use crate::ui_gpui::error_log::{ErrorLogEntry, ErrorLogStore, ErrorSeverityTag};
 
 /// `ErrorPresenter` - handles error display and logging
 ///
@@ -41,6 +42,23 @@ impl ErrorPresenter {
     #[must_use]
     pub fn new(
         event_bus: &broadcast::Sender<AppEvent>,
+        view_tx: mpsc::Sender<ViewCommand>,
+    ) -> Self {
+        let rx = event_bus.subscribe();
+        Self {
+            rx,
+            view_tx,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Create a new `ErrorPresenter` from an `EventBus` reference.
+    ///
+    /// Matches the constructor pattern used by other presenters in
+    /// `main_gpui.rs`'s `start_all_presenters`.
+    #[must_use]
+    pub fn new_with_event_bus(
+        event_bus: &Arc<crate::events::EventBus>,
         view_tx: mpsc::Sender<ViewCommand>,
     ) -> Self {
         let rx = event_bus.subscribe();
@@ -149,6 +167,17 @@ impl ErrorPresenter {
                 |ctx| format!("{source}: {error}\n\nContext: {ctx}"),
             );
 
+            ErrorLogStore::global().push(|id| ErrorLogEntry {
+                id,
+                timestamp: chrono::Utc::now(),
+                severity: crate::ui_gpui::error_log::classify_error_severity(&error),
+                source: source.clone(),
+                message: message.clone(),
+                raw_detail: None,
+                conversation_title: None,
+                conversation_id: None,
+            });
+
             let _ = view_tx
                 .send(ViewCommand::ShowError {
                     title: format!("{source} Error"),
@@ -165,15 +194,31 @@ impl ErrorPresenter {
     /// @requirement REQ-027.4
     async fn handle_chat_error(view_tx: &mut mpsc::Sender<ViewCommand>, event: ChatEvent) {
         if let ChatEvent::StreamError {
-            conversation_id: _,
+            conversation_id,
             error,
             recoverable,
         } = event
         {
+            let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
+                ErrorSeverityTag::Internal => ErrorSeverityTag::Stream,
+                other => other,
+            };
+
+            ErrorLogStore::global().push(|id| ErrorLogEntry {
+                id,
+                timestamp: chrono::Utc::now(),
+                severity,
+                source: "chat".to_string(),
+                message: error.clone(),
+                raw_detail: None,
+                conversation_title: None,
+                conversation_id: Some(conversation_id),
+            });
+
             let _ = view_tx
                 .send(ViewCommand::ShowError {
                     title: "Chat Error".to_string(),
-                    message: error.clone(),
+                    message: error,
                     severity: if recoverable {
                         ErrorSeverity::Warning
                     } else {
@@ -191,6 +236,22 @@ impl ErrorPresenter {
     async fn handle_mcp_error(view_tx: &mut mpsc::Sender<ViewCommand>, event: McpEvent) {
         match event {
             McpEvent::StartFailed { id: _, name, error } => {
+                let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
+                    ErrorSeverityTag::Internal => ErrorSeverityTag::Mcp,
+                    other => other,
+                };
+
+                ErrorLogStore::global().push(|id| ErrorLogEntry {
+                    id,
+                    timestamp: chrono::Utc::now(),
+                    severity,
+                    source: format!("mcp/{name}"),
+                    message: format!("Failed to start: {error}"),
+                    raw_detail: None,
+                    conversation_title: None,
+                    conversation_id: None,
+                });
+
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
                         title: "MCP Server Error".to_string(),
@@ -200,6 +261,22 @@ impl ErrorPresenter {
                     .await;
             }
             McpEvent::Unhealthy { id: _, name, error } => {
+                let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
+                    ErrorSeverityTag::Internal => ErrorSeverityTag::Mcp,
+                    other => other,
+                };
+
+                ErrorLogStore::global().push(|id| ErrorLogEntry {
+                    id,
+                    timestamp: chrono::Utc::now(),
+                    severity,
+                    source: format!("mcp/{name}"),
+                    message: format!("Unhealthy: {error}"),
+                    raw_detail: None,
+                    conversation_title: None,
+                    conversation_id: None,
+                });
+
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
                         title: "MCP Server Unhealthy".to_string(),
@@ -241,6 +318,9 @@ mod tests {
     use super::*;
     use tokio::sync::{broadcast, mpsc};
     use uuid::Uuid;
+
+    static ERROR_LOG_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+        once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
 
     /// Test handle system error
     /// @plan PLAN-20250125-REFACTOR.P12
@@ -370,6 +450,365 @@ mod tests {
                 } => {
                     assert!(title.contains("Unhealthy"));
                     assert_eq!(severity, ErrorSeverity::Warning);
+                }
+                _ => panic!("Expected ShowError command"),
+            }
+        } else {
+            panic!("Should have received a ViewCommand");
+        }
+    }
+
+    /// Verify system error pushes an Internal entry to `ErrorLogStore`
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_system_error_pushes_to_error_log() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_error = format!("Something broke {}", Uuid::new_v4());
+        let event = SystemEvent::Error {
+            source: "SysSource".to_string(),
+            error: unique_error.clone(),
+            context: None,
+        };
+
+        ErrorPresenter::handle_system_event(&mut view_tx.clone(), event).await;
+
+        // Locate by unique error text to be robust against parallel test execution.
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.message.contains(&unique_error))
+            .expect("entry with our unique error message should be present");
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Internal);
+        assert_eq!(our_entry.source, "SysSource");
+        assert!(ErrorLogStore::global().unviewed_count() >= 1);
+    }
+
+    /// Verify chat stream error pushes a Stream entry to `ErrorLogStore` with `conversation_id`
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_chat_stream_error_pushes_to_error_log() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let conv_id = Uuid::new_v4();
+        let event = ChatEvent::StreamError {
+            conversation_id: conv_id,
+            error: "LLM unavailable".to_string(),
+            recoverable: false,
+        };
+
+        ErrorPresenter::handle_chat_error(&mut view_tx.clone(), event).await;
+
+        // The global store is shared across test threads; assert the specific entry exists
+        // rather than asserting an exact count, to avoid flakiness from parallel tests.
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.conversation_id == Some(conv_id))
+            .expect("entry for our conversation_id should be present");
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Stream);
+        assert_eq!(our_entry.source, "chat");
+        assert_eq!(our_entry.message, "LLM unavailable");
+        assert!(ErrorLogStore::global().unviewed_count() >= 1);
+    }
+
+    /// Verify MCP `StartFailed` pushes a Mcp entry to `ErrorLogStore`
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_mcp_start_failed_pushes_to_error_log() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_name = format!("my-mcp-{}", Uuid::new_v4());
+        let event = McpEvent::StartFailed {
+            id: Uuid::new_v4(),
+            name: unique_name.clone(),
+            error: "port in use".to_string(),
+        };
+
+        ErrorPresenter::handle_mcp_error(&mut view_tx.clone(), event).await;
+
+        // Locate by unique source name to be robust against parallel test execution.
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.source == format!("mcp/{unique_name}"))
+            .expect("entry with our unique mcp source should be present");
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Mcp);
+        assert!(our_entry.message.contains("Failed to start"));
+        assert!(our_entry.message.contains("port in use"));
+        assert!(ErrorLogStore::global().unviewed_count() >= 1);
+    }
+
+    /// Verify MCP Unhealthy pushes a Mcp entry to `ErrorLogStore`
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_mcp_unhealthy_pushes_to_error_log() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_name = format!("my-mcp-{}", Uuid::new_v4());
+        let event = McpEvent::Unhealthy {
+            id: Uuid::new_v4(),
+            name: unique_name.clone(),
+            error: "timeout".to_string(),
+        };
+
+        ErrorPresenter::handle_mcp_error(&mut view_tx.clone(), event).await;
+
+        // Locate by unique source name to be robust against parallel test execution.
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.source == format!("mcp/{unique_name}"))
+            .expect("entry with our unique mcp source should be present");
+        // "timeout" is classified as Connection by classify_error_severity
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Connection);
+        assert!(our_entry.message.contains("Unhealthy"));
+        assert!(our_entry.message.contains("timeout"));
+        assert!(ErrorLogStore::global().unviewed_count() >= 1);
+    }
+
+    /// System error with "401 Unauthorized" must produce Auth severity (not Internal).
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_system_error_auth_pattern_gets_auth_severity() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_suffix = Uuid::new_v4().to_string();
+        let event = SystemEvent::Error {
+            source: format!("AuthSource-{unique_suffix}"),
+            error: format!("401 Unauthorized access attempt {unique_suffix}"),
+            context: None,
+        };
+
+        ErrorPresenter::handle_system_event(&mut view_tx.clone(), event).await;
+
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.source == format!("AuthSource-{unique_suffix}"))
+            .expect("auth system error entry should be present");
+        assert_eq!(
+            our_entry.severity,
+            ErrorSeverityTag::Auth,
+            "401 Unauthorized should be classified as Auth, not Internal"
+        );
+    }
+
+    /// System error with a generic message falls back to Internal (Stream → Internal mapping).
+    /// System errors with generic (unrecognised) messages classify as Internal directly.
+    ///
+    /// The classifier now defaults to Internal, and the system handler passes the
+    /// result through without remapping, so the final severity for a generic
+    /// system error is Internal.
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[test]
+    fn test_system_error_generic_message_gets_internal_severity() {
+        use crate::ui_gpui::error_log::{classify_error_severity, ErrorSeverityTag};
+
+        let severity = classify_error_severity("something went wrong unexpectedly");
+        assert_eq!(
+            severity,
+            ErrorSeverityTag::Internal,
+            "generic message should classify as Internal"
+        );
+    }
+
+    /// Chat errors with generic (unrecognised) messages classify as Stream.
+    ///
+    /// The classifier defaults to Internal, but the chat handler remaps
+    /// Internal → Stream since chat errors are inherently stream errors.
+    #[test]
+    fn test_chat_error_generic_message_gets_stream_severity() {
+        use crate::ui_gpui::error_log::{classify_error_severity, ErrorSeverityTag};
+
+        let raw = classify_error_severity("LLM unavailable");
+        assert_eq!(raw, ErrorSeverityTag::Internal);
+
+        let remapped = match raw {
+            ErrorSeverityTag::Internal => ErrorSeverityTag::Stream,
+            other => other,
+        };
+        assert_eq!(
+            remapped,
+            ErrorSeverityTag::Stream,
+            "Internal should remap to Stream for chat errors"
+        );
+    }
+
+    /// MCP `StartFailed` with "Connection refused" must produce Connection severity (not Mcp).
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_mcp_start_failed_connection_refused_gets_connection_severity() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_name = format!("conn-mcp-{}", Uuid::new_v4());
+        let event = McpEvent::StartFailed {
+            id: Uuid::new_v4(),
+            name: unique_name.clone(),
+            error: "Connection refused on port 3000".to_string(),
+        };
+
+        ErrorPresenter::handle_mcp_error(&mut view_tx.clone(), event).await;
+
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.source == format!("mcp/{unique_name}"))
+            .expect("connection-refused mcp entry should be present");
+        assert_eq!(
+            our_entry.severity,
+            ErrorSeverityTag::Connection,
+            "Connection refused should be classified as Connection, not Mcp"
+        );
+    }
+
+    /// MCP `StartFailed` with generic error falls back to Mcp (Internal → Mcp mapping).
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_mcp_start_failed_generic_error_gets_mcp_severity() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_name = format!("generic-mcp-{}", Uuid::new_v4());
+        let event = McpEvent::StartFailed {
+            id: Uuid::new_v4(),
+            name: unique_name.clone(),
+            error: "unexpected process exit with code 1".to_string(),
+        };
+
+        ErrorPresenter::handle_mcp_error(&mut view_tx.clone(), event).await;
+
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.source == format!("mcp/{unique_name}"))
+            .expect("generic mcp entry should be present");
+        assert_eq!(
+            our_entry.severity,
+            ErrorSeverityTag::Mcp,
+            "generic MCP error (Internal fallback) should map to Mcp"
+        );
+    }
+
+    /// MCP `Unhealthy` with "401 Unauthorized" must produce Auth severity (not Mcp).
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_mcp_unhealthy_auth_error_gets_auth_severity() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_name = format!("auth-mcp-{}", Uuid::new_v4());
+        let event = McpEvent::Unhealthy {
+            id: Uuid::new_v4(),
+            name: unique_name.clone(),
+            error: "401 Unauthorized: token expired".to_string(),
+        };
+
+        ErrorPresenter::handle_mcp_error(&mut view_tx.clone(), event).await;
+
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.source == format!("mcp/{unique_name}"))
+            .expect("auth mcp unhealthy entry should be present");
+        assert_eq!(
+            our_entry.severity,
+            ErrorSeverityTag::Auth,
+            "401 in MCP unhealthy should be classified as Auth"
+        );
+    }
+
+    /// Chat `StreamError` with "401 Unauthorized" produces Auth severity.
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_chat_stream_error_auth_pattern_gets_auth_severity() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let conv_id = Uuid::new_v4();
+        let event = ChatEvent::StreamError {
+            conversation_id: conv_id,
+            error: "401 Unauthorized: invalid API key".to_string(),
+            recoverable: false,
+        };
+
+        ErrorPresenter::handle_chat_error(&mut view_tx.clone(), event).await;
+
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.conversation_id == Some(conv_id))
+            .expect("auth chat error entry should be present");
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Auth);
+    }
+
+    /// Chat `StreamError` non-recoverable produces Error severity view command.
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_chat_stream_error_non_recoverable_emits_error_severity() {
+        let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+        let event = ChatEvent::StreamError {
+            conversation_id: Uuid::new_v4(),
+            error: "fatal stream failure".to_string(),
+            recoverable: false,
+        };
+
+        ErrorPresenter::handle_chat_error(&mut view_tx.clone(), event).await;
+
+        if let Ok(cmd) = view_rx.try_recv() {
+            match cmd {
+                ViewCommand::ShowError { severity, .. } => {
+                    assert_eq!(severity, ErrorSeverity::Error);
+                }
+                _ => panic!("Expected ShowError command"),
+            }
+        } else {
+            panic!("Should have received a ViewCommand");
+        }
+    }
+
+    /// System error with context includes it in the message.
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_system_error_without_context_omits_context_line() {
+        let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+        let event = SystemEvent::Error {
+            source: "src".to_string(),
+            error: "bare error".to_string(),
+            context: None,
+        };
+
+        ErrorPresenter::handle_system_event(&mut view_tx.clone(), event).await;
+
+        if let Ok(cmd) = view_rx.try_recv() {
+            match cmd {
+                ViewCommand::ShowError { message, .. } => {
+                    assert!(!message.contains("Context:"));
+                    assert!(message.contains("bare error"));
                 }
                 _ => panic!("Expected ShowError command"),
             }

@@ -26,7 +26,7 @@ use tracing_subscriber::FmtSubscriber;
 use personal_agent::events::types::UserEvent;
 use personal_agent::events::EventBus;
 use personal_agent::presentation::{
-    ApiKeyManagerPresenter, ChatPresenter, HistoryPresenter, McpAddPresenter,
+    ApiKeyManagerPresenter, ChatPresenter, ErrorPresenter, HistoryPresenter, McpAddPresenter,
     McpConfigurePresenter, ModelSelectorPresenter, ProfileEditorPresenter, SettingsPresenter,
     ViewCommand,
 };
@@ -304,7 +304,9 @@ fn main() {
     tracing::subscriber::set_global_default(subscriber).ok();
 
     info!("PersonalAgent GPUI starting...");
-    Application::new().run(|cx: &mut App| run_gpui_app(cx));
+    Application::new()
+        .with_assets(personal_agent::ui_gpui::app_assets::AppAssets)
+        .run(|cx: &mut App| run_gpui_app(cx));
 }
 
 fn run_gpui_app(cx: &mut App) {
@@ -598,6 +600,7 @@ async fn create_presenter_channels_and_bridges(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::cognitive_complexity)]
 async fn start_all_presenters(
     event_bus: &Arc<EventBus>,
     services: &Services,
@@ -672,6 +675,8 @@ async fn start_all_presenters(
         api_key_manager_view_tx,
     );
 
+    let mut error = ErrorPresenter::new_with_event_bus(event_bus, view_tx);
+
     start_presenter!("ChatPresenter", chat);
     start_presenter!("HistoryPresenter", history);
     start_presenter!("SettingsPresenter", settings);
@@ -680,5 +685,6 @@ async fn start_all_presenters(
     start_presenter!("McpAddPresenter", mcp_add);
     start_presenter!("McpConfigurePresenter", mcp_configure);
     start_presenter!("ApiKeyManagerPresenter", api_key_manager);
-    info!("All 8 presenters started");
+    start_presenter!("ErrorPresenter", error);
+    info!("All 9 presenters started");
 }

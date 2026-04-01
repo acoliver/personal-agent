@@ -214,6 +214,8 @@ impl ChatView {
     /// Render the title bar with conversation dropdown and model label
     /// @plan PLAN-20250130-GPUIREDUX.P03
     pub(super) fn render_title_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let unviewed = crate::ui_gpui::error_log::ErrorLogStore::global().unviewed_count();
+
         div()
             .id("chat-title-bar")
             .h(px(32.0))
@@ -234,6 +236,70 @@ impl ChatView {
                     .child(self.render_new_conversation_btn(cx))
                     .child(self.render_profile_selector(cx)),
             )
+            .child(self.render_bug_icon_btn(unviewed, cx))
+    }
+
+    /// Bug icon button with unviewed error count badge.
+    ///
+    /// Hidden via opacity when there are no unviewed errors, preserving title-bar
+    /// layout stability (equivalent to CSS `visibility: hidden`).
+    #[allow(clippy::unused_self)] // cx.listener borrows the entity, not &self directly
+    fn render_bug_icon_btn(
+        &self,
+        unviewed: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let count_label = if unviewed > 99 {
+            "99+".to_string()
+        } else {
+            unviewed.to_string()
+        };
+
+        div()
+            .id("btn-error-log")
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .relative()
+            // Preserve layout when no errors (like CSS visibility:hidden)
+            .opacity(if unviewed == 0 { 0.0 } else { 1.0 })
+            .when(unviewed > 0, |d| {
+                d.cursor_pointer()
+                    .hover(|s| s.bg(Theme::bg_dark()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            crate::ui_gpui::navigation_channel().request_navigate(
+                                crate::presentation::view_command::ViewId::ErrorLog,
+                            );
+                        }),
+                    )
+            })
+            .child(crate::ui_gpui::components::bug_icon::bug_icon(14.0).text_color(Theme::error()))
+            // Count badge — top-right corner, styled like the YOLO badge
+            .when(unviewed > 0, |d| {
+                d.child(
+                    div()
+                        .id("error-log-badge")
+                        .absolute()
+                        .top(px(1.0))
+                        .right(px(1.0))
+                        .min_w(px(13.0))
+                        .h(px(13.0))
+                        .rounded(px(7.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .px(px(2.0))
+                        .bg(Theme::error())
+                        .text_size(px(8.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(Theme::selection_fg())
+                        .child(count_label),
+                )
+            })
     }
 
     /// Conversation title / rename field.

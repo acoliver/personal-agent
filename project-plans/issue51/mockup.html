@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - Error Log Viewer Mockup (Issue #51)</title>
+<style>
+  /* -- Theme tokens (green-screen) -- all colors derived from theme -- */
+  :root {
+    --bg-base: #000000;          /* colors.background */
+    --bg-darker: #000000;        /* colors.input.bg */
+    --bg-dark: #000000;          /* colors.panel.headerBg */
+    --text-primary: #6a9955;     /* colors.text.primary */
+    --text-muted: #3b7a3b;       /* dimmed primary */
+    --accent-primary: #6a9955;   /* colors.accent.primary */
+    --accent-error: #6a9955;     /* colors.accent.error */
+    --accent-warning: #6a9955;   /* colors.accent.warning */
+    --accent-success: #00ff00;   /* colors.accent.success */
+    --border: #6a9955;           /* colors.panel.border */
+    --selection-bg: #6a9955;     /* colors.selection.bg */
+    --selection-fg: #000000;     /* colors.selection.fg */
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .section-label {
+    font-size: 13px; color: var(--text-primary);
+    text-transform: uppercase; letter-spacing: 2px;
+    margin-bottom: 12px; font-weight: 600;
+  }
+  .annotation-box {
+    background: rgba(106, 153, 85, 0.1);
+    border: 1px solid rgba(106, 153, 85, 0.3);
+    border-radius: 6px; padding: 12px 16px; margin-top: 12px;
+    font-size: 12px; color: var(--text-primary); line-height: 1.6; max-width: 500px;
+  }
+
+  /* -- App frame -- */
+  .app-frame {
+    width: 480px; background: var(--bg-base);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; position: relative;
+  }
+
+  /* -- Top bar (44px) -- */
+  .top-bar {
+    height: 44px; background: var(--bg-darker);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 12px; flex-shrink: 0;
+  }
+  .top-bar-left { display: flex; align-items: center; gap: 8px; }
+  .app-title { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+  .toolbar-buttons { display: flex; gap: 6px; align-items: center; }
+  .tb-btn {
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; color: var(--text-primary); background: transparent;
+    cursor: pointer; border: none; transition: background 0.15s; flex-shrink: 0;
+  }
+  .tb-btn:hover { background: #1a3318; }
+  .tb-btn.active { background: #1a3318; }
+  .tb-btn.exit:hover { background: #8B0000; }
+
+  /* -- Title bar (32px) -- */
+  .title-bar {
+    height: 32px; background: var(--bg-darker); padding: 0 12px;
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  }
+  .conv-dropdown {
+    min-width: 180px; padding: 4px 8px; border-radius: 4px;
+    background: var(--bg-dark); border: 1px solid var(--border);
+    font-size: 13px; color: var(--text-primary);
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer; flex: 1; min-width: 0;
+  }
+  .conv-dropdown .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-dropdown .arrow { font-size: 10px; flex-shrink: 0; margin-left: 6px; }
+  .new-btn {
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: var(--text-primary); background: transparent;
+    cursor: pointer; border: none; font-weight: bold;
+  }
+  .new-btn:hover { background: #1a3318; }
+  .profile-pill {
+    max-width: 160px; min-width: 80px; padding: 4px 8px; border-radius: 4px;
+    background: var(--bg-dark); border: 1px solid var(--border);
+    font-size: 11px; color: var(--text-primary);
+    display: flex; align-items: center; gap: 6px; cursor: pointer; overflow: hidden;
+  }
+  .profile-pill .name {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; direction: rtl; text-align: left;
+  }
+  .profile-pill .arrow { font-size: 9px; flex-shrink: 0; color: var(--text-muted); }
+
+  /* -- Bug icon button -- */
+  .bug-btn {
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--accent-error); cursor: pointer; border: none;
+    background: transparent; position: relative; transition: background 0.15s;
+  }
+  .bug-btn:hover { background: #1a3318; }
+  .bug-btn svg { width: 14px; height: 14px; }
+  .bug-count {
+    position: absolute; top: 1px; right: 1px;
+    min-width: 13px; height: 13px; border-radius: 7px;
+    background: var(--accent-error); color: var(--selection-fg);
+    font-size: 8px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 2px; line-height: 1;
+  }
+  .bug-btn.hidden-icon { visibility: hidden; }
+
+  /* -- Chat area -- */
+  .chat-area {
+    flex: 1; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 8px; background: var(--bg-base);
+  }
+  .msg-row { display: flex; width: 100%; }
+  .msg-row.user { justify-content: flex-end; }
+  .msg-row.assistant { justify-content: flex-start; }
+  .user-bubble {
+    max-width: 300px; padding: 10px; border-radius: 12px;
+    background: var(--selection-bg); color: var(--selection-fg); font-size: 13px;
+  }
+  .assistant-group { display: flex; flex-direction: column; gap: 2px; }
+  .model-label { font-size: 10px; color: var(--text-muted); }
+  .assistant-bubble {
+    max-width: 300px; padding: 10px; border-radius: 12px;
+    background: var(--bg-darker); border: 1px solid var(--border);
+    color: var(--text-primary); font-size: 13px;
+  }
+  .empty-state {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 14px;
+  }
+
+  /* -- Inline error indicator (in chat area) -- uses Theme::error() -- */
+  .inline-error {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 10px 12px; border-radius: 8px;
+    background: rgba(106, 153, 85, 0.08);
+    border: 1px solid rgba(106, 153, 85, 0.4);
+    margin: 4px 0;
+  }
+  .inline-error-icon {
+    flex-shrink: 0; margin-top: 1px; color: var(--accent-error);
+  }
+  .inline-error-icon svg { width: 14px; height: 14px; }
+  .inline-error-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .inline-error-title { font-size: 12px; font-weight: 600; color: var(--accent-error); }
+  .inline-error-msg { font-size: 11px; color: var(--text-muted); word-break: break-word; }
+
+  /* -- Input bar -- */
+  .input-bar {
+    display: flex; align-items: flex-end; gap: 8px; padding: 12px;
+    background: var(--bg-darker); border-top: 1px solid var(--border); flex-shrink: 0;
+  }
+  .input-field {
+    flex: 1; min-height: 36px; padding: 8px 10px; border-radius: 6px;
+    background: var(--bg-base); border: 1px solid var(--text-muted);
+    color: var(--text-muted); font-size: 13px;
+  }
+  .send-btn {
+    height: 36px; padding: 0 12px; border-radius: 6px;
+    border: none; font-size: 13px; cursor: pointer; flex-shrink: 0;
+    background: #1a3318; color: var(--text-muted);
+  }
+
+  /* -- Error History View -- */
+  .error-view-top-bar {
+    height: 44px; background: var(--bg-darker);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 12px; gap: 12px; flex-shrink: 0;
+  }
+  .back-btn {
+    padding: 4px 10px; border-radius: 4px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-primary); font-size: 12px; cursor: pointer;
+  }
+  .back-btn:hover { background: #1a3318; }
+  .error-view-title { font-size: 14px; font-weight: 700; color: var(--text-primary); flex: 1; }
+  .error-count-label { font-size: 11px; color: var(--text-muted); }
+  .clear-btn {
+    padding: 4px 10px; border-radius: 4px;
+    background: transparent; border: 1px solid var(--text-muted);
+    color: var(--text-muted); font-size: 11px; cursor: pointer;
+  }
+  .clear-btn:hover { background: #1a3318; color: var(--text-primary); border-color: var(--border); }
+
+  .error-list {
+    flex: 1; overflow-y: auto; padding: 8px 12px;
+    display: flex; flex-direction: column; gap: 6px; background: var(--bg-base);
+  }
+  .error-entry {
+    padding: 10px 12px; border-radius: 6px;
+    background: rgba(106, 153, 85, 0.04);
+    border: 1px solid rgba(106, 153, 85, 0.25);
+    display: flex; flex-direction: column; gap: 6px;
+    transition: border-color 0.15s;
+  }
+  .error-entry:hover { border-color: rgba(106, 153, 85, 0.5); }
+  .error-entry-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .error-entry-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .error-severity {
+    font-size: 9px; font-weight: 700; padding: 2px 5px; border-radius: 3px;
+    text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
+    background: rgba(106, 153, 85, 0.2); color: var(--accent-error);
+  }
+  .error-source {
+    font-size: 11px; font-weight: 600; color: var(--text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .error-timestamp { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+  .error-message {
+    font-size: 12px; color: var(--text-primary); line-height: 1.4; word-break: break-word;
+  }
+  .error-context { font-size: 10px; color: var(--text-muted); }
+  .error-raw-toggle {
+    font-size: 10px; color: var(--text-muted); cursor: pointer;
+    text-decoration: underline; margin-top: 2px;
+  }
+  .error-raw-toggle:hover { color: var(--text-primary); }
+  .error-raw-body {
+    font-size: 10px; color: var(--text-muted);
+    font-family: "SF Mono", Menlo, monospace;
+    background: rgba(106, 153, 85, 0.05); border-radius: 4px;
+    padding: 6px 8px; white-space: pre-wrap; word-break: break-all;
+    max-height: 80px; overflow-y: auto;
+    border: 1px solid rgba(106, 153, 85, 0.15);
+  }
+
+  /* -- Callout -- */
+  .callout {
+    position: absolute; background: var(--accent-primary); color: var(--selection-fg);
+    font-size: 11px; font-weight: 600; padding: 4px 10px;
+    border-radius: 4px; white-space: nowrap; z-index: 10; pointer-events: none;
+  }
+  .callout::after { content: ''; position: absolute; border: 6px solid transparent; }
+  .callout.above::after {
+    bottom: -11px; left: 50%; transform: translateX(-50%); border-top-color: var(--accent-primary);
+  }
+  .callout.below::after {
+    top: -11px; left: 50%; transform: translateX(-50%); border-bottom-color: var(--accent-primary);
+  }
+</style>
+</head>
+<body>
+
+<!-- Inline SVG symbol definitions (reused throughout) -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none;">
+  <symbol id="bug-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- antennae -->
+    <path d="M6.2 3.8 L4 1.5"/>
+    <path d="M9.8 3.8 L12 1.5"/>
+    <!-- head -->
+    <circle cx="8" cy="5" r="2"/>
+    <!-- body -->
+    <ellipse cx="8" cy="11" rx="3.8" ry="4.5"/>
+    <!-- wing seam -->
+    <line x1="8" y1="6.5" x2="8" y2="15.5"/>
+    <!-- left legs -->
+    <path d="M4.2 8.2 L1.5 6.5"/>
+    <path d="M4.2 11 L1 11"/>
+    <path d="M4.2 13.5 L1.5 15.5"/>
+    <!-- right legs -->
+    <path d="M11.8 8.2 L14.5 6.5"/>
+    <path d="M11.8 11 L15 11"/>
+    <path d="M11.8 13.5 L14.5 15.5"/>
+  </symbol>
+</svg>
+
+<!-- ================================================================
+     SECTION 1: Bug Icon - No Errors (Hidden)
+     ================================================================ -->
+
+<h1>Issue #51 - Error Log Viewer</h1>
+<h2>Bug Icon &amp; Error History View</h2>
+
+<div class="section-label">1. Bug Icon - No Errors (Hidden)</div>
+
+<div style="position: relative;">
+  <div class="app-frame" style="height: 200px;">
+    <div class="top-bar">
+      <div class="top-bar-left"><span class="app-title">PersonalAgent</span></div>
+      <div class="toolbar-buttons">
+        <button class="tb-btn">T</button>
+        <button class="tb-btn">Y</button>
+        <button class="tb-btn">R</button>
+        <button class="tb-btn">H</button>
+        <button class="tb-btn">MD</button>
+        <button class="tb-btn">&#x2B07;</button>
+        <button class="tb-btn">&#x2699;</button>
+        <button class="tb-btn exit">&#x23FB;</button>
+      </div>
+    </div>
+    <div class="title-bar">
+      <div class="conv-dropdown">
+        <span class="title">Testing Kimi provider</span>
+        <span class="arrow">&#x25BC;</span>
+      </div>
+      <button class="new-btn">+</button>
+      <div class="profile-pill">
+        <span class="name">kimi-k2-0711</span>
+        <span class="arrow">&#x25BC;</span>
+      </div>
+      <!-- Bug icon: HIDDEN when no errors -->
+      <button class="bug-btn hidden-icon">
+        <svg><use href="#bug-icon"/></svg>
+      </button>
+    </div>
+    <div class="chat-area">
+      <div class="empty-state">No messages yet</div>
+    </div>
+  </div>
+  <div class="callout above" style="bottom: -36px; right: 60px;">
+    Bug icon hidden - no unviewed errors
+  </div>
+</div>
+
+<div class="annotation-box">
+  When there are <strong>zero unviewed errors</strong>, the bug icon is
+  hidden (visibility: hidden) so the title bar layout stays stable.
+</div>
+
+<!-- ================================================================
+     SECTION 2: Bug Icon - With Errors (Visible + Badge)
+     ================================================================ -->
+
+<div class="section-label" style="margin-top: 40px;">2. Bug Icon - With Unviewed Errors (Visible + Count Badge)</div>
+
+<div style="position: relative;">
+  <div class="app-frame" style="height: 440px;">
+    <div class="top-bar">
+      <div class="top-bar-left"><span class="app-title">PersonalAgent</span></div>
+      <div class="toolbar-buttons">
+        <button class="tb-btn active">T</button>
+        <button class="tb-btn">Y</button>
+        <button class="tb-btn">R</button>
+        <button class="tb-btn">H</button>
+        <button class="tb-btn">MD</button>
+        <button class="tb-btn">&#x2B07;</button>
+        <button class="tb-btn">&#x2699;</button>
+        <button class="tb-btn exit">&#x23FB;</button>
+      </div>
+    </div>
+    <div class="title-bar" style="position: relative;">
+      <div class="conv-dropdown">
+        <span class="title">Testing Kimi provider</span>
+        <span class="arrow">&#x25BC;</span>
+      </div>
+      <button class="new-btn">+</button>
+      <div class="profile-pill">
+        <span class="name">kimi-k2-0711</span>
+        <span class="arrow">&#x25BC;</span>
+      </div>
+      <!-- Bug icon: VISIBLE with count badge -->
+      <button class="bug-btn" title="3 errors">
+        <svg><use href="#bug-icon"/></svg>
+        <span class="bug-count">3</span>
+      </button>
+      <div class="callout below" style="position: absolute; top: 36px; right: -20px;">
+        Bug icon + count badge (click for error log)
+      </div>
+    </div>
+    <div class="chat-area">
+      <div class="msg-row user">
+        <div class="user-bubble">Hello, can you help me?</div>
+      </div>
+      <div class="msg-row assistant">
+        <div class="assistant-group">
+          <div class="model-label">kimi-k2-0711</div>
+          <div class="assistant-bubble">Sure! I'd be happy to help. What would you like to know?</div>
+        </div>
+      </div>
+      <div class="msg-row user">
+        <div class="user-bubble">What is the meaning of life?</div>
+      </div>
+      <!-- Inline error rendered when StreamingState::Error is active -->
+      <div class="inline-error">
+        <span class="inline-error-icon">
+          <svg><use href="#bug-icon"/></svg>
+        </span>
+        <div class="inline-error-body">
+          <div class="inline-error-title">Stream Error</div>
+          <div class="inline-error-msg">kimi API: 429 Too Many Requests - rate limit exceeded, please retry after 30s</div>
+        </div>
+      </div>
+    </div>
+    <div class="input-bar">
+      <div class="input-field">Type a message...</div>
+      <button class="send-btn">Send</button>
+    </div>
+  </div>
+</div>
+
+<div class="annotation-box">
+  <strong>Bug icon</strong> appears to the right of the profile selector pill
+  in the title bar.<br><br>
+  - Uses <code>Theme::error()</code> color (green in green-screen theme;
+    red/etc in other themes like Dracula).<br>
+  - Count badge: bg = <code>Theme::error()</code>, text = <code>Theme::selection_fg()</code>.<br>
+  - <strong>Inline error</strong> box in chat area when StreamingState::Error
+    is active (the "immediate fix" prerequisite).<br>
+  - Clicking the bug icon navigates to the Error History view.
+</div>
+
+<!-- ================================================================
+     SECTION 3: Error History View (full screen)
+     ================================================================ -->
+
+<div class="section-label" style="margin-top: 40px;">3. Error History View (navigated from bug icon click)</div>
+
+<div style="position: relative;">
+  <div class="app-frame" style="height: 620px;">
+    <div class="error-view-top-bar">
+      <button class="back-btn">&#x2190; Back</button>
+      <span class="error-view-title">Error Log</span>
+      <span class="error-count-label">5 errors</span>
+      <button class="clear-btn">Clear All</button>
+    </div>
+
+    <div class="error-list">
+
+      <!-- Entry 1: stream error (newest first) -->
+      <div class="error-entry">
+        <div class="error-entry-header">
+          <div class="error-entry-left">
+            <span class="error-severity">Stream</span>
+            <span class="error-source">kimi / kimi-k2-0711</span>
+          </div>
+          <span class="error-timestamp">12:34:22 PM</span>
+        </div>
+        <div class="error-message">
+          429 Too Many Requests - rate limit exceeded, please retry after 30s
+        </div>
+        <div class="error-context">conv: Testing Kimi provider</div>
+        <div class="error-raw-toggle" onclick="toggleRaw(this)">&#x25B8; Show raw response</div>
+        <div class="error-raw-body" style="display: none;">
+{"error":{"type":"rate_limit_error","message":"rate limit exceeded"},"status":429}
+        </div>
+      </div>
+
+      <!-- Entry 2: auth error -->
+      <div class="error-entry">
+        <div class="error-entry-header">
+          <div class="error-entry-left">
+            <span class="error-severity">Auth</span>
+            <span class="error-source">anthropic / claude-sonnet-4-20250514</span>
+          </div>
+          <span class="error-timestamp">12:31:05 PM</span>
+        </div>
+        <div class="error-message">
+          401 Unauthorized - invalid API key. Check your API key in Settings.
+        </div>
+        <div class="error-context">conv: Code review discussion</div>
+        <div class="error-raw-toggle" onclick="toggleRaw(this)">&#x25B8; Show raw response</div>
+        <div class="error-raw-body" style="display: none;">
+{"error":{"type":"authentication_error","message":"invalid x-api-key"},"status":401}
+        </div>
+      </div>
+
+      <!-- Entry 3: connection error -->
+      <div class="error-entry">
+        <div class="error-entry-header">
+          <div class="error-entry-left">
+            <span class="error-severity">Conn</span>
+            <span class="error-source">openai / gpt-4o</span>
+          </div>
+          <span class="error-timestamp">12:28:41 PM</span>
+        </div>
+        <div class="error-message">
+          Connection timeout after 30000ms - could not reach api.openai.com
+        </div>
+        <div class="error-context">conv: Daily standup notes</div>
+        <div class="error-raw-toggle" onclick="toggleRaw(this)">&#x25B8; Show raw response</div>
+        <div class="error-raw-body" style="display: none;">
+hyper::Error(Connect, ConnectError("tcp connect error", Os { code: 60, kind: TimedOut }))
+        </div>
+      </div>
+
+      <!-- Entry 4: MCP error -->
+      <div class="error-entry">
+        <div class="error-entry-header">
+          <div class="error-entry-left">
+            <span class="error-severity">MCP</span>
+            <span class="error-source">filesystem-server</span>
+          </div>
+          <span class="error-timestamp">12:25:10 PM</span>
+        </div>
+        <div class="error-message">
+          MCP server exited with code 1: ENOENT - /usr/local/bin/mcp-filesystem not found
+        </div>
+        <div class="error-context">conv: Testing Kimi provider</div>
+        <div class="error-raw-toggle" onclick="toggleRaw(this)">&#x25B8; Show raw response</div>
+        <div class="error-raw-body" style="display: none;">
+Error: spawn /usr/local/bin/mcp-filesystem ENOENT
+    at ChildProcess._handle.onexit (node:internal/child_process:286:19)
+        </div>
+      </div>
+
+      <!-- Entry 5: stream error with raw body expanded -->
+      <div class="error-entry">
+        <div class="error-entry-header">
+          <div class="error-entry-left">
+            <span class="error-severity">Stream</span>
+            <span class="error-source">kimi / kimi-k2-0711</span>
+          </div>
+          <span class="error-timestamp">12:22:33 PM</span>
+        </div>
+        <div class="error-message">
+          500 Internal Server Error - upstream provider returned unexpected response
+        </div>
+        <div class="error-context">conv: Testing Kimi provider</div>
+        <div class="error-raw-toggle" onclick="toggleRaw(this)">&#x25BE; Hide raw response</div>
+        <div class="error-raw-body">
+HTTP/1.1 500 Internal Server Error
+Content-Type: application/json
+
+{"error":{"type":"internal_error","message":"An unexpected error occurred.","code":"500"},"request_id":"req_abc123def456"}</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="annotation-box">
+  <strong>Error History View</strong> - accessed by clicking the bug icon.<br><br>
+  - <strong>&#x2190; Back</strong> returns to Chat view (stack navigation).<br>
+  - Errors in <strong>reverse chronological order</strong> (newest first).<br>
+  - Each entry: <strong>severity tag</strong> (Stream/Auth/Conn/MCP),
+    <strong>source</strong> (provider/model), <strong>timestamp</strong>,
+    <strong>error message</strong>, <strong>conversation context</strong>.<br>
+  - Expandable <strong>raw response</strong> preserves full error detail.<br>
+  - <strong>Clear All</strong> empties the ring buffer.<br>
+  - Viewing this list <strong>clears the unviewed count</strong> on the bug icon.<br>
+  - Ring buffer: last ~100 errors in memory (no disk persistence).<br>
+  - All colors via <code>Theme::*</code> tokens - adapts to any theme.
+</div>
+
+<!-- ================================================================
+     SECTION 4: Inline error (StreamingState::Error rendering)
+     ================================================================ -->
+
+<div class="section-label" style="margin-top: 40px;">4. Inline Error (Immediate Fix - StreamingState::Error Rendering)</div>
+
+<div style="position: relative;">
+  <div class="app-frame" style="height: 280px;">
+    <div class="top-bar">
+      <div class="top-bar-left"><span class="app-title">PersonalAgent</span></div>
+      <div class="toolbar-buttons">
+        <button class="tb-btn">T</button>
+        <button class="tb-btn">Y</button>
+        <button class="tb-btn">R</button>
+        <button class="tb-btn">H</button>
+        <button class="tb-btn">MD</button>
+        <button class="tb-btn">&#x2B07;</button>
+        <button class="tb-btn">&#x2699;</button>
+        <button class="tb-btn exit">&#x23FB;</button>
+      </div>
+    </div>
+    <div class="title-bar">
+      <div class="conv-dropdown">
+        <span class="title">Testing Kimi provider</span>
+        <span class="arrow">&#x25BC;</span>
+      </div>
+      <button class="new-btn">+</button>
+      <div class="profile-pill">
+        <span class="name">kimi-k2-0711</span>
+        <span class="arrow">&#x25BC;</span>
+      </div>
+      <button class="bug-btn" title="1 error">
+        <svg><use href="#bug-icon"/></svg>
+        <span class="bug-count">1</span>
+      </button>
+    </div>
+    <div class="chat-area">
+      <div class="msg-row user">
+        <div class="user-bubble">Hello!</div>
+      </div>
+      <!-- Renders when StreamingState::Error(msg) is active -->
+      <div class="inline-error">
+        <span class="inline-error-icon">
+          <svg><use href="#bug-icon"/></svg>
+        </span>
+        <div class="inline-error-body">
+          <div class="inline-error-title">Stream Error</div>
+          <div class="inline-error-msg">kimi API: Connection refused - could not reach provider endpoint</div>
+        </div>
+      </div>
+    </div>
+    <div class="input-bar">
+      <div class="input-field">Type a message...</div>
+      <button class="send-btn">Send</button>
+    </div>
+  </div>
+</div>
+
+<div class="annotation-box">
+  <strong>Immediate Fix (prerequisite)</strong> - StreamingState::Error is
+  defined but never rendered in chat_view/render.rs.<br><br>
+  This inline error box renders in the chat area when the stream fails,
+  giving immediate visible feedback. Currently the UI just goes silent.<br><br>
+  Added as a <code>.when(matches!(streaming, StreamingState::Error(..)))</code>
+  block in render_chat_area, parallel to the StreamingState::Streaming block.
+</div>
+
+<!-- ================================================================
+     SECTION 5: Just the SVG bug icon, large
+     ================================================================ -->
+
+<div class="section-label" style="margin-top: 40px;">5. Bug Icon (SVG detail)</div>
+
+<div style="display: flex; gap: 40px; align-items: center;">
+  <div style="text-align: center;">
+    <div style="background: #000; border: 1px solid #6a9955; border-radius: 8px; padding: 20px; display: inline-block;">
+      <svg viewBox="0 0 16 16" width="64" height="64" fill="none" stroke="#6a9955" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6.2 3.8 L4 1.5"/>
+        <path d="M9.8 3.8 L12 1.5"/>
+        <circle cx="8" cy="5" r="2"/>
+        <ellipse cx="8" cy="11" rx="3.8" ry="4.5"/>
+        <line x1="8" y1="6.5" x2="8" y2="15.5"/>
+        <path d="M4.2 8.2 L1.5 6.5"/>
+        <path d="M4.2 11 L1 11"/>
+        <path d="M4.2 13.5 L1.5 15.5"/>
+        <path d="M11.8 8.2 L14.5 6.5"/>
+        <path d="M11.8 11 L15 11"/>
+        <path d="M11.8 13.5 L14.5 15.5"/>
+      </svg>
+    </div>
+    <div style="font-size: 11px; color: #6a9955; margin-top: 8px;">64px (detail view)</div>
+  </div>
+
+  <div style="text-align: center;">
+    <div style="background: #000; border: 1px solid #6a9955; border-radius: 8px; padding: 20px; display: inline-flex; gap: 16px; align-items: center;">
+      <div>
+        <svg viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="#6a9955" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6.2 3.8 L4 1.5"/>
+          <path d="M9.8 3.8 L12 1.5"/>
+          <circle cx="8" cy="5" r="2"/>
+          <ellipse cx="8" cy="11" rx="3.8" ry="4.5"/>
+          <line x1="8" y1="6.5" x2="8" y2="15.5"/>
+          <path d="M4.2 8.2 L1.5 6.5"/>
+          <path d="M4.2 11 L1 11"/>
+          <path d="M4.2 13.5 L1.5 15.5"/>
+          <path d="M11.8 8.2 L14.5 6.5"/>
+          <path d="M11.8 11 L15 11"/>
+          <path d="M11.8 13.5 L14.5 15.5"/>
+        </svg>
+        <div style="font-size: 10px; color: #3b7a3b; margin-top: 4px;">28px</div>
+      </div>
+      <div>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#6a9955" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6.2 3.8 L4 1.5"/>
+          <path d="M9.8 3.8 L12 1.5"/>
+          <circle cx="8" cy="5" r="2"/>
+          <ellipse cx="8" cy="11" rx="3.8" ry="4.5"/>
+          <line x1="8" y1="6.5" x2="8" y2="15.5"/>
+          <path d="M4.2 8.2 L1.5 6.5"/>
+          <path d="M4.2 11 L1 11"/>
+          <path d="M4.2 13.5 L1.5 15.5"/>
+          <path d="M11.8 8.2 L14.5 6.5"/>
+          <path d="M11.8 11 L15 11"/>
+          <path d="M11.8 13.5 L14.5 15.5"/>
+        </svg>
+        <div style="font-size: 10px; color: #3b7a3b; margin-top: 4px;">14px</div>
+      </div>
+    </div>
+    <div style="font-size: 11px; color: #6a9955; margin-top: 8px;">actual UI sizes</div>
+  </div>
+</div>
+
+<div class="annotation-box">
+  SVG bug icon uses <code>stroke="currentColor"</code> in the GPUI implementation
+  so it inherits <code>Theme::error()</code> color automatically.<br>
+  Stroke-only design stays crisp at small sizes (14px in title bar button).
+</div>
+
+<script>
+  function toggleRaw(el) {
+    var raw = el.nextElementSibling;
+    if (raw && raw.classList.contains('error-raw-body')) {
+      if (raw.style.display === 'none' || !raw.style.display) {
+        raw.style.display = 'block';
+        el.innerHTML = '&#x25BE; Hide raw response';
+      } else {
+        raw.style.display = 'none';
+        el.innerHTML = '&#x25B8; Show raw response';
+      }
+    }
+  }
+</script>
+
+</body>
+</html>

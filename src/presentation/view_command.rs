@@ -430,6 +430,7 @@ pub enum ViewId {
     McpAdd,
     McpConfigure,
     ModelSelector,
+    ErrorLog,
 }
 
 /// Modal identifier

@@ -84,6 +84,7 @@ impl MainPanel {
             ViewId::McpAdd => focus_child!(self.mcp_add_view),
             ViewId::ModelSelector => focus_child!(self.model_selector_view),
             ViewId::ApiKeyManager => focus_child!(self.api_key_manager_view),
+            ViewId::ErrorLog => focus_child!(self.error_log_view),
             _ => {}
         }
         window.focus(&self.focus_handle, cx);
@@ -145,6 +146,13 @@ impl MainPanel {
                     d,
                     self.api_key_manager_view.as_ref(),
                     "Loading API key manager...",
+                )
+            })
+            .when(current == ViewId::ErrorLog, |d| {
+                Self::render_child_or_placeholder(
+                    d,
+                    self.error_log_view.as_ref(),
+                    "Loading error log...",
                 )
             })
     }
