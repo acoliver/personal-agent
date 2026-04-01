@@ -103,11 +103,16 @@ impl ErrorLogStore {
         {
             let mut guard = self.entries.lock().expect("error log mutex poisoned");
 
-            // Deduplicate: skip if the most recent entry has the same message
-            // and was pushed within 2 seconds (handles chat_impl.rs triple-fire).
+            // Deduplicate: skip if a recent entry (within 2 s) shares the same
+            // source AND conversation_id. This handles the triple-fire from
+            // client_agent.rs where a single LLM error fires the callback up to
+            // 3 times with differently-wrapped message strings.
             if let Some(last) = guard.front() {
                 let elapsed = entry.timestamp - last.timestamp;
-                if last.message == entry.message && elapsed < chrono::Duration::seconds(2) {
+                if last.source == entry.source
+                    && last.conversation_id == entry.conversation_id
+                    && elapsed < chrono::Duration::seconds(2)
+                {
                     return;
                 }
             }
@@ -227,12 +232,16 @@ mod tests {
     use std::thread;
 
     /// Build a minimal `ErrorLogEntry` for testing, using the given `id`.
+    ///
+    /// Each entry gets a unique `source` so that the dedup guard (which
+    /// compares `source` + `conversation_id` within 2 s) does not suppress
+    /// entries that are meant to be distinct test rows.
     fn make_entry(id: u64) -> ErrorLogEntry {
         ErrorLogEntry {
             id,
             timestamp: chrono::Utc::now(),
             severity: ErrorSeverityTag::Stream,
-            source: "test / source".to_string(),
+            source: format!("test/{id}"),
             message: format!("error {id}"),
             raw_detail: None,
             conversation_title: None,
@@ -627,7 +636,7 @@ mod tests {
             id,
             timestamp: chrono::Utc::now(),
             severity: ErrorSeverityTag::Internal,
-            source: "sys".to_string(),
+            source: "sys/a".to_string(),
             message: "error without detail".to_string(),
             raw_detail: None,
             conversation_title: None,
@@ -637,7 +646,7 @@ mod tests {
             id,
             timestamp: chrono::Utc::now(),
             severity: ErrorSeverityTag::Internal,
-            source: "sys".to_string(),
+            source: "sys/b".to_string(),
             message: "error with detail".to_string(),
             raw_detail: Some(
                 "HTTP/1.1 500 Internal Server Error
@@ -655,43 +664,56 @@ body: {}"
     // --- Deduplication ---
 
     #[test]
-    fn test_dedup_skips_same_message_within_window() {
+    fn test_dedup_skips_same_source_and_conversation_within_window() {
         let store = fresh_store();
         let now = chrono::Utc::now();
+        let conv = Some(uuid::Uuid::new_v4());
 
         store.push(|id| ErrorLogEntry {
             id,
             timestamp: now,
             severity: ErrorSeverityTag::Stream,
-            source: "test".to_string(),
+            source: "chat".to_string(),
             message: "connection failed".to_string(),
             raw_detail: None,
             conversation_title: None,
-            conversation_id: None,
+            conversation_id: conv,
         });
 
-        // Same message, same timestamp — should be deduped
+        // Different message but same source + conversation_id — should be deduped
         store.push(|id| ErrorLogEntry {
             id,
             timestamp: now,
             severity: ErrorSeverityTag::Stream,
-            source: "test".to_string(),
-            message: "connection failed".to_string(),
+            source: "chat".to_string(),
+            message: "SerdesAi: connection failed".to_string(),
             raw_detail: None,
             conversation_title: None,
-            conversation_id: None,
+            conversation_id: conv,
         });
 
-        assert_eq!(store.entries().len(), 1, "duplicate should be skipped");
+        // Third variant with yet another wrapper — also deduped
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: now,
+            severity: ErrorSeverityTag::Stream,
+            source: "chat".to_string(),
+            message: "LLM error: connection failed".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: conv,
+        });
+
+        assert_eq!(store.entries().len(), 1, "triple-fire should collapse to 1");
         assert_eq!(
             store.unviewed_count(),
             1,
-            "unviewed count should not increment for deduped entry"
+            "unviewed count should not increment for deduped entries"
         );
     }
 
     #[test]
-    fn test_dedup_allows_different_messages() {
+    fn test_dedup_allows_different_sources() {
         let store = fresh_store();
         let now = chrono::Utc::now();
 
@@ -699,7 +721,7 @@ body: {}"
             id,
             timestamp: now,
             severity: ErrorSeverityTag::Stream,
-            source: "test".to_string(),
+            source: "chat".to_string(),
             message: "error A".to_string(),
             raw_detail: None,
             conversation_title: None,
@@ -709,8 +731,8 @@ body: {}"
         store.push(|id| ErrorLogEntry {
             id,
             timestamp: now,
-            severity: ErrorSeverityTag::Stream,
-            source: "test".to_string(),
+            severity: ErrorSeverityTag::Mcp,
+            source: "mcp/exa".to_string(),
             message: "error B".to_string(),
             raw_detail: None,
             conversation_title: None,
@@ -720,12 +742,12 @@ body: {}"
         assert_eq!(
             store.entries().len(),
             2,
-            "different messages should not be deduped"
+            "different sources should not be deduped"
         );
     }
 
     #[test]
-    fn test_dedup_allows_same_message_after_window() {
+    fn test_dedup_allows_same_source_after_window() {
         let store = fresh_store();
         let old = chrono::Utc::now() - chrono::Duration::seconds(5);
         let now = chrono::Utc::now();
@@ -734,7 +756,7 @@ body: {}"
             id,
             timestamp: old,
             severity: ErrorSeverityTag::Stream,
-            source: "test".to_string(),
+            source: "chat".to_string(),
             message: "connection failed".to_string(),
             raw_detail: None,
             conversation_title: None,
@@ -745,7 +767,7 @@ body: {}"
             id,
             timestamp: now,
             severity: ErrorSeverityTag::Stream,
-            source: "test".to_string(),
+            source: "chat".to_string(),
             message: "connection failed".to_string(),
             raw_detail: None,
             conversation_title: None,
@@ -755,7 +777,41 @@ body: {}"
         assert_eq!(
             store.entries().len(),
             2,
-            "same message outside window should not be deduped"
+            "same source outside window should not be deduped"
+        );
+    }
+
+    #[test]
+    fn test_dedup_allows_different_conversations_same_source() {
+        let store = fresh_store();
+        let now = chrono::Utc::now();
+
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: now,
+            severity: ErrorSeverityTag::Stream,
+            source: "chat".to_string(),
+            message: "error".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: Some(uuid::Uuid::new_v4()),
+        });
+
+        store.push(|id| ErrorLogEntry {
+            id,
+            timestamp: now,
+            severity: ErrorSeverityTag::Stream,
+            source: "chat".to_string(),
+            message: "error".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: Some(uuid::Uuid::new_v4()),
+        });
+
+        assert_eq!(
+            store.entries().len(),
+            2,
+            "different conversation_ids should not be deduped"
         );
     }
 }

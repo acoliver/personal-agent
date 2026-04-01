@@ -272,7 +272,7 @@ mod tests {
             id,
             timestamp: chrono::Utc::now(),
             severity: ErrorSeverityTag::Stream,
-            source: "test / source".to_string(),
+            source: format!("test/{id}"),
             message: format!("error {id}"),
             raw_detail: None,
             conversation_title: None,
