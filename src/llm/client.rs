@@ -327,15 +327,22 @@ impl LlmClient {
             .build()
             .map_err(|e| LlmError::InvalidConfig(format!("failed to build HTTP client: {e}")))?;
 
-        let mut model = serdes_ai::OpenAIChatModel::new(&self.profile.model_id, &self.api_key)
+        let mut config = ExtendedModelConfig::new()
+            .with_api_key(&self.api_key)
             .with_client(http_client)
             .with_timeout(Self::request_timeout());
 
         if let Some(url) = base_url {
-            model = model.with_base_url(url);
+            config = config.with_base_url(url);
         }
 
-        Ok(std::sync::Arc::new(model))
+        if self.profile.parameters.enable_thinking {
+            let budget = self.profile.parameters.thinking_budget.map(u64::from);
+            config = config.with_thinking(budget);
+        }
+
+        serdes_ai::build_model_extended("openai", &self.profile.model_id, config)
+            .map_err(|e| LlmError::SerdesAi(e.to_string()))
     }
 
     const fn request_timeout() -> Duration {

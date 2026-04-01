@@ -148,7 +148,7 @@ mod tests {
         );
         assert_eq!(
             quirks.headers.get("User-Agent").map(String::as_str),
-            Some("RooCode/1.0")
+            Some("claude-code/0.1.0")
         );
     }
 
@@ -185,7 +185,7 @@ mod tests {
             header_map
                 .get(USER_AGENT)
                 .and_then(|value| value.to_str().ok()),
-            Some("RooCode/1.0")
+            Some("claude-code/0.1.0")
         );
     }
 

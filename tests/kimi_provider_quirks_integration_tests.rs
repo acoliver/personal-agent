@@ -8,7 +8,7 @@ async fn kimi_requests_include_required_user_agent_header() {
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .and(header("user-agent", "RooCode/1.0"))
+        .and(header("user-agent", "claude-code/0.1.0"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -69,7 +69,7 @@ async fn kimi_requests_respect_explicit_profile_base_url_override() {
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .and(header("user-agent", "RooCode/1.0"))
+        .and(header("user-agent", "claude-code/0.1.0"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "chatcmpl-test-explicit-base-url",
             "object": "chat.completion",
