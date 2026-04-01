@@ -35,10 +35,10 @@ pub struct QuirksManifest {
 }
 
 impl QuirksManifest {
-    /// Look up a provider entry by ID.
+    /// Look up a provider entry by ID (trims whitespace for robustness).
     #[must_use]
     pub fn get(&self, provider_id: &str) -> Option<&QuirksEntry> {
-        self.entries.get(provider_id)
+        self.entries.get(provider_id.trim())
     }
 
     /// Iterate over all entries.
