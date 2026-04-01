@@ -69,6 +69,32 @@ impl SettingsView {
                     self.state.selected_mcp_id = self.state.mcps.first().map(|m| m.id);
                 }
             }
+            ViewCommand::ToolApprovalPolicyUpdated {
+                yolo_mode,
+                auto_approve_reads,
+                mcp_approval_mode,
+                persistent_allowlist,
+                persistent_denylist,
+            } => {
+                self.state.yolo_mode = yolo_mode;
+                self.state.auto_approve_reads = auto_approve_reads;
+                self.state.mcp_approval_mode = mcp_approval_mode;
+                self.state.persistent_allowlist = persistent_allowlist;
+                self.state.persistent_denylist = persistent_denylist;
+                self.state.allowlist_input.clear();
+                self.state.denylist_input.clear();
+            }
+            ViewCommand::YoloModeChanged { active } => {
+                self.state.yolo_mode = active;
+            }
+            ViewCommand::ShowNotification { message } => {
+                self.state.status_message = Some(message);
+                self.state.status_is_error = false;
+            }
+            ViewCommand::ShowError { title, message, .. } => {
+                self.state.status_message = Some(format!("{title}: {message}"));
+                self.state.status_is_error = true;
+            }
             _ => {}
         }
         cx.notify();

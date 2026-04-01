@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -270,6 +270,7 @@ struct MockAppSettingsState {
     theme: Option<String>,
     set_theme_calls: Vec<String>,
     set_theme_results: VecDeque<Result<(), ServiceError>>,
+    settings: HashMap<String, String>,
 }
 
 impl MockAppSettingsService {
@@ -282,6 +283,7 @@ impl MockAppSettingsService {
                 theme: None,
                 set_theme_calls: Vec::new(),
                 set_theme_results: VecDeque::new(),
+                settings: HashMap::new(),
             })),
         }
     }
@@ -371,11 +373,16 @@ impl AppSettingsService for MockAppSettingsService {
         result
     }
 
-    async fn get_setting(&self, _key: &str) -> Result<Option<String>, ServiceError> {
-        Ok(None)
+    async fn get_setting(&self, key: &str) -> Result<Option<String>, ServiceError> {
+        Ok(self.state.lock().unwrap().settings.get(key).cloned())
     }
 
-    async fn set_setting(&self, _key: &str, _value: String) -> Result<(), ServiceError> {
+    async fn set_setting(&self, key: &str, value: String) -> Result<(), ServiceError> {
+        self.state
+            .lock()
+            .unwrap()
+            .settings
+            .insert(key.to_string(), value);
         Ok(())
     }
 
@@ -675,6 +682,13 @@ mod settings_presenter_tests {
         )
     }
 
+    /// Drain all 5 startup commands emitted by the settings presenter.
+    async fn drain_startup(rx: &mut broadcast::Receiver<ViewCommand>) {
+        for _ in 0..5 {
+            let _ = recv_broadcast_command(rx).await;
+        }
+    }
+
     #[tokio::test]
     async fn lifecycle_start_stop_and_is_running_work() {
         let profile = make_profile(Uuid::new_v4(), "default", "openai", "gpt-4");
@@ -702,7 +716,9 @@ mod settings_presenter_tests {
                 selected_profile_id: Some(profile.id),
             }
         );
-        // Drain the ShowSettingsTheme snapshot emitted on startup
+        // Drain ShowSettingsTheme + ToolApprovalPolicyUpdated + YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
         presenter
@@ -762,9 +778,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -815,9 +829,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         let id = Uuid::new_v4();
         send_settings_event(&event_tx, AppEvent::User(UserEvent::SelectProfile { id })).await;
@@ -847,9 +859,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -894,9 +904,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(&event_tx, AppEvent::User(UserEvent::EditProfile { id })).await;
 
@@ -923,9 +931,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -968,9 +974,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -1001,9 +1005,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(&event_tx, AppEvent::User(UserEvent::RefreshProfiles)).await;
 
@@ -1039,9 +1041,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         let id = Uuid::new_v4();
         send_settings_event(
@@ -1073,9 +1073,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -1214,9 +1212,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         let id = Uuid::new_v4();
         send_settings_event(
@@ -1377,9 +1373,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -1446,6 +1440,10 @@ mod settings_presenter_tests {
         let _ = recv_broadcast_command(&mut view_rx).await;
 
         let cmd = recv_broadcast_command(&mut view_rx).await;
+        // Drain ToolApprovalPolicyUpdated + YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await;
+        let _ = recv_broadcast_command(&mut view_rx).await;
+
         match cmd {
             ViewCommand::ShowSettingsTheme {
                 options,
@@ -1485,9 +1483,7 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
 
         // Drain startup commands (ShowSettings + ChatProfilesUpdated + ShowSettingsTheme)
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -1533,9 +1529,7 @@ mod settings_presenter_tests {
 
         presenter.start().await.expect("start should succeed");
 
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -1574,10 +1568,7 @@ mod settings_presenter_tests {
             setup_settings_presenter(profile_service, app_settings_service);
 
         presenter.start().await.expect("start should succeed");
-
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         set_active_theme_slug("green-screen");
 
@@ -1625,9 +1616,7 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
         app_settings_service.set_current_theme(Some("invalid-after-start"));
 
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(
             &event_tx,
@@ -1667,13 +1656,12 @@ mod settings_presenter_tests {
         presenter.start().await.expect("start should succeed");
 
         // Drain startup commands
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
-        let _ = recv_broadcast_command(&mut view_rx).await;
+        drain_startup(&mut view_rx).await;
 
         send_settings_event(&event_tx, AppEvent::User(UserEvent::RefreshProfiles)).await;
 
         // Should receive ShowSettings + ChatProfilesUpdated + ShowSettingsTheme
+        // + ToolApprovalPolicyUpdated + YoloModeChanged
         let first = recv_broadcast_command(&mut view_rx).await;
         assert!(
             matches!(first, ViewCommand::ShowSettings { .. }),
@@ -1689,5 +1677,187 @@ mod settings_presenter_tests {
             matches!(third, ViewCommand::ShowSettingsTheme { .. }),
             "expected ShowSettingsTheme, got {third:?}"
         );
+        let fourth = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(fourth, ViewCommand::ToolApprovalPolicyUpdated { .. }),
+            "expected ToolApprovalPolicyUpdated, got {fourth:?}"
+        );
+        let fifth = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(fifth, ViewCommand::YoloModeChanged { .. }),
+            "expected YoloModeChanged, got {fifth:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_yolo_mode_emits_policy_and_yolo_changed() {
+        let profile = make_profile(Uuid::new_v4(), "default", "openai", "gpt-4");
+        let profile_service = MockProfileService::new(vec![profile.clone()], Some(profile.id));
+        let app_settings_service = MockAppSettingsService::new(Some(profile.id));
+        let (mut presenter, event_tx, mut view_rx, _ps, _as) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start");
+        drain_startup(&mut view_rx).await;
+
+        let _ = event_tx.send(AppEvent::User(UserEvent::SetToolApprovalYoloMode {
+            enabled: true,
+        }));
+        sleep(PROCESSING_DELAY).await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(
+                cmd,
+                ViewCommand::ToolApprovalPolicyUpdated {
+                    yolo_mode: true,
+                    ..
+                }
+            ),
+            "expected ToolApprovalPolicyUpdated with yolo_mode=true, got {cmd:?}"
+        );
+
+        let cmd2 = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(cmd2, ViewCommand::YoloModeChanged { active: true }),
+            "expected YoloModeChanged active=true, got {cmd2:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_auto_approve_reads_emits_policy_update() {
+        let profile = make_profile(Uuid::new_v4(), "default", "openai", "gpt-4");
+        let profile_service = MockProfileService::new(vec![profile.clone()], Some(profile.id));
+        let app_settings_service = MockAppSettingsService::new(Some(profile.id));
+        let (mut presenter, event_tx, mut view_rx, _ps, _as) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start");
+        drain_startup(&mut view_rx).await;
+
+        let _ = event_tx.send(AppEvent::User(UserEvent::SetToolApprovalAutoApproveReads {
+            enabled: true,
+        }));
+        sleep(PROCESSING_DELAY).await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(
+                cmd,
+                ViewCommand::ToolApprovalPolicyUpdated {
+                    auto_approve_reads: true,
+                    ..
+                }
+            ),
+            "expected ToolApprovalPolicyUpdated with auto_approve_reads=true, got {cmd:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_and_remove_allowlist_prefix_roundtrips() {
+        let profile = make_profile(Uuid::new_v4(), "default", "openai", "gpt-4");
+        let profile_service = MockProfileService::new(vec![profile.clone()], Some(profile.id));
+        let app_settings_service = MockAppSettingsService::new(Some(profile.id));
+        let (mut presenter, event_tx, mut view_rx, _ps, _as) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start");
+        drain_startup(&mut view_rx).await;
+
+        // Add "git" to allowlist
+        let _ = event_tx.send(AppEvent::User(UserEvent::AddToolApprovalAllowlistPrefix {
+            prefix: "git".to_string(),
+        }));
+        sleep(PROCESSING_DELAY).await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        match cmd {
+            ViewCommand::ToolApprovalPolicyUpdated {
+                persistent_allowlist,
+                ..
+            } => {
+                assert!(
+                    persistent_allowlist.contains(&"git".to_string()),
+                    "allowlist should contain 'git', got {persistent_allowlist:?}"
+                );
+            }
+            other => panic!("expected ToolApprovalPolicyUpdated, got {other:?}"),
+        }
+        let _ = recv_broadcast_command(&mut view_rx).await; // YoloModeChanged
+
+        // Remove "git" from allowlist
+        let _ = event_tx.send(AppEvent::User(
+            UserEvent::RemoveToolApprovalAllowlistPrefix {
+                prefix: "git".to_string(),
+            },
+        ));
+        sleep(PROCESSING_DELAY).await;
+
+        let cmd2 = recv_broadcast_command(&mut view_rx).await;
+        match cmd2 {
+            ViewCommand::ToolApprovalPolicyUpdated {
+                persistent_allowlist,
+                ..
+            } => {
+                assert!(
+                    !persistent_allowlist.contains(&"git".to_string()),
+                    "allowlist should not contain 'git' after removal, got {persistent_allowlist:?}"
+                );
+            }
+            other => panic!("expected ToolApprovalPolicyUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_and_remove_denylist_prefix_roundtrips() {
+        let profile = make_profile(Uuid::new_v4(), "default", "openai", "gpt-4");
+        let profile_service = MockProfileService::new(vec![profile.clone()], Some(profile.id));
+        let app_settings_service = MockAppSettingsService::new(Some(profile.id));
+        let (mut presenter, event_tx, mut view_rx, _ps, _as) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start");
+        drain_startup(&mut view_rx).await;
+
+        let _ = event_tx.send(AppEvent::User(UserEvent::AddToolApprovalDenylistPrefix {
+            prefix: "rm".to_string(),
+        }));
+        sleep(PROCESSING_DELAY).await;
+
+        let cmd = recv_broadcast_command(&mut view_rx).await;
+        match cmd {
+            ViewCommand::ToolApprovalPolicyUpdated {
+                persistent_denylist,
+                ..
+            } => {
+                assert!(
+                    persistent_denylist.contains(&"rm".to_string()),
+                    "denylist should contain 'rm', got {persistent_denylist:?}"
+                );
+            }
+            other => panic!("expected ToolApprovalPolicyUpdated, got {other:?}"),
+        }
+        let _ = recv_broadcast_command(&mut view_rx).await; // YoloModeChanged
+
+        let _ = event_tx.send(AppEvent::User(
+            UserEvent::RemoveToolApprovalDenylistPrefix {
+                prefix: "rm".to_string(),
+            },
+        ));
+        sleep(PROCESSING_DELAY).await;
+
+        let cmd2 = recv_broadcast_command(&mut view_rx).await;
+        match cmd2 {
+            ViewCommand::ToolApprovalPolicyUpdated {
+                persistent_denylist,
+                ..
+            } => {
+                assert!(
+                    !persistent_denylist.contains(&"rm".to_string()),
+                    "denylist should not contain 'rm' after removal, got {persistent_denylist:?}"
+                );
+            }
+            other => panic!("expected ToolApprovalPolicyUpdated, got {other:?}"),
+        }
     }
 }

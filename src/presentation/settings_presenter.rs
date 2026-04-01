@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use super::view_command::{ProfileSummary, ThemeSummary};
 use super::{Presenter, PresenterError, ViewCommand};
+
 use crate::events::{
     emit,
     types::{McpEvent, ProfileEvent, SystemEvent, UserEvent},
@@ -117,6 +118,7 @@ impl SettingsPresenter {
         .await;
 
         Self::emit_theme_snapshot(&self.app_settings_service, &self.view_tx, None).await;
+        Self::emit_tool_approval_policy_snapshot(&self.app_settings_service, &self.view_tx).await;
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -231,6 +233,48 @@ impl SettingsPresenter {
             UserEvent::RefreshProfiles => {
                 Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
                 Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
+                Self::emit_tool_approval_policy_snapshot(app_settings_service, view_tx).await;
+            }
+            UserEvent::RefreshToolApprovalPolicy => {
+                Self::emit_tool_approval_policy_snapshot(app_settings_service, view_tx).await;
+            }
+            UserEvent::SetToolApprovalYoloMode { enabled } => {
+                Self::on_set_tool_approval_yolo_mode(app_settings_service, view_tx, enabled).await;
+            }
+            UserEvent::SetToolApprovalAutoApproveReads { enabled } => {
+                Self::on_set_tool_approval_auto_approve_reads(
+                    app_settings_service,
+                    view_tx,
+                    enabled,
+                )
+                .await;
+            }
+            UserEvent::SetToolApprovalMcpApprovalMode { mode } => {
+                Self::on_set_tool_approval_mcp_mode(app_settings_service, view_tx, mode).await;
+            }
+            UserEvent::AddToolApprovalAllowlistPrefix { prefix } => {
+                Self::on_add_tool_approval_allowlist_prefix(app_settings_service, view_tx, prefix)
+                    .await;
+            }
+            UserEvent::RemoveToolApprovalAllowlistPrefix { prefix } => {
+                Self::on_remove_tool_approval_allowlist_prefix(
+                    app_settings_service,
+                    view_tx,
+                    prefix,
+                )
+                .await;
+            }
+            UserEvent::AddToolApprovalDenylistPrefix { prefix } => {
+                Self::on_add_tool_approval_denylist_prefix(app_settings_service, view_tx, prefix)
+                    .await;
+            }
+            UserEvent::RemoveToolApprovalDenylistPrefix { prefix } => {
+                Self::on_remove_tool_approval_denylist_prefix(
+                    app_settings_service,
+                    view_tx,
+                    prefix,
+                )
+                .await;
             }
             UserEvent::ToggleMcp { id, enabled } => {
                 Self::on_toggle_mcp(view_tx, id, enabled);

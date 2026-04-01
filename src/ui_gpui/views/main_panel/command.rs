@@ -62,6 +62,14 @@ impl MainPanel {
                 self.handle_model_profile_command(cmd, cx);
             }
 
+            // ── tool approval (settings + chat) ────────────────────────
+            ToolApprovalPolicyUpdated { .. } => {
+                self.forward_to_settings(cmd, cx);
+            }
+            YoloModeChanged { .. } => {
+                self.forward_yolo_to_settings_and_chat(&cmd, cx);
+            }
+
             // ── settings + profiles (non-store) ────────────────────────
             ShowSettingsTheme { .. }
             | ProfileCreated { .. }
@@ -97,6 +105,30 @@ impl MainPanel {
             chat.update(cx, |view, cx| {
                 view.handle_command(cmd, cx);
             });
+        }
+    }
+
+    fn forward_to_settings(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        if let Some(ref settings) = self.settings_view {
+            settings.update(cx, |view, cx| {
+                view.handle_command(cmd, cx);
+            });
+        }
+    }
+
+    fn forward_yolo_to_settings_and_chat(&self, cmd: &ViewCommand, cx: &mut gpui::Context<Self>) {
+        if let ViewCommand::YoloModeChanged { active } = cmd {
+            let active = *active;
+            if let Some(ref settings) = self.settings_view {
+                settings.update(cx, |view, cx| {
+                    view.handle_command(ViewCommand::YoloModeChanged { active }, cx);
+                });
+            }
+            if let Some(ref chat) = self.chat_view {
+                chat.update(cx, |view, cx| {
+                    view.handle_command(ViewCommand::YoloModeChanged { active }, cx);
+                });
+            }
         }
     }
 

@@ -192,11 +192,35 @@ pub enum UserEvent {
     SelectTheme { slug: String },
 
     // ===== Tool Approval Actions =====
+    /// User requested a fresh tool approval policy snapshot.
+    RefreshToolApprovalPolicy,
+
     /// User responded to a tool approval request.
     ToolApprovalResponse {
         request_id: String,
         decision: ToolApprovalResponseAction,
     },
+
+    /// User toggled YOLO mode for tool approvals.
+    SetToolApprovalYoloMode { enabled: bool },
+
+    /// User toggled automatic approval for read-only tools.
+    SetToolApprovalAutoApproveReads { enabled: bool },
+
+    /// User selected MCP approval granularity.
+    SetToolApprovalMcpApprovalMode { mode: crate::agent::McpApprovalMode },
+
+    /// User added an allowlist prefix for persistent tool approvals.
+    AddToolApprovalAllowlistPrefix { prefix: String },
+
+    /// User removed an allowlist prefix for persistent tool approvals.
+    RemoveToolApprovalAllowlistPrefix { prefix: String },
+
+    /// User added a denylist prefix for persistent tool approvals.
+    AddToolApprovalDenylistPrefix { prefix: String },
+
+    /// User removed a denylist prefix for persistent tool approvals.
+    RemoveToolApprovalDenylistPrefix { prefix: String },
 
     // ===== Navigation =====
     /// User clicked to navigate to a view

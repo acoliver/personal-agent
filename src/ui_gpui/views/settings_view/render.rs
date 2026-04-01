@@ -3,7 +3,10 @@
 use super::{McpItem, McpStatus, ProfileItem, SettingsView};
 use crate::events::types::UserEvent;
 use crate::ui_gpui::theme::Theme;
-use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
+use gpui::{
+    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FontWeight, MouseButton, Pixels,
+    SharedString,
+};
 
 impl SettingsView {
     /// Render the top bar with back button and title
@@ -621,6 +624,27 @@ impl gpui::Render for SettingsView {
             .size_full()
             .bg(Theme::bg_darkest())
             .track_focus(&self.focus_handle)
+            // Invisible canvas for InputHandler registration (IME/diacritics)
+            .child(
+                canvas(
+                    |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
+                    {
+                        let entity = cx.entity();
+                        let focus = self.focus_handle.clone();
+                        move |bounds: Bounds<Pixels>,
+                              _,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::App| {
+                            window.handle_input(
+                                &focus,
+                                ElementInputHandler::new(bounds, entity),
+                                cx,
+                            );
+                        }
+                    },
+                )
+                .size_0(),
+            )
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
                     this.handle_key_down(event, cx);
@@ -631,17 +655,20 @@ impl gpui::Render for SettingsView {
             // Content scroll area
             .child(
                 div()
+                    .id("settings-scroll-area")
                     .flex_1()
                     .w_full()
                     .p(px(12.0))
                     .flex()
                     .flex_col()
                     .gap(px(16.0))
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     // Profiles section
                     .child(self.render_profiles_section(cx))
                     // MCP Tools section
                     .child(self.render_mcp_section(cx))
+                    // Tool approval section
+                    .child(self.render_tool_approval_section(cx))
                     // Theme section
                     .child(self.render_theme_section(cx)),
             )

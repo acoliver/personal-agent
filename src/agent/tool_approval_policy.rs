@@ -173,6 +173,72 @@ impl ToolApprovalPolicy {
         self.save_to_settings(app_settings).await
     }
 
+    /// Add identifier to persistent denylist and save to settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when persisting updated policy fails.
+    pub async fn deny_persistently(
+        &mut self,
+        identifier: impl Into<String>,
+        app_settings: &dyn AppSettingsService,
+    ) -> ServiceResult<()> {
+        let identifier = identifier.into();
+        if identifier.is_empty() || self.persistent_denylist.contains(&identifier) {
+            return Ok(());
+        }
+
+        self.persistent_denylist.push(identifier);
+        self.save_to_settings(app_settings).await
+    }
+
+    /// Remove identifier from persistent allowlist and save to settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when persisting updated policy fails.
+    pub async fn remove_persistent_allow_prefix(
+        &mut self,
+        identifier: &str,
+        app_settings: &dyn AppSettingsService,
+    ) -> ServiceResult<()> {
+        if identifier.is_empty() {
+            return Ok(());
+        }
+
+        let original_len = self.persistent_allowlist.len();
+        self.persistent_allowlist
+            .retain(|entry| entry != identifier);
+        if self.persistent_allowlist.len() == original_len {
+            return Ok(());
+        }
+
+        self.save_to_settings(app_settings).await
+    }
+
+    /// Remove identifier from persistent denylist and save to settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when persisting updated policy fails.
+    pub async fn remove_persistent_deny_prefix(
+        &mut self,
+        identifier: &str,
+        app_settings: &dyn AppSettingsService,
+    ) -> ServiceResult<()> {
+        if identifier.is_empty() {
+            return Ok(());
+        }
+
+        let original_len = self.persistent_denylist.len();
+        self.persistent_denylist.retain(|entry| entry != identifier);
+        if self.persistent_denylist.len() == original_len {
+            return Ok(());
+        }
+
+        self.save_to_settings(app_settings).await
+    }
+
     /// Add identifier to session-scoped allowlist (in-memory only).
     pub fn allow_for_session(&mut self, identifier: impl Into<String>) {
         let identifier = identifier.into();
@@ -680,6 +746,65 @@ mod tests {
             policy.persistent_allowlist,
             vec!["examcp/web_search".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn deny_persistently_updates_denylist_and_saves() {
+        let (service, _temp_dir) = create_settings_service();
+        let mut policy = ToolApprovalPolicy::default();
+
+        policy
+            .deny_persistently("rm", &service)
+            .await
+            .expect("deny persistently should succeed");
+
+        let loaded = ToolApprovalPolicy::load_from_settings(&service)
+            .await
+            .expect("load should succeed");
+
+        assert_eq!(loaded.persistent_denylist, vec!["rm".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn remove_persistent_allow_prefix_updates_allowlist_and_saves() {
+        let (service, _temp_dir) = create_settings_service();
+        let mut policy = ToolApprovalPolicy::default();
+        policy
+            .allow_persistently("examcp/web_search", &service)
+            .await
+            .expect("initial allow should persist");
+
+        policy
+            .remove_persistent_allow_prefix("examcp/web_search", &service)
+            .await
+            .expect("remove allow should succeed");
+
+        let loaded = ToolApprovalPolicy::load_from_settings(&service)
+            .await
+            .expect("load should succeed");
+
+        assert!(loaded.persistent_allowlist.is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_persistent_deny_prefix_updates_denylist_and_saves() {
+        let (service, _temp_dir) = create_settings_service();
+        let mut policy = ToolApprovalPolicy::default();
+        policy
+            .deny_persistently("rm", &service)
+            .await
+            .expect("initial deny should persist");
+
+        policy
+            .remove_persistent_deny_prefix("rm", &service)
+            .await
+            .expect("remove deny should succeed");
+
+        let loaded = ToolApprovalPolicy::load_from_settings(&service)
+            .await
+            .expect("load should succeed");
+
+        assert!(loaded.persistent_denylist.is_empty());
     }
 
     #[tokio::test]
