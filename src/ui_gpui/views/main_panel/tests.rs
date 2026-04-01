@@ -310,17 +310,14 @@ async fn start_runtime_requires_popup_window_before_emitting_refreshes(cx: &mut 
         assert!(panel.test_conversation_switch_task.is_none());
     });
 
+    let mut pre_popup_events = Vec::new();
+    while let Ok(event) = user_rx.try_recv() {
+        pre_popup_events.push(event);
+    }
     assert_eq!(
-        user_rx.recv().expect("profile editor refresh"),
-        UserEvent::RefreshApiKeys
-    );
-    assert_eq!(
-        user_rx.recv().expect("api key manager refresh"),
-        UserEvent::RefreshApiKeys
-    );
-    assert!(
-        user_rx.try_recv().is_err(),
-        "runtime should not emit snapshot refreshes before popup window exists"
+        pre_popup_events,
+        vec![UserEvent::RefreshApiKeys, UserEvent::RefreshApiKeys],
+        "runtime should only emit RefreshApiKeys events (no snapshot refreshes) before popup window exists"
     );
 }
 
@@ -751,6 +748,96 @@ async fn handle_command_does_not_forward_non_export_feedback_to_chat_view(cx: &m
         chat_view.read_with(cx, |view, _| {
             assert_eq!(view.state.export_feedback_message, None);
             assert!(!view.state.export_feedback_is_error);
+        });
+    });
+}
+
+#[gpui::test]
+async fn route_tool_approval_policy_updated_increments_counter(cx: &mut TestAppContext) {
+    let _ = cx;
+    assert_route_count(
+        ViewCommand::ToolApprovalPolicyUpdated {
+            yolo_mode: true,
+            auto_approve_reads: false,
+            mcp_approval_mode: crate::agent::McpApprovalMode::PerTool,
+            persistent_allowlist: vec!["git".to_string()],
+            persistent_denylist: vec!["rm".to_string()],
+        },
+        1,
+        |targets| targets.tool_approval_policy_count,
+    );
+}
+
+#[gpui::test]
+async fn route_yolo_mode_changed_increments_counter(cx: &mut TestAppContext) {
+    let _ = cx;
+    assert_route_count(
+        ViewCommand::YoloModeChanged { active: true },
+        1,
+        |targets| targets.yolo_mode_changed_count,
+    );
+}
+
+#[gpui::test]
+async fn handle_command_forwards_tool_approval_policy_to_settings_view(cx: &mut TestAppContext) {
+    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+    cx.set_global(app_state);
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+
+        panel.handle_command(
+            ViewCommand::ToolApprovalPolicyUpdated {
+                yolo_mode: true,
+                auto_approve_reads: true,
+                mcp_approval_mode: crate::agent::McpApprovalMode::PerServer,
+                persistent_allowlist: vec!["git".to_string(), "ls".to_string()],
+                persistent_denylist: vec!["rm".to_string()],
+            },
+            cx,
+        );
+
+        let settings_view = panel
+            .settings_view
+            .as_ref()
+            .expect("settings view initialized");
+        settings_view.read_with(cx, |view, _| {
+            let state = view.get_state();
+            assert!(state.yolo_mode);
+            assert!(state.auto_approve_reads);
+            assert_eq!(
+                state.mcp_approval_mode,
+                crate::agent::McpApprovalMode::PerServer
+            );
+            assert_eq!(state.persistent_allowlist, vec!["git", "ls"]);
+            assert_eq!(state.persistent_denylist, vec!["rm"]);
+        });
+    });
+}
+
+#[gpui::test]
+async fn handle_command_forwards_yolo_mode_changed_to_settings_and_chat(cx: &mut TestAppContext) {
+    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+    cx.set_global(app_state);
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+
+        panel.handle_command(ViewCommand::YoloModeChanged { active: true }, cx);
+
+        let settings_view = panel
+            .settings_view
+            .as_ref()
+            .expect("settings view initialized");
+        settings_view.read_with(cx, |view, _| {
+            assert!(view.get_state().yolo_mode);
+        });
+
+        let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
+        chat_view.read_with(cx, |view, _| {
+            assert!(view.state.yolo_mode);
         });
     });
 }

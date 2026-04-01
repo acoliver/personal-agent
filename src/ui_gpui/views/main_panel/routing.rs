@@ -65,6 +65,10 @@ pub struct CommandTargets {
 
     // Profile prefill state from model selector
     pub profile_prefill_selected_count: usize,
+
+    // Tool approval routing counters
+    pub tool_approval_policy_count: usize,
+    pub yolo_mode_changed_count: usize,
 }
 
 /// Route a single `ViewCommand` to the correct target view state.
@@ -132,6 +136,14 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         // ── Profile prefill ────────────────────────────────────────────────
         ViewCommand::ModelSelected { .. } | ViewCommand::ProfileEditorLoad { .. } => {
             targets.profile_prefill_selected_count += 1;
+        }
+
+        // ── Tool approval ────────────────────────────────────────────────
+        ViewCommand::ToolApprovalPolicyUpdated { .. } => {
+            targets.tool_approval_policy_count += 1;
+        }
+        ViewCommand::YoloModeChanged { .. } => {
+            targets.yolo_mode_changed_count += 1;
         }
 
         // All other commands are store-managed, navigation, or ancillary

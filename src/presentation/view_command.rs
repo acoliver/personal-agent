@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::agent::McpApprovalMode;
 use crate::models::ConversationExportFormat;
 
 /// Command from presenter to UI layer
@@ -266,6 +267,18 @@ pub enum ViewCommand {
 
     /// Inform the UI whether YOLO mode is currently active.
     YoloModeChanged { active: bool },
+
+    /// Update settings surfaces with the current persisted tool approval policy.
+    ToolApprovalPolicyUpdated {
+        yolo_mode: bool,
+        auto_approve_reads: bool,
+        mcp_approval_mode: McpApprovalMode,
+        persistent_allowlist: Vec<String>,
+        persistent_denylist: Vec<String>,
+    },
+
+    /// Request presenters/views to refresh tool approval settings from persistence.
+    RefreshToolApprovalSettings,
 
     // ===== Error Commands =====
     /// Show error to user

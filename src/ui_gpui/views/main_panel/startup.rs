@@ -69,6 +69,7 @@ impl MainPanel {
             let _ = bridge.emit(UserEvent::RefreshProfiles);
             let _ = bridge.emit(UserEvent::RefreshHistory);
             let _ = bridge.emit(UserEvent::RefreshApiKeys);
+            let _ = bridge.emit(UserEvent::RefreshToolApprovalPolicy);
         }
     }
 

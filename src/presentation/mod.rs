@@ -49,6 +49,7 @@ pub mod mcp_configure_presenter;
 pub mod model_selector_presenter;
 pub mod profile_editor_presenter;
 pub mod settings_presenter;
+mod settings_presenter_tool_approval;
 pub mod view_command;
 
 /// Presenter error type

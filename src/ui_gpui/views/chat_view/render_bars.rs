@@ -105,7 +105,8 @@ impl ChatView {
                 "Y",
                 yolo_active,
                 cx.listener(|this, _, _window, cx| {
-                    this.state.yolo_mode = !this.state.yolo_mode;
+                    let next = !this.state.yolo_mode;
+                    this.emit(UserEvent::SetToolApprovalYoloMode { enabled: next });
                     cx.notify();
                 })
             ))
