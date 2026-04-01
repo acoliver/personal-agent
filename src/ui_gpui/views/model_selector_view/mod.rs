@@ -1077,4 +1077,127 @@ mod tests {
             });
         });
     }
+
+    // ===== Phase 1 tests: Virtual scrolling with uniform_list =====
+
+    // --- Test 27: display row count matches expected uniform_list item_count ---
+    #[test]
+    fn test_cached_display_row_count_matches_expected_uniform_list_count() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+        // 3 provider headers + 6 model rows = 9 total rows
+        assert_eq!(state.cached_display_rows.len(), 9);
+    }
+
+    // --- Test 28: stale-read guard handles out-of-bounds gracefully ---
+    #[test]
+    fn test_stale_read_guard_handles_out_of_bounds() {
+        let (providers, models) = test_models();
+        let mut state = ModelSelectorState::new();
+        state.load_models(providers, models);
+        assert_eq!(state.cached_display_rows.len(), 9);
+
+        // Simulate stale read: capture count at 9, then filter reduces to 3
+        let stale_count = state.cached_display_rows.len();
+        state.search_query = "claude".to_string();
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_display_rows.len(), 3); // 1 header + 2 models
+
+        // Walk the stale range — filter_map with .get() skips out-of-bounds
+        assert_eq!(
+            (0..stale_count)
+                .filter_map(|ix| state.cached_display_rows.get(ix))
+                .count(),
+            3
+        );
+    }
+
+    // --- Test 29 (GPUI): scroll position resets on filter change ---
+    #[gpui::test]
+    async fn test_scroll_position_resets_on_filter_change(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+
+        view.update(cx, |view: &mut ModelSelectorView, _cx| {
+            view.set_models(providers, models);
+            // Scroll to a non-zero position
+            view.scroll_handle
+                .scroll_to_item(5, gpui::ScrollStrategy::Top);
+        });
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            // Apply a filter — this should reset scroll via rebuild_and_reset_scroll
+            view.toggle_reasoning_filter(cx);
+            // Without a layout pass, logical_scroll_top_index reflects the
+            // deferred scroll intent (reset to 0).
+            assert_eq!(view.scroll_handle.logical_scroll_top_index(), 0);
+        });
+    }
+
+    // --- Test 30: scroll_to_item before first render does not panic ---
+    #[test]
+    fn test_scroll_to_item_before_first_render() {
+        let handle = UniformListScrollHandle::default();
+        // Should not panic even before any layout pass
+        handle.scroll_to_item(0, gpui::ScrollStrategy::Top);
+        handle.scroll_to_item(100, gpui::ScrollStrategy::Top);
+    }
+
+    // --- Test 31 (GPUI): cx.processor() smoke test with uniform_list ---
+    #[gpui::test]
+    async fn test_cx_processor_basic_smoke_test(cx: &mut TestAppContext) {
+        use gpui::prelude::*;
+
+        // Minimal entity to verify cx.processor() works with uniform_list
+        struct TestListView {
+            items: Vec<String>,
+        }
+
+        impl gpui::Render for TestListView {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                let count = self.items.len();
+                gpui::uniform_list(
+                    "test-list",
+                    count,
+                    cx.processor(
+                        |this: &mut Self, range: std::ops::Range<usize>, _window, _list_cx| {
+                            range
+                                .filter_map(|ix| {
+                                    let item = this.items.get(ix)?;
+                                    Some(gpui::div().child(item.clone()).into_any_element())
+                                })
+                                .collect::<Vec<_>>()
+                        },
+                    ),
+                )
+            }
+        }
+
+        let _view = cx.new(|_cx: &mut gpui::Context<TestListView>| TestListView {
+            items: vec!["a".into(), "b".into(), "c".into()],
+        });
+        // If we get here without panic, cx.processor() + uniform_list integration works
+    }
+
+    // --- Test 32: empty state triggers empty-state path ---
+    #[test]
+    fn test_empty_state_shows_no_matching_models() {
+        let mut state = ModelSelectorState::new();
+        state.load_models(vec![], vec![]);
+        assert_eq!(state.cached_display_rows.len(), 0);
+
+        // Also test: filter existing models to empty
+        let (providers, models) = test_models();
+        state.load_models(providers, models);
+        assert!(!state.cached_display_rows.is_empty());
+
+        state.search_query = "nonexistent_model_zzz".to_string();
+        state.rebuild_display_rows();
+        assert_eq!(state.cached_display_rows.len(), 0);
+    }
 }

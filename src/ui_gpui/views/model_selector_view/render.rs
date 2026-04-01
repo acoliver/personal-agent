@@ -1,11 +1,12 @@
 //! Render implementation for `ModelSelectorView`.
 
-use super::{ModelInfo, ModelSelectorView};
+use super::{DisplayRow, ModelInfo, ModelSelectorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
-    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
-    Pixels, SharedString,
+    canvas, div, prelude::*, px, uniform_list, Bounds, ElementInputHandler, FocusHandle,
+    FontWeight, MouseButton, Pixels, SharedString,
 };
+use std::ops::Range;
 
 /// Layout height constants — used for both rendering and dropdown positioning.
 const TOP_BAR_H: f32 = 44.0;
@@ -271,9 +272,29 @@ impl ModelSelectorView {
             .child(div().w(px(50.0)).flex().justify_end().child("Out $"))
     }
 
-    /// Render a single model row
-    /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_model_row(model: &ModelInfo, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    /// Render a provider section header for `uniform_list` (28px uniform height).
+    fn render_provider_header_uniform(provider_name: &str) -> impl IntoElement {
+        div()
+            .id(SharedString::from(format!(
+                "provider-header-{provider_name}"
+            )))
+            .h(px(28.0))
+            .w_full()
+            .bg(Theme::bg_dark())
+            .px(px(12.0))
+            .flex()
+            .items_center()
+            .text_size(px(12.0))
+            .font_weight(FontWeight::BOLD)
+            .text_color(Theme::text_primary())
+            .child(provider_name.to_string())
+    }
+
+    /// Render a single model row for `uniform_list` (28px uniform height).
+    fn render_model_row_uniform(
+        model: &ModelInfo,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         let model_id = model.id.clone();
         let provider_id = model.provider_id.clone();
         let context = model.context_display();
@@ -339,76 +360,68 @@ impl ModelSelectorView {
             )
     }
 
-    /// Render a provider section header
-    /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_provider_header(provider_id: &str) -> impl IntoElement {
-        div()
-            .id(SharedString::from(format!("provider-header-{provider_id}")))
-            .h(px(24.0))
-            .w_full()
-            .bg(Theme::bg_dark())
-            .px(px(12.0))
-            .flex()
-            .items_center()
-            .text_size(px(12.0))
-            .font_weight(FontWeight::BOLD)
-            .text_color(Theme::text_primary())
-            .child(provider_id.to_string())
-    }
+    /// Render the model list using virtual scrolling via `uniform_list`.
+    ///
+    /// Returns `AnyElement` because `uniform_list` and `div` are different concrete
+    /// types, requiring type erasure at the branch point (empty vs populated).
+    fn render_model_list(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let row_count = self.state.cached_display_rows.len();
 
-    /// Render the model list (scrollable unless the provider dropdown is open).
-    /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_model_list(
-        filtered: &[&ModelInfo],
-        providers: &[&str],
-        dropdown_open: bool,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        let list = div()
-            .id("model-list")
-            .flex_1()
-            .w_full()
-            .bg(Theme::bg_darkest());
+        if row_count == 0 {
+            return div()
+                .id("model-list-empty")
+                .flex_1()
+                .w_full()
+                .bg(Theme::bg_darkest())
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(Theme::text_muted())
+                        .child("No matching models"),
+                )
+                .into_any_element();
+        }
 
-        // Disable scroll on the model list while the provider dropdown is open
-        // to prevent dual-scroll (both the dropdown and the list scrolling at once).
-        let list = if dropdown_open {
-            list.overflow_hidden()
-        } else {
-            list.overflow_y_scroll()
-        };
-
-        list.child(
-            div().flex().flex_col().children(
-                providers
-                    .iter()
-                    .filter_map(|provider| {
-                        let provider_models: Vec<_> = filtered
-                            .iter()
-                            .filter(|m| m.provider_id == *provider)
-                            .collect();
-
-                        if provider_models.is_empty() {
-                            return None;
+        // `cx.processor()` bridges `Context<Self>` into the `Fn(E, &mut Window, &mut App)`
+        // callback that `uniform_list` requires.  Inside the closure, `this` is
+        // `&mut ModelSelectorView` and `list_cx` is `&mut Context<Self>`, so
+        // `list_cx.listener()` works for click handlers.
+        //
+        // `list_cx` is intentionally named differently from the outer `cx` to avoid
+        // shadowing confusion — both are valid `Context<Self>` references, but they
+        // come from different call sites.
+        uniform_list(
+            "model-list",
+            row_count,
+            cx.processor(|this: &mut Self, range: Range<usize>, _window, list_cx| {
+                range
+                    .filter_map(|ix| {
+                        let row = this.state.cached_display_rows.get(ix)?;
+                        match row {
+                            DisplayRow::ProviderHeader(name) => {
+                                Some(Self::render_provider_header_uniform(name).into_any_element())
+                            }
+                            DisplayRow::Model(idx) => {
+                                // Stale-index guard: skip if models Vec was replaced
+                                // between item_count capture and callback execution.
+                                let model = this.state.models.get(*idx)?;
+                                Some(
+                                    Self::render_model_row_uniform(model, list_cx)
+                                        .into_any_element(),
+                                )
+                            }
                         }
-
-                        let provider_id = provider.to_string();
-                        Some(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .child(Self::render_provider_header(&provider_id))
-                                .children(
-                                    provider_models
-                                        .into_iter()
-                                        .map(|model| Self::render_model_row(model, cx))
-                                        .collect::<Vec<_>>(),
-                                ),
-                        )
                     })
-                    .collect::<Vec<_>>(),
-            ),
+                    .collect()
+            }),
         )
+        .track_scroll(&self.scroll_handle)
+        .flex_1()
+        .w_full()
+        .into_any_element()
     }
 
     /// Render the status bar
@@ -431,11 +444,9 @@ impl ModelSelectorView {
             ))
     }
 
-    /// Render the provider dropdown overlay
-    fn render_provider_dropdown(
-        providers: &[&str],
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
+    /// Render the provider dropdown overlay.
+    /// Reads from `cached_providers` — no parameters needed.
+    fn render_provider_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("provider-menu-overlay")
             .absolute()
@@ -468,10 +479,10 @@ impl ModelSelectorView {
                     )
                     .child("All"),
             )
-            // Provider options
-            .children(providers.iter().map(|p| {
-                let provider_id = p.to_string();
-                let provider_name = p.to_string();
+            // Provider options from cached state
+            .children(self.state.cached_providers.iter().map(|p| {
+                let provider_id = p.clone();
+                let provider_name = p.clone();
                 div()
                     .id(SharedString::from(format!("provider-{provider_id}")))
                     .px(px(8.0))
@@ -504,10 +515,6 @@ impl gpui::Render for ModelSelectorView {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let show_dropdown = self.state.show_provider_dropdown;
-
-        // Compute filtered data once per render cycle.
-        let filtered = self.state.filtered_models();
-        let providers = self.state.all_providers();
         let model_count = self.state.cached_filtered_model_count();
         let provider_count = self.state.cached_visible_provider_count();
 
@@ -543,7 +550,6 @@ impl gpui::Render for ModelSelectorView {
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
                     this.handle_key_down(event, cx);
-                    // All other printable chars fall through to EntityInputHandler
                 }),
             )
             // Top bar
@@ -554,28 +560,17 @@ impl gpui::Render for ModelSelectorView {
             .child(self.render_capability_toggles(cx))
             // Column header (20px)
             .child(Self::render_column_header())
-            // Model list (flex, scrollable — disabled when dropdown is open)
-            .child(Self::render_model_list(
-                &filtered,
-                &providers,
-                show_dropdown,
-                cx,
-            ))
+            // Model list (virtual scrolling via uniform_list)
+            .child(self.render_model_list(cx))
             // Status bar (24px)
             .child(Self::render_status_bar(model_count, provider_count));
 
         // Dropdown overlay — two *siblings*, NOT parent-child.
         //
         // The backdrop blocks clicks from reaching the content behind it and
-        // closes the dropdown on click.  Scroll events pass through the
-        // backdrop (via `block_mouse_except_scroll`), but the model list has
-        // `overflow_hidden` while the dropdown is open so nothing scrolls.
-        //
-        // The dropdown menu is a separate element rendered AFTER the backdrop,
-        // which gives it higher z-order.  Because it is NOT a child of the
-        // backdrop, GPUI's hit-tester finds the dropdown first for any pointer
-        // events in its bounds — including scroll — so `overflow_y_scroll` on
-        // the dropdown works correctly.
+        // closes the dropdown on click.  The dropdown menu is a separate element
+        // rendered AFTER the backdrop, giving it higher z-order so GPUI's
+        // hit-tester finds the dropdown first for any pointer events in its bounds.
         if show_dropdown {
             root.child(
                 div()
@@ -594,7 +589,7 @@ impl gpui::Render for ModelSelectorView {
                         }),
                     ),
             )
-            .child(Self::render_provider_dropdown(&providers, cx))
+            .child(self.render_provider_dropdown(cx))
         } else {
             root
         }

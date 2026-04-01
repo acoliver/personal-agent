@@ -1,6 +1,6 @@
-use gpui::{div, hsla, IntoElement, ParentElement};
+use gpui::{hsla, IntoElement};
 use personal_agent::ui_gpui::components::{
-    Divider, Dropdown, IconButton, List, Toggle, TopBar, TopBarButton,
+    Divider, Dropdown, IconButton, Toggle, TopBar, TopBarButton,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -58,41 +58,6 @@ fn icon_button_supports_builder_variants() {
         .tooltip("Add item")
         .on_click(|| {})
         .into_element();
-}
-
-#[test]
-fn list_tracks_selection_callbacks_and_default_rendering() {
-    let selected = Rc::new(RefCell::new(None));
-    let selected_for_callback = Rc::clone(&selected);
-
-    let list = List::new(vec!["Alpha".to_string(), "Beta".to_string()])
-        .selected(1)
-        .on_select(move |index| {
-            *selected_for_callback.borrow_mut() = Some(index);
-        });
-
-    assert_eq!(list.selected_index(), Some(1));
-    list.select_row(0);
-    assert_eq!(list.selected_index(), Some(0));
-    assert_eq!(*selected.borrow(), Some(0));
-
-    let _ = list.into_element();
-}
-
-#[test]
-fn list_supports_custom_item_rendering() {
-    let list = List::new(vec![1_u8, 2_u8, 3_u8])
-        .render_item(|item, is_selected| {
-            let label = if is_selected {
-                format!("selected-{item}")
-            } else {
-                format!("item-{item}")
-            };
-            div().child(label)
-        })
-        .selected(2);
-
-    let _ = list.into_element();
 }
 
 #[test]
