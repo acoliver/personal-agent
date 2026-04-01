@@ -150,10 +150,15 @@ impl ErrorPresenter {
                 |ctx| format!("{source}: {error}\n\nContext: {ctx}"),
             );
 
+            let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
+                ErrorSeverityTag::Stream => ErrorSeverityTag::Internal,
+                other => other,
+            };
+
             ErrorLogStore::global().push(|id| ErrorLogEntry {
                 id,
                 timestamp: chrono::Utc::now(),
-                severity: ErrorSeverityTag::Internal,
+                severity,
                 source: source.clone(),
                 message: message.clone(),
                 raw_detail: None,
@@ -214,10 +219,15 @@ impl ErrorPresenter {
     async fn handle_mcp_error(view_tx: &mut mpsc::Sender<ViewCommand>, event: McpEvent) {
         match event {
             McpEvent::StartFailed { id: _, name, error } => {
+                let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
+                    ErrorSeverityTag::Stream => ErrorSeverityTag::Mcp,
+                    other => other,
+                };
+
                 ErrorLogStore::global().push(|id| ErrorLogEntry {
                     id,
                     timestamp: chrono::Utc::now(),
-                    severity: ErrorSeverityTag::Mcp,
+                    severity,
                     source: format!("mcp/{name}"),
                     message: format!("Failed to start: {error}"),
                     raw_detail: None,
@@ -234,10 +244,15 @@ impl ErrorPresenter {
                     .await;
             }
             McpEvent::Unhealthy { id: _, name, error } => {
+                let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
+                    ErrorSeverityTag::Stream => ErrorSeverityTag::Mcp,
+                    other => other,
+                };
+
                 ErrorLogStore::global().push(|id| ErrorLogEntry {
                     id,
                     timestamp: chrono::Utc::now(),
-                    severity: ErrorSeverityTag::Mcp,
+                    severity,
                     source: format!("mcp/{name}"),
                     message: format!("Unhealthy: {error}"),
                     raw_detail: None,
@@ -540,7 +555,8 @@ mod tests {
             .iter()
             .find(|e| e.source == format!("mcp/{unique_name}"))
             .expect("entry with our unique mcp source should be present");
-        assert_eq!(our_entry.severity, ErrorSeverityTag::Mcp);
+        // "timeout" is classified as Connection by classify_error_severity
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Connection);
         assert!(our_entry.message.contains("Unhealthy"));
         assert!(our_entry.message.contains("timeout"));
         assert!(ErrorLogStore::global().unviewed_count() >= 1);
