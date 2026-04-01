@@ -241,11 +241,15 @@ async fn key_handling_closes_dropdown_navigates_and_backspaces_search(cx: &mut T
         .take_pending()
         .is_some()
     {}
+    let (user_tx, user_rx) = flume::bounded(16);
+    let (_view_tx, view_rx) = flume::bounded(16);
+    let bridge = std::sync::Arc::new(crate::ui_gpui::bridge::GpuiBridge::new(user_tx, view_rx));
     let view = cx.new(ModelSelectorView::new);
     let mut visual_cx = cx.add_empty_window().clone();
 
     visual_cx.update(|window, app| {
         view.update(app, |view: &mut ModelSelectorView, cx| {
+            view.set_bridge(std::sync::Arc::clone(&bridge));
             view.state.show_provider_dropdown = true;
             view.state.search_query = "claude".to_string();
 
@@ -291,7 +295,11 @@ async fn key_handling_closes_dropdown_navigates_and_backspaces_search(cx: &mut T
             assert_eq!(view.marked_text_range(window, cx), None);
         });
     });
-    // No SearchModels events emitted — filtering is local-only.
+    // Verify no events emitted — filtering is local-only (issue #30).
+    assert!(
+        user_rx.try_recv().is_err(),
+        "no events should be emitted for key/IME input — filtering is local"
+    );
 }
 
 fn test_models() -> (Vec<ProviderInfo>, Vec<ModelInfo>) {

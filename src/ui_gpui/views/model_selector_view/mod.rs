@@ -115,7 +115,7 @@ impl ProviderInfo {
 /// uses `.get(ix)` to guard against stale reads.
 #[derive(Clone, Debug)]
 pub(super) enum DisplayRow {
-    ProviderHeader(#[allow(dead_code)] String),
+    ProviderHeader(String),
     Model(usize),
 }
 

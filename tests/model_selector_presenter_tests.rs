@@ -19,6 +19,7 @@ struct MockModelsRegistryService {
 #[derive(Debug, Default)]
 struct MockRegistryState {
     refresh_calls: usize,
+    list_all_calls: usize,
     search_queries: Vec<String>,
     provider_queries: Vec<String>,
     api_url_queries: Vec<String>,
@@ -72,6 +73,7 @@ impl MockModelsRegistryService {
         let state = self.state.lock().expect("state poisoned");
         MockRegistryStateSnapshot {
             refresh_calls: state.refresh_calls,
+            list_all_calls: state.list_all_calls,
             search_queries: state.search_queries.clone(),
             provider_queries: state.provider_queries.clone(),
             api_url_queries: state.api_url_queries.clone(),
@@ -86,6 +88,7 @@ impl MockModelsRegistryService {
 #[derive(Debug, PartialEq, Eq)]
 struct MockRegistryStateSnapshot {
     refresh_calls: usize,
+    list_all_calls: usize,
     search_queries: Vec<String>,
     provider_queries: Vec<String>,
     api_url_queries: Vec<String>,
@@ -149,6 +152,7 @@ impl ModelsRegistryService for MockModelsRegistryService {
 
     async fn list_all(&self) -> ServiceResult<Vec<ModelInfo>> {
         let mut state = self.state.lock().expect("state poisoned");
+        state.list_all_calls += 1;
         if state.list_all_responses.is_empty() {
             Ok(vec![])
         } else {
@@ -304,6 +308,7 @@ async fn open_model_selector_uses_cached_models_when_available() {
         snapshot_handle.snapshot(),
         MockRegistryStateSnapshot {
             refresh_calls: 0,
+            list_all_calls: 1,
             search_queries: vec![],
             provider_queries: vec![],
             api_url_queries: vec![],
@@ -423,7 +428,9 @@ async fn provider_filter_events_are_ignored_by_presenter() {
 
 #[tokio::test]
 async fn provider_filter_none_also_ignored_by_presenter() {
-    let service: Arc<dyn ModelsRegistryService> = Arc::new(MockModelsRegistryService::new());
+    let service_impl = MockModelsRegistryService::new();
+    let snapshot_handle = service_impl.clone();
+    let service: Arc<dyn ModelsRegistryService> = Arc::new(service_impl);
     let (_presenter, event_tx, mut view_rx) = start_presenter(service).await;
 
     event_tx
@@ -433,6 +440,11 @@ async fn provider_filter_none_also_ignored_by_presenter() {
         .expect("send should succeed");
 
     expect_no_view_command(&mut view_rx).await;
+    assert_eq!(
+        snapshot_handle.snapshot().list_all_calls,
+        0,
+        "FilterModelsByProvider(None) should not trigger list_all round-trip"
+    );
 }
 
 #[tokio::test]
@@ -548,6 +560,7 @@ async fn unrelated_events_are_ignored() {
         snapshot_handle.snapshot(),
         MockRegistryStateSnapshot {
             refresh_calls: 0,
+            list_all_calls: 0,
             search_queries: vec![],
             provider_queries: vec![],
             api_url_queries: vec![],
