@@ -121,7 +121,10 @@ impl ErrorLogView {
         let source = entry.source.clone();
         let timestamp = entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string();
         let message = entry.message.clone();
-        let conv_title = entry.conversation_title.clone();
+        let conversation_label = entry
+            .conversation_title
+            .clone()
+            .or_else(|| entry.conversation_id.as_ref().map(ToString::to_string));
 
         // Error tint background: error color with reduced alpha
         let mut bg = Theme::error();
@@ -193,12 +196,15 @@ impl ErrorLogView {
                     .child(message),
             )
             // Conversation context (if available)
-            .when(conv_title.is_some(), |d| {
+            .when(conversation_label.is_some(), |d| {
                 d.child(
                     div()
                         .text_size(px(Theme::FONT_SIZE_XS))
                         .text_color(Theme::text_muted())
-                        .child(format!("conv: {}", conv_title.as_deref().unwrap_or(""))),
+                        .child(format!(
+                            "conv: {}",
+                            conversation_label.as_deref().unwrap_or("")
+                        )),
                 )
             })
             .into_any_element()

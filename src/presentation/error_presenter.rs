@@ -150,24 +150,24 @@ impl ErrorPresenter {
                 |ctx| format!("{source}: {error}\n\nContext: {ctx}"),
             );
 
-            let _ = view_tx
-                .send(ViewCommand::ShowError {
-                    title: format!("{source} Error"),
-                    message: message.clone(),
-                    severity: ErrorSeverity::Critical,
-                })
-                .await;
-
             ErrorLogStore::global().push(|id| ErrorLogEntry {
                 id,
                 timestamp: chrono::Utc::now(),
                 severity: ErrorSeverityTag::Internal,
                 source: source.clone(),
-                message,
+                message: message.clone(),
                 raw_detail: None,
                 conversation_title: None,
                 conversation_id: None,
             });
+
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: format!("{source} Error"),
+                    message,
+                    severity: ErrorSeverity::Critical,
+                })
+                .await;
         }
     }
 
@@ -182,18 +182,6 @@ impl ErrorPresenter {
             recoverable,
         } = event
         {
-            let _ = view_tx
-                .send(ViewCommand::ShowError {
-                    title: "Chat Error".to_string(),
-                    message: error.clone(),
-                    severity: if recoverable {
-                        ErrorSeverity::Warning
-                    } else {
-                        ErrorSeverity::Error
-                    },
-                })
-                .await;
-
             ErrorLogStore::global().push(|id| ErrorLogEntry {
                 id,
                 timestamp: chrono::Utc::now(),
@@ -204,6 +192,18 @@ impl ErrorPresenter {
                 conversation_title: None,
                 conversation_id: Some(conversation_id),
             });
+
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Chat Error".to_string(),
+                    message: error,
+                    severity: if recoverable {
+                        ErrorSeverity::Warning
+                    } else {
+                        ErrorSeverity::Error
+                    },
+                })
+                .await;
         }
     }
 
@@ -214,14 +214,6 @@ impl ErrorPresenter {
     async fn handle_mcp_error(view_tx: &mut mpsc::Sender<ViewCommand>, event: McpEvent) {
         match event {
             McpEvent::StartFailed { id: _, name, error } => {
-                let _ = view_tx
-                    .send(ViewCommand::ShowError {
-                        title: "MCP Server Error".to_string(),
-                        message: format!("Failed to start MCP server '{name}': {error}"),
-                        severity: ErrorSeverity::Error,
-                    })
-                    .await;
-
                 ErrorLogStore::global().push(|id| ErrorLogEntry {
                     id,
                     timestamp: chrono::Utc::now(),
@@ -232,16 +224,16 @@ impl ErrorPresenter {
                     conversation_title: None,
                     conversation_id: None,
                 });
-            }
-            McpEvent::Unhealthy { id: _, name, error } => {
+
                 let _ = view_tx
                     .send(ViewCommand::ShowError {
-                        title: "MCP Server Unhealthy".to_string(),
-                        message: format!("MCP server '{name}' is unhealthy: {error}"),
-                        severity: ErrorSeverity::Warning,
+                        title: "MCP Server Error".to_string(),
+                        message: format!("Failed to start MCP server '{name}': {error}"),
+                        severity: ErrorSeverity::Error,
                     })
                     .await;
-
+            }
+            McpEvent::Unhealthy { id: _, name, error } => {
                 ErrorLogStore::global().push(|id| ErrorLogEntry {
                     id,
                     timestamp: chrono::Utc::now(),
@@ -252,6 +244,14 @@ impl ErrorPresenter {
                     conversation_title: None,
                     conversation_id: None,
                 });
+
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "MCP Server Unhealthy".to_string(),
+                        message: format!("MCP server '{name}' is unhealthy: {error}"),
+                        severity: ErrorSeverity::Warning,
+                    })
+                    .await;
             }
             _ => {} // Ignore other MCP events
         }
@@ -286,6 +286,9 @@ mod tests {
     use super::*;
     use tokio::sync::{broadcast, mpsc};
     use uuid::Uuid;
+
+    static ERROR_LOG_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+        once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
 
     /// Test handle system error
     /// @plan PLAN-20250125-REFACTOR.P12
@@ -428,6 +431,7 @@ mod tests {
     #[tokio::test]
     async fn test_system_error_pushes_to_error_log() {
         use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
         ErrorLogStore::global().clear();
 
         let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
@@ -456,6 +460,7 @@ mod tests {
     #[tokio::test]
     async fn test_chat_stream_error_pushes_to_error_log() {
         use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
         ErrorLogStore::global().clear();
 
         let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
@@ -486,6 +491,7 @@ mod tests {
     #[tokio::test]
     async fn test_mcp_start_failed_pushes_to_error_log() {
         use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
         ErrorLogStore::global().clear();
 
         let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
@@ -515,6 +521,7 @@ mod tests {
     #[tokio::test]
     async fn test_mcp_unhealthy_pushes_to_error_log() {
         use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        let _guard = ERROR_LOG_TEST_LOCK.lock().await;
         ErrorLogStore::global().clear();
 
         let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);

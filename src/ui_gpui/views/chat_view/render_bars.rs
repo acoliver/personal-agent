@@ -261,18 +261,20 @@ impl ChatView {
             .flex()
             .items_center()
             .justify_center()
-            .cursor_pointer()
             .relative()
             // Preserve layout when no errors (like CSS visibility:hidden)
             .opacity(if unviewed == 0 { 0.0 } else { 1.0 })
             .when(unviewed > 0, |d| {
-                d.hover(|s| s.bg(Theme::bg_dark())).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_this, _, _window, _cx| {
-                        crate::ui_gpui::navigation_channel()
-                            .request_navigate(crate::presentation::view_command::ViewId::ErrorLog);
-                    }),
-                )
+                d.cursor_pointer()
+                    .hover(|s| s.bg(Theme::bg_dark()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            crate::ui_gpui::navigation_channel().request_navigate(
+                                crate::presentation::view_command::ViewId::ErrorLog,
+                            );
+                        }),
+                    )
             })
             .child(
                 div()
