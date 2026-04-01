@@ -15,6 +15,9 @@ pub use input_bar::InputBar;
 pub use message_bubble::{AssistantBubble, UserBubble};
 pub use tab_bar::{Tab, TabBar};
 
+// Issue 51: Error Log Viewer
+pub mod bug_icon;
+
 // Phase 02: Component Library additions
 pub mod divider;
 pub mod dropdown;

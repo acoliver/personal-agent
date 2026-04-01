@@ -16,6 +16,7 @@ use crate::events::{
     types::{ChatEvent, McpEvent, SystemEvent},
     AppEvent,
 };
+use crate::ui_gpui::error_log::{ErrorLogEntry, ErrorLogStore, ErrorSeverityTag};
 
 /// `ErrorPresenter` - handles error display and logging
 ///
@@ -152,10 +153,21 @@ impl ErrorPresenter {
             let _ = view_tx
                 .send(ViewCommand::ShowError {
                     title: format!("{source} Error"),
-                    message,
+                    message: message.clone(),
                     severity: ErrorSeverity::Critical,
                 })
                 .await;
+
+            ErrorLogStore::global().push(|id| ErrorLogEntry {
+                id,
+                timestamp: chrono::Utc::now(),
+                severity: ErrorSeverityTag::Internal,
+                source: source.clone(),
+                message,
+                raw_detail: None,
+                conversation_title: None,
+                conversation_id: None,
+            });
         }
     }
 
@@ -165,7 +177,7 @@ impl ErrorPresenter {
     /// @requirement REQ-027.4
     async fn handle_chat_error(view_tx: &mut mpsc::Sender<ViewCommand>, event: ChatEvent) {
         if let ChatEvent::StreamError {
-            conversation_id: _,
+            conversation_id,
             error,
             recoverable,
         } = event
@@ -181,6 +193,17 @@ impl ErrorPresenter {
                     },
                 })
                 .await;
+
+            ErrorLogStore::global().push(|id| ErrorLogEntry {
+                id,
+                timestamp: chrono::Utc::now(),
+                severity: crate::ui_gpui::error_log::classify_error_severity(&error),
+                source: "chat".to_string(),
+                message: error.clone(),
+                raw_detail: None,
+                conversation_title: None,
+                conversation_id: Some(conversation_id),
+            });
         }
     }
 
@@ -198,6 +221,17 @@ impl ErrorPresenter {
                         severity: ErrorSeverity::Error,
                     })
                     .await;
+
+                ErrorLogStore::global().push(|id| ErrorLogEntry {
+                    id,
+                    timestamp: chrono::Utc::now(),
+                    severity: ErrorSeverityTag::Mcp,
+                    source: format!("mcp/{name}"),
+                    message: format!("Failed to start: {error}"),
+                    raw_detail: None,
+                    conversation_title: None,
+                    conversation_id: None,
+                });
             }
             McpEvent::Unhealthy { id: _, name, error } => {
                 let _ = view_tx
@@ -207,6 +241,17 @@ impl ErrorPresenter {
                         severity: ErrorSeverity::Warning,
                     })
                     .await;
+
+                ErrorLogStore::global().push(|id| ErrorLogEntry {
+                    id,
+                    timestamp: chrono::Utc::now(),
+                    severity: ErrorSeverityTag::Mcp,
+                    source: format!("mcp/{name}"),
+                    message: format!("Unhealthy: {error}"),
+                    raw_detail: None,
+                    conversation_title: None,
+                    conversation_id: None,
+                });
             }
             _ => {} // Ignore other MCP events
         }
@@ -376,5 +421,121 @@ mod tests {
         } else {
             panic!("Should have received a ViewCommand");
         }
+    }
+
+    /// Verify system error pushes an Internal entry to `ErrorLogStore`
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_system_error_pushes_to_error_log() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_error = format!("Something broke {}", Uuid::new_v4());
+        let event = SystemEvent::Error {
+            source: "SysSource".to_string(),
+            error: unique_error.clone(),
+            context: None,
+        };
+
+        ErrorPresenter::handle_system_event(&mut view_tx.clone(), event).await;
+
+        // Locate by unique error text to be robust against parallel test execution.
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.message.contains(&unique_error))
+            .expect("entry with our unique error message should be present");
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Internal);
+        assert_eq!(our_entry.source, "SysSource");
+        assert!(ErrorLogStore::global().unviewed_count() >= 1);
+    }
+
+    /// Verify chat stream error pushes a Stream entry to `ErrorLogStore` with `conversation_id`
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_chat_stream_error_pushes_to_error_log() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let conv_id = Uuid::new_v4();
+        let event = ChatEvent::StreamError {
+            conversation_id: conv_id,
+            error: "LLM unavailable".to_string(),
+            recoverable: false,
+        };
+
+        ErrorPresenter::handle_chat_error(&mut view_tx.clone(), event).await;
+
+        // The global store is shared across test threads; assert the specific entry exists
+        // rather than asserting an exact count, to avoid flakiness from parallel tests.
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.conversation_id == Some(conv_id))
+            .expect("entry for our conversation_id should be present");
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Stream);
+        assert_eq!(our_entry.source, "chat");
+        assert_eq!(our_entry.message, "LLM unavailable");
+        assert!(ErrorLogStore::global().unviewed_count() >= 1);
+    }
+
+    /// Verify MCP `StartFailed` pushes a Mcp entry to `ErrorLogStore`
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_mcp_start_failed_pushes_to_error_log() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_name = format!("my-mcp-{}", Uuid::new_v4());
+        let event = McpEvent::StartFailed {
+            id: Uuid::new_v4(),
+            name: unique_name.clone(),
+            error: "port in use".to_string(),
+        };
+
+        ErrorPresenter::handle_mcp_error(&mut view_tx.clone(), event).await;
+
+        // Locate by unique source name to be robust against parallel test execution.
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.source == format!("mcp/{unique_name}"))
+            .expect("entry with our unique mcp source should be present");
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Mcp);
+        assert!(our_entry.message.contains("Failed to start"));
+        assert!(our_entry.message.contains("port in use"));
+        assert!(ErrorLogStore::global().unviewed_count() >= 1);
+    }
+
+    /// Verify MCP Unhealthy pushes a Mcp entry to `ErrorLogStore`
+    /// @plan PLAN-20250125-REFACTOR.P12
+    #[tokio::test]
+    async fn test_mcp_unhealthy_pushes_to_error_log() {
+        use crate::ui_gpui::error_log::{ErrorLogStore, ErrorSeverityTag};
+        ErrorLogStore::global().clear();
+
+        let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+        let unique_name = format!("my-mcp-{}", Uuid::new_v4());
+        let event = McpEvent::Unhealthy {
+            id: Uuid::new_v4(),
+            name: unique_name.clone(),
+            error: "timeout".to_string(),
+        };
+
+        ErrorPresenter::handle_mcp_error(&mut view_tx.clone(), event).await;
+
+        // Locate by unique source name to be robust against parallel test execution.
+        let entries = ErrorLogStore::global().entries();
+        let our_entry = entries
+            .iter()
+            .find(|e| e.source == format!("mcp/{unique_name}"))
+            .expect("entry with our unique mcp source should be present");
+        assert_eq!(our_entry.severity, ErrorSeverityTag::Mcp);
+        assert!(our_entry.message.contains("Unhealthy"));
+        assert!(our_entry.message.contains("timeout"));
+        assert!(ErrorLogStore::global().unviewed_count() >= 1);
     }
 }
