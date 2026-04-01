@@ -444,6 +444,32 @@ impl ModelSelectorView {
             ))
     }
 
+    /// Render the click-dismiss backdrop for the dropdown overlay.
+    ///
+    /// Starts at `TOP_BAR_H` so the top bar (Cancel) remains accessible.
+    fn render_dropdown_backdrop(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("provider-menu-backdrop")
+            .absolute()
+            .top(px(TOP_BAR_H))
+            .left(px(0.0))
+            .right(px(0.0))
+            .bottom(px(0.0))
+            .block_mouse_except_scroll()
+            .on_scroll_wheel(
+                cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.state.show_provider_dropdown = false;
+                    cx.notify();
+                }),
+            )
+    }
+
     /// Render the provider dropdown overlay.
     /// Reads from `cached_providers` — no parameters needed.
     fn render_provider_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -581,38 +607,12 @@ impl gpui::Render for ModelSelectorView {
             // Status bar (24px)
             .child(Self::render_status_bar(model_count, provider_count));
 
-        // Dropdown overlay — two *siblings*, NOT parent-child.
-        //
-        // The backdrop blocks clicks from reaching the content behind it and
-        // closes the dropdown on click.  top(TOP_BAR_H) leaves the top bar
-        // accessible so Cancel remains clickable.  The dropdown menu is a
-        // separate element rendered AFTER the backdrop, giving it higher
-        // z-order so GPUI's hit-tester finds the dropdown first for any
-        // pointer events in its bounds.
+        // Dropdown overlay — backdrop and menu are *siblings*, NOT parent-child.
+        // Later sibling renders on top, so the dropdown receives pointer events
+        // in its bounds while the backdrop catches everything else.
         if show_dropdown {
-            root.child(
-                div()
-                    .id("provider-menu-backdrop")
-                    .absolute()
-                    .top(px(TOP_BAR_H))
-                    .left(px(0.0))
-                    .right(px(0.0))
-                    .bottom(px(0.0))
-                    .block_mouse_except_scroll()
-                    .on_scroll_wheel(cx.listener(
-                        |_this, _event: &ScrollWheelEvent, _window, cx| {
-                            cx.stop_propagation();
-                        },
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.show_provider_dropdown = false;
-                            cx.notify();
-                        }),
-                    ),
-            )
-            .child(self.render_provider_dropdown(cx))
+            root.child(Self::render_dropdown_backdrop(cx))
+                .child(self.render_provider_dropdown(cx))
         } else {
             root
         }
