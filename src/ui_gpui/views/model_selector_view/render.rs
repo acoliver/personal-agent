@@ -1,17 +1,22 @@
 //! Render implementation for `ModelSelectorView`.
 
-use super::{ModelInfo, ModelSelectorView};
+use super::{DisplayRow, ModelInfo, ModelSelectorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
-    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
-    Pixels, ScrollWheelEvent, SharedString,
+    canvas, div, prelude::*, px, uniform_list, Bounds, ElementInputHandler, FocusHandle,
+    FontWeight, MouseButton, Pixels, ScrollWheelEvent, SharedString,
 };
+use std::ops::Range;
+
+/// Layout height constants — used for both rendering and dropdown positioning.
+const TOP_BAR_H: f32 = 44.0;
+const FILTER_BAR_H: f32 = 36.0;
 
 impl ModelSelectorView {
     fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("top-bar")
-            .h(px(44.0))
+            .h(px(TOP_BAR_H))
             .w_full()
             .bg(Theme::bg_darker())
             .border_b_1()
@@ -68,7 +73,7 @@ impl ModelSelectorView {
 
         div()
             .id("filter-bar")
-            .h(px(36.0))
+            .h(px(FILTER_BAR_H))
             .w_full()
             .bg(Theme::bg_darkest())
             .px(px(12.0))
@@ -267,9 +272,29 @@ impl ModelSelectorView {
             .child(div().w(px(50.0)).flex().justify_end().child("Out $"))
     }
 
-    /// Render a single model row
-    /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_model_row(model: &ModelInfo, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    /// Render a provider section header for `uniform_list` (28px uniform height).
+    fn render_provider_header_uniform(provider_name: &str) -> impl IntoElement {
+        div()
+            .id(SharedString::from(format!(
+                "provider-header-{provider_name}"
+            )))
+            .h(px(28.0))
+            .w_full()
+            .bg(Theme::bg_dark())
+            .px(px(12.0))
+            .flex()
+            .items_center()
+            .text_size(px(12.0))
+            .font_weight(FontWeight::BOLD)
+            .text_color(Theme::text_primary())
+            .child(provider_name.to_string())
+    }
+
+    /// Render a single model row for `uniform_list` (28px uniform height).
+    fn render_model_row_uniform(
+        model: &ModelInfo,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         let model_id = model.id.clone();
         let provider_id = model.provider_id.clone();
         let context = model.context_display();
@@ -335,76 +360,73 @@ impl ModelSelectorView {
             )
     }
 
-    /// Render a provider section header
-    /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_provider_header(provider_id: &str) -> impl IntoElement {
-        div()
-            .id(SharedString::from(format!("provider-header-{provider_id}")))
-            .h(px(24.0))
-            .w_full()
-            .bg(Theme::bg_dark())
-            .px(px(12.0))
-            .flex()
-            .items_center()
-            .text_size(px(12.0))
-            .font_weight(FontWeight::BOLD)
-            .text_color(Theme::text_primary())
-            .child(provider_id.to_string())
-    }
+    /// Render the model list using virtual scrolling via `uniform_list`.
+    ///
+    /// Returns `AnyElement` because `uniform_list` and `div` are different concrete
+    /// types, requiring type erasure at the branch point (empty vs populated).
+    fn render_model_list(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let row_count = self.state.cached_display_rows.len();
 
-    /// Render the model list (scrollable)
-    /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_model_list(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let filtered = self.state.filtered_models();
-        let providers = self.state.all_providers();
+        if row_count == 0 {
+            return div()
+                .id("model-list-empty")
+                .flex_1()
+                .w_full()
+                .bg(Theme::bg_darkest())
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(Theme::text_muted())
+                        .child("No matching models"),
+                )
+                .into_any_element();
+        }
 
-        div()
-            .id("model-list")
-            .flex_1()
-            .w_full()
-            .bg(Theme::bg_darkest())
-            .overflow_y_scroll()
-            .child(
-                div().flex().flex_col().children(
-                    providers
-                        .iter()
-                        .filter_map(|provider| {
-                            let provider_models: Vec<_> = filtered
-                                .iter()
-                                .filter(|m| m.provider_id == *provider)
-                                .collect();
-
-                            if provider_models.is_empty() {
-                                return None;
+        // `cx.processor()` bridges `Context<Self>` into the `Fn(E, &mut Window, &mut App)`
+        // callback that `uniform_list` requires.  Inside the closure, `this` is
+        // `&mut ModelSelectorView` and `list_cx` is `&mut Context<Self>`, so
+        // `list_cx.listener()` works for click handlers.
+        //
+        // `list_cx` is intentionally named differently from the outer `cx` to avoid
+        // shadowing confusion — both are valid `Context<Self>` references, but they
+        // come from different call sites.
+        uniform_list(
+            "model-list",
+            row_count,
+            cx.processor(|this: &mut Self, range: Range<usize>, _window, list_cx| {
+                range
+                    .filter_map(|ix| {
+                        let row = this.state.cached_display_rows.get(ix)?;
+                        match row {
+                            DisplayRow::ProviderHeader(name) => {
+                                Some(Self::render_provider_header_uniform(name).into_any_element())
                             }
-
-                            let provider_id = provider.to_string();
-                            Some(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(Self::render_provider_header(&provider_id))
-                                    .children(
-                                        provider_models
-                                            .into_iter()
-                                            .map(|model| Self::render_model_row(model, cx))
-                                            .collect::<Vec<_>>(),
-                                    ),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-            )
+                            DisplayRow::Model(idx) => {
+                                // Stale-index guard: skip if models Vec was replaced
+                                // between item_count capture and callback execution.
+                                let model = this.state.models.get(*idx)?;
+                                Some(
+                                    Self::render_model_row_uniform(model, list_cx)
+                                        .into_any_element(),
+                                )
+                            }
+                        }
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(&self.scroll_handle)
+        .flex_1()
+        .w_full()
+        .into_any_element()
     }
 
     /// Render the status bar
     /// @plan PLAN-20250130-GPUIREDUX.P07
-    fn render_status_bar(&self) -> impl IntoElement {
-        let filtered = self.state.filtered_models();
-        let providers = self.state.all_providers();
-        let model_count = filtered.len();
-        let provider_count = providers.len();
-
+    fn render_status_bar(model_count: usize, provider_count: usize) -> impl IntoElement {
         div()
             .id("status-bar")
             .h(px(24.0))
@@ -422,19 +444,49 @@ impl ModelSelectorView {
             ))
     }
 
-    /// Render the provider dropdown overlay
-    fn render_provider_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let providers = self.state.all_providers();
+    /// Render the click-dismiss backdrop for the dropdown overlay.
+    ///
+    /// Starts at `TOP_BAR_H` so the top bar (Cancel) remains accessible.
+    fn render_dropdown_backdrop(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("provider-menu-backdrop")
+            .absolute()
+            .top(px(TOP_BAR_H))
+            .left(px(0.0))
+            .right(px(0.0))
+            .bottom(px(0.0))
+            .block_mouse_except_scroll()
+            .on_scroll_wheel(
+                cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.state.show_provider_dropdown = false;
+                    cx.notify();
+                }),
+            )
+    }
 
+    /// Render the provider dropdown overlay.
+    /// Reads from `cached_providers` — no parameters needed.
+    fn render_provider_dropdown(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("provider-menu-overlay")
             .absolute()
-            .top(px(80.0 + 28.0))
+            .top(px(TOP_BAR_H + FILTER_BAR_H))
             .right(px(12.0))
             .min_w(px(180.0))
             .max_w(px(320.0))
             .max_h(px(300.0))
             .overflow_y_scroll()
+            .on_scroll_wheel(
+                cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
+                    cx.stop_propagation();
+                }),
+            )
             .bg(Theme::bg_dark())
             .border_1()
             .border_color(Theme::accent())
@@ -458,10 +510,10 @@ impl ModelSelectorView {
                     )
                     .child("All"),
             )
-            // Provider options
-            .children(providers.into_iter().map(|p| {
-                let provider_id = p.to_string();
-                let provider_name = p.to_string();
+            // Provider options from cached state
+            .children(self.state.cached_providers.iter().map(|p| {
+                let provider_id = p.clone();
+                let provider_name = p.clone();
                 div()
                     .id(SharedString::from(format!("provider-{provider_id}")))
                     .px(px(8.0))
@@ -494,6 +546,8 @@ impl gpui::Render for ModelSelectorView {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let show_dropdown = self.state.show_provider_dropdown;
+        let model_count = self.state.cached_filtered_model_count();
+        let provider_count = self.state.cached_visible_provider_count();
 
         let root = div()
             .id("model-selector-view")
@@ -527,47 +581,38 @@ impl gpui::Render for ModelSelectorView {
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
                     this.handle_key_down(event, cx);
-                    // All other printable chars fall through to EntityInputHandler
                 }),
             )
-            // Top bar (44px)
+            // Top bar
             .child(Self::render_top_bar(cx))
-            // Filter bar (36px)
+            // Filter bar
             .child(self.render_filter_bar(cx))
             // Capability toggles (28px)
             .child(self.render_capability_toggles(cx))
             // Column header (20px)
             .child(Self::render_column_header())
-            // Model list (flex, scrollable)
-            .child(self.render_model_list(cx))
-            // Status bar (24px)
-            .child(self.render_status_bar());
-
-        // Dropdown overlay isolation: when open, capture background clicks and close only.
-        if show_dropdown {
-            root.child(
+            // Model list — hidden when dropdown open to prevent scroll bleed.
+            // uniform_list hardcodes overflow.y=Scroll, so the only way to stop
+            // scroll events from reaching it is to not render it at all.
+            .child(if show_dropdown {
                 div()
-                    .id("provider-menu-backdrop")
-                    .absolute()
-                    .top(px(0.0))
-                    .left(px(0.0))
-                    .right(px(0.0))
-                    .bottom(px(0.0))
-                    .block_mouse_except_scroll()
-                    .on_scroll_wheel(cx.listener(
-                        |_this, _event: &ScrollWheelEvent, _window, cx| {
-                            cx.stop_propagation();
-                        },
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.show_provider_dropdown = false;
-                            cx.notify();
-                        }),
-                    )
-                    .child(self.render_provider_dropdown(cx)),
-            )
+                    .id("model-list-hidden")
+                    .flex_1()
+                    .w_full()
+                    .bg(Theme::bg_darkest())
+                    .into_any_element()
+            } else {
+                self.render_model_list(cx)
+            })
+            // Status bar (24px)
+            .child(Self::render_status_bar(model_count, provider_count));
+
+        // Dropdown overlay — backdrop and menu are *siblings*, NOT parent-child.
+        // Later sibling renders on top, so the dropdown receives pointer events
+        // in its bounds while the backdrop catches everything else.
+        if show_dropdown {
+            root.child(Self::render_dropdown_backdrop(cx))
+                .child(self.render_provider_dropdown(cx))
         } else {
             root
         }

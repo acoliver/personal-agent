@@ -6,8 +6,12 @@
 mod command;
 mod ime;
 mod render;
+#[cfg(test)]
+mod tests;
+#[cfg(test)]
+mod tests_scale;
 
-use gpui::FocusHandle;
+use gpui::{FocusHandle, UniformListScrollHandle};
 use std::sync::Arc;
 
 use crate::events::types::UserEvent;
@@ -104,10 +108,32 @@ impl ProviderInfo {
     }
 }
 
+/// Row in the pre-computed display list for the model selector.
+///
+/// `Model(usize)` indices are valid only for the current `cached_display_rows`.
+/// They are rebuilt atomically in `rebuild_display_rows()`. The render callback
+/// uses `.get(ix)` to guard against stale reads.
+#[derive(Clone, Debug)]
+pub(super) enum DisplayRow {
+    ProviderHeader(String),
+    Model(usize),
+}
+
+/// Pre-lowercased wrapper for fast case-insensitive search.
+/// Invariant: `searchable_models[i]` corresponds to `models[i]`.
+/// Both are built atomically in `load_models()`.
+#[derive(Clone, Debug)]
+pub(super) struct SearchableModelInfo {
+    pub info: ModelInfo,
+    pub id_lower: String,
+    pub provider_lower: String,
+}
+
 /// Model Selector view state
 /// @plan PLAN-20250130-GPUIREDUX.P07
 #[derive(Clone, Default)]
 pub struct ModelSelectorState {
+    // NOTE: unused for rendering — see cached_providers
     pub providers: Vec<ProviderInfo>,
     pub models: Vec<ModelInfo>,
     pub search_query: String,
@@ -115,11 +141,11 @@ pub struct ModelSelectorState {
     pub filter_reasoning: bool,
     pub filter_vision: bool,
     pub show_provider_dropdown: bool,
-
-    /// Last search query emitted to presenter, used to avoid redundant events.
-    pub last_emitted_search_query: String,
-    /// Last provider filter emitted to presenter, used to avoid redundant events.
-    pub last_emitted_provider: Option<String>,
+    pub(super) searchable_models: Vec<SearchableModelInfo>,
+    pub(super) cached_providers: Vec<String>,
+    pub(super) cached_display_rows: Vec<DisplayRow>,
+    pub(super) cached_model_count: usize,
+    pub(super) cached_provider_count: usize,
 }
 
 impl ModelSelectorState {
@@ -128,46 +154,154 @@ impl ModelSelectorState {
         Self::default()
     }
 
-    /// Get filtered models based on current filters
+    /// Load models and providers, rebuilding all cached display state.
+    pub fn load_models(&mut self, providers: Vec<ProviderInfo>, models: Vec<ModelInfo>) {
+        self.providers = providers;
+        self.models.clone_from(&models);
+
+        // Build searchable models with pre-lowered fields
+        self.searchable_models = models
+            .into_iter()
+            .map(|m| {
+                let id_lower = m.id.to_lowercase();
+                let provider_lower = m.provider_id.to_lowercase();
+                SearchableModelInfo {
+                    info: m,
+                    id_lower,
+                    provider_lower,
+                }
+            })
+            .collect();
+
+        // Build sorted, deduped provider list from model data
+        let mut provider_ids: Vec<String> = self
+            .searchable_models
+            .iter()
+            .map(|s| s.info.provider_id.clone())
+            .collect();
+        provider_ids.sort_unstable();
+        provider_ids.dedup();
+        self.cached_providers = provider_ids;
+
+        // Clear selected_provider if it's no longer valid
+        if let Some(ref provider) = self.selected_provider {
+            if !self.cached_providers.contains(provider) {
+                self.selected_provider = None;
+            }
+        }
+
+        self.rebuild_display_rows();
+    }
+
+    /// Rebuild the cached display rows from current filters.
+    ///
+    /// Uses a single pass through models to bucket by provider (O(M + P)),
+    /// avoiding the O(P × M) cost of iterating all models per provider.
+    pub fn rebuild_display_rows(&mut self) {
+        let query_lower = self.search_query.to_lowercase();
+
+        // Single pass: bucket matching model indices by provider.
+        // Key: provider index in cached_providers. Value: sorted model indices.
+        let provider_count = self.cached_providers.len();
+        let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); provider_count];
+
+        // Build a provider-name → bucket-index map for O(1) lookup
+        let provider_idx: std::collections::HashMap<&str, usize> = self
+            .cached_providers
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.as_str(), i))
+            .collect();
+
+        for (model_ix, s) in self.searchable_models.iter().enumerate() {
+            // Provider filter
+            if let Some(ref selected) = self.selected_provider {
+                if &s.info.provider_id != selected {
+                    continue;
+                }
+            }
+            // Search filter
+            if !query_lower.is_empty()
+                && !s.id_lower.contains(&query_lower)
+                && !s.provider_lower.contains(&query_lower)
+            {
+                continue;
+            }
+            // Capability filters
+            if self.filter_reasoning && !s.info.reasoning {
+                continue;
+            }
+            if self.filter_vision && !s.info.vision {
+                continue;
+            }
+
+            if let Some(&bucket_ix) = provider_idx.get(s.info.provider_id.as_str()) {
+                buckets[bucket_ix].push(model_ix);
+            }
+        }
+
+        // Pre-allocate: worst case is all models + all providers
+        let total_models: usize = buckets.iter().map(Vec::len).sum();
+        let non_empty = buckets.iter().filter(|b| !b.is_empty()).count();
+        self.cached_display_rows.clear();
+        self.cached_display_rows.reserve(total_models + non_empty);
+
+        let mut model_count = 0;
+        let mut header_count = 0;
+
+        for (prov_ix, mut bucket) in buckets.into_iter().enumerate() {
+            if bucket.is_empty() {
+                continue;
+            }
+            // Sort models within provider by model ID (alphabetical)
+            bucket.sort_by(|&a, &b| {
+                self.searchable_models[a]
+                    .info
+                    .id
+                    .cmp(&self.searchable_models[b].info.id)
+            });
+
+            self.cached_display_rows.push(DisplayRow::ProviderHeader(
+                self.cached_providers[prov_ix].clone(),
+            ));
+            header_count += 1;
+
+            for idx in bucket {
+                self.cached_display_rows.push(DisplayRow::Model(idx));
+                model_count += 1;
+            }
+        }
+
+        self.cached_model_count = model_count;
+        self.cached_provider_count = header_count;
+    }
+
+    /// Get filtered models based on current filters (delegates to cache).
     #[must_use]
     pub fn filtered_models(&self) -> Vec<&ModelInfo> {
-        self.models
+        self.cached_display_rows
             .iter()
-            .filter(|m| {
-                // Provider filter
-                if let Some(ref provider) = self.selected_provider {
-                    if &m.provider_id != provider {
-                        return false;
-                    }
-                }
-                // Search filter
-                if !self.search_query.is_empty() {
-                    let query = self.search_query.to_lowercase();
-                    if !m.id.to_lowercase().contains(&query)
-                        && !m.provider_id.to_lowercase().contains(&query)
-                    {
-                        return false;
-                    }
-                }
-                // Capability filters
-                if self.filter_reasoning && !m.reasoning {
-                    return false;
-                }
-                if self.filter_vision && !m.vision {
-                    return false;
-                }
-                true
+            .filter_map(|row| match row {
+                DisplayRow::Model(idx) => self.models.get(*idx),
+                DisplayRow::ProviderHeader(_) => None,
             })
             .collect()
     }
 
-    /// Get unique providers from all models (not just filtered)
+    /// Get unique providers from all models (delegates to cache).
     #[must_use]
     pub fn all_providers(&self) -> Vec<&str> {
-        let mut providers: Vec<&str> = self.models.iter().map(|m| m.provider_id.as_str()).collect();
-        providers.sort_unstable();
-        providers.dedup();
-        providers
+        self.cached_providers.iter().map(String::as_str).collect()
+    }
+
+    /// Number of models in the current filtered view.
+    pub(super) const fn cached_filtered_model_count(&self) -> usize {
+        self.cached_model_count
+    }
+
+    /// Number of providers visible in the current filtered view.
+    pub(super) const fn cached_visible_provider_count(&self) -> usize {
+        self.cached_provider_count
     }
 }
 
@@ -178,6 +312,7 @@ pub struct ModelSelectorView {
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) focus_handle: FocusHandle,
     pub(super) ime_marked_byte_count: usize,
+    pub(super) scroll_handle: UniformListScrollHandle,
 }
 
 impl ModelSelectorView {
@@ -187,6 +322,7 @@ impl ModelSelectorView {
             bridge: None,
             focus_handle: cx.focus_handle(),
             ime_marked_byte_count: 0,
+            scroll_handle: UniformListScrollHandle::default(),
         }
     }
 
@@ -198,8 +334,9 @@ impl ModelSelectorView {
 
     /// Set models from presenter
     pub fn set_models(&mut self, providers: Vec<ProviderInfo>, models: Vec<ModelInfo>) {
-        self.state.providers = providers;
-        self.state.models = models;
+        self.state.load_models(providers, models);
+        self.scroll_handle
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
     }
 
     /// Set search query programmatically (for testing)
@@ -210,13 +347,6 @@ impl ModelSelectorView {
     /// Set selected provider programmatically (for testing)
     pub fn set_selected_provider(&mut self, provider: Option<String>) {
         self.state.selected_provider = provider;
-    }
-
-    /// Emit `SearchModels` event for current query.
-    pub fn emit_search_models(&self) {
-        self.emit(&UserEvent::SearchModels {
-            query: self.state.search_query.clone(),
-        });
     }
 
     /// Get current state for testing
@@ -235,353 +365,5 @@ impl ModelSelectorView {
         } else {
             tracing::warn!("No bridge set - event not emitted: {:?}", event);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::future_not_send)]
-
-    use super::*;
-    use crate::presentation::view_command::ViewCommand;
-    use flume;
-    use gpui::{AppContext, EntityInputHandler, TestAppContext};
-
-    fn remote_model(
-        provider_id: &str,
-        model_id: &str,
-        context_length: Option<u32>,
-    ) -> crate::presentation::view_command::ModelInfo {
-        crate::presentation::view_command::ModelInfo {
-            provider_id: provider_id.to_string(),
-            model_id: model_id.to_string(),
-            name: model_id.to_string(),
-            context_length,
-        }
-    }
-
-    #[test]
-    fn model_info_formatting_and_state_filters_work() {
-        let free = ModelInfo::new("claude", "anthropic")
-            .with_context(200_000)
-            .with_capabilities(true, false)
-            .with_costs(0.0, 3.5);
-        assert_eq!(free.context_display(), "200K");
-        assert_eq!(ModelInfo::cost_display(0.0), "free");
-        assert_eq!(ModelInfo::cost_display(3.0), "$3");
-        assert_eq!(ModelInfo::cost_display(0.25), "$0.25");
-
-        let vision = ModelInfo::new("gpt-4o", "openai")
-            .with_context(1_000_000)
-            .with_capabilities(false, true);
-        assert_eq!(vision.context_display(), "1M");
-
-        let mut state = ModelSelectorState::new();
-        state.models = vec![free, vision];
-        assert_eq!(state.filtered_models().len(), 2);
-
-        state.selected_provider = Some("anthropic".to_string());
-        let filtered = state.filtered_models();
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].provider_id, "anthropic");
-
-        state.selected_provider = None;
-        state.search_query = "4o".to_string();
-        let filtered = state.filtered_models();
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].id, "gpt-4o");
-
-        state.search_query.clear();
-        state.filter_reasoning = true;
-        let filtered = state.filtered_models();
-        assert_eq!(filtered.len(), 1);
-        assert!(filtered[0].reasoning);
-
-        state.filter_reasoning = false;
-        state.filter_vision = true;
-        let filtered = state.filtered_models();
-        assert_eq!(filtered.len(), 1);
-        assert!(filtered[0].vision);
-
-        assert_eq!(state.all_providers(), vec!["anthropic", "openai"]);
-    }
-
-    #[gpui::test]
-    async fn handle_command_maps_models_and_filter_events_emit_only_on_changes(
-        cx: &mut TestAppContext,
-    ) {
-        let (user_tx, user_rx) = flume::bounded(16);
-        let (_view_tx, view_rx) = flume::bounded(16);
-        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
-        let view = cx.new(ModelSelectorView::new);
-
-        view.update(cx, |view: &mut ModelSelectorView, cx| {
-            view.set_bridge(Arc::clone(&bridge));
-            view.handle_command(
-                ViewCommand::ModelSearchResults {
-                    models: vec![
-                        remote_model("anthropic", "claude-3-5-sonnet", Some(200_000)),
-                        remote_model("openai", "gpt-4o", Some(128_000)),
-                        remote_model("anthropic", "claude-haiku", None),
-                    ],
-                },
-                cx,
-            );
-
-            assert_eq!(view.state.models.len(), 3);
-            assert_eq!(view.state.providers.len(), 2);
-            assert_eq!(view.state.models[0].id, "claude-3-5-sonnet");
-            assert_eq!(view.state.models[0].context, 200_000);
-            assert_eq!(view.state.models[2].context, 128_000);
-
-            view.state.search_query = "claude".to_string();
-            view.emit_filter_events_if_changed();
-            view.emit_filter_events_if_changed();
-
-            view.state.selected_provider = Some("anthropic".to_string());
-            view.emit_filter_events_if_changed();
-            view.emit_filter_events_if_changed();
-
-            view.request_models();
-            view.emit_search_models();
-        });
-
-        assert_eq!(
-            user_rx.recv().expect("search event"),
-            UserEvent::SearchModels {
-                query: "claude".to_string(),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("provider filter event"),
-            UserEvent::FilterModelsByProvider {
-                provider_id: Some("anthropic".to_string()),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("open selector event"),
-            UserEvent::OpenModelSelector
-        );
-        assert_eq!(
-            user_rx.recv().expect("manual search emit"),
-            UserEvent::SearchModels {
-                query: "claude".to_string(),
-            }
-        );
-        assert!(
-            user_rx.try_recv().is_err(),
-            "duplicate filter events should not be emitted"
-        );
-    }
-
-    #[gpui::test]
-    async fn input_handler_mutates_search_query_and_marks_composition(cx: &mut TestAppContext) {
-        let view = cx.new(ModelSelectorView::new);
-        let mut visual_cx = cx.add_empty_window().clone();
-
-        visual_cx.update(|window, app| {
-            view.update(app, |view: &mut ModelSelectorView, cx| {
-                view.replace_text_in_range(None, "cla", window, cx);
-                assert_eq!(view.state.search_query, "cla");
-                assert_eq!(
-                    view.text_for_range(0..2, &mut None, window, cx),
-                    Some("cl".to_string())
-                );
-
-                view.replace_and_mark_text_in_range(None, "u", None, window, cx);
-                assert_eq!(view.state.search_query, "clau");
-                assert!(view.marked_text_range(window, cx).is_some());
-
-                view.replace_text_in_range(None, "de", window, cx);
-                assert_eq!(view.state.search_query, "clade");
-                assert_eq!(view.marked_text_range(window, cx), None);
-
-                let selected = view
-                    .selected_text_range(false, window, cx)
-                    .expect("selection range");
-                let len = "clade".encode_utf16().count();
-                assert_eq!(selected.range, len..len);
-
-                view.unmark_text(window, cx);
-                assert_eq!(view.marked_text_range(window, cx), None);
-            });
-        });
-    }
-
-    #[gpui::test]
-    async fn provider_dropdown_selection_and_model_emission_follow_real_filter_rules(
-        cx: &mut TestAppContext,
-    ) {
-        let (user_tx, user_rx) = flume::bounded(16);
-        let (_view_tx, view_rx) = flume::bounded(16);
-        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
-        let view = cx.new(ModelSelectorView::new);
-
-        view.update(cx, |view: &mut ModelSelectorView, cx| {
-            view.set_bridge(Arc::clone(&bridge));
-            view.set_models(
-                vec![
-                    ProviderInfo::new("anthropic", "anthropic"),
-                    ProviderInfo::new("openai", "openai"),
-                ],
-                vec![
-                    ModelInfo::new("claude-3-7-sonnet", "anthropic")
-                        .with_context(200_000)
-                        .with_capabilities(true, false),
-                    ModelInfo::new("gpt-4o", "openai")
-                        .with_context(128_000)
-                        .with_capabilities(false, true),
-                ],
-            );
-
-            view.toggle_provider_dropdown(cx);
-            assert!(view.get_state().show_provider_dropdown);
-
-            view.select_provider_filter("anthropic".to_string(), cx);
-            assert_eq!(
-                view.get_state().selected_provider.as_deref(),
-                Some("anthropic")
-            );
-            assert!(!view.get_state().show_provider_dropdown);
-            assert_eq!(view.get_state().filtered_models().len(), 1);
-            assert_eq!(
-                view.get_state().filtered_models()[0].id,
-                "claude-3-7-sonnet"
-            );
-
-            view.toggle_reasoning_filter(cx);
-            assert!(view.get_state().filter_reasoning);
-            assert_eq!(view.get_state().filtered_models().len(), 1);
-
-            view.toggle_vision_filter(cx);
-            assert!(view.get_state().filter_vision);
-            assert!(view.get_state().filtered_models().is_empty());
-
-            view.clear_provider_filter(cx);
-            assert_eq!(view.get_state().selected_provider, None);
-            assert_eq!(view.get_state().filtered_models().len(), 0);
-
-            view.toggle_vision_filter(cx);
-            assert!(!view.get_state().filter_vision);
-            assert_eq!(view.get_state().filtered_models().len(), 1);
-            assert_eq!(
-                view.get_state().filtered_models()[0].id,
-                "claude-3-7-sonnet"
-            );
-
-            view.select_model("anthropic".to_string(), "claude-3-7-sonnet".to_string());
-            assert!(!view.get_state().show_provider_dropdown);
-        });
-
-        assert_eq!(
-            user_rx.recv().expect("provider filter event"),
-            UserEvent::FilterModelsByProvider {
-                provider_id: Some("anthropic".to_string()),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("clear provider filter event"),
-            UserEvent::FilterModelsByProvider { provider_id: None }
-        );
-        assert_eq!(
-            user_rx.recv().expect("select model event"),
-            UserEvent::SelectModel {
-                provider_id: "anthropic".to_string(),
-                model_id: "claude-3-7-sonnet".to_string(),
-            }
-        );
-        assert!(
-            user_rx.try_recv().is_err(),
-            "unexpected additional selector events"
-        );
-    }
-
-    #[gpui::test]
-    async fn key_handling_closes_dropdown_navigates_and_backspaces_search_once(
-        cx: &mut TestAppContext,
-    ) {
-        while crate::ui_gpui::navigation_channel()
-            .take_pending()
-            .is_some()
-        {}
-        let (user_tx, user_rx) = flume::bounded(16);
-        let (_view_tx, view_rx) = flume::bounded(16);
-        let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
-        let view = cx.new(ModelSelectorView::new);
-        let mut visual_cx = cx.add_empty_window().clone();
-
-        visual_cx.update(|window, app| {
-            view.update(app, |view: &mut ModelSelectorView, cx| {
-                view.set_bridge(Arc::clone(&bridge));
-                view.state.show_provider_dropdown = true;
-                view.state.search_query = "claude".to_string();
-                view.state.last_emitted_search_query = "claude".to_string();
-
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert!(!view.state.show_provider_dropdown);
-                assert_eq!(crate::ui_gpui::navigation_channel().take_pending(), None);
-
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("backspace")
-                            .expect("backspace keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert_eq!(view.state.search_query, "claud");
-
-                view.handle_key_down(
-                    &gpui::KeyDownEvent {
-                        keystroke: gpui::Keystroke::parse("cmd-w").expect("cmd-w keystroke"),
-                        is_held: false,
-                        prefer_character_input: false,
-                    },
-                    cx,
-                );
-                assert_eq!(
-                    crate::ui_gpui::navigation_channel().take_pending(),
-                    Some(crate::presentation::view_command::ViewId::Settings)
-                );
-
-                view.replace_and_mark_text_in_range(None, "e", None, window, cx);
-                assert_eq!(view.state.search_query, "claude");
-                assert_eq!(view.marked_text_range(window, cx), Some(5..6));
-                view.replace_text_in_range(None, "e-3", window, cx);
-                assert_eq!(view.state.search_query, "claude-3");
-                assert_eq!(view.marked_text_range(window, cx), None);
-            });
-        });
-
-        assert_eq!(
-            user_rx.recv().expect("backspace search event"),
-            UserEvent::SearchModels {
-                query: "claud".to_string(),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("composition search event"),
-            UserEvent::SearchModels {
-                query: "claude".to_string(),
-            }
-        );
-        assert_eq!(
-            user_rx.recv().expect("composition replace search event"),
-            UserEvent::SearchModels {
-                query: "claude-3".to_string(),
-            }
-        );
-        assert!(
-            user_rx.try_recv().is_err(),
-            "unexpected additional key-handling events"
-        );
     }
 }

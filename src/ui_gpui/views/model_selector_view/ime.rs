@@ -49,6 +49,8 @@ impl gpui::EntityInputHandler for ModelSelectorView {
     }
 
     fn unmark_text(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) {
+        // No rebuild needed — unmark only clears the IME composition state
+        // without changing the search query or filters.
         self.ime_marked_byte_count = 0;
     }
 
@@ -69,8 +71,7 @@ impl gpui::EntityInputHandler for ModelSelectorView {
         if !text.is_empty() {
             self.state.search_query.push_str(text);
         }
-        self.emit_filter_events_if_changed();
-        cx.notify();
+        self.rebuild_and_reset_scroll(cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -92,8 +93,7 @@ impl gpui::EntityInputHandler for ModelSelectorView {
             self.state.search_query.push_str(new_text);
             self.ime_marked_byte_count = new_text.len();
         }
-        self.emit_filter_events_if_changed();
-        cx.notify();
+        self.rebuild_and_reset_scroll(cx);
     }
 
     fn bounds_for_range(
