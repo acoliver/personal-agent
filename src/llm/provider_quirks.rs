@@ -1,11 +1,8 @@
-use crate::config::provider_api_url;
+use crate::config::quirks_manifest::quirks_manifest;
 use crate::models::ModelProfile;
 use crate::registry::{ModelRegistry, Provider, RegistryCache};
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use std::collections::HashMap;
-
-const KIMI_PROVIDER_ID: &str = "kimi-for-coding";
-const KIMI_USER_AGENT: &str = "RooCode/1.0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProviderQuirks {
@@ -50,12 +47,10 @@ pub fn resolve_provider_quirks_with_registry(
 ) -> ProviderQuirks {
     let mut quirks = ProviderQuirks::default();
 
-    if profile.provider_id == KIMI_PROVIDER_ID {
-        quirks.serdes_provider = Some("openai".to_string());
-        quirks.base_url_override = provider_api_url(KIMI_PROVIDER_ID);
-        quirks
-            .headers
-            .insert("User-Agent".to_string(), KIMI_USER_AGENT.to_string());
+    if let Some(entry) = quirks_manifest().get(&profile.provider_id) {
+        quirks.serdes_provider.clone_from(&entry.transport);
+        quirks.base_url_override.clone_from(&entry.base_url);
+        quirks.headers.clone_from(&entry.headers);
         return quirks;
     }
 
@@ -142,7 +137,7 @@ mod tests {
     #[test]
     fn kimi_provider_adds_required_user_agent_and_base_url() {
         let quirks = resolve_provider_quirks_with_registry(
-            &profile(KIMI_PROVIDER_ID, KIMI_PROVIDER_ID),
+            &profile("kimi-for-coding", "kimi-for-coding"),
             None,
         );
 
@@ -153,7 +148,7 @@ mod tests {
         );
         assert_eq!(
             quirks.headers.get("User-Agent").map(String::as_str),
-            Some(KIMI_USER_AGENT)
+            Some("RooCode/1.0")
         );
     }
 
@@ -166,8 +161,6 @@ mod tests {
         );
 
         assert_eq!(quirks.serdes_provider.as_deref(), Some("openai"));
-        assert!(quirks.headers.is_empty());
-        assert!(quirks.base_url_override.is_none());
     }
 
     #[test]
@@ -183,7 +176,7 @@ mod tests {
     #[test]
     fn quirks_header_map_preserves_user_agent_header() {
         let quirks = resolve_provider_quirks_with_registry(
-            &profile(KIMI_PROVIDER_ID, KIMI_PROVIDER_ID),
+            &profile("kimi-for-coding", "kimi-for-coding"),
             None,
         );
         let header_map = quirks.header_map().expect("header map");
@@ -192,7 +185,44 @@ mod tests {
             header_map
                 .get(USER_AGENT)
                 .and_then(|value| value.to_str().ok()),
-            Some(KIMI_USER_AGENT)
+            Some("RooCode/1.0")
         );
+    }
+
+    #[test]
+    fn manifest_driven_provider_gets_transport_and_base_url() {
+        let quirks =
+            resolve_provider_quirks_with_registry(&profile("openrouter", "some-model"), None);
+
+        assert_eq!(quirks.serdes_provider.as_deref(), Some("openai"));
+        assert_eq!(
+            quirks.base_url_override.as_deref(),
+            Some("https://openrouter.ai/api/v1")
+        );
+        assert!(quirks.headers.is_empty());
+    }
+
+    #[test]
+    fn unknown_provider_falls_back_to_registry_npm_detection() {
+        let registry =
+            registry_with_provider("unknown-provider", Some("@ai-sdk/openai-compatible"));
+        let quirks = resolve_provider_quirks_with_registry(
+            &profile("unknown-provider", "some-model"),
+            Some(&registry),
+        );
+
+        assert_eq!(quirks.serdes_provider.as_deref(), Some("openai"));
+        assert!(quirks.base_url_override.is_none());
+        assert!(quirks.headers.is_empty());
+    }
+
+    #[test]
+    fn completely_unknown_provider_returns_default_quirks() {
+        let quirks =
+            resolve_provider_quirks_with_registry(&profile("totally-unknown", "some-model"), None);
+
+        assert!(quirks.serdes_provider.is_none());
+        assert!(quirks.base_url_override.is_none());
+        assert!(quirks.headers.is_empty());
     }
 }

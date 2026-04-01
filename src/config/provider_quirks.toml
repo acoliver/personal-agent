@@ -1,0 +1,43 @@
+# Bundled provider quirks manifest
+#
+# Each section defines per-provider overrides that eliminate the need for
+# hardcoded if/match chains. Adding support for a new provider should
+# only require a new entry here.
+#
+# Fields:
+#   transport  - SerdesAI provider for serialization ("openai", "anthropic",
+#                "groq", "mistral"). Optional; falls back to registry npm-based
+#                detection, then provider_id name matching.
+#   base_url   - API endpoint override. Optional; falls back to models.dev
+#                registry lookup.
+#   [<id>.headers] - Custom HTTP headers. Optional. A "User-Agent" key gets
+#                    special handling via reqwest's USER_AGENT constant.
+
+[anthropic]
+base_url = "https://api.anthropic.com/v1"
+
+[openai]
+base_url = "https://api.openai.com/v1"
+
+[kimi-for-coding]
+transport = "openai"
+base_url = "https://api.kimi.com/coding/v1"
+
+[kimi-for-coding.headers]
+User-Agent = "RooCode/1.0"
+
+[openrouter]
+transport = "openai"
+base_url = "https://openrouter.ai/api/v1"
+
+[synthetic]
+transport = "openai"
+base_url = "https://api.synthetic.new/v1"
+
+[moonshotai]
+transport = "openai"
+base_url = "https://api.moonshot.ai/v1"
+
+[moonshotai-cn]
+transport = "openai"
+base_url = "https://api.moonshot.cn/v1"

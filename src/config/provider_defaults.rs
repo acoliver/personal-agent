@@ -1,21 +1,14 @@
 use crate::registry::RegistryCache;
 use std::collections::HashMap;
 
-pub const OPENAI_API_BASE_URL: &str = "https://api.openai.com/v1";
-pub const ANTHROPIC_API_BASE_URL: &str = "https://api.anthropic.com/v1";
-pub const SYNTHETIC_API_BASE_URL: &str = "https://api.synthetic.new/v1";
+use super::quirks_manifest::quirks_manifest;
 
-fn builtin_provider_api_url(provider_id: &str) -> Option<&'static str> {
-    match provider_id.trim() {
-        "anthropic" => Some(ANTHROPIC_API_BASE_URL),
-        "openai" => Some(OPENAI_API_BASE_URL),
-        "synthetic" => Some(SYNTHETIC_API_BASE_URL),
-        "openrouter" => Some("https://openrouter.ai/api/v1"),
-        "moonshotai" => Some("https://api.moonshot.ai/v1"),
-        "moonshotai-cn" => Some("https://api.moonshot.cn/v1"),
-        "kimi-for-coding" => Some("https://api.kimi.com/coding/v1"),
-        _ => None,
-    }
+pub const OPENAI_API_BASE_URL: &str = "https://api.openai.com/v1";
+
+fn builtin_provider_api_url(provider_id: &str) -> Option<String> {
+    quirks_manifest()
+        .get(provider_id)
+        .and_then(|entry| entry.base_url.clone())
 }
 
 pub fn provider_api_url(provider_id: &str) -> Option<String> {
@@ -40,7 +33,7 @@ pub fn provider_api_url(provider_id: &str) -> Option<String> {
         }
     }
 
-    builtin_provider_api_url(provider_id).map(str::to_string)
+    builtin_provider_api_url(provider_id)
 }
 
 #[must_use]
