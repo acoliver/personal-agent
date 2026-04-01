@@ -38,12 +38,11 @@ async fn test_real_exa_search() {
     println!("Step 1: Checking MCP registry for Exa (mock)...");
 
     let mock_server = MockServer::start().await;
-    let fixture = std::fs::read_to_string("tests/fixtures/mcp_registry_with_exa.json")
-        .expect("Failed to load registry fixture");
+    let fixture = include_str!("fixtures/mcp_registry_with_exa.json");
     Mock::given(any())
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_string(&fixture)
+                .set_body_string(fixture)
                 .insert_header("content-type", "application/json"),
         )
         .mount(&mock_server)
