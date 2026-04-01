@@ -172,7 +172,7 @@ static GLOBAL_ERROR_LOG: once_cell::sync::Lazy<ErrorLogStore> =
 /// Classify an error message into a severity tag using keyword heuristics.
 ///
 /// Checks for common patterns in error text:
-/// - Auth: "401", "403", "unauthorized", "forbidden", "invalid api key", "authentication"
+/// - Auth: "401", "403", "unauthorized", "forbidden", "invalid api key", "`invalid_api_key`", "authentication"
 /// - Connection: "timeout", "connection refused", "ECONNREFUSED", "dns", "network", "ETIMEDOUT", "connection reset"
 /// - MCP: "mcp", "tool call"
 /// - Stream: default for anything not matching above
@@ -185,6 +185,7 @@ pub fn classify_error_severity(error_msg: &str) -> ErrorSeverityTag {
         || lower.contains("unauthorized")
         || lower.contains("forbidden")
         || lower.contains("invalid api key")
+        || lower.contains("invalid_api_key")
         || lower.contains("authentication")
     {
         ErrorSeverityTag::Auth
@@ -401,6 +402,10 @@ mod tests {
         );
         assert_eq!(
             classify_error_severity("Authentication failed"),
+            ErrorSeverityTag::Auth
+        );
+        assert_eq!(
+            classify_error_severity("error: invalid_api_key"),
             ErrorSeverityTag::Auth
         );
     }
