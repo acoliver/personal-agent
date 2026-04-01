@@ -54,6 +54,17 @@ impl McpRegistryServiceImpl {
         }
     }
 
+    /// Create a new `McpRegistryServiceImpl` with a pre-configured registry (useful for testing)
+    #[must_use]
+    pub fn with_registry(cache_dir: PathBuf, registry: McpRegistry) -> Self {
+        Self {
+            cache_dir,
+            cached_results: Arc::new(RwLock::new(Vec::new())),
+            registry,
+            last_refresh: Arc::new(RwLock::new(None)),
+        }
+    }
+
     /// Get the cache file path
     fn cache_path(&self) -> PathBuf {
         self.cache_dir.join(CACHE_FILENAME)

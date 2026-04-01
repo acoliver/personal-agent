@@ -187,6 +187,15 @@ impl McpRegistry {
         }
     }
 
+    /// Create a registry client pointing at a custom URL (useful for testing)
+    #[must_use]
+    pub fn with_url(official_url: impl Into<String>) -> Self {
+        Self {
+            http_client: reqwest::Client::new(),
+            official_url: official_url.into(),
+        }
+    }
+
     /// Search official registry with server-side search
     ///
     /// # Errors
