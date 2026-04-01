@@ -8,6 +8,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use tracing::warn;
 
 /// Bundled manifest compiled into the binary.
 const BUNDLED_MANIFEST: &str = include_str!("provider_quirks.toml");
@@ -49,8 +50,8 @@ impl QuirksManifest {
     /// Build the manifest by parsing the bundled TOML and overlaying the
     /// optional user config file.
     fn load() -> Self {
-        let mut entries: HashMap<String, QuirksEntry> =
-            toml::from_str(BUNDLED_MANIFEST).unwrap_or_default();
+        let mut entries: HashMap<String, QuirksEntry> = toml::from_str(BUNDLED_MANIFEST)
+            .expect("bundled provider_quirks.toml must be valid TOML");
 
         if let Some(user_entries) = Self::load_user_manifest() {
             for (id, user_entry) in user_entries {
@@ -67,8 +68,19 @@ impl QuirksManifest {
         let path = app_support
             .join("PersonalAgent")
             .join(USER_MANIFEST_FILENAME);
-        let content = std::fs::read_to_string(path).ok()?;
-        toml::from_str(&content).ok()
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return None;
+        };
+        match toml::from_str(&content) {
+            Ok(entries) => Some(entries),
+            Err(e) => {
+                warn!(
+                    "Failed to parse user quirks manifest at {}: {e}",
+                    path.display()
+                );
+                None
+            }
+        }
     }
 }
 

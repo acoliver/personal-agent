@@ -12,6 +12,11 @@
 #                registry lookup.
 #   [<id>.headers] - Custom HTTP headers. Optional. A "User-Agent" key gets
 #                    special handling via reqwest's USER_AGENT constant.
+#
+# User overrides: place a provider_quirks.toml in the app config directory
+# (e.g. ~/Library/Application Support/PersonalAgent/provider_quirks.toml).
+# User entries completely replace bundled entries for the same provider ID.
+# To override a single field, copy the entire section from this file.
 
 [anthropic]
 base_url = "https://api.anthropic.com/v1"
