@@ -4,7 +4,7 @@ use super::{DisplayRow, ModelInfo, ModelSelectorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
     canvas, div, prelude::*, px, uniform_list, Bounds, ElementInputHandler, FocusHandle,
-    FontWeight, MouseButton, Pixels, SharedString,
+    FontWeight, MouseButton, Pixels, ScrollWheelEvent, SharedString,
 };
 use std::ops::Range;
 
@@ -456,6 +456,11 @@ impl ModelSelectorView {
             .max_w(px(320.0))
             .max_h(px(300.0))
             .overflow_y_scroll()
+            .on_scroll_wheel(
+                cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
+                    cx.stop_propagation();
+                }),
+            )
             .bg(Theme::bg_dark())
             .border_1()
             .border_color(Theme::accent())
@@ -560,27 +565,45 @@ impl gpui::Render for ModelSelectorView {
             .child(self.render_capability_toggles(cx))
             // Column header (20px)
             .child(Self::render_column_header())
-            // Model list (virtual scrolling via uniform_list)
-            .child(self.render_model_list(cx))
+            // Model list — hidden when dropdown open to prevent scroll bleed.
+            // uniform_list hardcodes overflow.y=Scroll, so the only way to stop
+            // scroll events from reaching it is to not render it at all.
+            .child(if show_dropdown {
+                div()
+                    .id("model-list-hidden")
+                    .flex_1()
+                    .w_full()
+                    .bg(Theme::bg_darkest())
+                    .into_any_element()
+            } else {
+                self.render_model_list(cx)
+            })
             // Status bar (24px)
             .child(Self::render_status_bar(model_count, provider_count));
 
         // Dropdown overlay — two *siblings*, NOT parent-child.
         //
         // The backdrop blocks clicks from reaching the content behind it and
-        // closes the dropdown on click.  The dropdown menu is a separate element
-        // rendered AFTER the backdrop, giving it higher z-order so GPUI's
-        // hit-tester finds the dropdown first for any pointer events in its bounds.
+        // closes the dropdown on click.  top(TOP_BAR_H) leaves the top bar
+        // accessible so Cancel remains clickable.  The dropdown menu is a
+        // separate element rendered AFTER the backdrop, giving it higher
+        // z-order so GPUI's hit-tester finds the dropdown first for any
+        // pointer events in its bounds.
         if show_dropdown {
             root.child(
                 div()
                     .id("provider-menu-backdrop")
                     .absolute()
-                    .top(px(0.0))
+                    .top(px(TOP_BAR_H))
                     .left(px(0.0))
                     .right(px(0.0))
                     .bottom(px(0.0))
                     .block_mouse_except_scroll()
+                    .on_scroll_wheel(cx.listener(
+                        |_this, _event: &ScrollWheelEvent, _window, cx| {
+                            cx.stop_propagation();
+                        },
+                    ))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {

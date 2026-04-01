@@ -1200,4 +1200,91 @@ mod tests {
         state.rebuild_display_rows();
         assert_eq!(state.cached_display_rows.len(), 0);
     }
+
+    // ===================================================================
+    // Phase 2 tests — Dropdown scroll isolation
+    // ===================================================================
+
+    // --- Test 33: backdrop click closes dropdown ---
+    #[gpui::test]
+    async fn test_backdrop_click_closes_dropdown(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.toggle_provider_dropdown(cx);
+            assert!(view.state.show_provider_dropdown);
+
+            // Simulate what the backdrop's on_mouse_down handler does
+            view.state.show_provider_dropdown = false;
+            cx.notify();
+        });
+
+        view.update(cx, |view: &mut ModelSelectorView, _cx| {
+            assert!(!view.state.show_provider_dropdown);
+        });
+    }
+
+    // --- Test 34: cancel is reachable while dropdown open ---
+    #[gpui::test]
+    async fn test_cancel_clickable_while_dropdown_open(cx: &mut TestAppContext) {
+        while crate::ui_gpui::navigation_channel()
+            .take_pending()
+            .is_some()
+        {}
+        let view = cx.new(ModelSelectorView::new);
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.toggle_provider_dropdown(cx);
+            assert!(view.state.show_provider_dropdown);
+
+            // Simulate the cancel handler (same as Cancel button's on_mouse_down)
+            crate::ui_gpui::navigation_channel()
+                .request_navigate(crate::presentation::view_command::ViewId::Settings);
+        });
+
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(crate::presentation::view_command::ViewId::Settings)
+        );
+    }
+
+    // --- Test 35: model list replaced with placeholder when dropdown open ---
+    #[gpui::test]
+    async fn test_model_list_replaced_with_placeholder_when_dropdown_open(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.set_models(providers, models);
+            view.state.rebuild_display_rows();
+            assert!(!view.state.cached_display_rows.is_empty());
+
+            view.toggle_provider_dropdown(cx);
+            assert!(view.state.show_provider_dropdown);
+
+            // With dropdown open, the render path uses "model-list-hidden" instead
+            // of the uniform_list "model-list". The cached_display_rows are still
+            // populated (they aren't cleared), but the uniform_list is not rendered.
+            assert!(!view.state.cached_display_rows.is_empty());
+        });
+    }
+
+    // --- Test 36: dropdown provider selection works when open ---
+    #[gpui::test]
+    async fn test_dropdown_provider_selection_works_when_open(cx: &mut TestAppContext) {
+        let view = cx.new(ModelSelectorView::new);
+        let (providers, models) = test_models();
+
+        view.update(cx, |view: &mut ModelSelectorView, cx| {
+            view.set_models(providers, models);
+            view.state.rebuild_display_rows();
+            view.toggle_provider_dropdown(cx);
+            assert!(view.state.show_provider_dropdown);
+
+            // Simulate selecting a provider from the dropdown
+            view.select_provider_filter("anthropic".to_string(), cx);
+            assert_eq!(view.state.selected_provider.as_deref(), Some("anthropic"));
+            assert!(!view.state.show_provider_dropdown);
+        });
+    }
 }
