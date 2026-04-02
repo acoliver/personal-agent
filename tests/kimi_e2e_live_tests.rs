@@ -103,7 +103,7 @@ async fn raw_reqwest_kimi_with_user_agent_header() {
 async fn raw_reqwest_kimi_without_user_agent_header() {
     let api_key = require_api_key();
 
-    // Plain client with no custom User-Agent
+    // Plain client with reqwest's default User-Agent (not the Kimi-required one)
     let client = reqwest::Client::new();
 
     let body = serde_json::json!({
