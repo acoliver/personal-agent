@@ -324,7 +324,7 @@ mod tests {
         let tool_return = result.unwrap();
         match &tool_return.content {
             serdes_ai::core::messages::ToolReturnContent::Text { content } => {
-                assert_eq!(content, "line1\nline2\nline3\n");
+                assert_eq!(content, "line1\nline2\nline3");
             }
             _ => panic!("Expected text content"),
         }
@@ -369,10 +369,12 @@ mod tests {
 
         assert!(result.is_ok());
         let tool_return = result.unwrap();
-        assert!(matches!(
-            tool_return.content,
-            serdes_ai::core::messages::ToolReturnContent::Text { content: _ }
-        ));
+        match &tool_return.content {
+            serdes_ai::core::messages::ToolReturnContent::Text { content } => {
+                assert_eq!(content, "line2\nline3\nline4");
+            }
+            _ => panic!("Expected text content"),
+        }
     }
 
     #[tokio::test]
