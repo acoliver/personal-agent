@@ -329,20 +329,31 @@ impl LlmClient {
 
         let mut config = ExtendedModelConfig::new()
             .with_api_key(&self.api_key)
-            .with_client(http_client)
+            .with_client(http_client.clone())
             .with_timeout(Self::request_timeout());
 
-        if let Some(url) = base_url {
-            config = config.with_base_url(url);
-        }
+        let resolved_base_url = base_url.unwrap_or("https://api.openai.com/v1").to_string();
+        config = config.with_base_url(&resolved_base_url);
 
         if self.profile.parameters.enable_thinking {
             let budget = self.profile.parameters.thinking_budget.map(u64::from);
             config = config.with_thinking(budget);
         }
 
-        serdes_ai::build_model_extended("openai", &self.profile.model_id, config)
-            .map_err(|e| LlmError::SerdesAi(e.to_string()))
+        let inner = serdes_ai::build_model_extended("openai", &self.profile.model_id, config)
+            .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+
+        // Wrap with SSE normalizer — some providers (e.g. Kimi) send `data:{json}`
+        // without the space that serdes-ai's parser requires.
+        let wrapper = super::normalizing_model::NormalizingSseModel::new(
+            inner,
+            http_client,
+            self.api_key.clone(),
+            resolved_base_url,
+            self.profile.model_id.clone(),
+        );
+
+        Ok(std::sync::Arc::new(wrapper))
     }
 
     const fn request_timeout() -> Duration {
