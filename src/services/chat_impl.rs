@@ -74,12 +74,26 @@ impl ChatServiceImpl {
             .add_user_message(conversation_id, content)
             .await?;
 
-        let profile = self.default_profile("No active profile").await?;
         let conversation = self
             .conversation_service
             .load(conversation_id)
             .await
             .map_err(|e| ServiceError::Internal(format!("Failed to load conversation: {e}")))?;
+
+        // Use the conversation's stored profile_id as the authoritative profile
+        // for this send. This ensures that when the user selects a chat profile
+        // (e.g. Kimi), the conversation is updated and subsequent sends use
+        // that profile — not a potentially stale global default.
+        let profile = if let Ok(p) = self.profile_service.get(conversation.profile_id).await {
+            p
+        } else {
+            tracing::warn!(
+                conversation_profile_id = %conversation.profile_id,
+                "Conversation profile not found; falling back to default"
+            );
+            self.default_profile("No active profile").await?
+        };
+
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
         let messages = Self::build_llm_messages(&conversation, &profile);
@@ -412,17 +426,26 @@ mod tests {
 
     struct MockProfileService {
         profile: Arc<RwLock<Option<crate::models::ModelProfile>>>,
+        profiles_by_id: Arc<RwLock<std::collections::HashMap<Uuid, crate::models::ModelProfile>>>,
     }
 
     impl MockProfileService {
         fn new() -> Self {
             Self {
                 profile: Arc::new(RwLock::new(None)),
+                profiles_by_id: Arc::new(RwLock::new(std::collections::HashMap::new())),
             }
         }
 
         async fn set_default_profile(&self, profile: crate::models::ModelProfile) {
             *self.profile.write().await = Some(profile);
+        }
+
+        async fn add_profile(&self, profile: crate::models::ModelProfile) {
+            self.profiles_by_id
+                .write()
+                .await
+                .insert(profile.id, profile);
         }
     }
 
@@ -436,9 +459,16 @@ mod tests {
 
         async fn get(
             &self,
-            _id: Uuid,
+            id: Uuid,
         ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-            Err(crate::services::ServiceError::NotFound("test".to_string()))
+            self.profiles_by_id
+                .read()
+                .await
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| {
+                    crate::services::ServiceError::NotFound(format!("profile {id} not found"))
+                })
         }
 
         async fn create(
@@ -596,5 +626,65 @@ mod tests {
 
         // Initially not streaming
         assert!(!chat_service.is_streaming());
+    }
+
+    /// Proves that `prepare_message_context` resolves the profile via the
+    /// conversation's `profile_id` rather than always using the global default.
+    #[tokio::test]
+    async fn prepare_message_context_uses_conversation_profile_id() {
+        crate::services::secure_store::use_mock_backend();
+        crate::services::secure_store::api_keys::store(
+            "_test_conv_prof",
+            "fake-key-for-conv-profile-test",
+        )
+        .expect("store test key");
+
+        // Create a "kimi" profile that we want the conversation to use
+        let kimi_profile = crate::models::ModelProfile::new(
+            "Kimi Test".to_string(),
+            "kimi-for-coding".to_string(),
+            "kimi-k2-0711-preview".to_string(),
+            String::new(),
+            AuthConfig::Keychain {
+                label: "_test_conv_prof".to_string(),
+            },
+        );
+        let kimi_profile_id = kimi_profile.id;
+
+        // Default profile is OpenAI — should NOT be used
+        let default_profile = crate::models::ModelProfile::new(
+            "Default".to_string(),
+            "openai".to_string(),
+            "gpt-4o".to_string(),
+            "https://api.openai.com/v1".to_string(),
+            AuthConfig::Keychain {
+                label: "_test_conv_prof".to_string(),
+            },
+        );
+
+        // Conversation is bound to the kimi profile
+        let conversation_service = Arc::new(MockConversationService::new(kimi_profile_id))
+            as Arc<dyn super::super::ConversationService>;
+        let mock_profile_service = Arc::new(MockProfileService::new());
+        mock_profile_service
+            .set_default_profile(default_profile)
+            .await;
+        mock_profile_service.add_profile(kimi_profile).await;
+
+        let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
+        let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
+
+        let prepared = chat_service
+            .prepare_message_context(Uuid::new_v4(), "hello".to_string())
+            .await
+            .expect("prepare_message_context should succeed");
+
+        assert_eq!(
+            prepared.profile.id, kimi_profile_id,
+            "prepared context should use the conversation's profile, not the default"
+        );
+        assert_eq!(prepared.profile.provider_id, "kimi-for-coding");
+
+        let _ = crate::services::secure_store::api_keys::delete("_test_conv_prof");
     }
 }

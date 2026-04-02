@@ -246,6 +246,9 @@ impl ChatPresenter {
                 )
                 .await;
             }
+            UserEvent::SelectChatProfile { id } => {
+                Self::handle_select_chat_profile(conversation_service, id).await;
+            }
             _ => {} // Ignore other user events
         }
     }
@@ -604,6 +607,29 @@ impl ChatPresenter {
     ) {
         chat_service.cancel();
         // StreamCancelled event will be emitted by the service
+    }
+
+    /// Handle `SelectChatProfile` user event.
+    ///
+    /// When the user picks a different profile in the chat title-bar dropdown,
+    /// update the active conversation's `profile_id` so the next send uses
+    /// that profile (and its provider-specific headers/base-URL).
+    async fn handle_select_chat_profile(
+        conversation_service: &Arc<dyn ConversationService>,
+        profile_id: Uuid,
+    ) {
+        if let Ok(Some(active_id)) = conversation_service.get_active().await {
+            if let Err(e) = conversation_service
+                .update(active_id, None, Some(profile_id))
+                .await
+            {
+                tracing::warn!(
+                    conversation_id = %active_id,
+                    profile_id = %profile_id,
+                    "Failed to update conversation profile: {e}"
+                );
+            }
+        }
     }
 
     /// Handle `NewConversation` user event

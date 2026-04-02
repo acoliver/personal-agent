@@ -215,13 +215,25 @@ impl ConversationService for MockConversationService {
         Ok(messages)
     }
 
+    #[allow(clippy::significant_drop_tightening)]
     async fn update(
         &self,
-        _id: Uuid,
-        _title: Option<String>,
-        _model_profile_id: Option<Uuid>,
+        id: Uuid,
+        title: Option<String>,
+        model_profile_id: Option<Uuid>,
     ) -> Result<Conversation, ServiceError> {
-        Err(ServiceError::NotFound("not implemented".to_string()))
+        let mut conversations = self.conversations.lock().await;
+        let conversation = conversations
+            .iter_mut()
+            .find(|c| c.id == id)
+            .ok_or_else(|| ServiceError::NotFound(format!("conversation {id} not found")))?;
+        if let Some(t) = title {
+            conversation.set_title(t);
+        }
+        if let Some(pid) = model_profile_id {
+            conversation.profile_id = pid;
+        }
+        Ok(conversation.clone())
     }
 }
 
@@ -1363,4 +1375,88 @@ async fn save_conversation_uses_selected_format_when_setting_persist_fails() {
     let body = std::fs::read_to_string(&export_path).expect("read export body");
     assert!(body.contains("# Sprint 2"));
     assert!(body.contains("Persist failure still exports markdown"));
+}
+
+// ── SelectChatProfile tests ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn select_chat_profile_updates_active_conversation_profile_id() {
+    let default = profile();
+    let kimi_profile_id = Uuid::new_v4();
+
+    // Create a conversation bound to the default profile
+    let conversation = Conversation::new(default.id);
+    let conversation_id = conversation.id;
+
+    let conv_service = Arc::new(MockConversationService::new(
+        vec![conversation],
+        Some(conversation_id),
+    ));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default)));
+    let app_settings_service = Arc::new(MockAppSettingsService::new());
+    let event_bus = Arc::new(EventBus::new(64));
+
+    let (view_tx, mut _view_rx) = mpsc::channel::<ViewCommand>(100);
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conv_service.clone(),
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+
+    presenter.start().await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Simulate user selecting a different chat profile (e.g. Kimi)
+    let _ = event_bus.publish(AppEvent::User(UserEvent::SelectChatProfile {
+        id: kimi_profile_id,
+    }));
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+
+    // Verify the active conversation's profile_id was updated
+    let updated = conv_service.load(conversation_id).await.unwrap();
+    assert_eq!(
+        updated.profile_id, kimi_profile_id,
+        "active conversation should have its profile_id updated to the selected chat profile"
+    );
+}
+
+#[tokio::test]
+async fn select_chat_profile_without_active_conversation_is_harmless() {
+    let default = profile();
+    let kimi_profile_id = Uuid::new_v4();
+
+    // No conversations, no active
+    let conv_service = Arc::new(MockConversationService::new(vec![], None));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default)));
+    let app_settings_service = Arc::new(MockAppSettingsService::new());
+    let event_bus = Arc::new(EventBus::new(64));
+
+    let (view_tx, mut _view_rx) = mpsc::channel::<ViewCommand>(100);
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conv_service.clone(),
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+
+    presenter.start().await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Should not panic or error — just a no-op
+    let _ = event_bus.publish(AppEvent::User(UserEvent::SelectChatProfile {
+        id: kimi_profile_id,
+    }));
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+
+    // No crash, no active conversation = success
+    assert!(conv_service.get_active().await.unwrap().is_none());
 }
