@@ -125,7 +125,6 @@ impl ToolExecutor<McpToolContext> for ReadFileExecutor {
 
 impl ReadFileExecutor {
     /// Process the content based on line range or truncation rules.
-    #[allow(clippy::too_many_lines)]
     fn process_content(
         lines: &[&str],
         total_lines: usize,
@@ -133,13 +132,24 @@ impl ReadFileExecutor {
         start_line: Option<usize>,
         end_line: Option<usize>,
     ) -> Result<ToolReturn, ToolError> {
-        // Validate line range first
-        if let (Some(start), Some(end)) = (start_line, end_line) {
-            if start == 0 || end == 0 {
+        // Validate line numbers are 1-based (check even when only one is provided)
+        if let Some(start) = start_line {
+            if start == 0 {
                 return Err(ToolError::execution_failed(
                     "Line numbers are 1-based and must be greater than 0",
                 ));
             }
+        }
+        if let Some(end) = end_line {
+            if end == 0 {
+                return Err(ToolError::execution_failed(
+                    "Line numbers are 1-based and must be greater than 0",
+                ));
+            }
+        }
+
+        // Validate line range relationship
+        if let (Some(start), Some(end)) = (start_line, end_line) {
             if start > end {
                 return Err(ToolError::execution_failed(format!(
                     "Invalid line range: start_line ({start}) cannot be greater than end_line ({end})"
@@ -195,43 +205,74 @@ impl ReadFileExecutor {
                 ));
             }
             // No range specified - full file with truncation
-            (None, None) => {
-                // Check size limit first
-                let content_bytes = content_str.as_bytes();
-                if content_bytes.len() > MAX_SIZE_BYTES {
-                    // Find the line boundary before MAX_SIZE_BYTES
-                    let mut end_byte = MAX_SIZE_BYTES;
-                    while end_byte > 0 && content_bytes[end_byte] != b'\n' {
-                        end_byte -= 1;
-                    }
-
-                    let truncated_content = &content_str[..end_byte];
-                    let shown_lines = truncated_content.lines().count();
-                    let remaining_lines = total_lines.saturating_sub(shown_lines);
-
-                    format!(
-                        "{}\n\n[... {} lines and {} bytes remaining, use start_line={} to continue ...]",
-                        truncated_content,
-                        remaining_lines,
-                        content_bytes.len() - end_byte,
-                        shown_lines + 1
-                    )
-                } else if total_lines > MAX_LINES {
-                    let selected_lines: Vec<&str> = lines[..MAX_LINES].to_vec();
-                    let truncated_content = selected_lines.join("\n");
-                    format!(
-                        "{}\n\n[... {} lines remaining, use start_line={} to continue ...]",
-                        truncated_content,
-                        total_lines - MAX_LINES,
-                        MAX_LINES + 1
-                    )
-                } else {
-                    content_str.to_string()
-                }
-            }
+            (None, None) => Self::truncate_full_content(content_str, lines, total_lines),
         };
 
         Ok(ToolReturn::text(result))
+    }
+
+    /// Truncate full content when no line range is specified.
+    fn truncate_full_content(content_str: &str, lines: &[&str], total_lines: usize) -> String {
+        let content_bytes = content_str.as_bytes();
+
+        if content_bytes.len() > MAX_SIZE_BYTES {
+            Self::truncate_by_bytes(content_str, content_bytes, total_lines)
+        } else if total_lines > MAX_LINES {
+            Self::truncate_by_lines(lines, total_lines)
+        } else {
+            content_str.to_string()
+        }
+    }
+
+    /// Truncate content by finding a line boundary near `MAX_SIZE_BYTES`.
+    fn truncate_by_bytes(content_str: &str, content_bytes: &[u8], total_lines: usize) -> String {
+        // Find the line boundary before MAX_SIZE_BYTES
+        let max_boundary = content_bytes.len().min(MAX_SIZE_BYTES);
+        let mut end_byte = max_boundary;
+
+        // Search backwards for a newline
+        while end_byte > 0 && content_bytes[end_byte - 1] != b'\n' {
+            end_byte -= 1;
+        }
+
+        // If no newline found in search range, fall back to max_boundary
+        // but ensure we don't break a UTF-8 character boundary
+        if end_byte == 0 {
+            end_byte = max_boundary;
+            // Move to a valid UTF-8 character boundary
+            while end_byte > 0 && !content_str.is_char_boundary(end_byte) {
+                end_byte -= 1;
+            }
+            // As a last resort, if we can't find a valid boundary, use max_boundary
+            // (String slicing will panic if not on char boundary, so this is defensive)
+            if end_byte == 0 {
+                end_byte = max_boundary;
+            }
+        }
+
+        let truncated_content = &content_str[..end_byte];
+        let shown_lines = truncated_content.lines().count();
+        let remaining_lines = total_lines.saturating_sub(shown_lines);
+
+        format!(
+            "{}\n\n[... {} lines and {} bytes remaining, use start_line={} to continue ...]",
+            truncated_content,
+            remaining_lines,
+            content_bytes.len() - end_byte,
+            shown_lines + 1
+        )
+    }
+
+    /// Truncate content by limiting to `MAX_LINES`.
+    fn truncate_by_lines(lines: &[&str], total_lines: usize) -> String {
+        let selected_lines: Vec<&str> = lines[..MAX_LINES].to_vec();
+        let truncated_content = selected_lines.join("\n");
+        format!(
+            "{}\n\n[... {} lines remaining, use start_line={} to continue ...]",
+            truncated_content,
+            total_lines - MAX_LINES,
+            MAX_LINES + 1
+        )
     }
 }
 
@@ -423,6 +464,50 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Cannot specify end_line without start_line"));
+    }
+
+    #[tokio::test]
+    async fn read_file_start_line_zero_rejected() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(
+            b"line1
+line2
+",
+        )
+        .unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let executor = ReadFileExecutor;
+        // start_line: 0 should be rejected (1-based indexing)
+        let args = serde_json::json!({
+            "path": path,
+            "start_line": 0
+        });
+        let result = executor.execute(args, &RunContext::default()).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Line numbers are 1-based"));
+    }
+
+    #[tokio::test]
+    async fn read_file_end_line_zero_rejected() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"line1\nline2\n").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let executor = ReadFileExecutor;
+        // end_line: 0 should be rejected (1-based indexing)
+        let args = serde_json::json!({
+            "path": path,
+            "start_line": 1,
+            "end_line": 0
+        });
+        let result = executor.execute(args, &RunContext::default()).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Line numbers are 1-based"));
     }
 
     #[test]
