@@ -83,6 +83,7 @@ cocoa = "0.26"
 objc = "0.2"
 rand = "0.9"
 smol = "2"
+bytes = "1"
 
 [dev-dependencies]
 tempfile = "3"

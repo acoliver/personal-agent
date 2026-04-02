@@ -327,15 +327,37 @@ impl LlmClient {
             .build()
             .map_err(|e| LlmError::InvalidConfig(format!("failed to build HTTP client: {e}")))?;
 
-        let mut model = serdes_ai::OpenAIChatModel::new(&self.profile.model_id, &self.api_key)
-            .with_client(http_client)
+        let mut config = ExtendedModelConfig::new()
+            .with_api_key(&self.api_key)
+            .with_client(http_client.clone())
             .with_timeout(Self::request_timeout());
 
-        if let Some(url) = base_url {
-            model = model.with_base_url(url);
+        let resolved_base_url = base_url.unwrap_or("https://api.openai.com/v1").to_string();
+        config = config.with_base_url(&resolved_base_url);
+
+        if self.profile.parameters.enable_thinking {
+            let budget = self.profile.parameters.thinking_budget.map(u64::from);
+            config = config.with_thinking(budget);
         }
 
-        Ok(std::sync::Arc::new(model))
+        let inner = serdes_ai::build_model_extended("openai", &self.profile.model_id, config)
+            .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+
+        // Wrap with SSE normalizer — some providers (e.g. Kimi) send `data:{json}`
+        // without the space that serdes-ai's parser requires.
+        let wrapper = super::normalizing_model::NormalizingSseModel::new(
+            super::normalizing_model::NormalizingSseModelConfig {
+                inner,
+                client: http_client,
+                api_key: self.api_key.clone(),
+                base_url: resolved_base_url,
+                model_name: self.profile.model_id.clone(),
+                enable_thinking: self.profile.parameters.enable_thinking,
+                thinking_budget: self.profile.parameters.thinking_budget.map(u64::from),
+            },
+        );
+
+        Ok(std::sync::Arc::new(wrapper))
     }
 
     const fn request_timeout() -> Duration {
