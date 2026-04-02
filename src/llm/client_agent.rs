@@ -19,8 +19,23 @@ type StdResult<T, E> = std::result::Result<T, E>;
 /// Context for MCP tool execution
 ///
 /// This provides access to the global MCP service for tool execution
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct McpToolContext;
+
+/// Register native (built-in) tools with the agent builder.
+///
+/// Native tools are registered before MCP tools so they appear first
+/// in the tool list. These tools bypass the MCP layer for direct
+/// local operations.
+fn register_native_tools(
+    mut builder: AgentBuilder<McpToolContext>,
+) -> AgentBuilder<McpToolContext> {
+    // Register ReadFile tool
+    let read_file_def = crate::agent::tools::get_read_file_tool_definition();
+    builder = builder.tool_with_executor(read_file_def, crate::agent::tools::ReadFileExecutor);
+
+    builder
+}
 
 /// Executor that bridges Agent tools to MCP
 struct McpToolExecutor {
@@ -97,8 +112,10 @@ impl AgentClientExt for crate::llm::LlmClient {
         self.set_api_key_env();
 
         let model = self.build_agent_model()?;
-        let mut builder = self.build_agent_builder(model, system_prompt);
-        builder = Self::register_mcp_tools(builder, mcp_tools);
+        let builder = self.build_agent_builder(model, system_prompt);
+        // Register native tools first (they appear first in tool list)
+        let builder = register_native_tools(builder);
+        let builder = Self::register_mcp_tools(builder, mcp_tools);
 
         Ok(builder.build())
     }
