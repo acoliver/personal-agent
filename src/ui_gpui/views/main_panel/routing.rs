@@ -44,6 +44,7 @@ pub use _actions::*;
 pub struct CommandTargets {
     // Chat view counters (ephemeral commands only)
     pub chat_export_format_commands: usize,
+    pub chat_export_completed_commands: usize,
     pub chat_notification_commands: usize,
     pub chat_error_commands: usize,
 
@@ -85,6 +86,9 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         // ── Chat view (ephemeral only) ──────────────────────────────────
         ViewCommand::ShowConversationExportFormat { .. } => {
             targets.chat_export_format_commands += 1;
+        }
+        ViewCommand::ExportCompleted { .. } => {
+            targets.chat_export_completed_commands += 1;
         }
         ViewCommand::ShowNotification { message } => {
             if message.contains("Conversation saved")

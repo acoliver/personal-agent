@@ -71,6 +71,9 @@ pub enum UserEvent {
         format: crate::models::ConversationExportFormat,
     },
 
+    /// User changed the export directory path in settings.
+    SetExportDirectory { path: String },
+
     /// User started renaming conversation
     StartRenameConversation { id: Uuid },
 

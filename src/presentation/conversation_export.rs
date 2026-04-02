@@ -8,6 +8,19 @@ use crate::models::{Conversation, ConversationExportFormat, MessageRole};
 pub const EXPORT_FORMAT_SETTING_KEY: &str = "chat.export.format";
 pub const EXPORT_DIR_SETTING_KEY: &str = "chat.export.dir";
 
+/// Expand a leading `~` or `~/` to the user's home directory.
+fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"))
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("~"))
+            .join(rest)
+    } else {
+        PathBuf::from(path)
+    }
+}
+
 #[must_use]
 pub fn sanitize_filename_component(input: &str) -> String {
     let mut result = String::new();
@@ -50,7 +63,7 @@ pub fn resolve_export_directory(configured_dir: Option<&str>) -> PathBuf {
     if let Some(value) = configured_dir {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
+            return expand_tilde(trimmed);
         }
     }
 
@@ -215,6 +228,33 @@ pub fn resolve_unique_export_path(directory: &Path, filename: &str) -> PathBuf {
     }
 
     unreachable!("unbounded candidate search must eventually return")
+}
+
+/// Validate that the given directory path exists and is writable.
+pub fn validate_export_directory(path: &str) -> Result<(), String> {
+    let dir = expand_tilde(path);
+    if !dir.exists() {
+        return Err(format!("Directory does not exist: {path}"));
+    }
+    if !dir.is_dir() {
+        return Err(format!("Path is not a directory: {path}"));
+    }
+
+    let probe = dir.join(format!(
+        ".personalagent_write_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_or_else(
+            |_| Err(format!("Directory is not writable: {path}")),
+            |_file| {
+                let _ = std::fs::remove_file(&probe);
+                Ok(())
+            },
+        )
 }
 
 pub fn write_export_file(path: &Path, content: &str) -> std::io::Result<()> {
@@ -432,5 +472,48 @@ mod tests {
             .expect("retry helper should find next available file");
 
         assert_eq!(written, temp_dir.path().join("sprint-2-2.md"));
+    }
+
+    #[test]
+    fn validate_export_directory_accepts_existing_writable_dir() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        assert!(validate_export_directory(temp_dir.path().to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn validate_export_directory_rejects_nonexistent_path() {
+        let result = validate_export_directory("/nonexistent/path/that/should/not/exist");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn validate_export_directory_rejects_file_path() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_path = temp_dir.path().join("not-a-dir.txt");
+        std::fs::write(&file_path, "content").expect("create test file");
+
+        let result = validate_export_directory(file_path.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not a directory"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_export_directory_rejects_non_writable_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let read_only = std::fs::Permissions::from_mode(0o444);
+        std::fs::set_permissions(temp_dir.path(), read_only).expect("set permissions");
+
+        let result = validate_export_directory(temp_dir.path().to_str().unwrap());
+
+        // Restore permissions so tempdir cleanup succeeds.
+        let writable = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(temp_dir.path(), writable).expect("restore permissions");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not writable"));
     }
 }

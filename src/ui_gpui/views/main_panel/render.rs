@@ -80,12 +80,14 @@ impl MainPanel {
         }
         match current {
             ViewId::Chat => focus_child!(self.chat_view),
+            ViewId::Settings => focus_child!(self.settings_view),
+            ViewId::History => focus_child!(self.history_view),
             ViewId::ProfileEditor => focus_child!(self.profile_editor_view),
             ViewId::McpAdd => focus_child!(self.mcp_add_view),
             ViewId::ModelSelector => focus_child!(self.model_selector_view),
             ViewId::ApiKeyManager => focus_child!(self.api_key_manager_view),
             ViewId::ErrorLog => focus_child!(self.error_log_view),
-            _ => {}
+            ViewId::McpConfigure => focus_child!(self.mcp_configure_view),
         }
         window.focus(&self.focus_handle, cx);
     }

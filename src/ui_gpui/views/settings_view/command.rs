@@ -87,6 +87,9 @@ impl SettingsView {
             ViewCommand::YoloModeChanged { active } => {
                 self.state.yolo_mode = active;
             }
+            ViewCommand::ExportDirectoryLoaded { path } => {
+                self.state.export_dir_input = path;
+            }
             ViewCommand::ShowNotification { message } => {
                 self.state.status_message = Some(message);
                 self.state.status_is_error = false;
