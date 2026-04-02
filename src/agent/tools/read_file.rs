@@ -11,7 +11,7 @@ use std::path::Path;
 
 /// Maximum number of lines to read before truncation
 const MAX_LINES: usize = 2000;
-/// Maximum file size to read (500KB)
+/// Maximum file size to read (~512KB)
 const MAX_SIZE_BYTES: usize = 512_000;
 /// Number of bytes to check for binary detection
 const BINARY_CHECK_BYTES: usize = 8_192;
@@ -60,7 +60,7 @@ impl ToolExecutor<McpToolContext> for ReadFileExecutor {
         };
 
         // Check if file exists and is accessible
-        match std::fs::metadata(&absolute_path) {
+        match tokio::fs::metadata(&absolute_path).await {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(ToolError::execution_failed(format!(
                     "File not found: {}",
@@ -90,7 +90,7 @@ impl ToolExecutor<McpToolContext> for ReadFileExecutor {
         }
 
         // Read the file content
-        let content = std::fs::read(&absolute_path).map_err(|e| {
+        let content = tokio::fs::read(&absolute_path).await.map_err(|e| {
             ToolError::execution_failed(format!(
                 "Failed to read file '{}': {e}",
                 absolute_path.display()
@@ -322,10 +322,12 @@ mod tests {
 
         assert!(result.is_ok());
         let tool_return = result.unwrap();
-        assert!(matches!(
-            tool_return.content,
-            serdes_ai::core::messages::ToolReturnContent::Text { content: _ }
-        ));
+        match &tool_return.content {
+            serdes_ai::core::messages::ToolReturnContent::Text { content } => {
+                assert_eq!(content, "line1\nline2\nline3\n");
+            }
+            _ => panic!("Expected text content"),
+        }
     }
 
     #[tokio::test]
@@ -388,10 +390,12 @@ mod tests {
 
         assert!(result.is_ok());
         let tool_return = result.unwrap();
-        assert!(matches!(
-            tool_return.content,
-            serdes_ai::core::messages::ToolReturnContent::Text { content: _ }
-        ));
+        match &tool_return.content {
+            serdes_ai::core::messages::ToolReturnContent::Text { content } => {
+                assert_eq!(content, "line2\nline3");
+            }
+            _ => panic!("Expected text content"),
+        }
     }
 
     #[tokio::test]
