@@ -100,7 +100,6 @@ async fn kimi_requests_respect_explicit_profile_base_url_override() {
         .await;
 
     personal_agent::services::secure_store::use_mock_backend();
-    personal_agent::services::secure_store::use_mock_backend();
     personal_agent::services::secure_store::api_keys::store("_test_kimi_base", "sk-kimi-test")
         .expect("store test key");
 
