@@ -67,7 +67,7 @@ impl McpConfigureView {
                         d.cursor_pointer()
                             .bg(Theme::accent())
                             .hover(|s| s.bg(Theme::accent_hover()))
-                            .text_color(gpui::white())
+                            .text_color(Theme::selection_fg())
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, _window, _cx| {
@@ -254,7 +254,7 @@ impl McpConfigureView {
                                         d.bg(Theme::accent()).child(
                                             div()
                                                 .text_size(px(8.0))
-                                                .text_color(gpui::white())
+                                                .text_color(Theme::selection_fg())
                                                 .child("v"),
                                         )
                                     }),
@@ -390,7 +390,7 @@ impl McpConfigureView {
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::accent_hover()))
                     .text_size(px(12.0))
-                    .text_color(gpui::white())
+                    .text_color(Theme::selection_fg())
                     .child(format!("Authorize with {provider}"))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -485,7 +485,7 @@ impl McpConfigureView {
                         d.bg(Theme::accent()).child(
                             div()
                                 .text_size(px(10.0))
-                                .text_color(gpui::white())
+                                .text_color(Theme::selection_fg())
                                 .child("v"),
                         )
                     }),
