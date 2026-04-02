@@ -235,19 +235,13 @@ impl ReadFileExecutor {
             end_byte -= 1;
         }
 
-        // If no newline found in search range, fall back to max_boundary
-        // but ensure we don't break a UTF-8 character boundary
+        // If no newline was found, fall back to max_boundary.
+        // Always move to a valid UTF-8 boundary before slicing.
         if end_byte == 0 {
             end_byte = max_boundary;
-            // Move to a valid UTF-8 character boundary
-            while end_byte > 0 && !content_str.is_char_boundary(end_byte) {
-                end_byte -= 1;
-            }
-            // As a last resort, if we can't find a valid boundary, use max_boundary
-            // (String slicing will panic if not on char boundary, so this is defensive)
-            if end_byte == 0 {
-                end_byte = max_boundary;
-            }
+        }
+        while end_byte > 0 && !content_str.is_char_boundary(end_byte) {
+            end_byte -= 1;
         }
 
         let truncated_content = &content_str[..end_byte];
