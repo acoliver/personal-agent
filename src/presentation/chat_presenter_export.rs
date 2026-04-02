@@ -181,6 +181,13 @@ impl ChatPresenter {
         path: String,
     ) {
         let trimmed = path.trim().to_string();
+        let trimmed = if trimmed.starts_with('~') {
+            resolve_export_directory(Some(&trimmed))
+                .to_string_lossy()
+                .to_string()
+        } else {
+            trimmed
+        };
 
         if trimmed.is_empty() {
             if let Err(error) = app_settings_service

@@ -162,7 +162,8 @@ impl SettingsView {
                     .cursor_text()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, _, _window, cx| {
+                        cx.listener(move |this, _, window, cx| {
+                            window.focus(&this.focus_handle, cx);
                             on_focus(this, cx);
                         }),
                     )

@@ -579,6 +579,16 @@ impl SettingsView {
             return;
         }
 
+        if key == "enter" {
+            self.handle_enter_key(cx);
+            return;
+        }
+
+        // When a text field is focused, don't intercept regular keys as shortcuts.
+        if self.state.active_field.is_some() {
+            return;
+        }
+
         if key == "=" && modifiers.shift {
             Self::navigate_to_profile_editor();
             return;
@@ -605,11 +615,6 @@ impl SettingsView {
             self.scroll_profiles(1);
             self.scroll_themes(1);
             cx.notify();
-            return;
-        }
-
-        if key == "enter" {
-            self.handle_enter_key(cx);
             return;
         }
 
@@ -643,6 +648,32 @@ impl SettingsView {
     fn save_export_directory(&self) {
         let path = self.state.export_dir_input.trim().to_string();
         self.emit(&UserEvent::SetExportDirectory { path });
+    }
+
+    #[allow(clippy::unused_self)] // cx.spawn closure captures the entity handle
+    fn browse_export_directory(&mut self, cx: &mut gpui::Context<Self>) {
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Select Export Directory".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(path) = paths.first() {
+                    let path_str = path.to_string_lossy().to_string();
+                    cx.update(|cx| {
+                        this.update(cx, |view, cx| {
+                            view.state.export_dir_input = path_str;
+                            view.save_export_directory();
+                            cx.notify();
+                        })
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     fn apply_selected_theme(&mut self, cx: &mut gpui::Context<Self>) {

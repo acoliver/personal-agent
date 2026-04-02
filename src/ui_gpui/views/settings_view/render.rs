@@ -567,30 +567,63 @@ impl SettingsView {
             )
             .child(
                 div()
-                    .id("export-dir-input")
-                    .w_full()
-                    .h(px(28.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_darker())
-                    .border_1()
-                    .border_color(if is_active {
-                        Theme::accent()
-                    } else {
-                        Theme::border()
-                    })
-                    .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .text_color(text_color)
-                    .child(input_text)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.set_active_field(Some(super::ActiveField::ExportDirInput));
-                            cx.notify();
-                        }),
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .id("export-dir-input")
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .h(px(28.0))
+                            .px(px(8.0))
+                            .bg(Theme::bg_darker())
+                            .border_1()
+                            .border_color(if is_active {
+                                Theme::accent()
+                            } else {
+                                Theme::border()
+                            })
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .overflow_hidden()
+                            .cursor_text()
+                            .text_size(px(12.0))
+                            .text_color(text_color)
+                            .child(input_text)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    window.focus(&this.focus_handle, cx);
+                                    this.set_active_field(Some(super::ActiveField::ExportDirInput));
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("btn-browse-export-dir")
+                            .h(px(28.0))
+                            .px(px(10.0))
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::accent()))
+                            .text_size(px(11.0))
+                            .text_color(Theme::text_primary())
+                            .child("Browse…")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.browse_export_directory(cx);
+                                }),
+                            ),
                     ),
             )
             .child(self.render_export_dir_toolbar(cx))

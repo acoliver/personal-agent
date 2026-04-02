@@ -8,6 +8,19 @@ use crate::models::{Conversation, ConversationExportFormat, MessageRole};
 pub const EXPORT_FORMAT_SETTING_KEY: &str = "chat.export.format";
 pub const EXPORT_DIR_SETTING_KEY: &str = "chat.export.dir";
 
+/// Expand a leading `~` or `~/` to the user's home directory.
+fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"))
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("~"))
+            .join(rest)
+    } else {
+        PathBuf::from(path)
+    }
+}
+
 #[must_use]
 pub fn sanitize_filename_component(input: &str) -> String {
     let mut result = String::new();
@@ -50,7 +63,7 @@ pub fn resolve_export_directory(configured_dir: Option<&str>) -> PathBuf {
     if let Some(value) = configured_dir {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
+            return expand_tilde(trimmed);
         }
     }
 
@@ -219,7 +232,7 @@ pub fn resolve_unique_export_path(directory: &Path, filename: &str) -> PathBuf {
 
 /// Validate that the given directory path exists and is writable.
 pub fn validate_export_directory(path: &str) -> Result<(), String> {
-    let dir = Path::new(path);
+    let dir = expand_tilde(path);
     if !dir.exists() {
         return Err(format!("Directory does not exist: {path}"));
     }
