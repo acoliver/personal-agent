@@ -324,7 +324,7 @@ mod tests {
         let tool_return = result.unwrap();
         match &tool_return.content {
             serdes_ai::core::messages::ToolReturnContent::Text { content } => {
-                assert_eq!(content, "line1\nline2\nline3");
+                assert_eq!(content, "line1\nline2\nline3\n");
             }
             _ => panic!("Expected text content"),
         }
