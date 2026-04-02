@@ -9,6 +9,7 @@ use crate::llm::AgentClientExt;
 use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::mcp::McpService;
 use crate::models::MessageRole;
+use crate::services::template::{expand_system_prompt, TemplateContext};
 use crate::services::ConversationService;
 use futures::{stream, Stream};
 use std::pin::Pin;
@@ -83,8 +84,13 @@ impl ChatServiceImpl {
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
         let messages = Self::build_llm_messages(&conversation, &profile);
-        let system_prompt =
+        let raw_system_prompt =
             Self::system_prompt_for_conversation(&conversation, &profile).to_string();
+
+        // Expand template variables in the system prompt
+        let template_ctx =
+            TemplateContext::new(conversation.created_at, &profile.name, &profile.model_id);
+        let system_prompt = expand_system_prompt(&raw_system_prompt, &template_ctx);
 
         Ok(PreparedMessageContext {
             profile,
@@ -109,6 +115,10 @@ impl ChatServiceImpl {
         conversation: &crate::models::Conversation,
         profile: &crate::models::ModelProfile,
     ) -> Vec<LlmMessage> {
+        // Create template context for expanding system messages
+        let template_ctx =
+            TemplateContext::new(conversation.created_at, &profile.name, &profile.model_id);
+
         let has_system_message = conversation
             .messages
             .iter()
@@ -118,14 +128,20 @@ impl ChatServiceImpl {
             .messages
             .iter()
             .map(|msg| match msg.role {
-                MessageRole::System => LlmMessage::system(msg.content.clone()),
+                MessageRole::System => {
+                    // Expand template variables in conversation system messages
+                    let expanded = expand_system_prompt(&msg.content, &template_ctx);
+                    LlmMessage::system(expanded)
+                }
                 MessageRole::User => LlmMessage::user(msg.content.clone()),
                 MessageRole::Assistant => LlmMessage::assistant(msg.content.clone()),
             })
             .collect();
 
         if !has_system_message && !profile.system_prompt.trim().is_empty() {
-            messages.insert(0, LlmMessage::system(profile.system_prompt.clone()));
+            // Expand template variables in the profile system prompt fallback
+            let expanded = expand_system_prompt(&profile.system_prompt, &template_ctx);
+            messages.insert(0, LlmMessage::system(expanded));
         }
 
         messages

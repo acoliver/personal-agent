@@ -4,6 +4,7 @@ use super::client::LlmClient;
 use super::error::{LlmError, LlmResult};
 use super::events::ChatStreamEvent;
 use crate::models::{AuthConfig, Conversation, MessageRole};
+use crate::services::template::{expand_system_prompt, TemplateContext};
 use futures::stream::{Stream, StreamExt};
 use serdes_ai::agent::{AgentBuilder, AgentStreamEvent, ModelConfig, RunOptions};
 use serdes_ai::core::messages::{ModelRequest, ModelRequestPart, ModelResponse, UserPromptPart};
@@ -75,11 +76,17 @@ pub async fn send_message_stream(
     let config = ModelConfig::new(&model_spec).with_api_key(&api_key);
 
     // Build system prompt from conversation if there's a system message
-    let system_prompt = conversation
+    let raw_system_prompt = conversation
         .messages
         .iter()
         .find(|m| m.role == MessageRole::System)
         .map(|m| m.content.clone());
+
+    // Create template context and expand system prompt
+    let template_ctx =
+        TemplateContext::new(conversation.created_at, &profile.name, &profile.model_id);
+    let system_prompt =
+        raw_system_prompt.map(|prompt| expand_system_prompt(&prompt, &template_ctx));
 
     // Create the agent using our new from_config method
     let mut builder: AgentBuilder<(), String> = AgentBuilder::from_config(config)
