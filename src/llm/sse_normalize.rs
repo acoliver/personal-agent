@@ -7,24 +7,28 @@
 //! This module provides a `Bytes`-stream wrapper that normalizes bare `data:`
 //! prefixes so every downstream parser sees spec-compliant SSE.
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use futures::Stream;
-use pin_project_lite::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-pin_project! {
-    /// Wraps a `Bytes` stream and ensures every `data:` SSE line has a space
-    /// after the colon (i.e. `data: …`).
-    pub struct NormalizeSseStream<S> {
-        #[pin]
-        inner: S,
-    }
+/// Wraps a `Bytes` stream and ensures every `data:` SSE line has a space
+/// after the colon (i.e. `data: …`).
+///
+/// Maintains an internal line buffer so that `data:` prefixes split across
+/// TCP chunks are handled correctly.
+pub struct NormalizeSseStream<S> {
+    inner: Pin<Box<S>>,
+    /// Partial line leftover from the previous chunk.
+    buf: BytesMut,
 }
 
 impl<S> NormalizeSseStream<S> {
-    pub const fn new(inner: S) -> Self {
-        Self { inner }
+    pub fn new(inner: S) -> Self {
+        Self {
+            inner: Box::pin(inner),
+            buf: BytesMut::new(),
+        }
     }
 }
 
@@ -34,14 +38,41 @@ where
 {
     type Item = Result<Bytes, reqwest::Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-        match this.inner.poll_next(cx) {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.inner.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
-                let normalized = normalize_sse_bytes(&bytes);
+                self.buf.put(bytes);
+
+                // Find the last newline — everything before it contains
+                // complete lines that we can normalize and emit now.
+                let last_nl = self
+                    .buf
+                    .iter()
+                    .rposition(|&b| b == b'\n')
+                    .map_or(0, |i| i + 1); // include the newline
+
+                if last_nl == 0 {
+                    // No complete line yet — wait for more data.
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+
+                let complete = self.buf.split_to(last_nl).freeze();
+                let normalized = normalize_sse_bytes(&complete);
                 Poll::Ready(Some(Ok(normalized)))
             }
-            other => other,
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => {
+                // Stream ended — flush any remaining buffer.
+                if self.buf.is_empty() {
+                    Poll::Ready(None)
+                } else {
+                    let remaining = self.buf.split().freeze();
+                    let normalized = normalize_sse_bytes(&remaining);
+                    Poll::Ready(Some(Ok(normalized)))
+                }
+            }
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -68,7 +99,6 @@ fn normalize_sse_bytes(bytes: &Bytes) -> Bytes {
         }
         if let Some(rest) = line.strip_prefix("data:") {
             if rest.starts_with(' ') {
-                // Already has space: `data: …`
                 result.push_str(line);
             } else {
                 // Missing space: `data:{…}` → `data: {…}`
@@ -152,7 +182,6 @@ mod tests {
 
     #[test]
     fn kimi_style_sse_chunk_normalized() {
-        // Real Kimi format captured from live API
         let input = Bytes::from(
             "data:{\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\
              \"created\":1,\"model\":\"kimi-for-coding\",\"choices\":[{\"index\":0,\
@@ -163,6 +192,29 @@ mod tests {
         assert!(
             text.starts_with("data: {"),
             "should start with 'data: {{': {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_handles_split_data_prefix() {
+        use futures::StreamExt;
+
+        // Simulate `data:` split across two chunks: "dat" | "a:{json}\n\n..."
+        let chunks: Vec<Result<Bytes, reqwest::Error>> = vec![
+            Ok(Bytes::from("dat")),
+            Ok(Bytes::from("a:{\"x\":1}\n\ndata: [DONE]\n\n")),
+        ];
+        let inner = futures::stream::iter(chunks);
+        let mut stream = NormalizeSseStream::new(inner);
+
+        let mut collected = String::new();
+        while let Some(Ok(bytes)) = stream.next().await {
+            collected.push_str(std::str::from_utf8(&bytes).unwrap());
+        }
+
+        assert_eq!(
+            collected, "data: {\"x\":1}\n\ndata: [DONE]\n\n",
+            "split data: prefix should be normalized"
         );
     }
 }

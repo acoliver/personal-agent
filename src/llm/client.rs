@@ -346,11 +346,15 @@ impl LlmClient {
         // Wrap with SSE normalizer — some providers (e.g. Kimi) send `data:{json}`
         // without the space that serdes-ai's parser requires.
         let wrapper = super::normalizing_model::NormalizingSseModel::new(
-            inner,
-            http_client,
-            self.api_key.clone(),
-            resolved_base_url,
-            self.profile.model_id.clone(),
+            super::normalizing_model::NormalizingSseModelConfig {
+                inner,
+                client: http_client,
+                api_key: self.api_key.clone(),
+                base_url: resolved_base_url,
+                model_name: self.profile.model_id.clone(),
+                enable_thinking: self.profile.parameters.enable_thinking,
+                thinking_budget: self.profile.parameters.thinking_budget.map(u64::from),
+            },
         );
 
         Ok(std::sync::Arc::new(wrapper))

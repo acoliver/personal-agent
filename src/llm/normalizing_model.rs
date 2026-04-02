@@ -27,33 +27,44 @@ use serdes_ai_models::ToolChoice;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Configuration for constructing a [`NormalizingSseModel`].
+pub struct NormalizingSseModelConfig {
+    pub inner: Arc<dyn Model>,
+    /// HTTP client (carries custom headers like User-Agent via `default_headers`).
+    pub client: Client,
+    pub api_key: String,
+    pub base_url: String,
+    pub model_name: String,
+    /// Whether the model supports thinking/reasoning (affects token field used).
+    pub enable_thinking: bool,
+    /// Optional thinking budget.
+    pub thinking_budget: Option<u64>,
+}
+
 /// Model wrapper that normalizes non-standard SSE formatting in streaming
 /// responses. Delegates non-streaming requests to the inner model.
 pub struct NormalizingSseModel {
     inner: Arc<dyn Model>,
-    /// HTTP client (carries custom headers like User-Agent via `default_headers`).
     client: Client,
     api_key: String,
     base_url: String,
     model_name: String,
     default_timeout: Duration,
+    enable_thinking: bool,
+    thinking_budget: Option<u64>,
 }
 
 impl NormalizingSseModel {
-    pub fn new(
-        inner: Arc<dyn Model>,
-        client: Client,
-        api_key: String,
-        base_url: String,
-        model_name: String,
-    ) -> Self {
+    pub fn new(config: NormalizingSseModelConfig) -> Self {
         Self {
-            inner,
-            client,
-            api_key,
-            base_url,
-            model_name,
+            inner: config.inner,
+            client: config.client,
+            api_key: config.api_key,
+            base_url: config.base_url,
+            model_name: config.model_name,
             default_timeout: Duration::from_secs(120),
+            enable_thinking: config.enable_thinking,
+            thinking_budget: config.thinking_budget,
         }
     }
 }
@@ -87,7 +98,14 @@ impl Model for NormalizingSseModel {
         settings: &ModelSettings,
         params: &ModelRequestParameters,
     ) -> Result<StreamedResponse, ModelError> {
-        let body = build_chat_request(&self.model_name, messages, settings, params);
+        let body = build_chat_request(
+            &self.model_name,
+            messages,
+            settings,
+            params,
+            self.enable_thinking,
+            self.thinking_budget,
+        );
         let timeout = settings.timeout.unwrap_or(self.default_timeout);
 
         let response = self
@@ -122,6 +140,8 @@ impl std::fmt::Debug for NormalizingSseModel {
             .field("base_url", &self.base_url)
             .field("model_name", &self.model_name)
             .field("default_timeout", &self.default_timeout)
+            .field("enable_thinking", &self.enable_thinking)
+            .field("thinking_budget", &self.thinking_budget)
             .finish_non_exhaustive()
     }
 }
@@ -130,11 +150,17 @@ impl std::fmt::Debug for NormalizingSseModel {
 // Request-body construction
 // ---------------------------------------------------------------------------
 
+/// Build a streaming `ChatCompletionRequest`.
+///
+/// When `enable_thinking` is set, `max_completion_tokens` is used instead of
+/// `max_tokens` (the `OpenAI` reasoning API requirement).
 fn build_chat_request(
     model_name: &str,
     messages: &[ModelRequest],
     settings: &ModelSettings,
     params: &ModelRequestParameters,
+    enable_thinking: bool,
+    thinking_budget: Option<u64>,
 ) -> ChatCompletionRequest {
     let chat_messages: Vec<ChatMessage> = messages.iter().flat_map(convert_request).collect();
 
@@ -146,13 +172,19 @@ fn build_chat_request(
 
     let tool_choice = params.tool_choice.as_ref().map(convert_tool_choice);
 
+    let (max_tokens, max_completion_tokens) = if enable_thinking {
+        (None, thinking_budget.or(settings.max_tokens))
+    } else {
+        (settings.max_tokens, None)
+    };
+
     ChatCompletionRequest {
         model: model_name.to_string(),
         messages: chat_messages,
         temperature: settings.temperature,
         top_p: settings.top_p,
-        max_tokens: settings.max_tokens,
-        max_completion_tokens: None,
+        max_tokens,
+        max_completion_tokens,
         stop: settings.stop.clone(),
         presence_penalty: settings.presence_penalty,
         frequency_penalty: settings.frequency_penalty,
