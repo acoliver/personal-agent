@@ -31,6 +31,7 @@ pub mod profile_migration;
 pub mod secrets;
 pub mod secrets_impl;
 pub mod secure_store;
+pub mod template;
 
 use thiserror::Error;
 
@@ -80,6 +81,7 @@ pub use mcp_registry::McpRegistryService;
 pub use models_registry::ModelsRegistryService;
 pub use profile::ProfileService;
 pub use secrets::SecretsService;
+pub use template::{expand_system_prompt, TemplateContext};
 
 // Re-export service implementations
 pub use app_settings_impl::AppSettingsServiceImpl;
