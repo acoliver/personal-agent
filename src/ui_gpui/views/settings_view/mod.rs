@@ -125,9 +125,11 @@ pub struct ThemeOption {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub(super) enum ActiveField {
     AllowlistInput,
     DenylistInput,
+    ExportDirInput,
 }
 
 /// Settings view state
@@ -148,6 +150,7 @@ pub struct SettingsState {
     pub persistent_denylist: Vec<String>,
     pub allowlist_input: String,
     pub denylist_input: String,
+    pub export_dir_input: String,
     pub(super) active_field: Option<ActiveField>,
     pub status_message: Option<String>,
     pub status_is_error: bool,
@@ -176,6 +179,7 @@ impl Default for SettingsState {
             persistent_denylist: Vec::new(),
             allowlist_input: String::new(),
             denylist_input: String::new(),
+            export_dir_input: String::new(),
             active_field: None,
             status_message: None,
             status_is_error: false,
@@ -327,6 +331,7 @@ impl SettingsView {
         match self.state.active_field {
             Some(ActiveField::AllowlistInput) => self.state.allowlist_input.push_str(text),
             Some(ActiveField::DenylistInput) => self.state.denylist_input.push_str(text),
+            Some(ActiveField::ExportDirInput) => self.state.export_dir_input.push_str(text),
             None => {}
         }
     }
@@ -338,6 +343,9 @@ impl SettingsView {
             }
             Some(ActiveField::DenylistInput) => {
                 self.state.denylist_input.pop();
+            }
+            Some(ActiveField::ExportDirInput) => {
+                self.state.export_dir_input.pop();
             }
             None => {}
         }
@@ -361,6 +369,12 @@ impl SettingsView {
                     .denylist_input
                     .truncate(len.saturating_sub(byte_count));
             }
+            Some(ActiveField::ExportDirInput) => {
+                let len = self.state.export_dir_input.len();
+                self.state
+                    .export_dir_input
+                    .truncate(len.saturating_sub(byte_count));
+            }
             None => {}
         }
     }
@@ -369,6 +383,7 @@ impl SettingsView {
         match self.state.active_field {
             Some(ActiveField::AllowlistInput) => &self.state.allowlist_input,
             Some(ActiveField::DenylistInput) => &self.state.denylist_input,
+            Some(ActiveField::ExportDirInput) => &self.state.export_dir_input,
             None => "",
         }
     }
@@ -380,8 +395,9 @@ impl SettingsView {
 
     const fn cycle_active_field(&mut self) {
         let next = match self.state.active_field {
+            Some(ActiveField::ExportDirInput) => ActiveField::AllowlistInput,
             Some(ActiveField::AllowlistInput) => ActiveField::DenylistInput,
-            Some(ActiveField::DenylistInput) | None => ActiveField::AllowlistInput,
+            Some(ActiveField::DenylistInput) | None => ActiveField::ExportDirInput,
         };
         self.set_active_field(Some(next));
     }
@@ -563,6 +579,16 @@ impl SettingsView {
             return;
         }
 
+        if key == "enter" {
+            self.handle_enter_key(cx);
+            return;
+        }
+
+        // When a text field is focused, don't intercept regular keys as shortcuts.
+        if self.state.active_field.is_some() {
+            return;
+        }
+
         if key == "=" && modifiers.shift {
             Self::navigate_to_profile_editor();
             return;
@@ -592,11 +618,6 @@ impl SettingsView {
             return;
         }
 
-        if key == "enter" {
-            self.handle_enter_key(cx);
-            return;
-        }
-
         if key == "space" {
             self.apply_selected_theme(cx);
         }
@@ -614,9 +635,45 @@ impl SettingsView {
                 cx.notify();
                 return;
             }
+            Some(ActiveField::ExportDirInput) => {
+                self.save_export_directory();
+                cx.notify();
+                return;
+            }
             None => {}
         }
         self.apply_selected_theme(cx);
+    }
+
+    fn save_export_directory(&self) {
+        let path = self.state.export_dir_input.trim().to_string();
+        self.emit(&UserEvent::SetExportDirectory { path });
+    }
+
+    #[allow(clippy::unused_self)] // cx.spawn closure captures the entity handle
+    fn browse_export_directory(&mut self, cx: &mut gpui::Context<Self>) {
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Select Export Directory".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(path) = paths.first() {
+                    let path_str = path.to_string_lossy().to_string();
+                    cx.update(|cx| {
+                        this.update(cx, |view, cx| {
+                            view.state.export_dir_input = path_str;
+                            view.save_export_directory();
+                            cx.notify();
+                        })
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     fn apply_selected_theme(&mut self, cx: &mut gpui::Context<Self>) {

@@ -40,7 +40,7 @@ impl SettingsView {
                         d.bg(Theme::accent()).child(
                             div()
                                 .text_size(px(9.0))
-                                .text_color(gpui::white())
+                                .text_color(Theme::selection_fg())
                                 .child("v"),
                         )
                     }),
@@ -162,7 +162,8 @@ impl SettingsView {
                     .cursor_text()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, _, _window, cx| {
+                        cx.listener(move |this, _, window, cx| {
+                            window.focus(&this.focus_handle, cx);
                             on_focus(this, cx);
                         }),
                     )
@@ -395,7 +396,7 @@ impl SettingsView {
                         })
                         .text_size(px(11.0))
                         .text_color(if self.state.status_is_error {
-                            gpui::white()
+                            Theme::selection_fg()
                         } else {
                             Theme::text_primary()
                         })

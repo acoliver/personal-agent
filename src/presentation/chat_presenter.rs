@@ -249,6 +249,9 @@ impl ChatPresenter {
             UserEvent::SelectChatProfile { id } => {
                 Self::handle_select_chat_profile(conversation_service, id).await;
             }
+            UserEvent::SetExportDirectory { path } => {
+                Self::handle_set_export_directory(app_settings_service, view_tx, path).await;
+            }
             _ => {} // Ignore other user events
         }
     }

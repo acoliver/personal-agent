@@ -165,8 +165,8 @@ impl ChatView {
                     .justify_center()
                     .cursor_pointer()
                     .bg(Theme::bg_darker())
-                    .hover(|s| s.bg(gpui::rgb(0x008B_0000)))
-                    .active(|s| s.bg(gpui::rgb(0x005C_0000)))
+                    .hover(|s| s.bg(Theme::danger()))
+                    .active(|s| s.bg(Theme::danger()))
                     .text_size(px(14.0))
                     .text_color(Theme::text_primary())
                     .child("\u{23FB}")
@@ -180,26 +180,76 @@ impl ChatView {
     }
 
     pub(super) fn render_export_feedback_bar(&self) -> impl IntoElement {
-        let message = self
-            .state
-            .export_feedback_message
-            .clone()
-            .unwrap_or_default();
-        let text_color = if self.state.export_feedback_is_error {
+        let is_error = self.state.export_feedback_is_error;
+        let text_color = if is_error {
             Theme::error()
         } else {
             Theme::text_secondary()
         };
 
-        div()
+        let container = div()
             .id("chat-export-feedback")
             .h(px(24.0))
             .w_full()
             .bg(Theme::bg_darker())
             .px(px(12.0))
             .flex()
-            .items_center()
-            .child(
+            .items_center();
+
+        if let (Some(ref file_path), false) = (&self.state.export_feedback_path, is_error) {
+            let path_for_open = file_path.clone();
+            let dir_path = std::path::Path::new(file_path)
+                .parent()
+                .map_or_else(String::new, |p| p.display().to_string());
+            let display_path = file_path.clone();
+
+            container.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .id("export-open-file")
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(11.0))
+                            .text_color(Theme::accent())
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(Theme::accent_hover()))
+                            .child(display_path)
+                            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                                let _ = std::process::Command::new("open")
+                                    .arg(&path_for_open)
+                                    .spawn();
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id("export-open-dir")
+                            .flex_shrink_0()
+                            .text_size(px(11.0))
+                            .text_color(Theme::accent())
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(Theme::accent_hover()))
+                            .child("(dir)")
+                            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                                let _ = std::process::Command::new("open").arg(&dir_path).spawn();
+                            }),
+                    ),
+            )
+        } else {
+            let message = self
+                .state
+                .export_feedback_message
+                .clone()
+                .unwrap_or_default();
+            container.child(
                 div()
                     .w_full()
                     .overflow_hidden()
@@ -209,6 +259,7 @@ impl ChatView {
                     .text_color(text_color)
                     .child(message),
             )
+        }
     }
 
     /// Render the title bar with conversation dropdown and model label
@@ -557,10 +608,11 @@ impl ChatView {
             .py(px(6.0))
             .cursor_pointer()
             .when(selected, |row| {
-                row.bg(Theme::accent()).text_color(gpui::white())
+                row.bg(Theme::accent()).text_color(Theme::selection_fg())
             })
             .when(!selected && highlighted, |row| {
-                row.bg(Theme::accent_hover()).text_color(gpui::white())
+                row.bg(Theme::accent_hover())
+                    .text_color(Theme::selection_fg())
             })
             .when(!selected && !highlighted, |row| {
                 row.hover(|s| s.bg(Theme::bg_darker()))
@@ -673,10 +725,11 @@ impl ChatView {
             .py(px(6.0))
             .cursor_pointer()
             .when(is_selected, |row| {
-                row.bg(Theme::accent()).text_color(gpui::white())
+                row.bg(Theme::accent()).text_color(Theme::selection_fg())
             })
             .when(!is_selected && is_highlighted, |row| {
-                row.bg(Theme::accent_hover()).text_color(gpui::white())
+                row.bg(Theme::accent_hover())
+                    .text_color(Theme::selection_fg())
             })
             .when(!is_selected && !is_highlighted, |row| {
                 row.hover(|s| s.bg(Theme::bg_darker()))

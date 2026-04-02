@@ -1352,16 +1352,16 @@ async fn save_conversation_uses_selected_format_when_setting_persist_fails() {
         .expect("publish save conversation");
     let save_commands = collect_commands(&mut view_rx).await;
 
-    let saved_message = save_commands.iter().find_map(|command| match command {
-        ViewCommand::ShowNotification { message }
-            if message.starts_with("Conversation saved as ") =>
-        {
-            Some(message.clone())
+    let export_completed = save_commands
+        .iter()
+        .find(|command| matches!(command, ViewCommand::ExportCompleted { .. }));
+    let export_completed = export_completed.expect("save notification");
+    match export_completed {
+        ViewCommand::ExportCompleted { format_label, .. } => {
+            assert_eq!(format_label, "MD");
         }
-        _ => None,
-    });
-    let saved_message = saved_message.expect("save notification");
-    assert!(saved_message.ends_with("(MD)"), "{saved_message}");
+        _ => unreachable!(),
+    }
 
     let export_path = export_dir
         .path()

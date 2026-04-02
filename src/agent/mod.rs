@@ -28,6 +28,7 @@
 
 pub mod runtime;
 pub mod tool_approval_policy;
+pub mod tools;
 
 pub use runtime::{agent_runtime, run_in_agent_runtime, spawn_in_agent_runtime};
 pub use tool_approval_policy::{McpApprovalMode, ToolApprovalDecision, ToolApprovalPolicy};

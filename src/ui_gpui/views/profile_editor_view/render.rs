@@ -74,7 +74,7 @@ impl ProfileEditorView {
                         d.cursor_pointer()
                             .bg(Theme::accent())
                             .hover(|s| s.bg(Theme::accent_hover()))
-                            .text_color(gpui::white())
+                            .text_color(Theme::selection_fg())
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, _window, _cx| {
@@ -599,7 +599,7 @@ impl ProfileEditorView {
                         d.bg(Theme::accent()).child(
                             div()
                                 .text_size(px(10.0))
-                                .text_color(gpui::white())
+                                .text_color(Theme::selection_fg())
                                 .child("v"),
                         )
                     }),
@@ -650,7 +650,7 @@ impl ProfileEditorView {
                                 d.bg(Theme::accent()).child(
                                     div()
                                         .text_size(px(10.0))
-                                        .text_color(gpui::white())
+                                        .text_color(Theme::selection_fg())
                                         .child("v"),
                                 )
                             }),

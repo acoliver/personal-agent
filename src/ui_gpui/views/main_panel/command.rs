@@ -55,7 +55,11 @@ impl MainPanel {
             // ── chat-only ephemeral commands (forward to chat_view) ────
             ConversationCleared
             | ToggleThinkingVisibility
-            | ShowConversationExportFormat { .. } => self.forward_to_chat(cmd, cx),
+            | ShowConversationExportFormat { .. }
+            | ExportCompleted { .. } => self.forward_to_chat(cmd, cx),
+
+            // ── export directory (settings view) ────────────────────────
+            ExportDirectoryLoaded { .. } => self.forward_to_settings(cmd, cx),
 
             // ── model selector + profile editor ─────────────────────────
             ModelSearchResults { .. } | ModelSelected { .. } | ProfileEditorLoad { .. } => {
