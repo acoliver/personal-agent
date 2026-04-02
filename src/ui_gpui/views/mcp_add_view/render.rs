@@ -69,7 +69,7 @@ impl McpAddView {
                         d.cursor_pointer()
                             .bg(Theme::accent())
                             .hover(|s| s.bg(Theme::accent_hover()))
-                            .text_color(gpui::white())
+                            .text_color(Theme::selection_fg())
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, _window, _cx| {
@@ -373,7 +373,7 @@ impl McpAddView {
                             .text_size(px(12.0))
                             .font_weight(FontWeight::BOLD)
                             .text_color(if is_selected {
-                                gpui::white()
+                                Theme::selection_fg()
                             } else {
                                 Theme::text_primary()
                             })

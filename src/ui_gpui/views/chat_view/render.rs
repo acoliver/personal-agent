@@ -594,7 +594,7 @@ impl ChatView {
             .cursor_pointer()
             .when(is_streaming, |d| {
                 d.bg(Theme::error())
-                    .text_color(gpui::white())
+                    .text_color(Theme::selection_fg())
                     .child("Stop")
                     .on_mouse_down(
                         MouseButton::Left,

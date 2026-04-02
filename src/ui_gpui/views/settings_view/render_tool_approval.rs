@@ -40,7 +40,7 @@ impl SettingsView {
                         d.bg(Theme::accent()).child(
                             div()
                                 .text_size(px(9.0))
-                                .text_color(gpui::white())
+                                .text_color(Theme::selection_fg())
                                 .child("v"),
                         )
                     }),
@@ -396,7 +396,7 @@ impl SettingsView {
                         })
                         .text_size(px(11.0))
                         .text_color(if self.state.status_is_error {
-                            gpui::white()
+                            Theme::selection_fg()
                         } else {
                             Theme::text_primary()
                         })
