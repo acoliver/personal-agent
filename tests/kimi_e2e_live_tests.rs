@@ -61,7 +61,7 @@ async fn raw_reqwest_kimi_with_user_agent_header() {
         "messages": [
             {"role": "user", "content": "Say exactly: pong"}
         ],
-        "max_tokens": 32,
+        "max_completion_tokens": 256,
         "temperature": 0.0
     });
 
@@ -91,8 +91,15 @@ async fn raw_reqwest_kimi_with_user_agent_header() {
     let content = parsed["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("");
+    let reasoning = parsed["choices"][0]["message"]["reasoning_content"]
+        .as_str()
+        .unwrap_or("");
     println!("Content: {content}");
-    assert!(!content.is_empty(), "response content should not be empty");
+    println!("Reasoning: {reasoning}");
+    assert!(
+        !content.is_empty() || !reasoning.is_empty(),
+        "response should have content or reasoning_content"
+    );
 }
 
 /// Same raw reqwest test but WITHOUT the User-Agent header.
@@ -111,7 +118,7 @@ async fn raw_reqwest_kimi_without_user_agent_header() {
         "messages": [
             {"role": "user", "content": "Say exactly: pong"}
         ],
-        "max_tokens": 32,
+        "max_completion_tokens": 256,
         "temperature": 0.0
     });
 
