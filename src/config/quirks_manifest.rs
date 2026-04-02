@@ -119,7 +119,7 @@ mod tests {
         );
         assert_eq!(
             kimi.headers.get("User-Agent").map(String::as_str),
-            Some("claude-code/0.1.0")
+            Some("RooCode/1.0")
         );
     }
 
