@@ -711,11 +711,10 @@ mod settings_presenter_tests {
         )
     }
 
-    /// Write a temp config file containing one MCP entry and return (path, `mcp_id`).
-    fn make_temp_config_with_mcp() -> (std::path::PathBuf, Uuid) {
+    /// Write a temp config file containing one MCP entry and return (`TempDir`, path, `mcp_id`).
+    fn make_temp_config_with_mcp() -> (tempfile::TempDir, std::path::PathBuf, Uuid) {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let dir_path = dir.keep();
-        let path = dir_path.join("config.json");
+        let path = dir.path().join("config.json");
         let mcp_id = Uuid::new_v4();
         let mut config = personal_agent::config::Config::default();
         config.mcps.push(personal_agent::mcp::McpConfig {
@@ -738,7 +737,7 @@ mod settings_presenter_tests {
         });
         let json = serde_json::to_string_pretty(&config).expect("serialize config");
         std::fs::write(&path, json).expect("write config");
-        (path, mcp_id)
+        (dir, path, mcp_id)
     }
 
     /// Drain all 5 startup commands emitted by the settings presenter.
@@ -1089,11 +1088,7 @@ mod settings_presenter_tests {
     }
 
     #[tokio::test]
-    async fn toggle_mcp_emits_status_changed() {
-        // Toggle and delete now operate directly on config.json.
-        // With a random UUID that won't be in config, the presenter
-        // logs a warning and returns without emitting — which is the
-        // correct behaviour for a missing MCP.  Verify no crash.
+    async fn toggle_mcp_missing_entry_emits_show_error() {
         let profile_service = MockProfileService::new(vec![], None);
         let app_settings_service = MockAppSettingsService::new(None);
         let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =
@@ -1108,23 +1103,23 @@ mod settings_presenter_tests {
             AppEvent::User(UserEvent::ToggleMcp { id, enabled: true }),
         )
         .await;
-        // No ViewCommand emitted for a missing MCP — channel should be empty
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            recv_broadcast_command(&mut view_rx),
-        )
-        .await;
-        assert!(
-            result.is_err(),
-            "Expected timeout (no command emitted for missing MCP)"
+
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::ShowError {
+                title: "MCP Toggle Failed".to_string(),
+                message: format!("MCP {id} not found in config"),
+                severity: ErrorSeverity::Error,
+            }
         );
+        assert_broadcast_no_command(&mut view_rx).await;
     }
 
     /// Regression test for issue #72: `ToggleMcp` must emit `McpStatusChanged` when the MCP
     /// exists in config (i.e. the config path override is used so the entry is found).
     #[tokio::test]
     async fn toggle_mcp_known_entry_emits_status_changed() {
-        let (config_path, mcp_id) = make_temp_config_with_mcp();
+        let (_temp_dir, config_path, mcp_id) = make_temp_config_with_mcp();
         let profile_service = MockProfileService::new(vec![], None);
         let app_settings_service = MockAppSettingsService::new(None);
         let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =
@@ -1182,7 +1177,7 @@ mod settings_presenter_tests {
     /// exists in config.
     #[tokio::test]
     async fn delete_mcp_known_entry_emits_mcp_deleted() {
-        let (config_path, mcp_id) = make_temp_config_with_mcp();
+        let (_temp_dir, config_path, mcp_id) = make_temp_config_with_mcp();
         let profile_service = MockProfileService::new(vec![], None);
         let app_settings_service = MockAppSettingsService::new(None);
         let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =
@@ -1217,10 +1212,37 @@ mod settings_presenter_tests {
         );
     }
 
+    /// Regression test for issue #72: `DeleteMcp` should emit an error when target MCP is missing.
+    #[tokio::test]
+    async fn delete_mcp_missing_entry_emits_show_error() {
+        let profile_service = MockProfileService::new(vec![], None);
+        let app_settings_service = MockAppSettingsService::new(None);
+        let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+        drain_startup(&mut view_rx).await;
+
+        let id = Uuid::new_v4();
+        send_settings_event(&event_tx, AppEvent::User(UserEvent::DeleteMcp { id })).await;
+
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::ShowError {
+                title: "MCP Delete Failed".to_string(),
+                message: format!(
+                    "Failed to remove MCP {id}: Configuration error: MCP not found: {id}"
+                ),
+                severity: ErrorSeverity::Error,
+            }
+        );
+        assert_broadcast_no_command(&mut view_rx).await;
+    }
+
     /// Regression test for issue #72: `ToggleMcp` must persist the enabled state to config.
     #[tokio::test]
     async fn toggle_mcp_persists_enabled_state_to_config() {
-        let (config_path, mcp_id) = make_temp_config_with_mcp();
+        let (_temp_dir, config_path, mcp_id) = make_temp_config_with_mcp();
         let profile_service = MockProfileService::new(vec![], None);
         let app_settings_service = MockAppSettingsService::new(None);
         let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =

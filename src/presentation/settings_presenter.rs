@@ -589,6 +589,11 @@ impl SettingsPresenter {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!("Cannot resolve config path for MCP toggle: {e}");
+                    let _ = view_tx.send(ViewCommand::ShowError {
+                        title: "MCP Toggle Failed".to_string(),
+                        message: format!("Failed to resolve config path: {e}"),
+                        severity: super::view_command::ErrorSeverity::Error,
+                    });
                     return;
                 }
             },
@@ -597,6 +602,11 @@ impl SettingsPresenter {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("Cannot load config for MCP toggle: {e}");
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "MCP Toggle Failed".to_string(),
+                    message: format!("Failed to load config: {e}"),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
                 return;
             }
         };
@@ -604,10 +614,20 @@ impl SettingsPresenter {
             mcp.enabled = enabled;
         } else {
             tracing::warn!("MCP {id} not found in config for toggle");
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "MCP Toggle Failed".to_string(),
+                message: format!("MCP {id} not found in config"),
+                severity: super::view_command::ErrorSeverity::Error,
+            });
             return;
         }
         if let Err(e) = config.save(&config_path) {
             tracing::error!("Failed to save config after MCP toggle: {e}");
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "MCP Toggle Failed".to_string(),
+                message: format!("Failed to save config: {e}"),
+                severity: super::view_command::ErrorSeverity::Error,
+            });
             return;
         }
 
@@ -643,6 +663,11 @@ impl SettingsPresenter {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!("Cannot resolve config path for MCP delete: {e}");
+                    let _ = view_tx.send(ViewCommand::ShowError {
+                        title: "MCP Delete Failed".to_string(),
+                        message: format!("Failed to resolve config path: {e}"),
+                        severity: super::view_command::ErrorSeverity::Error,
+                    });
                     return;
                 }
             },
@@ -651,15 +676,30 @@ impl SettingsPresenter {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("Cannot load config for MCP delete: {e}");
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "MCP Delete Failed".to_string(),
+                    message: format!("Failed to load config: {e}"),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
                 return;
             }
         };
         if let Err(e) = config.remove_mcp(&id) {
             tracing::error!("Failed to remove MCP {id}: {e}");
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "MCP Delete Failed".to_string(),
+                message: format!("Failed to remove MCP {id}: {e}"),
+                severity: super::view_command::ErrorSeverity::Error,
+            });
             return;
         }
         if let Err(e) = config.save(&config_path) {
             tracing::error!("Failed to save config after MCP delete: {e}");
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "MCP Delete Failed".to_string(),
+                message: format!("Failed to save config: {e}"),
+                severity: super::view_command::ErrorSeverity::Error,
+            });
             return;
         }
 
