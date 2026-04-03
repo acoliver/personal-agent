@@ -63,6 +63,7 @@ struct ParseState {
     container_stack: Vec<Container>,
     image_alt_buffer: String,
     in_image: bool,
+    in_table_cell: bool,
     footnote_label: String,
     in_html_block: bool,
     html_buffer: String,
@@ -82,6 +83,7 @@ impl ParseState {
             container_stack: Vec::new(),
             image_alt_buffer: String::new(),
             in_image: false,
+            in_table_cell: false,
             footnote_label: String::new(),
             in_html_block: false,
             html_buffer: String::new(),
@@ -138,7 +140,9 @@ impl ParseState {
         use pulldown_cmark::Tag;
 
         match tag {
-            Tag::Paragraph | Tag::Item | Tag::TableCell => self.reset_inline_buffers(),
+            Tag::Paragraph => self.begin_paragraph(),
+            Tag::Item => self.reset_inline_buffers(),
+            Tag::TableCell => self.begin_table_cell(),
             Tag::Heading { level, .. } => self.begin_heading(level as u8),
             Tag::CodeBlock(kind) => self.begin_code_block(kind),
             Tag::BlockQuote(_) => self.begin_blockquote(),
@@ -188,6 +192,15 @@ impl ParseState {
     fn begin_heading(&mut self, level: u8) {
         self.reset_inline_buffers();
         self.current_heading_level = Some(level);
+    }
+
+    fn begin_paragraph(&mut self) {
+        self.reset_inline_buffers();
+    }
+
+    fn begin_table_cell(&mut self) {
+        self.reset_inline_buffers();
+        self.in_table_cell = true;
     }
 
     fn begin_code_block(&mut self, kind: pulldown_cmark::CodeBlockKind<'_>) {
@@ -394,6 +407,7 @@ impl ParseState {
         if let Some(Container::Table { current_row, .. }) = self.container_stack.last_mut() {
             current_row.push(cell);
         }
+        self.in_table_cell = false;
     }
 
     fn end_table(&mut self) {
@@ -426,7 +440,7 @@ impl ParseState {
         self.in_html_block = false;
         let stripped = strip_html_tags(&self.html_buffer);
         if !stripped.is_empty() {
-            self.push_plain_paragraph_to_root(stripped);
+            self.push_plain_paragraph(stripped);
         }
         self.html_buffer.clear();
     }
@@ -434,13 +448,26 @@ impl ParseState {
     fn end_image(&mut self) {
         self.in_image = false;
         let alt = std::mem::take(&mut self.image_alt_buffer);
+
+        if self.current_heading_level.is_some() || self.in_table_cell {
+            if alt.is_empty() {
+                self.text_buffer.push_str("[image]");
+            } else {
+                self.text_buffer.push_str("[image: ");
+                self.text_buffer.push_str(&alt);
+                self.text_buffer.push(']');
+            }
+            return;
+        }
+
         self.push_block(MarkdownBlock::ImageFallback { alt });
     }
 
     fn end_footnote_definition(&mut self) {
-        if !self.text_buffer.is_empty() {
-            let prefixed_text = format!("[^{}]: {}", self.footnote_label, self.text_buffer);
-            self.push_plain_paragraph_to_root(prefixed_text);
+        let text = std::mem::take(&mut self.text_buffer);
+        if !text.is_empty() {
+            let prefixed_text = format!("[^{}]: {}", self.footnote_label, text);
+            self.push_plain_paragraph(prefixed_text);
         }
         self.footnote_label.clear();
     }
@@ -454,14 +481,11 @@ impl ParseState {
     }
 
     fn push_code_span(&mut self, text: &str) {
-        self.current_spans.push(MarkdownInline {
-            text: text.to_string(),
-            bold: false,
-            italic: false,
-            strikethrough: false,
-            code: true,
-            link_url: None,
-        });
+        self.flush_text_buffer();
+
+        let mut span = create_inline_span(text, &self.inline_stack);
+        span.code = true;
+        self.current_spans.push(span);
     }
 
     fn push_display_math_block(&mut self, text: &str) {
@@ -479,7 +503,7 @@ impl ParseState {
 
         let stripped = strip_html_tags(html);
         if !stripped.is_empty() {
-            self.push_plain_paragraph_to_root(stripped);
+            self.push_plain_paragraph(stripped);
         }
     }
 
@@ -494,8 +518,8 @@ impl ParseState {
         let _ = write!(self.text_buffer, "[^{label}]");
     }
 
-    fn push_plain_paragraph_to_root(&mut self, text: String) {
-        self.blocks.push(MarkdownBlock::Paragraph {
+    fn push_plain_paragraph(&mut self, text: String) {
+        self.push_block(MarkdownBlock::Paragraph {
             spans: vec![MarkdownInline::plain(text)],
             links: vec![],
         });

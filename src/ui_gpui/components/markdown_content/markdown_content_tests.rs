@@ -265,6 +265,48 @@ mod tests {
     }
 
     /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-024
+    #[test]
+    fn test_parse_inline_code_inside_bold_inherits_bold_style() {
+        let input = "**prefix `code` suffix**";
+        let blocks = parse_markdown_blocks(input);
+
+        match &blocks[0] {
+            MarkdownBlock::Paragraph { spans, .. } => {
+                let code_span = spans
+                    .iter()
+                    .find(|span| span.code)
+                    .expect("Expected code span");
+                assert_eq!(code_span.text, "code");
+                assert!(code_span.bold);
+            }
+            _ => panic!("Expected Paragraph"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-024
+    #[test]
+    fn test_parse_inline_code_inside_link_inherits_link_url() {
+        let input = "[prefix `code` suffix](https://example.com)";
+        let blocks = parse_markdown_blocks(input);
+
+        match &blocks[0] {
+            MarkdownBlock::Paragraph { spans, links } => {
+                let code_span = spans
+                    .iter()
+                    .find(|span| span.code)
+                    .expect("Expected code span");
+                assert_eq!(code_span.text, "code");
+                assert_eq!(code_span.link_url.as_deref(), Some("https://example.com"));
+                assert_eq!(links.len(), 1);
+                assert_eq!(links[0].1, "https://example.com");
+            }
+            _ => panic!("Expected Paragraph"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
     /// @requirement:REQ-MD-PARSE-025
     #[test]
     fn test_parse_link() {
@@ -365,12 +407,91 @@ mod tests {
     }
 
     /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-040
+    #[test]
+    fn test_parse_image_inside_heading_stays_in_heading_content() {
+        let input = "# See ![alt text](image.png) now";
+        let blocks = parse_markdown_blocks(input);
+        assert_eq!(blocks.len(), 1);
+
+        match &blocks[0] {
+            MarkdownBlock::Heading { level, spans, .. } => {
+                assert_eq!(*level, 1);
+                let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+                assert!(text.contains("See "));
+                assert!(text.contains("[image: alt text]"));
+                assert!(text.contains(" now"));
+            }
+            _ => panic!("Expected Heading"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-040
+    #[test]
+    fn test_parse_image_inside_table_cell_stays_in_cell_content() {
+        let input = "| A |\n|---|\n| before ![alt text](image.png) after |";
+        let blocks = parse_markdown_blocks(input);
+        assert_eq!(blocks.len(), 1);
+
+        match &blocks[0] {
+            MarkdownBlock::Table { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 1);
+                let cell_text: String = rows[0][0].spans.iter().map(|s| s.text.as_str()).collect();
+                assert_eq!(cell_text, "before [image: alt text] after");
+            }
+            _ => panic!("Expected Table"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-043
+    #[test]
+    fn test_parse_html_in_blockquote_stays_nested() {
+        let input = "> <div>nested html</div>";
+        let blocks = parse_markdown_blocks(input);
+        assert_eq!(blocks.len(), 1);
+
+        match &blocks[0] {
+            MarkdownBlock::BlockQuote { blocks: children } => {
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    MarkdownBlock::Paragraph { spans, .. } => {
+                        let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+                        assert_eq!(text, "nested html");
+                    }
+                    _ => panic!("Expected nested Paragraph"),
+                }
+            }
+            _ => panic!("Expected BlockQuote"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
     /// @requirement:REQ-MD-PARSE-041
     #[test]
     fn test_parse_footnote_definition() {
         let input = "[^1]: footnote text";
         let blocks = parse_markdown_blocks(input);
         assert!(!blocks.is_empty());
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-041
+    #[test]
+    fn test_parse_footnote_definition_not_duplicated() {
+        let input = "[^1]: footnote text";
+        let blocks = parse_markdown_blocks(input);
+        assert_eq!(blocks.len(), 1);
+
+        match &blocks[0] {
+            MarkdownBlock::Paragraph { spans, .. } => {
+                let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+                assert_eq!(text, "[^1]: footnote text");
+            }
+            _ => panic!("Expected Paragraph"),
+        }
     }
 
     /// @plan:PLAN-20260402-MARKDOWN.P04
