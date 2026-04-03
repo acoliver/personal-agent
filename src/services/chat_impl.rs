@@ -92,14 +92,17 @@ impl ChatServiceImpl {
     ) -> Self {
         let (view_tx, _view_rx) = tokio::sync::mpsc::channel(100);
         let approval_gate = Arc::new(ApprovalGate::new());
+        let settings_path = std::env::temp_dir().join(format!(
+            "chat-service-test-app-settings-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+
         Self::new(
             conversation_service,
             profile_service,
             Arc::new(
-                super::AppSettingsServiceImpl::new(std::path::PathBuf::from(
-                    "/tmp/chat-service-test-app-settings.json",
-                ))
-                .expect("failed to create test app settings service"),
+                super::AppSettingsServiceImpl::new(settings_path)
+                    .expect("failed to create test app settings service"),
             ) as Arc<dyn super::AppSettingsService>,
             view_tx,
             approval_gate,

@@ -110,16 +110,25 @@ fn resolve_path(path: &str) -> Result<std::path::PathBuf, ToolError> {
 /// Create parent directories if they don't exist.
 async fn ensure_parent_dirs(absolute_path: &Path) -> Result<(), ToolError> {
     if let Some(parent) = absolute_path.parent() {
-        if !parent.exists() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                ToolError::execution_failed(format!(
-                    "Failed to create parent directories for '{}': {e}",
-                    absolute_path.display()
-                ))
-            })?;
-        }
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            ToolError::execution_failed(format!(
+                "Failed to create parent directories for '{}': {e}",
+                absolute_path.display()
+            ))
+        })?;
     }
     Ok(())
+}
+
+fn is_disk_full_error(error: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        error.raw_os_error() == Some(112)
+    }
+    #[cfg(not(windows))]
+    {
+        error.raw_os_error() == Some(28)
+    }
 }
 
 /// Write content to a file with descriptive error mapping.
@@ -135,7 +144,7 @@ async fn write_content(absolute_path: &Path, content: &str) -> Result<(), ToolEr
             std::io::ErrorKind::InvalidInput => {
                 format!("Invalid path: {}", absolute_path.display())
             }
-            _ if e.raw_os_error() == Some(28) => {
+            _ if is_disk_full_error(&e) => {
                 format!("Disk full: cannot write to {}", absolute_path.display())
             }
             _ => format!("Failed to write file '{}': {e}", absolute_path.display()),
