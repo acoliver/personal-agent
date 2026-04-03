@@ -205,10 +205,19 @@ fn build_chat_request_payload(
     };
 
     let mut request_value = serde_json::to_value(request)?;
-    if let Some(obj) = request_value.as_object_mut() {
-        let encoded_messages = serde_json::to_value(chat_messages)?;
-        obj.insert("messages".to_string(), encoded_messages);
+    if !request_value.is_object() {
+        return Err(ModelError::from(serde_json::Error::io(
+            std::io::Error::other(format!(
+                "ChatCompletionRequest must serialize to a JSON object, got: {request_value}"
+            )),
+        )));
     }
+
+    let encoded_messages = serde_json::to_value(chat_messages)?;
+    request_value
+        .as_object_mut()
+        .expect("request_value object checked above")
+        .insert("messages".to_string(), encoded_messages);
 
     Ok(request_value)
 }
