@@ -42,6 +42,45 @@ pub fn use_mock_backend() {
     let _ = MOCK_ACTIVE.set(true);
 }
 
+// ── Debug-only key cache ────────────────────────────────────────────────
+//
+// In debug builds, cache keychain reads in-memory so you only get prompted
+// once per key per process lifetime.  Compile-gated: release builds contain
+// zero cache code.
+
+#[cfg(debug_assertions)]
+static DEBUG_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+#[cfg(debug_assertions)]
+fn debug_cache() -> &'static Mutex<HashMap<String, String>> {
+    DEBUG_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(debug_assertions)]
+fn debug_cache_get(key: &str) -> Option<String> {
+    debug_cache()
+        .lock()
+        .expect("debug cache poisoned")
+        .get(key)
+        .cloned()
+}
+
+#[cfg(debug_assertions)]
+fn debug_cache_put(key: &str, value: &str) {
+    debug_cache()
+        .lock()
+        .expect("debug cache poisoned")
+        .insert(key.to_string(), value.to_string());
+}
+
+#[cfg(debug_assertions)]
+fn debug_cache_remove(key: &str) {
+    debug_cache()
+        .lock()
+        .expect("debug cache poisoned")
+        .remove(key);
+}
+
 #[derive(Debug, Error)]
 pub enum SecureStoreError {
     #[error("Keychain error: {0}")]
@@ -150,7 +189,7 @@ pub fn set_secret(key: &str, value: &str) -> Result<(), SecureStoreError> {
     }
     let entry = keyring::Entry::new(SERVICE_NAME, key)
         .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
-    match entry.set_password(value) {
+    let result = match entry.set_password(value) {
         Ok(()) => Ok(()),
         Err(e) => {
             #[cfg(target_os = "macos")]
@@ -163,7 +202,14 @@ pub fn set_secret(key: &str, value: &str) -> Result<(), SecureStoreError> {
                 Err(SecureStoreError::Keychain(e.to_string()))
             }
         }
+    };
+
+    #[cfg(debug_assertions)]
+    if result.is_ok() {
+        debug_cache_put(key, value);
     }
+
+    result
 }
 
 /// Retrieve a secret from the OS keychain (or mock store in tests).
@@ -184,9 +230,16 @@ pub fn get_secret(key: &str) -> Result<Option<String>, SecureStoreError> {
             .get(key)
             .cloned());
     }
+
+    // In debug builds, return from the in-memory cache if available.
+    #[cfg(debug_assertions)]
+    if let Some(cached) = debug_cache_get(key) {
+        return Ok(Some(cached));
+    }
+
     let entry = keyring::Entry::new(SERVICE_NAME, key)
         .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
-    match entry.get_password() {
+    let result = match entry.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => {
@@ -200,7 +253,16 @@ pub fn get_secret(key: &str) -> Result<Option<String>, SecureStoreError> {
                 Err(SecureStoreError::Keychain(e.to_string()))
             }
         }
+    };
+
+    // In debug builds, cache successful reads so the keychain prompt
+    // only appears once per key per process lifetime.
+    #[cfg(debug_assertions)]
+    if let Ok(Some(ref value)) = result {
+        debug_cache_put(key, value);
     }
+
+    result
 }
 
 /// Delete a secret from the OS keychain (or mock store in tests).
@@ -220,6 +282,10 @@ pub fn delete_secret(key: &str) -> Result<(), SecureStoreError> {
             .remove(key);
         return Ok(());
     }
+
+    #[cfg(debug_assertions)]
+    debug_cache_remove(key);
+
     let entry = keyring::Entry::new(SERVICE_NAME, key)
         .map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
     match entry.delete_credential() {

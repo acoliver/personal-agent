@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - Settings Redesign Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* ── Themed scrollbars (green-screen defaults) ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #1a3318; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: #6a9955; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #7ab966; }
+  .nebula ::-webkit-scrollbar-track { background: #2a2a3a; }
+  .nebula ::-webkit-scrollbar-thumb { background: #89B4FA; }
+  .nebula ::-webkit-scrollbar-thumb:hover { background: #a3c5fb; }
+
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .section-label {
+    font-size: 13px;
+    color: #6a9955;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .annotation {
+    font-size: 11px;
+    color: #6a9955;
+    font-style: italic;
+    margin-top: 8px;
+    max-width: 500px;
+    line-height: 1.6;
+  }
+  .mockup-wrapper { display: flex; flex-direction: column; align-items: center; }
+  .divider { width: 80%; height: 1px; background: #444; margin: 10px 0; }
+
+  /* ── Popup frame (400×520 like the real app) ── */
+  .popup-frame {
+    width: 400px;
+    height: 520px;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  /* ── Top bar ── */
+  .top-bar {
+    height: 44px;
+    background: #000;
+    border-bottom: 1px solid #6a9955;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    flex-shrink: 0;
+  }
+  .top-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .back-btn {
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #6a9955; background: transparent;
+    cursor: pointer; border: none;
+  }
+  .back-btn:hover { background: #1a3318; }
+  .top-title {
+    font-size: 14px; font-weight: 700; color: #6a9955;
+  }
+
+  /* ── Settings body: sidebar + content ── */
+  .settings-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── Category sidebar ── */
+  .cat-sidebar {
+    width: 120px;
+    background: #000;
+    border-right: 1px solid #1a3318;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 0;
+    flex-shrink: 0;
+  }
+  .cat-item {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #6a9955;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: all 0.1s;
+  }
+  .cat-item:hover { background: #0a1a0a; }
+  .cat-item.selected {
+    background: #0a1a0a;
+    border-left-color: #6a9955;
+    color: #6a9955;
+    font-weight: 600;
+  }
+
+  /* ── Content panel ── */
+  .content-panel {
+    flex: 1;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  /* ── Section header ── */
+  .section-hdr {
+    font-size: 11px;
+    color: #6a9955;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Generic list box ── */
+  .list-box {
+    flex: 1;
+    min-height: 0;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    scrollbar-width: thin;
+    scrollbar-color: #6a9955 #1a3318;
+  }
+  .list-row {
+    height: 24px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    color: #6a9955;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .list-row:hover { background: #0a1a0a; }
+  .list-row.selected {
+    background: #6a9955;
+    color: #000;
+  }
+  .list-count {
+    padding: 2px 8px;
+    font-size: 10px;
+    color: #3b7a3b;
+  }
+
+  /* ── MCP-specific row ── */
+  .mcp-row {
+    height: 28px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    color: #6a9955;
+    cursor: pointer;
+    flex-shrink: 0;
+    gap: 8px;
+  }
+  .mcp-row:hover { background: #0a1a0a; }
+  .mcp-row.selected { background: #6a9955; color: #000; }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.running { background: #00ff00; }
+  .status-dot.stopped { background: #3b7a3b; }
+  .mcp-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mcp-toggle {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .mcp-toggle.on { background: #6a9955; color: #000; }
+  .mcp-toggle.off { background: #0a1a0a; color: #3b7a3b; }
+
+  /* ── Toolbar row ── */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tb-btn {
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #6a9955; background: transparent;
+    cursor: pointer; border: none;
+  }
+  .tb-btn:hover { background: #0a1a0a; }
+  .tb-btn.danger:hover { background: #4a2a2a; color: #ff6b6b; }
+  .text-btn {
+    padding: 4px 12px; border-radius: 4px;
+    font-size: 12px; color: #6a9955; background: transparent;
+    cursor: pointer; border: none;
+  }
+  .text-btn:hover { background: #0a1a0a; }
+  .spacer { flex: 1; }
+
+  /* ── Standard dropdown (matches conv-dropdown / profile-pill style) ── */
+  .std-dropdown {
+    min-width: 140px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: #000;
+    border: 1px solid #6a9955;
+    font-size: 13px;
+    color: #6a9955;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+  }
+  .std-dropdown:hover { background: #0a1a0a; }
+  .std-dropdown .arrow { font-size: 10px; color: #3b7a3b; margin-left: 8px; }
+
+  /* ── Dropdown open state ── */
+  .std-dropdown-open {
+    position: relative;
+  }
+  .std-dropdown-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 2px;
+    max-height: 180px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    overflow-y: auto;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    scrollbar-width: thin;
+    scrollbar-color: #6a9955 #1a3318;
+  }
+  .std-dropdown-item {
+    height: 26px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: #6a9955;
+    cursor: pointer;
+  }
+  .std-dropdown-item:hover { background: #0a1a0a; }
+  .std-dropdown-item.selected { background: #6a9955; color: #000; }
+
+  /* ── Toggle checkbox ── */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .checkbox {
+    width: 14px; height: 14px;
+    border: 1px solid #6a9955;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+  .checkbox.checked { background: #6a9955; color: #000; }
+  .toggle-label { font-size: 12px; color: #6a9955; }
+  .toggle-warning {
+    padding-left: 22px;
+    font-size: 10px;
+    color: #6a9955;
+    font-style: italic;
+  }
+
+  /* ── Mode selector buttons ── */
+  .mode-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mode-label { font-size: 12px; color: #6a9955; }
+  .mode-btn {
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid #6a9955;
+    font-size: 11px;
+    cursor: pointer;
+    background: #000;
+    color: #6a9955;
+  }
+  .mode-btn.active {
+    background: #6a9955;
+    color: #000;
+  }
+
+  /* ── Editable list (allowlist/denylist) ── */
+  .editable-list {
+    min-height: 32px;
+    max-height: 64px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    scrollbar-width: thin;
+    scrollbar-color: #6a9955 #1a3318;
+  }
+  .editable-row {
+    height: 24px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #6a9955;
+  }
+  .editable-row:hover { background: #0a1a0a; }
+  .remove-x {
+    width: 18px; height: 18px; border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #3b7a3b; cursor: pointer;
+    background: transparent; border: none;
+  }
+  .remove-x:hover { background: #4a2a2a; color: #ff6b6b; }
+  .editable-empty {
+    height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #3b7a3b;
+  }
+
+  /* ── Input + Add row ── */
+  .input-add-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .text-input {
+    flex: 1;
+    height: 24px;
+    padding: 0 8px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #3b7a3b;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .add-btn {
+    height: 24px;
+    padding: 0 8px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #6a9955;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .add-btn:hover { background: #6a9955; color: #000; }
+
+  /* ── Export dir row ── */
+  .export-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .export-input {
+    flex: 1;
+    height: 28px;
+    padding: 0 8px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #3b7a3b;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .browse-btn {
+    height: 28px;
+    padding: 0 10px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #6a9955;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .browse-btn:hover { background: #6a9955; color: #000; }
+
+  .save-reset-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .small-btn {
+    padding: 4px 12px; border-radius: 4px;
+    font-size: 11px; cursor: pointer;
+    background: transparent; border: none;
+  }
+  .small-btn.save { color: #6a9955; }
+  .small-btn.save:hover { background: #0a1a0a; }
+  .small-btn.reset { color: #3b7a3b; }
+  .small-btn.reset:hover { background: #0a1a0a; }
+  .help-text {
+    font-size: 10px; color: #3b7a3b;
+  }
+
+  /* ── Midnight Nebula overrides ── */
+  .nebula .popup-frame { background: #1E1E2E; }
+  .nebula .top-bar { background: #1E1E2E; border-bottom-color: #6C7086; }
+  .nebula .back-btn { color: #6C7086; }
+  .nebula .back-btn:hover { background: #2a2a3a; }
+  .nebula .top-title { color: #e5e7eb; }
+  .nebula .cat-sidebar { background: #161628; border-right-color: #2a2a3a; }
+  .nebula .cat-item { color: #6C7086; }
+  .nebula .cat-item:hover { background: #2a2a3a; }
+  .nebula .cat-item.selected {
+    background: #2a2a3a;
+    border-left-color: #89B4FA;
+    color: #e5e7eb;
+  }
+  .nebula .content-panel { }
+  .nebula .section-hdr { color: #e5e7eb; }
+  .nebula .list-box { background: #161628; border-color: #6C7086; }
+  .nebula .list-row { color: #e5e7eb; }
+  .nebula .list-row:hover { background: #2a2a3a; }
+  .nebula .list-row.selected { background: #89B4FA; color: #0f172a; }
+  .nebula .list-count { color: #6C7086; }
+  .nebula .mcp-row { color: #e5e7eb; }
+  .nebula .mcp-row:hover { background: #2a2a3a; }
+  .nebula .mcp-row.selected { background: #89B4FA; color: #0f172a; }
+  .nebula .status-dot.running { background: #A6E3A1; }
+  .nebula .status-dot.stopped { background: #6C7086; }
+  .nebula .mcp-toggle.on { background: #89B4FA; color: #0f172a; }
+  .nebula .mcp-toggle.off { background: #2a2a3a; color: #6C7086; }
+  .nebula .tb-btn { color: #e5e7eb; }
+  .nebula .tb-btn:hover { background: #2a2a3a; }
+  .nebula .text-btn { color: #e5e7eb; }
+  .nebula .text-btn:hover { background: #2a2a3a; }
+  .nebula .std-dropdown { background: #1E1E2E; border-color: #6C7086; color: #e5e7eb; }
+  .nebula .std-dropdown:hover { background: #2a2a3a; }
+  .nebula .std-dropdown .arrow { color: #6C7086; }
+  .nebula .std-dropdown-list { background: #1E1E2E; border-color: #6C7086; }
+  .nebula .std-dropdown-item { color: #e5e7eb; }
+  .nebula .std-dropdown-item:hover { background: #2a2a3a; }
+  .nebula .std-dropdown-item.selected { background: #89B4FA; color: #0f172a; }
+  .nebula .checkbox { border-color: #6C7086; }
+  .nebula .checkbox.checked { background: #89B4FA; color: #0f172a; border-color: #89B4FA; }
+  .nebula .toggle-label { color: #e5e7eb; }
+  .nebula .toggle-warning { color: #F9E2AF; }
+  .nebula .mode-label { color: #e5e7eb; }
+  .nebula .mode-btn { border-color: #6C7086; color: #e5e7eb; background: #1E1E2E; }
+  .nebula .mode-btn.active { background: #89B4FA; color: #0f172a; border-color: #89B4FA; }
+  .nebula .editable-list { border-color: #6C7086; background: #161628; }
+  .nebula .editable-row { color: #e5e7eb; }
+  .nebula .editable-row:hover { background: #2a2a3a; }
+  .nebula .remove-x { color: #6C7086; }
+  .nebula .remove-x:hover { background: #4a2a2a; color: #F38BA8; }
+  .nebula .editable-empty { color: #6C7086; }
+  .nebula .text-input { background: #161628; border-color: #6C7086; color: #6C7086; }
+  .nebula .add-btn { background: #161628; border-color: #6C7086; color: #e5e7eb; }
+  .nebula .add-btn:hover { background: #89B4FA; color: #0f172a; }
+  .nebula .export-input { background: #161628; border-color: #6C7086; color: #6C7086; }
+  .nebula .browse-btn { background: #161628; border-color: #6C7086; color: #e5e7eb; }
+  .nebula .browse-btn:hover { background: #89B4FA; color: #0f172a; }
+  .nebula .small-btn.save { color: #e5e7eb; }
+  .nebula .small-btn.save:hover { background: #2a2a3a; }
+  .nebula .small-btn.reset { color: #6C7086; }
+  .nebula .help-text { color: #6C7086; }
+  .nebula .section-label { color: #89B4FA; }
+  .nebula .annotation { color: #89B4FA; }
+</style>
+</head>
+<body>
+
+<h1>PersonalAgent - Settings Redesign</h1>
+<h2>Category Sidebar &amp; No-Scroll Layout</h2>
+
+<!-- ================================================================ -->
+<!-- SECTION 1: General category (default view)                       -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">1. General Category — Theme Dropdown (Closed)</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item selected">General</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <!-- Theme dropdown -->
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div class="section-hdr">THEME</div>
+          <div class="std-dropdown">
+            <span>Green Screen</span>
+            <span class="arrow">&darr;</span>
+          </div>
+        </div>
+
+        <!-- Export directory -->
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div class="section-hdr">EXPORT DIRECTORY</div>
+          <div class="export-row">
+            <div class="export-input">System Downloads (default)</div>
+            <button class="browse-btn">Browse&hellip;</button>
+          </div>
+          <div class="save-reset-row">
+            <button class="small-btn save">Save</button>
+            <button class="small-btn reset">Reset</button>
+            <span class="help-text">Enter path or reset for default</span>
+          </div>
+        </div>
+
+        <div style="flex:1;"></div>
+        <div style="font-size:10px; color:#3b7a3b; text-align:center;">
+          Room for future general settings
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Theme is a standard dropdown matching the conversation selector and<br>
+    profile selector style. Click to open, select to close.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 2: General with theme dropdown open                      -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">2. General Category — Theme Dropdown (Open)</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item selected">General</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div class="section-hdr">THEME</div>
+          <div class="std-dropdown-open" style="position:relative;">
+            <div class="std-dropdown" style="border-color:#6a9955;">
+              <span>Green Screen</span>
+              <span class="arrow">&uarr;</span>
+            </div>
+            <div class="std-dropdown-list">
+              <div class="std-dropdown-item">ANSI</div>
+              <div class="std-dropdown-item">ANSI Light</div>
+              <div class="std-dropdown-item">Atom One Dark</div>
+              <div class="std-dropdown-item">Ayu</div>
+              <div class="std-dropdown-item">Ayu Light</div>
+              <div class="std-dropdown-item">Default Light</div>
+              <div class="std-dropdown-item">Dracula</div>
+              <div class="std-dropdown-item">GitHub Dark</div>
+              <div class="std-dropdown-item">GitHub Light</div>
+              <div class="std-dropdown-item">Google Code</div>
+              <div class="std-dropdown-item selected">Green Screen</div>
+              <div class="std-dropdown-item">Mac Native</div>
+              <div class="std-dropdown-item">Midnight Nebula</div>
+              <div class="std-dropdown-item">No Color</div>
+              <div class="std-dropdown-item">Shades of Purple</div>
+              <div class="std-dropdown-item">Xcode</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div class="section-hdr">EXPORT DIRECTORY</div>
+          <div class="export-row">
+            <div class="export-input">System Downloads (default)</div>
+            <button class="browse-btn">Browse&hellip;</button>
+          </div>
+          <div class="save-reset-row">
+            <button class="small-btn save">Save</button>
+            <button class="small-btn reset">Reset</button>
+            <span class="help-text">Enter path or reset for default</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Standard dropdown list appears below the trigger, same as the conversation<br>
+    and profile selectors elsewhere in the app. The list scrolls if needed.<br>
+    Select a theme or click elsewhere to close.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 3: Models category                                       -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">3. Models Category — Profiles List Gets Full Height</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item selected">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div class="section-hdr">PROFILES</div>
+
+        <div class="list-box">
+          <div class="list-row selected">Default (anthropic:claude-sonnet-4-20250514)</div>
+          <div class="list-row">GPT-4.1 (openai:gpt-4.1)</div>
+          <div class="list-row">Claude Opus (anthropic:claude-opus-4-20250514)</div>
+          <div class="list-row">Gemini Pro (google:gemini-2.5-pro)</div>
+          <div class="list-row">Local Llama (ollama:llama3.3)</div>
+          <div class="list-row">DeepSeek R1 (deepseek:deepseek-r1)</div>
+          <div class="list-row">GPT-o3 (openai:o3)</div>
+          <div class="list-row">Grok 3 (xai:grok-3)</div>
+          <div style="flex:1;"></div>
+          <div class="list-count">8 profiles</div>
+        </div>
+
+        <div class="toolbar">
+          <button class="tb-btn danger">-</button>
+          <button class="tb-btn">+</button>
+          <div class="spacer"></div>
+          <button class="text-btn">Edit</button>
+          <button class="text-btn">Refresh Models</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Profiles list gets ~350px of height instead of the old 100px box.<br>
+    Most users will never need to scroll. "Refresh Models" moved from top bar to here.<br>
+    The list is the only scrollable element on screen — no nested scroll conflict.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 4: Security category                                     -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">4. Security Category — Tool Approval Settings</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item selected">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div class="section-hdr">TOOL APPROVAL</div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div class="toggle-row">
+            <div class="checkbox checked">v</div>
+            <span class="toggle-label">YOLO mode</span>
+          </div>
+          <div class="toggle-warning">Auto-approves all tool calls except denylisted commands.</div>
+
+          <div class="toggle-row">
+            <div class="checkbox"></div>
+            <span class="toggle-label">Auto-approve read-only tools</span>
+          </div>
+        </div>
+
+        <div class="mode-row">
+          <span class="mode-label">MCP approval:</span>
+          <button class="mode-btn active">Per Tool</button>
+          <button class="mode-btn">Per Server</button>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div style="font-size:11px; color:#3b7a3b;">ALLOWLIST</div>
+          <div class="editable-list">
+            <div class="editable-row">
+              <span>git</span>
+              <button class="remove-x">x</button>
+            </div>
+            <div class="editable-row">
+              <span>ls</span>
+              <button class="remove-x">x</button>
+            </div>
+            <div class="editable-row">
+              <span>cat</span>
+              <button class="remove-x">x</button>
+            </div>
+          </div>
+          <div class="input-add-row">
+            <div class="text-input">e.g. grep, find</div>
+            <button class="add-btn">Add</button>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div style="font-size:11px; color:#3b7a3b;">DENYLIST</div>
+          <div class="editable-list">
+            <div class="editable-row">
+              <span>rm</span>
+              <button class="remove-x">x</button>
+            </div>
+            <div class="editable-row">
+              <span>sudo</span>
+              <button class="remove-x">x</button>
+            </div>
+          </div>
+          <div class="input-add-row">
+            <div class="text-input">e.g. shutdown, reboot</div>
+            <button class="add-btn">Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    All tool approval settings in one focused panel. The allowlist/denylist<br>
+    boxes are compact (max ~64px each). Everything fits without scrolling.<br>
+    If lists grow long, they scroll individually — but they're the only scrollable thing.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 5: MCP Tools category                                    -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">5. MCP Tools Category — Server List Gets Full Height</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item selected">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div class="section-hdr">MCP SERVERS</div>
+
+        <div class="list-box">
+          <div class="mcp-row selected">
+            <div class="status-dot running"></div>
+            <span class="mcp-name">filesystem</span>
+            <span class="mcp-toggle on">ON</span>
+          </div>
+          <div class="mcp-row">
+            <div class="status-dot running"></div>
+            <span class="mcp-name">fetch</span>
+            <span class="mcp-toggle on">ON</span>
+          </div>
+          <div class="mcp-row">
+            <div class="status-dot stopped"></div>
+            <span class="mcp-name">github</span>
+            <span class="mcp-toggle off">OFF</span>
+          </div>
+          <div class="mcp-row">
+            <div class="status-dot running"></div>
+            <span class="mcp-name">sequential-thinking</span>
+            <span class="mcp-toggle on">ON</span>
+          </div>
+          <div class="mcp-row">
+            <div class="status-dot stopped"></div>
+            <span class="mcp-name">puppeteer</span>
+            <span class="mcp-toggle off">OFF</span>
+          </div>
+          <div style="flex:1;"></div>
+          <div class="list-count">5 MCP tools</div>
+        </div>
+
+        <div class="toolbar">
+          <button class="tb-btn danger">-</button>
+          <button class="tb-btn">+</button>
+          <div class="spacer"></div>
+          <button class="text-btn">Edit</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    MCP server list gets ~350px height instead of 100px. Status dots, ON/OFF<br>
+    toggles, and [-] [+] Edit toolbar unchanged from current behavior.<br>
+    The list is the only scrollable element — no nested scroll conflict.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 6: Midnight Nebula — Models                              -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper nebula">
+  <div class="section-label">6. Midnight Nebula Theme — Models Category</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item selected">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div class="section-hdr">PROFILES</div>
+
+        <div class="list-box">
+          <div class="list-row selected">Default (anthropic:claude-sonnet-4-20250514)</div>
+          <div class="list-row">GPT-4.1 (openai:gpt-4.1)</div>
+          <div class="list-row">Claude Opus (anthropic:claude-opus-4-20250514)</div>
+          <div class="list-row">Gemini Pro (google:gemini-2.5-pro)</div>
+          <div class="list-row">Local Llama (ollama:llama3.3)</div>
+          <div class="list-row">DeepSeek R1 (deepseek:deepseek-r1)</div>
+          <div class="list-row">GPT-o3 (openai:o3)</div>
+          <div class="list-row">Grok 3 (xai:grok-3)</div>
+          <div style="flex:1;"></div>
+          <div class="list-count">8 profiles</div>
+        </div>
+
+        <div class="toolbar">
+          <button class="tb-btn danger">-</button>
+          <button class="tb-btn">+</button>
+          <div class="spacer"></div>
+          <button class="text-btn">Edit</button>
+          <button class="text-btn">Refresh Models</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Same layout in the Midnight Nebula color palette. Sidebar active indicator<br>
+    uses the theme's accent color (blue). All colors pull from theme tokens.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 7: Midnight Nebula — Security                            -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper nebula">
+  <div class="section-label">7. Midnight Nebula Theme — Security Category</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item selected">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div class="section-hdr">TOOL APPROVAL</div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div class="toggle-row">
+            <div class="checkbox"></div>
+            <span class="toggle-label">YOLO mode</span>
+          </div>
+
+          <div class="toggle-row">
+            <div class="checkbox checked">v</div>
+            <span class="toggle-label">Auto-approve read-only tools</span>
+          </div>
+        </div>
+
+        <div class="mode-row">
+          <span class="mode-label">MCP approval:</span>
+          <button class="mode-btn">Per Tool</button>
+          <button class="mode-btn active">Per Server</button>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div style="font-size:11px; color:#6C7086;">ALLOWLIST</div>
+          <div class="editable-list">
+            <div class="editable-row">
+              <span>git</span>
+              <button class="remove-x">x</button>
+            </div>
+            <div class="editable-row">
+              <span>cargo</span>
+              <button class="remove-x">x</button>
+            </div>
+          </div>
+          <div class="input-add-row">
+            <div class="text-input">e.g. grep, find</div>
+            <button class="add-btn">Add</button>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div style="font-size:11px; color:#6C7086;">DENYLIST</div>
+          <div class="editable-list">
+            <div class="editable-empty">(none)</div>
+          </div>
+          <div class="input-add-row">
+            <div class="text-input">e.g. rm, sudo</div>
+            <button class="add-btn">Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Security panel in Midnight Nebula. YOLO warning only shows when enabled<br>
+    (off here). Checkbox uses accent blue. Empty denylist shows "(none)".
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 8: Keyboard navigation spec                              -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">8. Keyboard &amp; Mouse Behavior</div>
+
+  <div style="background:#0a0a0a; border:1px solid #6a9955; border-radius:8px; padding:20px 24px; max-width:500px; font-size:12px; color:#6a9955; line-height:2;">
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; color:#6a9955;">Navigation</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">Esc</code> / <code style="background:#1a3318; padding:1px 6px; border-radius:3px;">Cmd+W</code> &nbsp;&rarr;&nbsp; Back to Chat</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">Tab</code> &nbsp;&rarr;&nbsp; Cycle text input fields in active panel</div>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px; color:#6a9955;">Within Content Panels</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">&uarr;</code> / <code style="background:#1a3318; padding:1px 6px; border-radius:3px;">&darr;</code> &nbsp;&rarr;&nbsp; Navigate list items (profiles, MCPs)</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">Enter</code> &nbsp;&rarr;&nbsp; Confirm / submit</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">+</code> &nbsp;&rarr;&nbsp; Add new item (context-dependent)</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">E</code> &nbsp;&rarr;&nbsp; Edit selected item</div>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px; color:#6a9955;">Mouse / Scroll</div>
+    <div>Click sidebar category &rarr; switch panel</div>
+    <div>Mouse wheel &rarr; scrolls only the active panel's list</div>
+    <div>One scrollable element per panel &mdash; no nested scroll conflict</div>
+  </div>
+
+  <div class="annotation">
+    Key change from current: arrow keys only affect the active panel's list,<br>
+    not multiple lists simultaneously (current behavior scrolls profiles and themes together).
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 9: GPUI implementation notes                             -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">9. GPUI Implementation Notes</div>
+
+  <div style="background:#0a0a0a; border:1px solid #6a9955; border-radius:8px; padding:20px 24px; max-width:560px; font-size:12px; color:#6a9955; line-height:1.8;">
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Layout Structure</div>
+    <code style="display:block; background:#0d1a0d; padding:12px; border-radius:4px; font-size:11px; line-height:1.6; white-space:pre; color:#6a9955;">div().flex().flex_col().size_full()            // settings-view
+  .child(render_top_bar())                      // 44px fixed
+  .child(
+    div().flex_1().flex().flex_row()             // settings-body
+      .child(render_category_sidebar())         // 120px fixed
+      .child(render_content_panel())            // flex-1
+  )</code>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px;">New State</div>
+    <code style="display:block; background:#0d1a0d; padding:12px; border-radius:4px; font-size:11px; line-height:1.6; white-space:pre; color:#6a9955;">enum SettingsCategory {
+    General,
+    Models,
+    Security,
+    McpTools,
+}
+// Add to SettingsState:
+//   selected_category: SettingsCategory
+//   theme_dropdown_open: bool</code>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px;">Theme Dropdown</div>
+    <div>Standard dropdown like conv-dropdown / profile-pill:</div>
+    <div>&bull; Click trigger &rarr; toggle <code style="background:#0d1a0d; padding:1px 4px; border-radius:2px;">theme_dropdown_open</code></div>
+    <div>&bull; Click item &rarr; emit <code style="background:#0d1a0d; padding:1px 4px; border-radius:2px;">SelectTheme</code>, close dropdown</div>
+    <div>&bull; Click elsewhere &rarr; close dropdown</div>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px;">No Outer Scroll</div>
+    <div>Content panel uses <code style="background:#0d1a0d; padding:1px 4px; border-radius:2px;">overflow_hidden()</code>.</div>
+    <div>Only the list box or dropdown list gets <code style="background:#0d1a0d; padding:1px 4px; border-radius:2px;">overflow_y_scroll()</code>.</div>
+    <div>One scrollable element per screen, max.</div>
+  </div>
+
+  <div class="annotation">
+    SettingsView stays one GPUI entity. Render switches on selected_category.<br>
+    All existing events, bridge, and state management stay structurally the same.<br>
+    Profile/MCP sub-views continue using navigation_channel for full-screen navigation.
+  </div>
+</div>
+
+</body>
+</html>

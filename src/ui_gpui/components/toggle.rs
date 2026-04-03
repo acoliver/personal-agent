@@ -71,7 +71,7 @@ impl IntoElement for Toggle {
                     .w(px(20.0))
                     .h(px(20.0))
                     .rounded(px(10.0))
-                    .bg(gpui::white()),
+                    .bg(Theme::selection_fg()),
             )
     }
 }

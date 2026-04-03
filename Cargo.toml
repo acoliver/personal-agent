@@ -86,6 +86,7 @@ smol = "2"
 # Issue 62: Markdown rendering
 pulldown-cmark = "0.13"
 url = "2"
+bytes = "1"
 
 [dev-dependencies]
 tempfile = "3"

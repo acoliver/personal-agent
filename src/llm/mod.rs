@@ -7,7 +7,9 @@ mod client;
 pub mod client_agent;
 pub mod error;
 pub mod events;
+mod normalizing_model;
 mod provider_quirks;
+pub(crate) mod sse_normalize;
 mod stream;
 pub mod tools;
 

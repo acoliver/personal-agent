@@ -165,8 +165,8 @@ impl ChatView {
                     .justify_center()
                     .cursor_pointer()
                     .bg(Theme::bg_darker())
-                    .hover(|s| s.bg(gpui::rgb(0x008B_0000)))
-                    .active(|s| s.bg(gpui::rgb(0x005C_0000)))
+                    .hover(|s| s.bg(Theme::danger()))
+                    .active(|s| s.bg(Theme::danger()))
                     .text_size(px(14.0))
                     .text_color(Theme::text_primary())
                     .child("\u{23FB}")
@@ -608,10 +608,11 @@ impl ChatView {
             .py(px(6.0))
             .cursor_pointer()
             .when(selected, |row| {
-                row.bg(Theme::accent()).text_color(gpui::white())
+                row.bg(Theme::accent()).text_color(Theme::selection_fg())
             })
             .when(!selected && highlighted, |row| {
-                row.bg(Theme::accent_hover()).text_color(gpui::white())
+                row.bg(Theme::accent_hover())
+                    .text_color(Theme::selection_fg())
             })
             .when(!selected && !highlighted, |row| {
                 row.hover(|s| s.bg(Theme::bg_darker()))
@@ -724,10 +725,11 @@ impl ChatView {
             .py(px(6.0))
             .cursor_pointer()
             .when(is_selected, |row| {
-                row.bg(Theme::accent()).text_color(gpui::white())
+                row.bg(Theme::accent()).text_color(Theme::selection_fg())
             })
             .when(!is_selected && is_highlighted, |row| {
-                row.bg(Theme::accent_hover()).text_color(gpui::white())
+                row.bg(Theme::accent_hover())
+                    .text_color(Theme::selection_fg())
             })
             .when(!is_selected && !is_highlighted, |row| {
                 row.hover(|s| s.bg(Theme::bg_darker()))

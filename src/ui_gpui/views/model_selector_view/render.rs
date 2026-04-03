@@ -197,7 +197,7 @@ impl ModelSelectorView {
                                 d.bg(Theme::accent()).child(
                                     div()
                                         .text_size(px(10.0))
-                                        .text_color(gpui::white())
+                                        .text_color(Theme::selection_fg())
                                         .child("[OK]"),
                                 )
                             }),
@@ -236,7 +236,7 @@ impl ModelSelectorView {
                                 d.bg(Theme::accent()).child(
                                     div()
                                         .text_size(px(10.0))
-                                        .text_color(gpui::white())
+                                        .text_color(Theme::selection_fg())
                                         .child("[OK]"),
                                 )
                             }),

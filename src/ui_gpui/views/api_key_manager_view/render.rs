@@ -143,7 +143,7 @@ impl ApiKeyManagerView {
                     .py(px(2.0))
                     .rounded(px(4.0))
                     .text_size(px(11.0))
-                    .text_color(gpui::rgb(0x00EF_4444))
+                    .text_color(Theme::error())
                     .hover(|s| s.bg(Theme::bg_dark()))
                     .child("Delete")
                     .on_mouse_down(
@@ -323,7 +323,7 @@ impl ApiKeyManagerView {
                                         d.bg(Theme::accent()).child(
                                             div()
                                                 .text_size(px(8.0))
-                                                .text_color(gpui::white())
+                                                .text_color(Theme::selection_fg())
                                                 .child("v"),
                                         )
                                     }),
@@ -461,7 +461,7 @@ impl ApiKeyManagerView {
                 d.child(
                     div()
                         .text_size(px(11.0))
-                        .text_color(gpui::rgb(0x00EF_4444))
+                        .text_color(Theme::error())
                         .child(self.state.error.clone().unwrap_or_default()),
                 )
             })
