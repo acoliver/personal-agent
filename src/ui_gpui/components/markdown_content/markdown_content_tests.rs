@@ -155,7 +155,7 @@ mod tests {
     /// @requirement:REQ-MD-PARSE-009
     #[test]
     fn test_parse_table() {
-        let input = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let input = "| A | B |\n|:---|---:|\n| 1 | 2 |";
         let blocks = parse_markdown_blocks(input);
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
@@ -165,6 +165,8 @@ mod tests {
                 rows,
             } => {
                 assert_eq!(alignments.len(), 2);
+                assert_eq!(alignments[0], Alignment::Left);
+                assert_eq!(alignments[1], Alignment::Right);
                 assert_eq!(header.len(), 2);
                 assert_eq!(rows.len(), 1);
                 assert_eq!(rows[0].len(), 2);
@@ -468,8 +470,15 @@ mod tests {
     fn test_parse_malformed_html_no_panic() {
         let input = "<div unclosed";
         let blocks = parse_markdown_blocks(input);
-        // Should not panic and should produce output
-        assert!(!blocks.is_empty());
+        // Should not panic and should preserve malformed tag text.
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            MarkdownBlock::Paragraph { spans, .. } => {
+                let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+                assert_eq!(text, "<div unclosed");
+            }
+            _ => panic!("Expected Paragraph"),
+        }
     }
 
     /// @plan:PLAN-20260402-MARKDOWN.P04

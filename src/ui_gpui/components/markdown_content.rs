@@ -251,10 +251,12 @@ fn strip_html_tags(html: &str) -> String {
     let mut in_strip_tag = false;
     let mut result = String::new();
     let mut chars = html.chars();
+    let mut tag_buffer = String::new();
 
     while let Some(ch) = chars.next() {
         if ch == '<' && !in_tag {
             in_tag = true;
+            tag_buffer.clear();
             // Check if this is a script or style tag
             let remaining: String = chars.clone().take(10).collect();
             let lower = remaining.to_ascii_lowercase();
@@ -265,8 +267,9 @@ fn strip_html_tags(html: &str) -> String {
             }
         } else if ch == '>' && in_tag {
             in_tag = false;
+            tag_buffer.clear();
         } else if in_tag {
-            // Inside tag: skip character
+            tag_buffer.push(ch);
         } else if in_strip_tag {
             // Inside script/style content: strip entirely
         } else {
@@ -275,9 +278,10 @@ fn strip_html_tags(html: &str) -> String {
         }
     }
 
-    // Handle malformed: if still in_tag, treat remaining as literal
-    if in_tag {
-        result.insert(0, '<');
+    // Handle malformed: append unclosed tag literal to preserve text order.
+    if in_tag && !in_strip_tag {
+        result.push('<');
+        result.push_str(&tag_buffer);
     }
 
     result
@@ -570,13 +574,24 @@ fn render_table(
     header: &[TableCell],
     rows: &[Vec<TableCell>],
 ) -> gpui::AnyElement {
-    let _ = alignments;
-    let col_count = header.len().max(rows.first().map_or(0, Vec::len));
+    let col_count = header
+        .len()
+        .max(rows.first().map_or(0, Vec::len))
+        .max(alignments.len());
     let grid_cols = u16::try_from(col_count.max(1)).unwrap_or(u16::MAX);
+
+    let align_content = |alignment: &Alignment, content: gpui::AnyElement| match alignment {
+        Alignment::Center => div().w_full().flex().justify_center().child(content),
+        Alignment::Right => div().w_full().flex().justify_end().child(content),
+        Alignment::Left | Alignment::None => div().w_full().flex().justify_start().child(content),
+    };
 
     let mut table = div().grid().grid_cols(grid_cols).w_full();
 
-    for cell in header {
+    for (col_idx, cell) in header.iter().enumerate() {
+        let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
+        let content = spans_to_styled_text(&cell.spans, &cell.links);
+
         table = table.child(
             div()
                 .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
@@ -584,12 +599,15 @@ fn render_table(
                 .bg(crate::ui_gpui::theme::Theme::bg_dark())
                 .border_1()
                 .border_color(crate::ui_gpui::theme::Theme::border())
-                .child(spans_to_styled_text(&cell.spans, &cell.links)),
+                .child(align_content(alignment, content)),
         );
     }
 
     for (row_idx, row) in rows.iter().enumerate() {
-        for cell in row {
+        for (col_idx, cell) in row.iter().enumerate() {
+            let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
+            let content = spans_to_styled_text(&cell.spans, &cell.links);
+
             table = table.child(
                 div()
                     .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
@@ -601,7 +619,7 @@ fn render_table(
                     })
                     .border_1()
                     .border_color(crate::ui_gpui::theme::Theme::border())
-                    .child(spans_to_styled_text(&cell.spans, &cell.links)),
+                    .child(align_content(alignment, content)),
             );
         }
     }
