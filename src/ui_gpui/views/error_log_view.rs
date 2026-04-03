@@ -176,13 +176,100 @@ impl ErrorLogView {
         }
     }
 
-    fn render_top_bar(entries_len: usize, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let count_label = if entries_len == 1 {
+    fn error_count_label(entries_len: usize) -> String {
+        if entries_len == 1 {
             "1 error".to_string()
         } else {
             format!("{entries_len} errors")
-        };
+        }
+    }
 
+    fn render_back_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("btn-back")
+            .size(px(28.0))
+            .rounded(px(Theme::RADIUS_SM))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|s| s.bg(Theme::bg_dark()))
+            .text_size(px(Theme::FONT_SIZE_BASE))
+            .text_color(Theme::text_secondary())
+            .child("<")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _, _window, _cx| {
+                    crate::ui_gpui::navigation_channel()
+                        .request_navigate(crate::presentation::view_command::ViewId::Chat);
+                }),
+            )
+    }
+
+    fn render_title() -> impl IntoElement {
+        div()
+            .flex_1()
+            .text_size(px(Theme::FONT_SIZE_BASE))
+            .font_weight(FontWeight::BOLD)
+            .text_color(Theme::text_primary())
+            .child("Error Log")
+    }
+
+    fn render_error_count(entries_len: usize) -> impl IntoElement {
+        div()
+            .text_size(px(Theme::FONT_SIZE_XS))
+            .text_color(Theme::text_muted())
+            .child(Self::error_count_label(entries_len))
+    }
+
+    fn render_save_error_log_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("btn-save-error-log")
+            .size(px(28.0))
+            .rounded(px(Theme::RADIUS_SM))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .bg(Theme::bg_dark())
+            .hover(|s| s.bg(Theme::bg_dark()))
+            .text_size(px(Theme::FONT_SIZE_BASE))
+            .text_color(Theme::text_primary())
+            .child("\u{2B07}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.emit(&UserEvent::SaveErrorLog);
+                    this.export_feedback_message = None;
+                    this.export_feedback_is_error = false;
+                    this.export_feedback_path = None;
+                    cx.notify();
+                }),
+            )
+    }
+
+    fn render_clear_all_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("btn-clear-all")
+            .px(px(Theme::SPACING_SM))
+            .py(px(4.0))
+            .rounded(px(Theme::RADIUS_SM))
+            .bg(Theme::bg_dark())
+            .cursor_pointer()
+            .hover(|s| s.bg(Theme::danger()))
+            .text_size(px(Theme::FONT_SIZE_XS))
+            .text_color(Theme::text_primary())
+            .child("Clear All")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _, _window, cx| {
+                    ErrorLogStore::global().clear();
+                    cx.notify();
+                }),
+            )
+    }
+
+    fn render_top_bar(entries_len: usize, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("error-log-top-bar")
             .h(px(44.0))
@@ -194,91 +281,11 @@ impl ErrorLogView {
             .flex()
             .items_center()
             .gap(px(Theme::SPACING_SM))
-            // Back button
-            .child(
-                div()
-                    .id("btn-back")
-                    .size(px(28.0))
-                    .rounded(px(Theme::RADIUS_SM))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(Theme::FONT_SIZE_BASE))
-                    .text_color(Theme::text_secondary())
-                    .child("<")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
-                            crate::ui_gpui::navigation_channel()
-                                .request_navigate(crate::presentation::view_command::ViewId::Chat);
-                        }),
-                    ),
-            )
-            // Title (flex-1 to push count + controls to the right)
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(px(Theme::FONT_SIZE_BASE))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(Theme::text_primary())
-                    .child("Error Log"),
-            )
-            // Error count
-            .child(
-                div()
-                    .text_size(px(Theme::FONT_SIZE_XS))
-                    .text_color(Theme::text_muted())
-                    .child(count_label),
-            )
-            // Save export button (download icon parity with chat view)
-            .child(
-                div()
-                    .id("btn-save-error-log")
-                    .size(px(28.0))
-                    .rounded(px(Theme::RADIUS_SM))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .bg(Theme::bg_dark())
-                    .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(Theme::FONT_SIZE_BASE))
-                    .text_color(Theme::text_primary())
-                    .child("\u{2B07}")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.emit(&UserEvent::SaveErrorLog);
-                            this.export_feedback_message = None;
-                            this.export_feedback_is_error = false;
-                            this.export_feedback_path = None;
-                            cx.notify();
-                        }),
-                    ),
-            )
-            // Clear All button
-            .child(
-                div()
-                    .id("btn-clear-all")
-                    .px(px(Theme::SPACING_SM))
-                    .py(px(4.0))
-                    .rounded(px(Theme::RADIUS_SM))
-                    .bg(Theme::bg_dark())
-                    .cursor_pointer()
-                    .hover(|s| s.bg(Theme::danger()))
-                    .text_size(px(Theme::FONT_SIZE_XS))
-                    .text_color(Theme::text_primary())
-                    .child("Clear All")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_this, _, _window, cx| {
-                            ErrorLogStore::global().clear();
-                            cx.notify();
-                        }),
-                    ),
-            )
+            .child(Self::render_back_button(cx))
+            .child(Self::render_title())
+            .child(Self::render_error_count(entries_len))
+            .child(Self::render_save_error_log_button(cx))
+            .child(Self::render_clear_all_button(cx))
     }
 
     fn render_empty_state() -> impl IntoElement {
