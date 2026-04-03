@@ -270,7 +270,9 @@ impl ChatView {
             (!streaming.thinking_buffer.is_empty()).then_some(streaming.thinking_buffer);
         self.state.sync_conversation_dropdown_index();
 
-        if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
+        if !should_reset_autoscroll
+            && matches!(self.state.streaming, StreamingState::Streaming { .. })
+        {
             self.maybe_scroll_chat_to_bottom(cx);
         }
 
