@@ -13,11 +13,14 @@ use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
+use tokio::time::{timeout, Duration};
 
 /// Maximum number of matches returned by the tool.
 const MAX_MATCHES: usize = 200;
 /// Number of bytes sampled for binary-file detection.
 const BINARY_CHECK_BYTES: usize = 8_192;
+/// Maximum amount of time to wait for ripgrep execution.
+const RIPGREP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Executor for the `Search` built-in tool.
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +43,7 @@ struct SearchArgs {
 #[derive(Debug)]
 enum RipgrepError {
     NotFound,
+    Timeout,
     Failed(String),
 }
 
@@ -74,7 +78,7 @@ async fn execute_search(args: serde_json::Value) -> Result<String, String> {
     .await
     {
         Ok(result) => Ok(result),
-        Err(RipgrepError::NotFound) => search_with_builtin(
+        Err(RipgrepError::NotFound | RipgrepError::Timeout) => search_with_builtin(
             &search_args.pattern,
             &search_args.path,
             search_args.include.as_deref(),
@@ -139,13 +143,16 @@ async fn search_with_ripgrep(
 
     command.arg("--").arg(pattern).arg(path);
 
-    let output = command.output().await.map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            RipgrepError::NotFound
-        } else {
-            RipgrepError::Failed(format!("Failed to execute ripgrep: {error}"))
-        }
-    })?;
+    let output = timeout(RIPGREP_TIMEOUT, command.output())
+        .await
+        .map_err(|_| RipgrepError::Timeout)?
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                RipgrepError::NotFound
+            } else {
+                RipgrepError::Failed(format!("Failed to execute ripgrep: {error}"))
+            }
+        })?;
 
     let exit_code = output.status.code();
     if !output.status.success() && exit_code != Some(1) {
@@ -231,9 +238,17 @@ fn search_with_builtin(
     })?;
 
     if metadata.is_file() {
-        search_single_file(&root_path, &regex, include_filter.as_ref())
+        Ok(search_single_file(
+            &root_path,
+            &regex,
+            include_filter.as_ref(),
+        ))
     } else if metadata.is_dir() {
-        search_directory(&root_path, &regex, include_filter.as_ref())
+        Ok(search_directory(
+            &root_path,
+            &regex,
+            include_filter.as_ref(),
+        ))
     } else {
         Err(format!(
             "Search path is neither a file nor directory: {}",
@@ -259,24 +274,24 @@ fn search_single_file(
     file_path: &Path,
     regex: &Regex,
     include_filter: Option<&IncludeFilter>,
-) -> Result<(Vec<SearchMatch>, bool), String> {
+) -> (Vec<SearchMatch>, bool) {
     let mut matches = Vec::new();
     let mut truncated = false;
 
     let root = file_path.parent().unwrap_or_else(|| Path::new("."));
     if !matches_include(file_path, root, include_filter) {
-        return Ok((matches, truncated));
+        return (matches, truncated);
     }
 
-    collect_matches_from_file(file_path, regex, &mut matches, &mut truncated)?;
-    Ok((matches, truncated))
+    collect_matches_from_file(file_path, regex, &mut matches, &mut truncated);
+    (matches, truncated)
 }
 
 fn search_directory(
     root_path: &Path,
     regex: &Regex,
     include_filter: Option<&IncludeFilter>,
-) -> Result<(Vec<SearchMatch>, bool), String> {
+) -> (Vec<SearchMatch>, bool) {
     let mut matches = Vec::new();
     let mut truncated = false;
 
@@ -299,14 +314,14 @@ fn search_directory(
             continue;
         }
 
-        collect_matches_from_file(file_path, regex, &mut matches, &mut truncated)?;
+        collect_matches_from_file(file_path, regex, &mut matches, &mut truncated);
 
         if truncated {
             break;
         }
     }
 
-    Ok((matches, truncated))
+    (matches, truncated)
 }
 
 fn matches_include(
@@ -343,7 +358,7 @@ fn collect_matches_from_file(
     regex: &Regex,
     matches: &mut Vec<SearchMatch>,
     truncated: &mut bool,
-) -> Result<(), String> {
+) {
     let bytes = match std::fs::read(file_path) {
         Ok(bytes) => bytes,
         Err(error)
@@ -352,22 +367,24 @@ fn collect_matches_from_file(
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
             ) =>
         {
-            return Ok(());
+            return;
         }
         Err(error) => {
-            return Err(format!(
-                "Failed to read file '{}': {error}",
-                file_path.display()
-            ));
+            tracing::debug!(
+                file = %file_path.display(),
+                error = %error,
+                "Skipping file that could not be read during Search"
+            );
+            return;
         }
     };
 
     if is_binary_content(&bytes) {
-        return Ok(());
+        return;
     }
 
     let Ok(content) = std::str::from_utf8(&bytes) else {
-        return Ok(());
+        return;
     };
 
     for (line_index, line) in content.lines().enumerate() {
@@ -384,8 +401,6 @@ fn collect_matches_from_file(
             }
         }
     }
-
-    Ok(())
 }
 
 fn is_binary_content(content: &[u8]) -> bool {
@@ -456,6 +471,117 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
+
+    #[test]
+    fn parse_search_args_defaults_path_to_dot() {
+        let parsed = parse_search_args(&serde_json::json!({
+            "pattern": "needle",
+            "path": ""
+        }))
+        .expect("args should parse");
+
+        assert_eq!(parsed.pattern, "needle");
+        assert_eq!(parsed.path, ".");
+        assert!(parsed.include.is_none());
+    }
+
+    #[test]
+    fn parse_search_args_rejects_non_string_fields() {
+        let pattern_error = parse_search_args(&serde_json::json!({
+            "pattern": 42
+        }))
+        .expect_err("non-string pattern should fail");
+        assert!(pattern_error.contains("'pattern' must be a string"));
+
+        let include_error = parse_search_args(&serde_json::json!({
+            "pattern": "needle",
+            "include": 42
+        }))
+        .expect_err("non-string include should fail");
+        assert!(include_error.contains("'include' must be a string"));
+    }
+
+    #[test]
+    fn parse_ripgrep_match_handles_match_and_non_match_events() {
+        let match_line = serde_json::json!({
+            "type": "match",
+            "data": {
+                "path": { "text": "src/main.rs" },
+                "line_number": 7,
+                "lines": { "text": "fn main() {\n" }
+            }
+        })
+        .to_string();
+
+        let parsed = parse_ripgrep_match(match_line.as_bytes()).expect("match line should parse");
+        assert_eq!(parsed.file_path, "src/main.rs");
+        assert_eq!(parsed.line_number, 7);
+        assert_eq!(parsed.line_content, "fn main() {");
+
+        let begin_line = serde_json::json!({
+            "type": "begin",
+            "data": {}
+        })
+        .to_string();
+        assert!(parse_ripgrep_match(begin_line.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn compile_include_filter_rejects_invalid_pattern() {
+        let result = compile_include_filter(Some("["));
+        assert!(result.is_err());
+        let error = result.expect_err("invalid glob should fail");
+        assert!(error.contains("Invalid include glob pattern"));
+    }
+
+    #[test]
+    fn search_with_builtin_returns_not_found_error_for_missing_path() {
+        let dir = tempdir().expect("temp dir should be created");
+        let missing_path = dir.path().join("does-not-exist");
+
+        let result =
+            search_with_builtin("needle", missing_path.to_str().expect("utf-8 path"), None);
+        assert!(result.is_err());
+        let error = result.expect_err("missing path should fail");
+        assert!(error.contains("Search path not found"));
+    }
+
+    #[test]
+    fn search_with_builtin_file_path_respects_include_filter() {
+        let dir = tempdir().expect("temp dir should be created");
+        let file_path = dir.path().join("match.txt");
+        std::fs::write(&file_path, "needle\n").expect("file write should succeed");
+
+        let (matches, truncated) = search_with_builtin(
+            "needle",
+            file_path.to_str().expect("utf-8 path"),
+            Some("*.rs"),
+        )
+        .expect("search should succeed");
+
+        assert!(!truncated);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn format_results_appends_truncation_notice() {
+        let matches = vec![SearchMatch {
+            file_path: "src/main.rs".to_string(),
+            line_number: 42,
+            line_content: "needle here".to_string(),
+        }];
+
+        let output = format_results("needle", &matches, true);
+        assert!(output.contains("File: src/main.rs"));
+        assert!(output.contains("L42: needle here"));
+        assert!(output.contains("[Results truncated at 200 matches]"));
+    }
+
+    #[test]
+    fn normalize_path_replaces_backslashes() {
+        let normalized = normalize_path(Path::new(r"dir\file.txt"));
+        assert_eq!(normalized, "dir/file.txt");
+    }
 
     #[test]
     fn get_search_tool_definition_returns_valid_schema() {
