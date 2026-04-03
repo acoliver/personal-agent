@@ -37,9 +37,11 @@ impl ToolExecutor<McpToolContext> for WriteFileExecutor {
             .ok_or_else(|| ToolError::execution_failed("Missing required 'content' argument"))?
             .to_string();
 
-        check_approval(ctx.deps(), &path).await?;
-
         let absolute_path = resolve_path(&path)?;
+        let approval_path = absolute_path.display().to_string();
+
+        check_approval(ctx.deps(), &approval_path).await?;
+
         ensure_parent_dirs(&absolute_path).await?;
         write_content(&absolute_path, &content).await?;
 

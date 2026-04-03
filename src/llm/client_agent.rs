@@ -85,6 +85,19 @@ impl ApprovalGate {
 
         None
     }
+
+    /// Peek the tool identifier for a pending approval without consuming it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    #[must_use]
+    pub fn pending_tool_identifier(&self, request_id: &str) -> Option<String> {
+        let pending = self.pending.lock().unwrap();
+        pending
+            .get(request_id)
+            .map(|pending_approval| pending_approval.tool_identifier.clone())
+    }
 }
 
 impl Default for ApprovalGate {

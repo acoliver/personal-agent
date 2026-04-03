@@ -467,23 +467,24 @@ mod tests {
         ErrorLogStore::global().clear();
 
         let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
-        let unique_error = format!("Something broke {}", Uuid::new_v4());
+        let unique_source = format!("SysSource-{}", Uuid::new_v4());
         let event = SystemEvent::Error {
-            source: "SysSource".to_string(),
-            error: unique_error.clone(),
+            source: unique_source.clone(),
+            error: "Something broke unexpectedly".to_string(),
             context: None,
         };
 
         ErrorPresenter::handle_system_event(&mut view_tx.clone(), event).await;
 
-        // Locate by unique error text to be robust against parallel test execution.
+        // Locate by unique source name to avoid random message collisions with
+        // classify_error_severity auth/connection token patterns.
         let entries = ErrorLogStore::global().entries();
         let our_entry = entries
             .iter()
-            .find(|e| e.message.contains(&unique_error))
-            .expect("entry with our unique error message should be present");
+            .find(|e| e.source == unique_source)
+            .expect("entry with our unique system source should be present");
         assert_eq!(our_entry.severity, ErrorSeverityTag::Internal);
-        assert_eq!(our_entry.source, "SysSource");
+        assert!(our_entry.message.contains("Something broke unexpectedly"));
         assert!(ErrorLogStore::global().unviewed_count() >= 1);
     }
 

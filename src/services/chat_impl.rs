@@ -303,34 +303,37 @@ impl ChatServiceImpl {
         let approved = !matches!(decision, ToolApprovalResponseAction::Denied);
         let tool_identifier = self
             .approval_gate
-            .resolve(&request_id, approved)
+            .pending_tool_identifier(&request_id)
             .ok_or_else(|| {
                 ServiceError::NotFound(format!("Tool approval request {request_id} not found"))
             })?;
 
         match decision {
             ToolApprovalResponseAction::ProceedSession => {
-                self.policy.lock().await.allow_for_session(tool_identifier);
+                self.policy
+                    .lock()
+                    .await
+                    .allow_for_session(tool_identifier.clone());
             }
             ToolApprovalResponseAction::ProceedAlways => {
                 self.policy
                     .lock()
                     .await
-                    .allow_persistently(tool_identifier, self.app_settings_service.as_ref())
+                    .allow_persistently(tool_identifier.clone(), self.app_settings_service.as_ref())
                     .await?;
             }
             ToolApprovalResponseAction::ProceedOnce | ToolApprovalResponseAction::Denied => {}
         }
 
-        self.view_tx
-            .try_send(ViewCommand::ToolApprovalResolved {
-                request_id,
-                approved,
-            })
-            .map_err(|_| {
-                ServiceError::Internal(
-                    "Failed to send tool approval resolution to view channel".to_string(),
-                )
+        let _ = self.view_tx.try_send(ViewCommand::ToolApprovalResolved {
+            request_id: request_id.clone(),
+            approved,
+        });
+
+        self.approval_gate
+            .resolve(&request_id, approved)
+            .ok_or_else(|| {
+                ServiceError::NotFound(format!("Tool approval request {request_id} not found"))
             })?;
 
         Ok(())
