@@ -235,12 +235,10 @@ pub fn render_error_entry_text(entry: &ErrorLogEntry) -> String {
     );
     let _ = writeln!(output, "Source: {}", entry.source);
 
-    let conversation_label = entry
-        .conversation_title
-        .clone()
-        .or_else(|| entry.conversation_id.as_ref().map(ToString::to_string));
-    if let Some(conversation) = conversation_label {
+    if let Some(conversation) = entry.conversation_title.as_deref() {
         let _ = writeln!(output, "Conversation: {conversation}");
+    } else if let Some(conversation_id) = entry.conversation_id.as_ref() {
+        let _ = writeln!(output, "Conversation: {conversation_id}");
     }
 
     let _ = writeln!(output, "Message:");

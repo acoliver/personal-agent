@@ -16,6 +16,7 @@ use crate::presentation::view_command::ViewCommand;
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::error_log::{render_error_entry_text, ErrorLogEntry, ErrorLogStore};
 use crate::ui_gpui::theme::Theme;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Full-screen error log view.
@@ -85,6 +86,18 @@ impl ErrorLogView {
             _ => {}
         }
     }
+    #[cfg(target_os = "macos")]
+    fn open_path(path: &str) {
+        let _ = std::process::Command::new("open").arg(path).spawn();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_path(path: &str) {
+        let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    fn open_path(_path: &str) {}
 
     fn render_export_feedback_bar(&self) -> Option<gpui::AnyElement> {
         let _ = self.export_feedback_message.as_ref()?;
@@ -106,7 +119,7 @@ impl ErrorLogView {
 
         if let (Some(ref file_path), false) = (&self.export_feedback_path, is_error) {
             let path_for_open = file_path.clone();
-            let dir_path = std::path::Path::new(file_path)
+            let dir_path = Path::new(file_path)
                 .parent()
                 .map_or_else(String::new, |p| p.display().to_string());
             let display_path = file_path.clone();
@@ -134,9 +147,7 @@ impl ErrorLogView {
                                     .hover(|s| s.text_color(Theme::accent_hover()))
                                     .child(display_path)
                                     .on_mouse_down(MouseButton::Left, move |_, _, _| {
-                                        let _ = std::process::Command::new("open")
-                                            .arg(&path_for_open)
-                                            .spawn();
+                                        Self::open_path(&path_for_open);
                                     }),
                             )
                             .child(
@@ -149,9 +160,9 @@ impl ErrorLogView {
                                     .hover(|s| s.text_color(Theme::accent_hover()))
                                     .child("(dir)")
                                     .on_mouse_down(MouseButton::Left, move |_, _, _| {
-                                        let _ = std::process::Command::new("open")
-                                            .arg(&dir_path)
-                                            .spawn();
+                                        if !dir_path.is_empty() {
+                                            Self::open_path(&dir_path);
+                                        }
                                     }),
                             ),
                     )
@@ -231,7 +242,7 @@ impl ErrorLogView {
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .bg(Theme::bg_dark())
+            .bg(Theme::bg_darker())
             .hover(|s| s.bg(Theme::bg_dark()))
             .text_size(px(Theme::FONT_SIZE_BASE))
             .text_color(Theme::text_primary())
@@ -286,6 +297,15 @@ impl ErrorLogView {
             .child(Self::render_error_count(entries_len))
             .child(Self::render_save_error_log_button(cx))
             .child(Self::render_clear_all_button(cx))
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn export_feedback_state(&self) -> (&Option<String>, bool, &Option<String>) {
+        (
+            &self.export_feedback_message,
+            self.export_feedback_is_error,
+            &self.export_feedback_path,
+        )
     }
 
     fn render_empty_state() -> impl IntoElement {

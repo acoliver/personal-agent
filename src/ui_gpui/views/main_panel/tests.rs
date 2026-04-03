@@ -772,12 +772,37 @@ async fn handle_command_forwards_error_log_export_feedback_to_error_log_view(
             cx,
         );
 
+        let error_log_view = panel
+            .error_log_view
+            .as_ref()
+            .expect("error log view initialized");
+        error_log_view.read_with(cx, |view, _| {
+            let (message, is_error, path) = view.export_feedback_state();
+            assert_eq!(
+                message.as_deref(),
+                Some("Error log saved as /tmp/error-log.txt (TXT)")
+            );
+            assert!(!is_error);
+            assert_eq!(path.as_deref(), Some("/tmp/error-log.txt"));
+        });
+
         panel.handle_command(
             ViewCommand::ShowNotification {
                 message: "No errors recorded".to_string(),
             },
             cx,
         );
+
+        let error_log_view = panel
+            .error_log_view
+            .as_ref()
+            .expect("error log view initialized");
+        error_log_view.read_with(cx, |view, _| {
+            let (message, is_error, path) = view.export_feedback_state();
+            assert_eq!(message.as_deref(), Some("No errors recorded"));
+            assert!(!is_error);
+            assert!(path.is_none());
+        });
 
         panel.handle_command(
             ViewCommand::ShowError {
@@ -787,6 +812,17 @@ async fn handle_command_forwards_error_log_export_feedback_to_error_log_view(
             },
             cx,
         );
+
+        let error_log_view = panel
+            .error_log_view
+            .as_ref()
+            .expect("error log view initialized");
+        error_log_view.read_with(cx, |view, _| {
+            let (message, is_error, path) = view.export_feedback_state();
+            assert_eq!(message.as_deref(), Some("Save Error Log: disk unavailable"));
+            assert!(is_error);
+            assert!(path.is_none());
+        });
     });
 }
 

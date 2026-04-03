@@ -7,7 +7,9 @@ use std::sync::{
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream;
+use std::sync::LazyLock;
 use tokio::sync::{mpsc, Mutex};
+
 use uuid::Uuid;
 
 use personal_agent::events::{
@@ -27,6 +29,9 @@ use personal_agent::services::{
     AppSettingsService, ChatService, ChatStreamEvent, ConversationService, ProfileService,
     ServiceError,
 };
+
+static ERROR_LOG_TEST_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 struct MockConversationService {
     conversations: Mutex<Vec<Conversation>>,
@@ -1463,6 +1468,8 @@ async fn select_chat_profile_without_active_conversation_is_harmless() {
 
 #[tokio::test]
 async fn save_error_log_exports_txt_and_emits_completion() {
+    let _error_log_lock = ERROR_LOG_TEST_MUTEX.lock().await;
+
     let default_profile = profile();
     let profile_id = default_profile.id;
     let conversation =
@@ -1538,6 +1545,8 @@ async fn save_error_log_exports_txt_and_emits_completion() {
 
 #[tokio::test]
 async fn save_error_log_with_empty_store_emits_notification() {
+    let _error_log_lock = ERROR_LOG_TEST_MUTEX.lock().await;
+
     let default_profile = profile();
     let profile_id = default_profile.id;
     let conversation =
