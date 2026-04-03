@@ -7,7 +7,9 @@ use std::sync::{
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream;
+use std::sync::LazyLock;
 use tokio::sync::{mpsc, Mutex};
+
 use uuid::Uuid;
 
 use personal_agent::events::{
@@ -27,6 +29,9 @@ use personal_agent::services::{
     AppSettingsService, ChatService, ChatStreamEvent, ConversationService, ProfileService,
     ServiceError,
 };
+
+static ERROR_LOG_TEST_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 struct MockConversationService {
     conversations: Mutex<Vec<Conversation>>,
@@ -1467,4 +1472,132 @@ async fn select_chat_profile_without_active_conversation_is_harmless() {
 
     // No crash, no active conversation = success
     assert!(conv_service.get_active().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn save_error_log_exports_txt_and_emits_completion() {
+    let _error_log_lock = ERROR_LOG_TEST_MUTEX.lock().await;
+
+    let default_profile = profile();
+    let profile_id = default_profile.id;
+    let conversation =
+        conversation_with_messages(profile_id, vec![Message::assistant("context".to_string())]);
+
+    let conversation_service = Arc::new(MockConversationService::new(vec![conversation], None));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = mpsc::channel(128);
+
+    let app_settings = Arc::new(MockAppSettingsService::new());
+    let export_dir = tempfile::tempdir().expect("temp export dir");
+    app_settings
+        .set_export_dir(Some(export_dir.path().to_path_buf()))
+        .await;
+    let app_settings_service = app_settings.clone() as Arc<dyn AppSettingsService>;
+
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conversation_service,
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+    presenter.start().await.expect("start presenter");
+    let _ = collect_commands(&mut view_rx).await;
+
+    personal_agent::ui_gpui::error_log::ErrorLogStore::global().clear();
+    personal_agent::ui_gpui::error_log::ErrorLogStore::global().push(|id| {
+        personal_agent::ui_gpui::error_log::ErrorLogEntry {
+            id,
+            timestamp: Utc::now(),
+            severity: personal_agent::ui_gpui::error_log::ErrorSeverityTag::Auth,
+            source: "anthropic / claude".to_string(),
+            message: "401 unauthorized".to_string(),
+            raw_detail: Some("invalid_api_key".to_string()),
+            conversation_title: Some("Bug report".to_string()),
+            conversation_id: None,
+        }
+    });
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveErrorLog))
+        .expect("publish save error log");
+    let commands = collect_commands(&mut view_rx).await;
+
+    let export_completed = commands
+        .iter()
+        .find(|command| matches!(command, ViewCommand::ErrorLogExportCompleted { .. }))
+        .expect("error log export completion command");
+
+    let export_path = match export_completed {
+        ViewCommand::ErrorLogExportCompleted { path } => std::path::PathBuf::from(path),
+        _ => unreachable!(),
+    };
+
+    assert!(
+        export_path.exists(),
+        "exported error log path should exist: {}",
+        export_path.display()
+    );
+
+    let body = std::fs::read_to_string(&export_path).expect("read exported error log");
+    assert!(body.contains("AUTH"));
+    assert!(body.contains("Source: anthropic / claude"));
+    assert!(body.contains("Message:"));
+    assert!(body.contains("401 unauthorized"));
+
+    personal_agent::ui_gpui::error_log::ErrorLogStore::global().clear();
+}
+
+#[tokio::test]
+async fn save_error_log_with_empty_store_emits_notification() {
+    let _error_log_lock = ERROR_LOG_TEST_MUTEX.lock().await;
+
+    let default_profile = profile();
+    let profile_id = default_profile.id;
+    let conversation =
+        conversation_with_messages(profile_id, vec![Message::assistant("context".to_string())]);
+
+    let conversation_service = Arc::new(MockConversationService::new(vec![conversation], None));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = mpsc::channel(128);
+
+    let app_settings = Arc::new(MockAppSettingsService::new());
+    let export_dir = tempfile::tempdir().expect("temp export dir");
+    app_settings
+        .set_export_dir(Some(export_dir.path().to_path_buf()))
+        .await;
+    let app_settings_service = app_settings.clone() as Arc<dyn AppSettingsService>;
+
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conversation_service,
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+    presenter.start().await.expect("start presenter");
+    let _ = collect_commands(&mut view_rx).await;
+
+    personal_agent::ui_gpui::error_log::ErrorLogStore::global().clear();
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveErrorLog))
+        .expect("publish save error log");
+    let commands = collect_commands(&mut view_rx).await;
+
+    assert!(commands.iter().any(|command| {
+        matches!(
+            command,
+            ViewCommand::ShowNotification { message }
+                if message == "No errors recorded"
+        )
+    }));
+
+    personal_agent::ui_gpui::error_log::ErrorLogStore::global().clear();
 }

@@ -150,6 +150,9 @@ pub enum ViewCommand {
     /// Conversation was successfully exported to disk.
     ExportCompleted { path: String, format_label: String },
 
+    /// Error log was successfully exported to disk.
+    ErrorLogExportCompleted { path: String },
+
     /// Profile was created
     ProfileCreated { id: Uuid, name: String },
 

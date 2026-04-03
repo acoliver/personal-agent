@@ -19,11 +19,13 @@ use crate::presentation::view_command::{ViewCommand, ViewId};
 
 impl MainPanel {
     fn is_export_notification(message: &str) -> bool {
-        message.contains("Conversation saved") || message.contains("No active conversation to save")
+        message.contains("Conversation saved")
+            || message.contains("No active conversation to save")
+            || message.contains("No errors recorded")
     }
 
     fn is_export_error(title: &str) -> bool {
-        title == "Save Conversation"
+        title == "Save Conversation" || title == "Save Error Log"
     }
 
     /// Handle `ViewCommand` from the presentation layer.
@@ -57,6 +59,8 @@ impl MainPanel {
             | ToggleThinkingVisibility
             | ShowConversationExportFormat { .. }
             | ExportCompleted { .. } => self.forward_to_chat(cmd, cx),
+
+            ErrorLogExportCompleted { .. } => self.forward_to_error_log(cmd, cx),
 
             // ── export directory (settings view) ────────────────────────
             ExportDirectoryLoaded { .. } => self.forward_to_settings(cmd, cx),
@@ -115,6 +119,14 @@ impl MainPanel {
     fn forward_to_settings(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         if let Some(ref settings) = self.settings_view {
             settings.update(cx, |view, cx| {
+                view.handle_command(cmd, cx);
+            });
+        }
+    }
+
+    fn forward_to_error_log(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        if let Some(ref error_log) = self.error_log_view {
+            error_log.update(cx, |view, cx| {
                 view.handle_command(cmd, cx);
             });
         }
@@ -371,7 +383,7 @@ impl MainPanel {
 
     fn forward_export_notification_to_chat(&self, message: &str, cx: &mut gpui::Context<Self>) {
         if let Some(ref chat) = self.chat_view {
-            if Self::is_export_notification(message) {
+            if Self::is_export_notification(message) && !message.contains("No errors recorded") {
                 let chat_message = message.to_string();
                 chat.update(cx, |view, cx| {
                     view.handle_command(
@@ -401,7 +413,7 @@ impl MainPanel {
         cx: &mut gpui::Context<Self>,
     ) {
         if let Some(ref chat) = self.chat_view {
-            if Self::is_export_error(title) {
+            if Self::is_export_error(title) && title != "Save Error Log" {
                 let t = title.to_string();
                 let m = message.to_string();
                 chat.update(cx, |view, cx| {
@@ -466,6 +478,14 @@ impl MainPanel {
         match cmd {
             ViewCommand::ShowNotification { message } => {
                 self.forward_export_notification_to_chat(&message, cx);
+                if message.contains("No errors recorded") {
+                    self.forward_to_error_log(
+                        ViewCommand::ShowNotification {
+                            message: message.clone(),
+                        },
+                        cx,
+                    );
+                }
                 self.forward_notification_to_settings(message, cx);
             }
             ViewCommand::ShowError {
@@ -474,6 +494,16 @@ impl MainPanel {
                 severity,
             } => {
                 self.forward_export_error_to_chat(&title, &message, severity, cx);
+                if title == "Save Error Log" {
+                    self.forward_to_error_log(
+                        ViewCommand::ShowError {
+                            title: title.clone(),
+                            message: message.clone(),
+                            severity,
+                        },
+                        cx,
+                    );
+                }
                 self.forward_error_to_mcp_add(&title, &message, severity, cx);
                 self.forward_error_to_mcp_configure(title, message, severity, cx);
             }

@@ -200,8 +200,14 @@ impl MainPanel {
             view
         }));
 
-        // Error Log view (reads from global ErrorLogStore, no bridge needed)
-        self.error_log_view = Some(cx.new(ErrorLogView::new));
+        // Error Log view
+        self.error_log_view = Some(cx.new(|cx: &mut gpui::Context<ErrorLogView>| {
+            let mut view = ErrorLogView::new(cx);
+            if let Some(ref b) = bridge {
+                view.set_bridge(b.clone());
+            }
+            view
+        }));
 
         self.apply_startup_state(cx);
     }

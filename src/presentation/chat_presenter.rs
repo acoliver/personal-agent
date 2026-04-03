@@ -246,6 +246,9 @@ impl ChatPresenter {
                 )
                 .await;
             }
+            UserEvent::SaveErrorLog => {
+                Self::handle_save_error_log(app_settings_service, view_tx).await;
+            }
             UserEvent::SelectChatProfile { id } => {
                 Self::handle_select_chat_profile(conversation_service, id).await;
             }

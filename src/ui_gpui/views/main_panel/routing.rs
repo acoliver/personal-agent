@@ -47,6 +47,7 @@ pub struct CommandTargets {
     pub chat_export_completed_commands: usize,
     pub chat_notification_commands: usize,
     pub chat_error_commands: usize,
+    pub error_log_export_completed_commands: usize,
 
     // Settings view counters
     pub settings_profile_commands: usize,
@@ -89,6 +90,9 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         }
         ViewCommand::ExportCompleted { .. } => {
             targets.chat_export_completed_commands += 1;
+        }
+        ViewCommand::ErrorLogExportCompleted { .. } => {
+            targets.error_log_export_completed_commands += 1;
         }
         ViewCommand::ShowNotification { message } => {
             if message.contains("Conversation saved")

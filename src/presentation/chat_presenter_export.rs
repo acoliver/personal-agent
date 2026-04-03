@@ -11,6 +11,7 @@ use super::view_command::ErrorSeverity;
 use super::{ChatPresenter, ViewCommand};
 use crate::models::ConversationExportFormat;
 use crate::services::{AppSettingsService, ConversationService};
+use crate::ui_gpui::error_log::{render_error_log_text, ErrorLogStore};
 
 impl ChatPresenter {
     pub(crate) async fn emit_initial_export_format(
@@ -172,6 +173,53 @@ impl ChatPresenter {
             .await;
         let _ = view_tx
             .send(ViewCommand::ShowConversationExportFormat { format })
+            .await;
+    }
+
+    pub(crate) async fn handle_save_error_log(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+    ) {
+        let entries = ErrorLogStore::global().entries();
+        if entries.is_empty() {
+            let _ = view_tx
+                .send(ViewCommand::ShowNotification {
+                    message: "No errors recorded".to_string(),
+                })
+                .await;
+            return;
+        }
+
+        let export_body = render_error_log_text(&entries);
+
+        let configured_export_dir = app_settings_service
+            .get_setting(EXPORT_DIR_SETTING_KEY)
+            .await
+            .ok()
+            .flatten();
+        let export_dir = resolve_export_directory(configured_export_dir.as_deref());
+        let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+        let filename = format!("{timestamp}-error-log.txt");
+        let initial_path = resolve_unique_export_path(&export_dir, &filename);
+
+        let path = match write_export_file_retrying_collisions(initial_path, &export_body) {
+            Ok(path) => path,
+            Err(error) => {
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Save Error Log".to_string(),
+                        message: format!("failed to write export file {filename}: {error}"),
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
+                return;
+            }
+        };
+
+        let _ = view_tx
+            .send(ViewCommand::ErrorLogExportCompleted {
+                path: path.display().to_string(),
+            })
             .await;
     }
 
