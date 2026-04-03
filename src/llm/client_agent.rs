@@ -190,6 +190,10 @@ fn register_native_tools(
     let read_file_def = crate::agent::tools::get_read_file_tool_definition();
     builder = builder.tool_with_executor(read_file_def, crate::agent::tools::ReadFileExecutor);
 
+    // Register Search tool
+    let search_def = crate::agent::tools::get_search_tool_definition();
+    builder = builder.tool_with_executor(search_def, crate::agent::tools::SearchExecutor);
+
     // Register WriteFile tool
     let write_file_def = crate::agent::tools::get_write_file_tool_definition();
     builder = builder.tool_with_executor(write_file_def, crate::agent::tools::WriteFileExecutor);
