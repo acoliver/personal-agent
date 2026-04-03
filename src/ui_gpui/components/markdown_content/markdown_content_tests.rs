@@ -1,6 +1,15 @@
 mod tests {
     use super::super::*;
 
+    const FIXTURE_COLLAPSED_TABLE: &str = include_str!(
+        "../../../../tests/fixtures/markdown_tables/conversational_collapsed_single_line_table.md"
+    );
+    const FIXTURE_REGULAR_TABLE: &str = include_str!(
+        "../../../../tests/fixtures/markdown_tables/conversational_regular_planets_table.md"
+    );
+    const FIXTURE_WIDE_TABLE: &str =
+        include_str!("../../../../tests/fixtures/markdown_tables/conversational_wide_table.md");
+
     // Helper function to extract text from list item
     fn extract_item_text(item_blocks: &[MarkdownBlock]) -> String {
         let mut text = String::new();
@@ -12,6 +21,10 @@ mod tests {
             }
         }
         text
+    }
+
+    fn spans_text(spans: &[MarkdownInline]) -> String {
+        spans.iter().map(|span| span.text.as_str()).collect()
     }
 
     // ============================================================================
@@ -173,6 +186,135 @@ mod tests {
             }
             _ => panic!("Expected Table"),
         }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-009
+    #[test]
+    fn test_parse_imperfect_single_line_table_with_collapsed_row_separators() {
+        let input = "| Planet | Type ||---|---|| Earth | Rocky || Jupiter | Gas Giant |";
+        let blocks = parse_markdown_blocks(input);
+        assert_eq!(blocks.len(), 1);
+
+        match &blocks[0] {
+            MarkdownBlock::Table { header, rows, .. } => {
+                assert_eq!(header.len(), 2);
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[1].len(), 2);
+                assert_eq!(spans_text(&header[0].spans), "Planet");
+                assert_eq!(spans_text(&header[1].spans), "Type");
+                assert_eq!(spans_text(&rows[0][0].spans), "Earth");
+                assert_eq!(spans_text(&rows[0][1].spans), "Rocky");
+                assert_eq!(spans_text(&rows[1][0].spans), "Jupiter");
+                assert_eq!(spans_text(&rows[1][1].spans), "Gas Giant");
+            }
+            _ => panic!("Expected Table"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-009
+    #[test]
+    fn test_parse_conversational_preamble_then_single_line_collapsed_table() {
+        let blocks = parse_markdown_blocks(FIXTURE_COLLAPSED_TABLE);
+        assert_eq!(blocks.len(), 3);
+
+        match &blocks[0] {
+            MarkdownBlock::Paragraph { spans, .. } => {
+                assert_eq!(
+                    spans_text(spans),
+                    "Here’s a quick table with the major planets."
+                );
+            }
+            _ => panic!("Expected first block paragraph preamble"),
+        }
+
+        match &blocks[1] {
+            MarkdownBlock::Table { header, rows, .. } => {
+                assert_eq!(header.len(), 2);
+                assert_eq!(rows.len(), 3);
+                assert_eq!(spans_text(&header[0].spans), "Planet");
+                assert_eq!(spans_text(&header[1].spans), "Type");
+                assert_eq!(spans_text(&rows[0][0].spans), "Earth");
+                assert_eq!(spans_text(&rows[0][1].spans), "Rocky");
+                assert_eq!(spans_text(&rows[1][0].spans), "Jupiter");
+                assert_eq!(spans_text(&rows[1][1].spans), "Gas Giant");
+                assert_eq!(spans_text(&rows[2][0].spans), "Neptune");
+                assert_eq!(spans_text(&rows[2][1].spans), "Ice Giant");
+            }
+            _ => panic!("Expected second block table"),
+        }
+
+        match &blocks[2] {
+            MarkdownBlock::Paragraph { spans, .. } => {
+                assert_eq!(
+                    spans_text(spans),
+                    "Let me know if you want moon counts and apsis distances too."
+                );
+            }
+            _ => panic!("Expected third block paragraph epilogue"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-009
+    #[test]
+    fn test_parse_fixture_conversational_regular_table_with_preamble_and_epilogue() {
+        let blocks = parse_markdown_blocks(FIXTURE_REGULAR_TABLE);
+        assert_eq!(blocks.len(), 3);
+
+        match &blocks[0] {
+            MarkdownBlock::Paragraph { spans, .. } => {
+                assert_eq!(spans_text(spans), "Sure — here’s a clean table of planets.");
+            }
+            _ => panic!("Expected fixture preamble paragraph"),
+        }
+
+        match &blocks[1] {
+            MarkdownBlock::Table {
+                alignments,
+                header,
+                rows,
+            } => {
+                assert_eq!(header.len(), 5);
+                assert_eq!(rows.len(), 4);
+                assert_eq!(alignments.len(), 5);
+                assert_eq!(alignments[0], Alignment::Left);
+                assert_eq!(alignments[1], Alignment::Left);
+                assert_eq!(alignments[2], Alignment::Left);
+                assert_eq!(alignments[3], Alignment::Left);
+                assert_eq!(alignments[4], Alignment::Left);
+                assert_eq!(spans_text(&header[0].spans), "Planet");
+                assert_eq!(spans_text(&rows[2][0].spans), "Jupiter");
+                assert_eq!(spans_text(&rows[2][4].spans), "Gas Giant");
+            }
+            _ => panic!("Expected fixture regular table"),
+        }
+
+        match &blocks[2] {
+            MarkdownBlock::Paragraph { spans, .. } => {
+                assert_eq!(
+                    spans_text(spans),
+                    "If you want I can convert this to AU as well."
+                );
+            }
+            _ => panic!("Expected fixture epilogue paragraph"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P08
+    /// @requirement:REQ-MD-RENDER-009
+    #[test]
+    fn test_render_fixture_tables_do_not_break_when_conversational_or_wide() {
+        let collapsed_rendered = render_markdown(FIXTURE_COLLAPSED_TABLE);
+        assert_eq!(collapsed_rendered.len(), 3);
+
+        let regular_rendered = render_markdown(FIXTURE_REGULAR_TABLE);
+        assert_eq!(regular_rendered.len(), 3);
+
+        let wide_rendered = render_markdown(FIXTURE_WIDE_TABLE);
+        assert_eq!(wide_rendered.len(), 3);
     }
 
     /// @plan:PLAN-20260402-MARKDOWN.P04

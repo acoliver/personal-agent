@@ -25,7 +25,120 @@ use std::ops::Range;
 /// @requirement:REQ-MD-PARSE-001
 /// @pseudocode parse-markdown-blocks.md lines 1-10
 pub(crate) fn parse_markdown_blocks(content: &str) -> Vec<MarkdownBlock> {
-    ParseState::new().parse(content)
+    let parsed = ParseState::new().parse(content);
+    if parsed
+        .iter()
+        .any(|block| matches!(block, MarkdownBlock::Table { .. }))
+    {
+        return parsed;
+    }
+
+    let normalized = normalize_imperfect_table_markdown(content);
+    if matches!(normalized, std::borrow::Cow::Borrowed(_)) {
+        return parsed;
+    }
+
+    let reparsed = ParseState::new().parse(normalized.as_ref());
+    if reparsed
+        .iter()
+        .any(|block| matches!(block, MarkdownBlock::Table { .. }))
+    {
+        reparsed
+    } else {
+        parsed
+    }
+}
+
+fn normalize_imperfect_table_markdown(content: &str) -> std::borrow::Cow<'_, str> {
+    fn count_columns(row: &str) -> usize {
+        row.trim_matches('|')
+            .split('|')
+            .filter(|cell| !cell.trim().is_empty())
+            .count()
+    }
+
+    fn ensure_pipe_row(segment: &str) -> String {
+        let mut row = segment.trim().to_string();
+        if !row.starts_with('|') {
+            row.insert(0, '|');
+        }
+        if !row.ends_with('|') {
+            row.push('|');
+        }
+        row
+    }
+
+    fn is_delimiter_row(row: &str) -> bool {
+        let inner = row.trim().trim_matches('|');
+        !inner.is_empty()
+            && inner.split('|').all(|cell| {
+                let trimmed = cell.trim();
+                !trimmed.is_empty() && trimmed.chars().all(|ch| matches!(ch, '-' | ':' | ' '))
+            })
+    }
+
+    fn build_delimiter_row(columns: usize) -> String {
+        let mut delimiter = String::from("|");
+        for _ in 0..columns {
+            delimiter.push_str("---|");
+        }
+        delimiter
+    }
+
+    fn normalize_collapsed_table_line(line: &str) -> Option<String> {
+        let first_pipe = line.find('|')?;
+        let (prefix, candidate) = line.split_at(first_pipe);
+
+        if !candidate.contains("||") {
+            return None;
+        }
+
+        let mut rows: Vec<String> = candidate
+            .split("||")
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .map(ensure_pipe_row)
+            .collect();
+
+        if rows.len() < 2 {
+            return None;
+        }
+
+        let header_columns = count_columns(&rows[0]);
+        if header_columns < 2 || rows.iter().any(|row| count_columns(row) < 2) {
+            return None;
+        }
+
+        if !rows.get(1).is_some_and(|row| is_delimiter_row(row)) {
+            rows.insert(1, build_delimiter_row(header_columns));
+        }
+
+        let normalized_table = rows.join("\n");
+        let prefix = prefix.trim_end();
+        if prefix.is_empty() {
+            Some(normalized_table)
+        } else {
+            Some(format!("{prefix}\n{normalized_table}"))
+        }
+    }
+
+    let mut changed = false;
+    let mut normalized_lines: Vec<String> = Vec::with_capacity(content.lines().count());
+
+    for line in content.lines() {
+        if let Some(normalized) = normalize_collapsed_table_line(line) {
+            normalized_lines.push(normalized);
+            changed = true;
+        } else {
+            normalized_lines.push(line.to_string());
+        }
+    }
+
+    if changed {
+        std::borrow::Cow::Owned(normalized_lines.join("\n"))
+    } else {
+        std::borrow::Cow::Borrowed(content)
+    }
 }
 
 #[derive(Debug)]

@@ -140,7 +140,7 @@ impl IntoElement for AssistantBubble {
             if let Some(thinking_content) = self.thinking {
                 bubble = bubble.child(
                     div()
-                        .w(px(400.0))
+                        .w_full()
                         .px(px(Theme::SPACING_MD))
                         .py(px(Theme::SPACING_SM))
                         .rounded(px(Theme::RADIUS_MD))
@@ -160,7 +160,7 @@ impl IntoElement for AssistantBubble {
         let rendered = blocks_to_elements(&blocks);
 
         let mut main_content = div()
-            .w(px(400.0))
+            .w_full()
             .px(px(Theme::SPACING_MD))
             .py(px(Theme::SPACING_SM))
             .rounded(px(Theme::RADIUS_LG))

@@ -428,13 +428,19 @@ fn spans_to_styled_text(
 
     let styled = StyledText::new(text).with_runs(runs);
     if links.is_empty() {
-        return div().child(styled).into_any_element();
+        return div()
+            .w_full()
+            .min_w(px(0.0))
+            .child(styled)
+            .into_any_element();
     }
 
     let ranges: Vec<Range<usize>> = links.iter().map(|(range, _)| range.clone()).collect();
     let links_owned: Vec<String> = links.iter().map(|(_, url)| url.clone()).collect();
 
     div()
+        .w_full()
+        .min_w(px(0.0))
         .child(
             gpui::InteractiveText::new("markdown-links", styled).on_click(
                 ranges,
@@ -581,19 +587,36 @@ fn render_table(
     let grid_cols = u16::try_from(col_count.max(1)).unwrap_or(u16::MAX);
 
     let align_content = |alignment: &Alignment, content: gpui::AnyElement| match alignment {
-        Alignment::Center => div().w_full().flex().justify_center().child(content),
-        Alignment::Right => div().w_full().flex().justify_end().child(content),
-        Alignment::Left | Alignment::None => div().w_full().flex().justify_start().child(content),
+        Alignment::Center => div()
+            .w_full()
+            .min_w(px(0.0))
+            .flex()
+            .justify_center()
+            .child(content),
+        Alignment::Right => div()
+            .w_full()
+            .min_w(px(0.0))
+            .flex()
+            .justify_end()
+            .child(content),
+        Alignment::Left | Alignment::None => div()
+            .w_full()
+            .min_w(px(0.0))
+            .flex()
+            .justify_start()
+            .child(content),
     };
 
-    let mut table = div().grid().grid_cols(grid_cols).w_full();
+    let mut table_grid = div().grid().grid_cols(grid_cols).w_full();
 
     for (col_idx, cell) in header.iter().enumerate() {
         let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
         let content = spans_to_styled_text(&cell.spans, &cell.links);
 
-        table = table.child(
+        table_grid = table_grid.child(
             div()
+                .w_full()
+                .min_w(px(120.0))
                 .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
                 .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
                 .bg(crate::ui_gpui::theme::Theme::bg_dark())
@@ -608,8 +631,10 @@ fn render_table(
             let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
             let content = spans_to_styled_text(&cell.spans, &cell.links);
 
-            table = table.child(
+            table_grid = table_grid.child(
                 div()
+                    .w_full()
+                    .min_w(px(120.0))
                     .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
                     .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
                     .bg(if row_idx % 2 == 0 {
@@ -624,7 +649,7 @@ fn render_table(
         }
     }
 
-    table.into_any_element()
+    div().w_full().child(table_grid).into_any_element()
 }
 
 /// @plan:PLAN-20260402-MARKDOWN.P06
