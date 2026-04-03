@@ -213,120 +213,111 @@ fn build_chat_request_payload(
     Ok(request_value)
 }
 
-#[allow(clippy::too_many_lines)]
 fn convert_request(req: &ModelRequest) -> Vec<OutboundChatMessage> {
-    let mut messages = Vec::new();
-    for part in &req.parts {
-        match part {
-            ModelRequestPart::SystemPrompt(sys) => {
-                messages.push(OutboundChatMessage::from_chat_message(ChatMessage {
-                    role: "system".to_string(),
-                    content: Some(MessageContent::Text(sys.content.clone())),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                }));
-            }
-            ModelRequestPart::UserPrompt(user) => {
-                let content = match &user.content {
-                    UserContent::Text(text) => MessageContent::Text(text.clone()),
-                    UserContent::Parts(parts) => {
-                        let text: String = parts
-                            .iter()
-                            .filter_map(|p| match p {
-                                UserContentPart::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("");
-                        MessageContent::Text(text)
-                    }
-                };
-                messages.push(OutboundChatMessage::from_chat_message(ChatMessage {
-                    role: "user".to_string(),
-                    content: Some(content),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                }));
-            }
-            ModelRequestPart::ToolReturn(tool_ret) => {
-                messages.push(OutboundChatMessage::from_chat_message(ChatMessage {
-                    role: "tool".to_string(),
-                    content: Some(MessageContent::Text(tool_ret.content.to_string_content())),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: tool_ret.tool_call_id.clone(),
-                }));
-            }
-            ModelRequestPart::RetryPrompt(retry) => {
-                messages.push(OutboundChatMessage::from_chat_message(ChatMessage {
-                    role: "user".to_string(),
-                    content: Some(MessageContent::Text(retry.content.message().to_string())),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                }));
-            }
-            ModelRequestPart::BuiltinToolReturn(builtin) => {
-                let content_str = serde_json::to_string(&builtin.content)
-                    .unwrap_or_else(|_| builtin.content_type().to_string());
-                messages.push(OutboundChatMessage::from_chat_message(ChatMessage::tool(
-                    content_str,
-                    builtin.tool_call_id.clone(),
-                )));
-            }
-            ModelRequestPart::ModelResponse(response) => {
-                let mut text_parts = Vec::new();
-                let mut tool_calls = Vec::new();
-                let mut reasoning_parts = Vec::new();
-                for rp in &response.parts {
-                    match rp {
-                        ModelResponsePart::Text(t) => text_parts.push(t.content.clone()),
-                        ModelResponsePart::Thinking(t) => reasoning_parts.push(t.content.clone()),
-                        ModelResponsePart::ToolCall(tc) => {
-                            tool_calls.push(ToolCall {
-                                id: tc.tool_call_id.clone().unwrap_or_default(),
-                                tool_type: "function".to_string(),
-                                function: FunctionCall {
-                                    name: tc.tool_name.clone(),
-                                    arguments: tc.args.to_json_string().unwrap_or_default(),
-                                },
-                            });
-                        }
-                        _ => {}
-                    }
-                }
+    req.parts.iter().map(convert_request_part).collect()
+}
 
-                let reasoning_content = {
-                    let merged = reasoning_parts.join("");
-                    (!merged.is_empty()).then_some(merged)
-                };
+fn convert_request_part(part: &ModelRequestPart) -> OutboundChatMessage {
+    match part {
+        ModelRequestPart::SystemPrompt(sys) => {
+            OutboundChatMessage::from_chat_message(ChatMessage {
+                role: "system".to_string(),
+                content: Some(MessageContent::Text(sys.content.clone())),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            })
+        }
+        ModelRequestPart::UserPrompt(user) => OutboundChatMessage::from_chat_message(ChatMessage {
+            role: "user".to_string(),
+            content: Some(convert_user_content(&user.content)),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }),
+        ModelRequestPart::ToolReturn(tool_ret) => {
+            OutboundChatMessage::from_chat_message(ChatMessage {
+                role: "tool".to_string(),
+                content: Some(MessageContent::Text(tool_ret.content.to_string_content())),
+                name: None,
+                tool_calls: None,
+                tool_call_id: tool_ret.tool_call_id.clone(),
+            })
+        }
+        ModelRequestPart::RetryPrompt(retry) => {
+            OutboundChatMessage::from_chat_message(ChatMessage {
+                role: "user".to_string(),
+                content: Some(MessageContent::Text(retry.content.message().to_string())),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            })
+        }
+        ModelRequestPart::BuiltinToolReturn(builtin) => {
+            let content = serde_json::to_string(&builtin.content)
+                .unwrap_or_else(|_| builtin.content_type().to_string());
+            OutboundChatMessage::from_chat_message(ChatMessage::tool(
+                content,
+                builtin.tool_call_id.clone(),
+            ))
+        }
+        ModelRequestPart::ModelResponse(response) => convert_model_response(response),
+    }
+}
 
-                let assistant_message = ChatMessage {
-                    role: "assistant".to_string(),
-                    content: Some(MessageContent::Text(text_parts.join(""))),
-                    name: None,
-                    tool_calls: if tool_calls.is_empty() {
-                        None
-                    } else {
-                        Some(tool_calls)
-                    },
-                    tool_call_id: None,
-                };
-
-                messages.push(OutboundChatMessage {
-                    role: assistant_message.role,
-                    content: assistant_message.content,
-                    name: assistant_message.name,
-                    tool_calls: assistant_message.tool_calls,
-                    tool_call_id: assistant_message.tool_call_id,
-                    reasoning_content,
-                });
-            }
+fn convert_user_content(content: &UserContent) -> MessageContent {
+    match content {
+        UserContent::Text(text) => MessageContent::Text(text.clone()),
+        UserContent::Parts(parts) => {
+            let text = parts
+                .iter()
+                .filter_map(|part| match part {
+                    UserContentPart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            MessageContent::Text(text)
         }
     }
-    messages
+}
+
+fn convert_model_response(response: &ModelResponse) -> OutboundChatMessage {
+    let mut text_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+    let mut reasoning_parts = Vec::new();
+
+    for part in &response.parts {
+        match part {
+            ModelResponsePart::Text(text) => text_parts.push(text.content.clone()),
+            ModelResponsePart::Thinking(thinking) => reasoning_parts.push(thinking.content.clone()),
+            ModelResponsePart::ToolCall(tool_call) => {
+                tool_calls.push(ToolCall {
+                    id: tool_call.tool_call_id.clone().unwrap_or_default(),
+                    tool_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: tool_call.tool_name.clone(),
+                        arguments: tool_call.args.to_json_string().unwrap_or_default(),
+                    },
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let reasoning_content = {
+        let merged = reasoning_parts.join("");
+        (!merged.is_empty()).then_some(merged)
+    };
+
+    OutboundChatMessage {
+        role: "assistant".to_string(),
+        content: Some(MessageContent::Text(text_parts.join(""))),
+        name: None,
+        tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
+        tool_call_id: None,
+        reasoning_content,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
