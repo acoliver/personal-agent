@@ -28,6 +28,8 @@ use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, Stream
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
 use gpui::{point, px, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent};
+#[cfg(test)]
+use std::cell::Cell;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -41,6 +43,8 @@ pub struct ChatView {
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
     pub(super) chat_scroll_handle: ScrollHandle,
+    #[cfg(test)]
+    pub(super) maybe_scroll_chat_to_bottom_invocations: Cell<usize>,
 }
 
 impl ChatView {
@@ -52,6 +56,8 @@ impl ChatView {
             conversation_id: None,
             selection_generation: 0,
             chat_scroll_handle: ScrollHandle::new(),
+            #[cfg(test)]
+            maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
         }
     }
 
@@ -75,10 +81,9 @@ impl ChatView {
             return;
         }
 
-        // Any downward wheel movement while sticky-follow is disabled should re-enable follow.
-        // This avoids depending on offset timing when content height changes in the same frame.
+        // Re-enable sticky-follow only once the viewport is actually near the bottom.
         if delta.y < px(0.0) {
-            self.state.chat_autoscroll_enabled = true;
+            self.refresh_autoscroll_state_from_handle();
             return;
         }
 
@@ -87,6 +92,10 @@ impl ChatView {
 
     pub(super) fn maybe_scroll_chat_to_bottom(&self, cx: &mut gpui::Context<Self>) {
         if self.state.chat_autoscroll_enabled {
+            #[cfg(test)]
+            self.maybe_scroll_chat_to_bottom_invocations
+                .set(self.maybe_scroll_chat_to_bottom_invocations.get() + 1);
+
             self.chat_scroll_handle.scroll_to_bottom();
             let entity = cx.entity();
             cx.defer(move |cx| {
@@ -260,6 +269,11 @@ impl ChatView {
         self.state.thinking_content =
             (!streaming.thinking_buffer.is_empty()).then_some(streaming.thinking_buffer);
         self.state.sync_conversation_dropdown_index();
+
+        if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
+            self.maybe_scroll_chat_to_bottom(cx);
+        }
+
         cx.notify();
     }
 
@@ -752,7 +766,13 @@ mod tests {
     #![allow(clippy::future_not_send)]
 
     use super::*;
-    use gpui::{AppContext, KeyDownEvent, Keystroke, Modifiers, TestAppContext};
+    use crate::presentation::view_command::ConversationSummary;
+    use crate::ui_gpui::app_store::StreamingStoreSnapshot;
+    use chrono::Utc;
+    use gpui::{
+        point, AppContext, KeyDownEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
+        TestAppContext, TouchPhase,
+    };
 
     fn chat_key_event(key: &str) -> KeyDownEvent {
         KeyDownEvent {
@@ -823,6 +843,129 @@ mod tests {
                     },
                     cx,
                 );
+                assert!(view.state.chat_autoscroll_enabled);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn apply_store_snapshot_streaming_calls_maybe_scroll_when_autoscroll_enabled(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut ChatView, cx| {
+                let conversation_id = Uuid::new_v4();
+                let snapshot = ChatStoreSnapshot {
+                    selected_conversation_id: Some(conversation_id),
+                    selected_conversation_title: "Conv".to_string(),
+                    selection_generation: 1,
+                    load_state: ConversationLoadState::Ready {
+                        conversation_id,
+                        generation: 1,
+                    },
+                    transcript: Vec::new(),
+                    streaming: StreamingStoreSnapshot {
+                        stream_buffer: "partial".to_string(),
+                        active_target: Some(conversation_id),
+                        ..StreamingStoreSnapshot::default()
+                    },
+                    conversations: vec![ConversationSummary {
+                        id: conversation_id,
+                        title: "Conv".to_string(),
+                        updated_at: Utc::now(),
+                        message_count: 0,
+                    }],
+                };
+
+                view.conversation_id = Some(conversation_id);
+                view.selection_generation = 1;
+                view.state.chat_autoscroll_enabled = true;
+                view.maybe_scroll_chat_to_bottom_invocations.set(0);
+
+                view.apply_store_snapshot(snapshot, cx);
+
+                assert!(matches!(
+                    view.state.streaming,
+                    StreamingState::Streaming { .. }
+                ));
+                assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 1);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn apply_store_snapshot_streaming_skips_maybe_scroll_when_autoscroll_disabled(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut ChatView, cx| {
+                let conversation_id = Uuid::new_v4();
+                let snapshot = ChatStoreSnapshot {
+                    selected_conversation_id: Some(conversation_id),
+                    selected_conversation_title: "Conv".to_string(),
+                    selection_generation: 1,
+                    load_state: ConversationLoadState::Ready {
+                        conversation_id,
+                        generation: 1,
+                    },
+                    transcript: Vec::new(),
+                    streaming: StreamingStoreSnapshot {
+                        stream_buffer: "partial".to_string(),
+                        active_target: Some(conversation_id),
+                        ..StreamingStoreSnapshot::default()
+                    },
+                    conversations: vec![ConversationSummary {
+                        id: conversation_id,
+                        title: "Conv".to_string(),
+                        updated_at: Utc::now(),
+                        message_count: 0,
+                    }],
+                };
+
+                view.conversation_id = Some(conversation_id);
+                view.selection_generation = 1;
+                view.state.chat_autoscroll_enabled = false;
+                view.maybe_scroll_chat_to_bottom_invocations.set(0);
+
+                view.apply_store_snapshot(snapshot, cx);
+
+                assert!(matches!(
+                    view.state.streaming,
+                    StreamingState::Streaming { .. }
+                ));
+                assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 0);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn wheel_scroll_down_reenables_autoscroll_only_when_near_bottom(cx: &mut TestAppContext) {
+        let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut ChatView, _cx| {
+                let downward_event = ScrollWheelEvent {
+                    position: point(px(0.0), px(0.0)),
+                    delta: ScrollDelta::Pixels(point(px(0.0), px(-16.0))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Moved,
+                };
+
+                view.state.chat_autoscroll_enabled = false;
+                view.chat_scroll_handle
+                    .set_offset(point(px(0.0), px(-120.0)));
+                view.refresh_autoscroll_state_after_wheel(&downward_event);
+                assert!(!view.state.chat_autoscroll_enabled);
+
+                view.chat_scroll_handle.set_offset(point(px(0.0), px(0.0)));
+                view.refresh_autoscroll_state_after_wheel(&downward_event);
                 assert!(view.state.chat_autoscroll_enabled);
             });
         });
