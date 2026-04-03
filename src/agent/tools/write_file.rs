@@ -68,7 +68,7 @@ async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(),
         )),
         ToolApprovalDecision::AskUser => {
             let request_id = uuid::Uuid::new_v4().to_string();
-            let rx = tool_context
+            let waiter = tool_context
                 .approval_gate
                 .wait_for_approval(request_id.clone(), "WriteFile".to_string());
 
@@ -87,7 +87,7 @@ async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(),
                 ));
             }
 
-            let approved = rx.await.unwrap_or(false);
+            let approved = waiter.wait().await.unwrap_or(false);
 
             if approved {
                 Ok(())

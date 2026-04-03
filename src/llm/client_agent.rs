@@ -15,7 +15,7 @@ use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 // Use std Result to avoid conflict with serdes_ai::prelude::Result
@@ -27,7 +27,7 @@ type StdResult<T, E> = std::result::Result<T, E>;
 /// user approval decisions.
 #[derive(Debug)]
 pub struct ApprovalGate {
-    pending: Mutex<HashMap<String, PendingApproval>>,
+    pending: Arc<Mutex<HashMap<String, PendingApproval>>>,
 }
 
 #[derive(Debug)]
@@ -36,35 +36,104 @@ struct PendingApproval {
     tool_identifier: String,
 }
 
+#[derive(Debug)]
+pub struct ApprovalWaiter {
+    request_id: String,
+    pending: Weak<Mutex<HashMap<String, PendingApproval>>>,
+    receiver: Option<oneshot::Receiver<bool>>,
+}
+
+impl ApprovalWaiter {
+    /// Await the approval decision for this pending request.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the resolver side is dropped before sending a decision.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after the internal receiver has already been taken.
+    pub async fn wait(mut self) -> Result<bool, oneshot::error::RecvError> {
+        let receiver = self
+            .receiver
+            .take()
+            .expect("ApprovalWaiter receiver should be present");
+        receiver.await
+    }
+}
+
+impl Drop for ApprovalWaiter {
+    fn drop(&mut self) {
+        let Some(_receiver) = self.receiver.as_ref() else {
+            return;
+        };
+
+        let Some(pending) = self.pending.upgrade() else {
+            return;
+        };
+
+        {
+            let mut pending_guard = pending
+                .lock()
+                .expect("approval gate pending map lock should not be poisoned");
+            pending_guard.remove(&self.request_id);
+        }
+    }
+}
+
 impl ApprovalGate {
     /// Create a new approval gate.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            pending: Mutex::new(HashMap::new()),
+            pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// Register a pending approval and return the receiver to await the user's decision.
+    /// Register a pending approval and return a waiter to await the user's decision.
     ///
     /// # Panics
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
-    pub fn wait_for_approval(
-        &self,
-        request_id: String,
-        tool_identifier: String,
-    ) -> oneshot::Receiver<bool> {
+    #[must_use]
+    pub fn wait_for_approval(&self, request_id: String, tool_identifier: String) -> ApprovalWaiter {
         let (tx, rx) = oneshot::channel();
-        let mut pending = self.pending.lock().unwrap();
-        pending.insert(
+        {
+            let mut pending = self.pending.lock().unwrap();
+            pending.insert(
+                request_id.clone(),
+                PendingApproval {
+                    tx,
+                    tool_identifier,
+                },
+            );
+        }
+
+        ApprovalWaiter {
             request_id,
-            PendingApproval {
-                tx,
-                tool_identifier,
-            },
-        );
-        rx
+            pending: Arc::downgrade(&self.pending),
+            receiver: Some(rx),
+        }
+    }
+
+    /// Resolve a pending approval with the user's decision, returning the claimed tool identifier
+    /// only when a live waiter exists.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    #[must_use]
+    pub fn resolve_and_take_identifier(&self, request_id: &str, approved: bool) -> Option<String> {
+        let pending_approval = {
+            let mut pending = self.pending.lock().unwrap();
+            pending.remove(request_id)
+        }?;
+
+        if pending_approval.tx.send(approved).is_ok() {
+            Some(pending_approval.tool_identifier)
+        } else {
+            None
+        }
     }
 
     /// Resolve a pending approval with the user's decision.
@@ -72,31 +141,9 @@ impl ApprovalGate {
     /// # Panics
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
-    pub fn resolve(&self, request_id: &str, approved: bool) -> Option<String> {
-        let pending_approval = {
-            let mut pending = self.pending.lock().unwrap();
-            pending.remove(request_id)
-        };
-
-        if let Some(pending_approval) = pending_approval {
-            let _ = pending_approval.tx.send(approved);
-            return Some(pending_approval.tool_identifier);
-        }
-
-        None
-    }
-
-    /// Peek the tool identifier for a pending approval without consuming it.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
     #[must_use]
-    pub fn pending_tool_identifier(&self, request_id: &str) -> Option<String> {
-        let pending = self.pending.lock().unwrap();
-        pending
-            .get(request_id)
-            .map(|pending_approval| pending_approval.tool_identifier.clone())
+    pub fn resolve(&self, request_id: &str, approved: bool) -> Option<String> {
+        self.resolve_and_take_identifier(request_id, approved)
     }
 }
 
@@ -477,6 +524,7 @@ impl crate::llm::LlmClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn split_prompt_and_history_uses_last_user_message() {
@@ -492,6 +540,51 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert!(matches!(history[0].role, Role::User));
         assert!(matches!(history[1].role, Role::Assistant));
+    }
+    #[tokio::test]
+    async fn approval_waiter_drop_cleans_pending_entry() {
+        let gate = ApprovalGate::new();
+        let request_id = Uuid::new_v4().to_string();
+        let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+
+        drop(waiter);
+
+        assert!(gate.resolve(&request_id, true).is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_none_when_waiter_was_dropped() {
+        let gate = ApprovalGate::new();
+        let request_id = Uuid::new_v4().to_string();
+        let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+
+        drop(waiter);
+
+        assert!(gate
+            .resolve_and_take_identifier(&request_id, true)
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_identifier_when_waiter_is_alive() {
+        let gate = ApprovalGate::new();
+        let request_id = Uuid::new_v4().to_string();
+        let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+
+        let resolver = {
+            let gate = gate;
+            let request_id = request_id.clone();
+            tokio::spawn(async move { gate.resolve_and_take_identifier(&request_id, true) })
+        };
+
+        let approved = waiter.wait().await.expect("waiter should receive decision");
+        let identifier = resolver
+            .await
+            .expect("resolver task should complete")
+            .expect("identifier should be returned for live waiter");
+
+        assert!(approved);
+        assert_eq!(identifier, "WriteFile");
     }
 
     #[test]

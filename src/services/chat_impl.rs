@@ -292,9 +292,8 @@ impl ChatServiceImpl {
     ///
     /// # Errors
     ///
-    /// Returns `ServiceError::NotFound` when `request_id` is unknown, `ServiceError::Internal`
-    /// when emitting the resolution event fails, or persistence-related errors for
-    /// `ProceedAlways` decisions.
+    /// Returns `ServiceError::NotFound` when `request_id` is unknown or already consumed,
+    /// or persistence-related errors for `ProceedAlways` decisions.
     pub async fn resolve_tool_approval(
         &self,
         request_id: String,
@@ -303,7 +302,7 @@ impl ChatServiceImpl {
         let approved = !matches!(decision, ToolApprovalResponseAction::Denied);
         let tool_identifier = self
             .approval_gate
-            .pending_tool_identifier(&request_id)
+            .resolve_and_take_identifier(&request_id, approved)
             .ok_or_else(|| {
                 ServiceError::NotFound(format!("Tool approval request {request_id} not found"))
             })?;
@@ -319,22 +318,16 @@ impl ChatServiceImpl {
                 self.policy
                     .lock()
                     .await
-                    .allow_persistently(tool_identifier.clone(), self.app_settings_service.as_ref())
+                    .allow_persistently(tool_identifier, self.app_settings_service.as_ref())
                     .await?;
             }
             ToolApprovalResponseAction::ProceedOnce | ToolApprovalResponseAction::Denied => {}
         }
 
         let _ = self.view_tx.try_send(ViewCommand::ToolApprovalResolved {
-            request_id: request_id.clone(),
+            request_id,
             approved,
         });
-
-        self.approval_gate
-            .resolve(&request_id, approved)
-            .ok_or_else(|| {
-                ServiceError::NotFound(format!("Tool approval request {request_id} not found"))
-            })?;
 
         Ok(())
     }
@@ -497,6 +490,363 @@ mod tests {
 
     struct MockConversationService {
         profile_id: Uuid,
+    }
+    use crate::agent::McpApprovalMode;
+    use crate::services::{AppSettingsService, ServiceError, ServiceResult};
+    use std::collections::HashMap;
+    use tokio::sync::Barrier;
+
+    struct InMemoryAppSettingsService {
+        settings: RwLock<HashMap<String, String>>,
+    }
+
+    impl InMemoryAppSettingsService {
+        fn new() -> Self {
+            Self {
+                settings: RwLock::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AppSettingsService for InMemoryAppSettingsService {
+        async fn get_default_profile_id(&self) -> ServiceResult<Option<Uuid>> {
+            Ok(None)
+        }
+
+        async fn set_default_profile_id(&self, _id: Uuid) -> ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_current_conversation_id(&self) -> ServiceResult<Option<Uuid>> {
+            Ok(None)
+        }
+
+        async fn set_current_conversation_id(&self, _id: Uuid) -> ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_hotkey(&self) -> ServiceResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set_hotkey(&self, _hotkey: String) -> ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_theme(&self) -> ServiceResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set_theme(&self, _theme: String) -> ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_setting(&self, key: &str) -> ServiceResult<Option<String>> {
+            Ok(self.settings.read().await.get(key).cloned())
+        }
+
+        async fn set_setting(&self, key: &str, value: String) -> ServiceResult<()> {
+            self.settings.write().await.insert(key.to_string(), value);
+            Ok(())
+        }
+
+        async fn reset_to_defaults(&self) -> ServiceResult<()> {
+            self.settings.write().await.clear();
+            Ok(())
+        }
+    }
+
+    struct FailingAppSettingsService;
+
+    #[async_trait::async_trait]
+    impl AppSettingsService for FailingAppSettingsService {
+        async fn get_default_profile_id(&self) -> ServiceResult<Option<Uuid>> {
+            Ok(None)
+        }
+
+        async fn set_default_profile_id(&self, _id: Uuid) -> ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_current_conversation_id(&self) -> ServiceResult<Option<Uuid>> {
+            Ok(None)
+        }
+
+        async fn set_current_conversation_id(&self, _id: Uuid) -> ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_hotkey(&self) -> ServiceResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set_hotkey(&self, _hotkey: String) -> ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_theme(&self) -> ServiceResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set_theme(&self, _theme: String) -> ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_setting(&self, _key: &str) -> ServiceResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set_setting(&self, _key: &str, _value: String) -> ServiceResult<()> {
+            Err(ServiceError::Storage(
+                "simulated settings persistence failure".to_string(),
+            ))
+        }
+
+        async fn reset_to_defaults(&self) -> ServiceResult<()> {
+            Ok(())
+        }
+    }
+
+    fn make_approval_test_chat_service(
+        app_settings_service: Arc<dyn AppSettingsService>,
+    ) -> (
+        ChatServiceImpl,
+        tokio::sync::mpsc::Receiver<ViewCommand>,
+        Arc<ApprovalGate>,
+    ) {
+        let conversation_service = Arc::new(MockConversationService::new(Uuid::new_v4()))
+            as Arc<dyn super::super::ConversationService>;
+        let profile_service =
+            Arc::new(MockProfileService::new()) as Arc<dyn crate::services::ProfileService>;
+        let (view_tx, view_rx) = tokio::sync::mpsc::channel(8);
+        let approval_gate = Arc::new(ApprovalGate::new());
+        let policy = Arc::new(AsyncMutex::new(ToolApprovalPolicy {
+            yolo_mode: false,
+            auto_approve_reads: false,
+            mcp_approval_mode: McpApprovalMode::PerTool,
+            persistent_allowlist: Vec::new(),
+            persistent_denylist: Vec::new(),
+            session_allowlist: std::collections::HashSet::new(),
+        }));
+
+        let service = ChatServiceImpl::new(
+            conversation_service,
+            profile_service,
+            app_settings_service,
+            view_tx,
+            approval_gate.clone(),
+            policy,
+        );
+
+        (service, view_rx, approval_gate)
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_approval_denied_does_not_update_policy() {
+        let app_settings =
+            Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+        let (service, mut view_rx, approval_gate) =
+            make_approval_test_chat_service(app_settings.clone());
+        let request_id = Uuid::new_v4().to_string();
+        let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+
+        service
+            .resolve_tool_approval(request_id.clone(), ToolApprovalResponseAction::Denied)
+            .await
+            .expect("denied resolution should succeed");
+
+        let approved = waiter.wait().await.expect("waiter should receive decision");
+        assert!(
+            !approved,
+            "denied decision should propagate false to waiter"
+        );
+
+        let resolved = view_rx
+            .recv()
+            .await
+            .expect("view should receive ToolApprovalResolved");
+        assert_eq!(
+            resolved,
+            ViewCommand::ToolApprovalResolved {
+                request_id,
+                approved: false,
+            }
+        );
+
+        let policy_after = service.policy.lock().await.clone();
+        assert_eq!(
+            policy_after.evaluate("WriteFile"),
+            crate::agent::tool_approval_policy::ToolApprovalDecision::AskUser,
+            "Denied should not add session or persistent allow rules"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_approval_proceed_session_updates_session_policy() {
+        let app_settings =
+            Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+        let (service, mut view_rx, approval_gate) =
+            make_approval_test_chat_service(app_settings.clone());
+        let request_id = Uuid::new_v4().to_string();
+        let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+
+        service
+            .resolve_tool_approval(
+                request_id.clone(),
+                ToolApprovalResponseAction::ProceedSession,
+            )
+            .await
+            .expect("session resolution should succeed");
+
+        let approved = waiter.wait().await.expect("waiter should receive decision");
+        assert!(approved, "ProceedSession should propagate true to waiter");
+
+        let resolved = view_rx
+            .recv()
+            .await
+            .expect("view should receive ToolApprovalResolved");
+        assert_eq!(
+            resolved,
+            ViewCommand::ToolApprovalResolved {
+                request_id,
+                approved: true,
+            }
+        );
+
+        let policy_after = service.policy.lock().await.clone();
+        assert_eq!(
+            policy_after.evaluate("WriteFile"),
+            crate::agent::tool_approval_policy::ToolApprovalDecision::Allow,
+            "ProceedSession should add an in-memory session allow rule"
+        );
+
+        let persisted = app_settings
+            .get_setting(crate::agent::tool_approval_policy::TOOL_APPROVAL_POLICY_SETTINGS_KEY)
+            .await
+            .expect("settings read should succeed");
+        assert!(
+            persisted.is_none(),
+            "ProceedSession should not persist policy to settings"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_approval_proceed_always_persists_policy() {
+        let app_settings =
+            Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+        let (service, mut view_rx, approval_gate) =
+            make_approval_test_chat_service(app_settings.clone());
+        let request_id = Uuid::new_v4().to_string();
+        let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+
+        service
+            .resolve_tool_approval(
+                request_id.clone(),
+                ToolApprovalResponseAction::ProceedAlways,
+            )
+            .await
+            .expect("persistent resolution should succeed");
+
+        let approved = waiter.wait().await.expect("waiter should receive decision");
+        assert!(approved, "ProceedAlways should propagate true to waiter");
+
+        let resolved = view_rx
+            .recv()
+            .await
+            .expect("view should receive ToolApprovalResolved");
+        assert_eq!(
+            resolved,
+            ViewCommand::ToolApprovalResolved {
+                request_id,
+                approved: true,
+            }
+        );
+
+        let persisted = app_settings
+            .get_setting(crate::agent::tool_approval_policy::TOOL_APPROVAL_POLICY_SETTINGS_KEY)
+            .await
+            .expect("settings read should succeed")
+            .expect("ProceedAlways should persist policy payload");
+        assert!(persisted.contains("WriteFile"));
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_approval_is_atomic_between_competing_decisions() {
+        let app_settings =
+            Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+        let (service, _view_rx, approval_gate) =
+            make_approval_test_chat_service(app_settings.clone());
+
+        let request_id = Uuid::new_v4().to_string();
+        let _waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+
+        let barrier = Arc::new(Barrier::new(2));
+        let service_denied = Arc::new(service);
+        let service_always = service_denied.clone();
+
+        let request_id_denied = request_id.clone();
+        let barrier_denied = barrier.clone();
+        let denied_handle = tokio::spawn(async move {
+            barrier_denied.wait().await;
+            service_denied
+                .resolve_tool_approval(request_id_denied, ToolApprovalResponseAction::Denied)
+                .await
+        });
+
+        let request_id_always = request_id.clone();
+        let barrier_always = barrier.clone();
+        let always_handle = tokio::spawn(async move {
+            barrier_always.wait().await;
+            service_always
+                .resolve_tool_approval(request_id_always, ToolApprovalResponseAction::ProceedAlways)
+                .await
+        });
+
+        let denied_result = denied_handle.await.expect("denied task should join");
+        let always_result = always_handle.await.expect("always task should join");
+
+        let winner_is_denied = denied_result.is_ok();
+        let winner_is_always = always_result.is_ok();
+        assert!(
+            winner_is_denied ^ winner_is_always,
+            "exactly one resolver should win the approval claim"
+        );
+
+        let persisted = app_settings
+            .get_setting(crate::agent::tool_approval_policy::TOOL_APPROVAL_POLICY_SETTINGS_KEY)
+            .await
+            .expect("settings read should succeed");
+
+        if winner_is_always {
+            let payload = persisted.expect("ProceedAlways winner should persist policy");
+            assert!(payload.contains("WriteFile"));
+        } else {
+            assert!(
+                persisted.is_none(),
+                "Denied winner must not persist allowlist entries"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_tool_approval_returns_error_when_persistence_fails() {
+        let app_settings = Arc::new(FailingAppSettingsService) as Arc<dyn AppSettingsService>;
+        let (service, _view_rx, approval_gate) = make_approval_test_chat_service(app_settings);
+        let request_id = Uuid::new_v4().to_string();
+        let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+
+        let error = service
+            .resolve_tool_approval(request_id, ToolApprovalResponseAction::ProceedAlways)
+            .await
+            .expect_err("ProceedAlways should fail when persistence fails");
+
+        assert!(
+            matches!(error, ServiceError::Storage(_)),
+            "persistence failure should bubble up as storage error"
+        );
+
+        drop(waiter);
     }
 
     impl MockConversationService {
