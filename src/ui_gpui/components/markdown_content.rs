@@ -1041,7 +1041,7 @@ fn render_list(ordered: bool, start: u64, items: &[Vec<MarkdownBlock>]) -> gpui:
 
     for (idx, item_blocks) in items.iter().enumerate() {
         let prefix = if ordered {
-            format!("{}. ", start + idx as u64)
+            format!("{}. ", start.saturating_add(idx as u64))
         } else {
             "• ".to_string()
         };
