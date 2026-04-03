@@ -633,10 +633,16 @@ impl SettingsPresenter {
 
         // Reload global MCP runtime so the change takes effect immediately.
         let global = crate::mcp::McpService::global();
+        let reload_view_tx = view_tx.clone();
         tokio::spawn(async move {
             let mut svc = global.lock().await;
             if let Err(e) = svc.reload().await {
                 tracing::error!("MCP global reload after toggle failed: {e}");
+                let _ = reload_view_tx.send(ViewCommand::ShowError {
+                    title: "MCP Toggle Failed".to_string(),
+                    message: format!("Config updated, but MCP runtime reload failed: {e}"),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
             } else {
                 tracing::info!("MCP global runtime reloaded after toggle");
             }
@@ -705,10 +711,16 @@ impl SettingsPresenter {
 
         // Reload global MCP runtime so the deleted server is stopped immediately.
         let global = crate::mcp::McpService::global();
+        let reload_view_tx = view_tx.clone();
         tokio::spawn(async move {
             let mut svc = global.lock().await;
             if let Err(e) = svc.reload().await {
                 tracing::error!("MCP global reload after delete failed: {e}");
+                let _ = reload_view_tx.send(ViewCommand::ShowError {
+                    title: "MCP Delete Failed".to_string(),
+                    message: format!("Config updated, but MCP runtime reload failed: {e}"),
+                    severity: super::view_command::ErrorSeverity::Error,
+                });
             } else {
                 tracing::info!("MCP global runtime reloaded after delete");
             }
