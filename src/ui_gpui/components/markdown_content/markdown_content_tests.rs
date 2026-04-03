@@ -436,13 +436,31 @@ mod tests {
     /// @requirement:REQ-MD-PARSE-046
     #[test]
     fn test_parse_inline_math_as_code() {
-        let input = "`x^2`";
+        let input = "$x^2$";
         let blocks = parse_markdown_blocks(input);
         match &blocks[0] {
             MarkdownBlock::Paragraph { spans, .. } => {
                 assert!(spans.iter().any(|s| s.code));
+                let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+                assert_eq!(text, "x^2");
             }
             _ => panic!("Expected Paragraph"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-047
+    #[test]
+    fn test_parse_display_math_as_code_block() {
+        let input = "$$x^2$$";
+        let blocks = parse_markdown_blocks(input);
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            MarkdownBlock::CodeBlock { language, code } => {
+                assert_eq!(language.as_deref(), Some("math"));
+                assert_eq!(code, "x^2");
+            }
+            _ => panic!("Expected CodeBlock"),
         }
     }
 
@@ -555,14 +573,15 @@ mod tests {
     /// @requirement:REQ-MD-PARSE-025
     #[test]
     fn test_link_range_offsets_are_byte_based() {
-        let input = "before [link](https://example.com) after";
+        let input = "é before [link](https://example.com) after";
         let blocks = parse_markdown_blocks(input);
         match &blocks[0] {
-            MarkdownBlock::Paragraph { links, .. } => {
+            MarkdownBlock::Paragraph { spans, links } => {
                 assert_eq!(links.len(), 1);
                 let (range, url) = &links[0];
                 assert_eq!(url, "https://example.com");
-                assert!(range.start < range.end);
+                let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+                assert_eq!(text.get(range.clone()), Some("link"));
             }
             _ => panic!("Expected Paragraph"),
         }
@@ -588,8 +607,7 @@ mod tests {
     /// @plan:PLAN-20260402-MARKDOWN.P04
     /// @requirement:REQ-MD-PARSE-065
     #[test]
-    fn test_parser_unknown_event_fallback_no_panic() {
-        // This exercises the default _ => {} arm implicitly
+    fn test_parser_no_panic_smoke() {
         let input = "normal text";
         let blocks = parse_markdown_blocks(input);
         assert!(!blocks.is_empty());

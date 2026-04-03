@@ -91,8 +91,10 @@ impl ParseState {
     fn parse(mut self, content: &str) -> Vec<MarkdownBlock> {
         use pulldown_cmark::{Options, Parser};
 
-        let options =
-            Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+        let options = Options::ENABLE_TABLES
+            | Options::ENABLE_STRIKETHROUGH
+            | Options::ENABLE_TASKLISTS
+            | Options::ENABLE_MATH;
         for event in Parser::new_ext(content, options) {
             self.handle_event(event);
         }
