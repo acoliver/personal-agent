@@ -88,7 +88,6 @@ impl SettingsPresenter {
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
     /// @requirement REQ-WIRE-006
     /// @pseudocode component-001-event-pipeline.md lines 090-136
-    #[allow(dead_code)]
     pub fn new_with_event_bus(
         profile_service: Arc<dyn ProfileService>,
         app_settings_service: Arc<dyn AppSettingsService>,

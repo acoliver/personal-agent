@@ -11,8 +11,6 @@
 #![allow(clippy::unused_async)]
 
 pub mod agent;
-pub mod app;
-pub mod app_context;
 pub mod config;
 pub mod error;
 pub mod events;
@@ -27,8 +25,6 @@ pub mod storage;
 pub mod ui_gpui;
 
 // Re-export commonly used types
-pub use app::{App, AppContext, ServiceRegistry};
-pub use app_context::AppContext as AppContextExt;
 pub use config::{Config, ContextManagement};
 pub use error::{AppError, Result};
 pub use events::{emit, subscribe, AppEvent, EventBus, EventBusError};
