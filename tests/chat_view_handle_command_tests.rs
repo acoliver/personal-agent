@@ -246,6 +246,7 @@ async fn handle_enter_emits_send_message_and_ignores_enter_during_streaming(
 
     view.update(cx, |view: &mut ChatView, cx| {
         view.set_bridge(Arc::clone(&bridge));
+        view.state.chat_autoscroll_enabled = false;
         view.state.input_text = "hello".to_string();
         view.state.cursor_position = view.state.input_text.len();
         view.handle_enter(cx);
@@ -269,6 +270,10 @@ async fn handle_enter_emits_send_message_and_ignores_enter_during_streaming(
 
     view.read_with(cx, |view, _| {
         assert_eq!(view.state.input_text, "ignored while streaming");
+        assert!(
+            view.state.chat_autoscroll_enabled,
+            "send should restore sticky autoscroll so streaming stays pinned to the bottom"
+        );
         assert_eq!(
             view.state.streaming,
             StreamingState::Streaming {
