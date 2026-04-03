@@ -44,6 +44,9 @@ pub struct SettingsPresenter {
 
     /// Running flag for event loop
     running: Arc<std::sync::atomic::AtomicBool>,
+
+    /// Optional config path override (for testing); `None` → `Config::default_path()`.
+    config_path_override: Option<std::path::PathBuf>,
 }
 
 impl SettingsPresenter {
@@ -64,7 +67,15 @@ impl SettingsPresenter {
             app_settings_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            config_path_override: None,
         }
+    }
+
+    /// Override the config file path (for testing).
+    #[must_use]
+    pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
+        self.config_path_override = Some(path);
+        self
     }
 
     /// Stub constructor using unified global `EventBus` (REQ-WIRE-006 unification path).
@@ -91,6 +102,7 @@ impl SettingsPresenter {
             app_settings_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            config_path_override: None,
         }
     }
 
@@ -125,6 +137,7 @@ impl SettingsPresenter {
         let profile_service = self.profile_service.clone();
         let app_settings_service = self.app_settings_service.clone();
         let view_tx = self.view_tx.clone();
+        let config_path = self.config_path_override.clone();
 
         tokio::spawn(async move {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
@@ -135,6 +148,7 @@ impl SettingsPresenter {
                             &app_settings_service,
                             &view_tx,
                             event,
+                            config_path.as_deref(),
                         )
                         .await;
                     }
@@ -185,11 +199,18 @@ impl SettingsPresenter {
         app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
+        config_path: Option<&std::path::Path>,
     ) {
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(profile_service, app_settings_service, view_tx, user_evt)
-                    .await;
+                Self::handle_user_event(
+                    profile_service,
+                    app_settings_service,
+                    view_tx,
+                    user_evt,
+                    config_path,
+                )
+                .await;
             }
             AppEvent::Profile(profile_evt) => {
                 Self::handle_profile_event(
@@ -219,6 +240,7 @@ impl SettingsPresenter {
         app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
+        config_path: Option<&std::path::Path>,
     ) {
         match event {
             UserEvent::SelectProfile { id } | UserEvent::SelectChatProfile { id } => {
@@ -277,10 +299,10 @@ impl SettingsPresenter {
                 .await;
             }
             UserEvent::ToggleMcp { id, enabled } => {
-                Self::on_toggle_mcp(view_tx, id, enabled);
+                Self::on_toggle_mcp(view_tx, id, enabled, config_path).await;
             }
             UserEvent::DeleteMcp { id } | UserEvent::ConfirmDeleteMcp { id } => {
-                Self::on_delete_mcp(view_tx, id);
+                Self::on_delete_mcp(view_tx, id, config_path).await;
             }
             UserEvent::SelectTheme { slug } => {
                 Self::on_select_theme(app_settings_service, view_tx, slug).await;
@@ -552,15 +574,24 @@ impl SettingsPresenter {
         }
     }
 
-    /// Toggle an MCP's enabled state in config.json and emit the result.
-    fn on_toggle_mcp(view_tx: &broadcast::Sender<ViewCommand>, id: Uuid, enabled: bool) {
+    /// Toggle an MCP's enabled state in config.json, reload the global MCP runtime,
+    /// and emit the updated status.
+    async fn on_toggle_mcp(
+        view_tx: &broadcast::Sender<ViewCommand>,
+        id: Uuid,
+        enabled: bool,
+        config_path_override: Option<&std::path::Path>,
+    ) {
         tracing::info!("Toggling MCP {id} enabled={enabled}");
-        let config_path = match crate::config::Config::default_path() {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("Cannot resolve config path for MCP toggle: {e}");
-                return;
-            }
+        let config_path = match config_path_override {
+            Some(p) => p.to_path_buf(),
+            None => match crate::config::Config::default_path() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("Cannot resolve config path for MCP toggle: {e}");
+                    return;
+                }
+            },
         };
         let mut config = match crate::config::Config::load(&config_path) {
             Ok(c) => c,
@@ -579,6 +610,18 @@ impl SettingsPresenter {
             tracing::error!("Failed to save config after MCP toggle: {e}");
             return;
         }
+
+        // Reload global MCP runtime so the change takes effect immediately.
+        let global = crate::mcp::McpService::global();
+        tokio::spawn(async move {
+            let mut svc = global.lock().await;
+            if let Err(e) = svc.reload().await {
+                tracing::error!("MCP global reload after toggle failed: {e}");
+            } else {
+                tracing::info!("MCP global runtime reloaded after toggle");
+            }
+        });
+
         let status = if enabled {
             super::view_command::McpStatus::Starting
         } else {
@@ -587,15 +630,22 @@ impl SettingsPresenter {
         let _ = view_tx.send(ViewCommand::McpStatusChanged { id, status });
     }
 
-    /// Delete an MCP from config.json and emit the result.
-    fn on_delete_mcp(view_tx: &broadcast::Sender<ViewCommand>, id: Uuid) {
+    /// Delete an MCP from config.json, reload the global MCP runtime, and emit the result.
+    async fn on_delete_mcp(
+        view_tx: &broadcast::Sender<ViewCommand>,
+        id: Uuid,
+        config_path_override: Option<&std::path::Path>,
+    ) {
         tracing::info!("Deleting MCP {id}");
-        let config_path = match crate::config::Config::default_path() {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("Cannot resolve config path for MCP delete: {e}");
-                return;
-            }
+        let config_path = match config_path_override {
+            Some(p) => p.to_path_buf(),
+            None => match crate::config::Config::default_path() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("Cannot resolve config path for MCP delete: {e}");
+                    return;
+                }
+            },
         };
         let mut config = match crate::config::Config::load(&config_path) {
             Ok(c) => c,
@@ -612,6 +662,18 @@ impl SettingsPresenter {
             tracing::error!("Failed to save config after MCP delete: {e}");
             return;
         }
+
+        // Reload global MCP runtime so the deleted server is stopped immediately.
+        let global = crate::mcp::McpService::global();
+        tokio::spawn(async move {
+            let mut svc = global.lock().await;
+            if let Err(e) = svc.reload().await {
+                tracing::error!("MCP global reload after delete failed: {e}");
+            } else {
+                tracing::info!("MCP global runtime reloaded after delete");
+            }
+        });
+
         let _ = view_tx.send(ViewCommand::McpDeleted { id });
     }
 
