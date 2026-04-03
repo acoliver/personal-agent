@@ -142,7 +142,7 @@ impl IntoElement for ApprovalBubble {
                             &yes_id,
                             "Yes",
                             Theme::accent(),
-                            Theme::selection_fg(),
+                            Theme::accent_fg(),
                             self.on_yes,
                         ))
                         .child(Self::render_action_button(
@@ -163,7 +163,7 @@ impl IntoElement for ApprovalBubble {
                             &no_id,
                             "No",
                             Theme::error(),
-                            Theme::selection_fg(),
+                            Theme::error_fg(),
                             self.on_no,
                         )),
                 );

@@ -200,7 +200,6 @@ fn register_native_tools(
 /// Executor that bridges Agent tools to MCP
 struct McpToolExecutor {
     tool_name: String,
-    display_tool_name: String,
 }
 
 #[async_trait::async_trait]
@@ -225,14 +224,12 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
             provider
         };
 
-        let tool_identifier = {
+        let (tool_identifier, decision) = {
             let policy = ctx.deps().policy.lock().await;
-            policy.mcp_tool_identifier(&provider.mcp_name, &self.tool_name)
-        };
-
-        let decision = {
-            let policy = ctx.deps().policy.lock().await;
-            policy.evaluate(&tool_identifier)
+            let tool_identifier = policy.mcp_tool_identifier(&provider.mcp_name, &self.tool_name);
+            let decision = policy.evaluate(&tool_identifier);
+            drop(policy);
+            (tool_identifier, decision)
         };
 
         match decision {
@@ -254,7 +251,7 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
                     .view_tx
                     .try_send(ViewCommand::ToolApprovalRequest {
                         request_id: request_id.clone(),
-                        tool_name: self.display_tool_name.clone(),
+                        tool_name: self.tool_name.clone(),
                         tool_argument: args.to_string(),
                     })
                     .is_err()
@@ -470,10 +467,7 @@ impl crate::llm::LlmClient {
             let tool_name = tool.name.clone();
             let tool_def = ToolDefinition::new(&tool_name, &tool.description)
                 .with_parameters(tool.input_schema.clone());
-            let executor = McpToolExecutor {
-                tool_name,
-                display_tool_name: tool_def.name.clone(),
-            };
+            let executor = McpToolExecutor { tool_name };
             builder = builder.tool_with_executor(tool_def, executor);
         }
         builder
@@ -708,13 +702,11 @@ mod tests {
     }
 
     #[test]
-    fn mcp_tool_executor_stores_display_tool_name() {
+    fn mcp_tool_executor_stores_tool_name() {
         let executor = McpToolExecutor {
             tool_name: "weather/get_forecast".to_string(),
-            display_tool_name: "weather.get_forecast".to_string(),
         };
 
         assert_eq!(executor.tool_name, "weather/get_forecast");
-        assert_eq!(executor.display_tool_name, "weather.get_forecast");
     }
 }

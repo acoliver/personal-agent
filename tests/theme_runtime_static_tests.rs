@@ -363,6 +363,31 @@ fn mac_native_entry_has_expected_name() {
 }
 
 #[test]
+fn accent_and_error_foregrounds_are_distinct_in_catalog_fallback() {
+    let _guard = ThemeSwitchGuard::acquire();
+
+    set_active_theme_slug("totally-unknown-slug-99");
+
+    let accent = Theme::accent();
+    let accent_fg = Theme::accent_fg();
+    assert!(
+        !approx_eq(accent.h, accent_fg.h)
+            || !approx_eq(accent.s, accent_fg.s)
+            || !approx_eq(accent.l, accent_fg.l),
+        "accent foreground should differ from accent background in fallback mode"
+    );
+
+    let error = Theme::error();
+    let error_fg = Theme::error_fg();
+    assert!(
+        !approx_eq(error.h, error_fg.h)
+            || !approx_eq(error.s, error_fg.s)
+            || !approx_eq(error.l, error_fg.l),
+        "error foreground should differ from error background in fallback mode"
+    );
+}
+
+#[test]
 fn mac_native_constants_match_expected_values() {
     // Contract: slug and display name constants are stable and used by tests and UI.
     assert_eq!(MAC_NATIVE_SLUG, "mac-native");

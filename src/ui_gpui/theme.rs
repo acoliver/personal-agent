@@ -299,7 +299,9 @@ mod fallback {
     pub const TEXT_PRIMARY: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
     pub const TEXT_MUTED: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
     pub const ACCENT_PRIMARY: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
+    pub const ACCENT_FG: (f32, f32, f32) = (0.0, 0.0, 0.0); // #000000
     pub const ACCENT_ERROR: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
+    pub const ERROR_FG: (f32, f32, f32) = (0.0, 0.0, 0.0); // #000000
     pub const ACCENT_WARNING: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
     pub const ACCENT_SUCCESS: (f32, f32, f32) = (0.0, 1.0, 0.0); // #00ff00
     pub const BORDER: (f32, f32, f32) = (0.416, 0.600, 0.333); // #6a9955
@@ -521,6 +523,32 @@ impl Theme {
             |p| p.text_primary,
             |c| c.selection.fg.as_str(),
             fallback::TEXT_PRIMARY,
+        )
+    }
+
+    /// Accent button foreground.
+    ///
+    /// Uses `colors.selection.fg` for catalog-backed themes and a dedicated
+    /// high-contrast fallback when the catalog is unavailable.
+    #[must_use]
+    pub fn accent_fg() -> Hsla {
+        Self::resolve_with_mac_native(
+            |p| p.text_primary,
+            |c| c.selection.fg.as_str(),
+            fallback::ACCENT_FG,
+        )
+    }
+
+    /// Error button foreground.
+    ///
+    /// Uses `colors.selection.fg` for catalog-backed themes and a dedicated
+    /// high-contrast fallback when the catalog is unavailable.
+    #[must_use]
+    pub fn error_fg() -> Hsla {
+        Self::resolve_with_mac_native(
+            |p| p.text_primary,
+            |c| c.selection.fg.as_str(),
+            fallback::ERROR_FG,
         )
     }
 

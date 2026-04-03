@@ -114,9 +114,16 @@ impl ChatServiceImpl {
         match ToolApprovalPolicy::load_from_settings(self.app_settings_service.as_ref()).await {
             Ok(mut loaded_policy) => {
                 let mut policy = self.policy.lock().await;
-                loaded_policy
-                    .session_allowlist
-                    .clone_from(&policy.session_allowlist);
+                let should_clear_session_allowlist = policy.yolo_mode && !loaded_policy.yolo_mode;
+
+                if should_clear_session_allowlist {
+                    loaded_policy.clear_session_allowlist();
+                } else {
+                    loaded_policy
+                        .session_allowlist
+                        .clone_from(&policy.session_allowlist);
+                }
+
                 *policy = loaded_policy;
             }
             Err(error) => {
