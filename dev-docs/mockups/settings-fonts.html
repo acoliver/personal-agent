@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - Font Settings Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* ── Themed scrollbars (green-screen defaults) ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #1a3318; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: #6a9955; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #7ab966; }
+  .nebula ::-webkit-scrollbar-track { background: #2a2a3a; }
+  .nebula ::-webkit-scrollbar-thumb { background: #89B4FA; }
+  .nebula ::-webkit-scrollbar-thumb:hover { background: #a3c5fb; }
+
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .section-label {
+    font-size: 13px;
+    color: #6a9955;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .annotation {
+    font-size: 11px;
+    color: #6a9955;
+    font-style: italic;
+    margin-top: 8px;
+    max-width: 500px;
+    line-height: 1.6;
+  }
+  .mockup-wrapper { display: flex; flex-direction: column; align-items: center; }
+  .divider { width: 80%; height: 1px; background: #444; margin: 10px 0; }
+
+  /* ── Popup frame (400×520 like the real app) ── */
+  .popup-frame {
+    width: 400px;
+    height: 520px;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  /* ── Top bar ── */
+  .top-bar {
+    height: 44px;
+    background: #000;
+    border-bottom: 1px solid #6a9955;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    flex-shrink: 0;
+  }
+  .top-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .back-btn {
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #6a9955; background: transparent;
+    cursor: pointer; border: none;
+  }
+  .back-btn:hover { background: #1a3318; }
+  .top-title {
+    font-size: 14px; font-weight: 700; color: #6a9955;
+  }
+
+  /* ── Settings body: sidebar + content ── */
+  .settings-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── Category sidebar ── */
+  .cat-sidebar {
+    width: 120px;
+    background: #000;
+    border-right: 1px solid #1a3318;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 0;
+    flex-shrink: 0;
+  }
+  .cat-item {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #6a9955;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: all 0.1s;
+  }
+  .cat-item:hover { background: #0a1a0a; }
+  .cat-item.selected {
+    background: #0a1a0a;
+    border-left-color: #6a9955;
+    color: #6a9955;
+    font-weight: 600;
+  }
+
+  /* ── Content panel ── */
+  .content-panel {
+    flex: 1;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  /* ── Section header ── */
+  .section-hdr {
+    font-size: 11px;
+    color: #6a9955;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Standard dropdown ── */
+  .std-dropdown {
+    min-width: 140px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: #000;
+    border: 1px solid #6a9955;
+    font-size: 13px;
+    color: #6a9955;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+  }
+  .std-dropdown:hover { background: #0a1a0a; }
+  .std-dropdown .arrow { font-size: 10px; color: #3b7a3b; margin-left: 8px; }
+
+  /* ── Dropdown open state ── */
+  .std-dropdown-open {
+    position: relative;
+  }
+  .std-dropdown-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 2px;
+    max-height: 180px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    overflow-y: auto;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    scrollbar-width: thin;
+    scrollbar-color: #6a9955 #1a3318;
+  }
+  .std-dropdown-item {
+    height: 26px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: #6a9955;
+    cursor: pointer;
+  }
+  .std-dropdown-item:hover { background: #0a1a0a; }
+  .std-dropdown-item.selected { background: #6a9955; color: #000; }
+
+  /* ── Font setting row: label + dropdown + stepper ── */
+  .font-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .font-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .font-label {
+    font-size: 11px;
+    color: #3b7a3b;
+    width: 36px;
+    flex-shrink: 0;
+  }
+  .font-dropdown {
+    flex: 1;
+    min-width: 0;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: #000;
+    border: 1px solid #6a9955;
+    font-size: 12px;
+    color: #6a9955;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .font-dropdown:hover { background: #0a1a0a; }
+  .font-dropdown .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .font-dropdown .arrow { font-size: 9px; color: #3b7a3b; margin-left: 4px; flex-shrink: 0; }
+
+  /* ── Size stepper ── */
+  .size-stepper {
+    display: flex;
+    align-items: center;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .size-btn {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    color: #6a9955;
+    background: #000;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+  }
+  .size-btn:hover { background: #0a1a0a; }
+  .size-value {
+    width: 30px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: #6a9955;
+    background: #000;
+    border-left: 1px solid #1a3318;
+    border-right: 1px solid #1a3318;
+  }
+
+  /* ── Toggle checkbox (reused from main mockup) ── */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .checkbox {
+    width: 14px; height: 14px;
+    border: 1px solid #6a9955;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+  .checkbox.checked { background: #6a9955; color: #000; }
+  .toggle-label { font-size: 12px; color: #6a9955; }
+
+  .help-text {
+    font-size: 10px; color: #3b7a3b;
+  }
+  .spacer { flex: 1; }
+
+  /* ── Preview box ── */
+  .preview-box {
+    border: 1px solid #1a3318;
+    border-radius: 4px;
+    background: #000;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+  }
+  .preview-label {
+    font-size: 9px;
+    color: #3b7a3b;
+    letter-spacing: 0.5px;
+  }
+  .preview-heading {
+    font-weight: 700;
+    color: #6a9955;
+  }
+  .preview-body {
+    color: #6a9955;
+  }
+  .preview-code {
+    font-family: "Menlo", "SF Mono", monospace;
+    background: #0a1a0a;
+    padding: 2px 4px;
+    border-radius: 2px;
+    color: #7ab966;
+  }
+
+  /* ── Keyboard shortcut hint ── */
+  .shortcut-hint {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: #3b7a3b;
+  }
+  .kbd {
+    background: #1a3318;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    color: #6a9955;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+
+  /* ── Midnight Nebula overrides ── */
+  .nebula .popup-frame { background: #1E1E2E; }
+  .nebula .top-bar { background: #1E1E2E; border-bottom-color: #6C7086; }
+  .nebula .back-btn { color: #6C7086; }
+  .nebula .back-btn:hover { background: #2a2a3a; }
+  .nebula .top-title { color: #e5e7eb; }
+  .nebula .cat-sidebar { background: #161628; border-right-color: #2a2a3a; }
+  .nebula .cat-item { color: #6C7086; }
+  .nebula .cat-item:hover { background: #2a2a3a; }
+  .nebula .cat-item.selected {
+    background: #2a2a3a;
+    border-left-color: #89B4FA;
+    color: #e5e7eb;
+  }
+  .nebula .section-hdr { color: #e5e7eb; }
+  .nebula .font-label { color: #6C7086; }
+  .nebula .font-dropdown { background: #161628; border-color: #6C7086; color: #e5e7eb; }
+  .nebula .font-dropdown:hover { background: #2a2a3a; }
+  .nebula .font-dropdown .arrow { color: #6C7086; }
+  .nebula .size-stepper { border-color: #6C7086; }
+  .nebula .size-btn { color: #e5e7eb; background: #161628; }
+  .nebula .size-btn:hover { background: #2a2a3a; }
+  .nebula .size-value { color: #e5e7eb; background: #161628; border-color: #2a2a3a; }
+  .nebula .checkbox { border-color: #6C7086; }
+  .nebula .checkbox.checked { background: #89B4FA; color: #0f172a; border-color: #89B4FA; }
+  .nebula .toggle-label { color: #e5e7eb; }
+  .nebula .help-text { color: #6C7086; }
+  .nebula .preview-box { border-color: #2a2a3a; background: #161628; }
+  .nebula .preview-label { color: #6C7086; }
+  .nebula .preview-heading { color: #e5e7eb; }
+  .nebula .preview-body { color: #CDD6F4; }
+  .nebula .preview-code { background: #2a2a3a; color: #89B4FA; }
+  .nebula .shortcut-hint { color: #6C7086; }
+  .nebula .kbd { background: #2a2a3a; color: #e5e7eb; }
+  .nebula .std-dropdown { background: #1E1E2E; border-color: #6C7086; color: #e5e7eb; }
+  .nebula .std-dropdown:hover { background: #2a2a3a; }
+  .nebula .std-dropdown .arrow { color: #6C7086; }
+  .nebula .std-dropdown-list { background: #1E1E2E; border-color: #6C7086; }
+  .nebula .std-dropdown-item { color: #e5e7eb; }
+  .nebula .std-dropdown-item:hover { background: #2a2a3a; }
+  .nebula .std-dropdown-item.selected { background: #89B4FA; color: #0f172a; }
+  .nebula .section-label { color: #89B4FA; }
+  .nebula .annotation { color: #89B4FA; }
+</style>
+</head>
+<body>
+
+<h1>PersonalAgent - Font Settings</h1>
+<h2>Appearance Category for Issue #71 Settings Redesign</h2>
+
+<!-- ================================================================ -->
+<!-- SECTION 1: Appearance category — default state                    -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">1. Appearance Category — Green Screen Theme</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item selected">Appearance</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <!-- Theme dropdown (moved from General) -->
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">THEME</div>
+          <div class="std-dropdown">
+            <span>Green Screen</span>
+            <span class="arrow">&darr;</span>
+          </div>
+        </div>
+
+        <!-- Font Size (global zoom) -->
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">FONT SIZE</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="size-stepper">
+              <button class="size-btn">-</button>
+              <div class="size-value">14</div>
+              <button class="size-btn">+</button>
+            </div>
+            <div class="shortcut-hint">
+              <span class="kbd">&#8984;+</span> / <span class="kbd">&#8984;-</span> to zoom
+            </div>
+          </div>
+          <div class="help-text">Base size for all text. Headings and UI scale proportionally.</div>
+        </div>
+
+        <!-- UI Font -->
+        <div class="font-group">
+          <div class="section-hdr">UI FONT</div>
+          <div class="font-row">
+            <div class="font-dropdown">
+              <span class="name">System Default</span>
+              <span class="arrow">&darr;</span>
+            </div>
+          </div>
+          <div class="help-text">Labels, buttons, sidebar, settings chrome</div>
+        </div>
+
+        <!-- Mono Font -->
+        <div class="font-group">
+          <div class="section-hdr">MONO FONT</div>
+          <div class="font-row">
+            <div class="font-dropdown">
+              <span class="name">Menlo</span>
+              <span class="arrow">&darr;</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:2px;">
+            <div class="toggle-row">
+              <div class="checkbox checked">v</div>
+              <span class="toggle-label" style="font-size:11px;">Ligatures</span>
+            </div>
+          </div>
+          <div class="help-text">Inline code and code blocks in messages</div>
+        </div>
+
+        <!-- Live preview -->
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">PREVIEW</div>
+          <div class="preview-box">
+            <div class="preview-heading" style="font-size:16px;">Heading Text</div>
+            <div class="preview-body" style="font-size:14px;">Body text looks like this in messages.</div>
+            <div style="font-size:13px;"><span class="preview-code">Settings &gt; Privacy</span><span class="preview-body"> inline with body</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Theme moves from General to Appearance (it's the most visual setting).<br>
+    Font Size is the primary control — one number that scales everything.<br>
+    &#8984;+ / &#8984;- adjusts this same value from anywhere in the app.<br>
+    UI Font and Code Font are secondary — most users never change these.<br>
+    Live preview updates as settings change.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 2: Code font dropdown open                                -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">2. Appearance — Code Font Dropdown Open</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item selected">Appearance</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">THEME</div>
+          <div class="std-dropdown">
+            <span>Green Screen</span>
+            <span class="arrow">&darr;</span>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">FONT SIZE</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="size-stepper">
+              <button class="size-btn">-</button>
+              <div class="size-value">14</div>
+              <button class="size-btn">+</button>
+            </div>
+            <div class="shortcut-hint">
+              <span class="kbd">&#8984;+</span> / <span class="kbd">&#8984;-</span> to zoom
+            </div>
+          </div>
+        </div>
+
+        <div class="font-group">
+          <div class="section-hdr">UI FONT</div>
+          <div class="font-row">
+            <div class="font-dropdown">
+              <span class="name">System Default</span>
+              <span class="arrow">&darr;</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="font-group">
+          <div class="section-hdr">MONO FONT</div>
+          <div class="std-dropdown-open" style="position:relative;">
+            <div class="font-dropdown" style="border-color:#6a9955;">
+              <span class="name">Menlo</span>
+              <span class="arrow">&uarr;</span>
+            </div>
+            <div class="std-dropdown-list" style="max-height:160px;">
+              <div class="std-dropdown-item">Courier New</div>
+              <div class="std-dropdown-item">Fira Code</div>
+              <div class="std-dropdown-item">Inconsolata</div>
+              <div class="std-dropdown-item">JetBrains Mono</div>
+              <div class="std-dropdown-item selected">Menlo</div>
+              <div class="std-dropdown-item">Monaco</div>
+              <div class="std-dropdown-item">SF Mono</div>
+              <div class="std-dropdown-item">Source Code Pro</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Code font dropdown shows monospace fonts at the top of the list (detected<br>
+    from system fonts via GPUI's all_font_names() + known-monospace heuristic).<br>
+    User can also type to filter. The dropdown is the only scrollable element.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 3: Larger font size (zoomed in)                           -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">3. Appearance — After &#8984;+ Zoom to 18px</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title" style="font-size:16px;">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item" style="font-size:13px;">General</div>
+        <div class="cat-item selected" style="font-size:13px;">Appearance</div>
+        <div class="cat-item" style="font-size:13px;">Models</div>
+        <div class="cat-item" style="font-size:13px;">Security</div>
+        <div class="cat-item" style="font-size:13px;">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">THEME</div>
+          <div class="std-dropdown" style="font-size:15px; padding:5px 8px;">
+            <span>Green Screen</span>
+            <span class="arrow">&darr;</span>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">FONT SIZE</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="size-stepper">
+              <button class="size-btn" style="width:26px; height:26px;">-</button>
+              <div class="size-value" style="width:34px; height:26px; font-size:13px;">18</div>
+              <button class="size-btn" style="width:26px; height:26px;">+</button>
+            </div>
+            <div class="shortcut-hint">
+              <span class="kbd">&#8984;+</span> / <span class="kbd">&#8984;-</span>
+            </div>
+          </div>
+          <div class="help-text">Base size for all text. Headings and UI scale proportionally.</div>
+        </div>
+
+        <div class="font-group">
+          <div class="section-hdr">UI FONT</div>
+          <div class="font-row">
+            <div class="font-dropdown" style="font-size:14px; padding:4px 6px;">
+              <span class="name">System Default</span>
+              <span class="arrow">&darr;</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="font-group">
+          <div class="section-hdr">MONO FONT</div>
+          <div class="font-row">
+            <div class="font-dropdown" style="font-size:14px; padding:4px 6px;">
+              <span class="name">Menlo</span>
+              <span class="arrow">&darr;</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:2px;">
+            <div class="toggle-row">
+              <div class="checkbox checked">v</div>
+              <span class="toggle-label" style="font-size:13px;">Ligatures</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">PREVIEW</div>
+          <div class="preview-box">
+            <div class="preview-heading" style="font-size:20px;">Heading Text</div>
+            <div class="preview-body" style="font-size:18px;">Body text at 18px.</div>
+            <div style="font-size:16px;"><span class="preview-code">highlighted</span><span class="preview-body"> inline</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    After pressing &#8984;+ several times, everything scales up proportionally.<br>
+    The stepper in Appearance reflects the new value (18). The preview updates live.<br>
+    Min: 10, Max: 24. &#8984;+/&#8984;- step by 1px each press. &#8984;0 resets to 14.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 4: Midnight Nebula — Appearance                           -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper nebula">
+  <div class="section-label">4. Midnight Nebula Theme — Appearance Category</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item selected">Appearance</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">THEME</div>
+          <div class="std-dropdown">
+            <span>Midnight Nebula</span>
+            <span class="arrow">&darr;</span>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">FONT SIZE</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="size-stepper">
+              <button class="size-btn">-</button>
+              <div class="size-value">14</div>
+              <button class="size-btn">+</button>
+            </div>
+            <div class="shortcut-hint">
+              <span class="kbd">&#8984;+</span> / <span class="kbd">&#8984;-</span> to zoom
+            </div>
+          </div>
+          <div class="help-text">Base size for all text. Headings and UI scale proportionally.</div>
+        </div>
+
+        <div class="font-group">
+          <div class="section-hdr">UI FONT</div>
+          <div class="font-row">
+            <div class="font-dropdown">
+              <span class="name">System Default</span>
+              <span class="arrow">&darr;</span>
+            </div>
+          </div>
+          <div class="help-text">Labels, buttons, sidebar, settings chrome</div>
+        </div>
+
+        <div class="font-group">
+          <div class="section-hdr">CODE FONT</div>
+          <div class="font-row">
+            <div class="font-dropdown">
+              <span class="name">JetBrains Mono</span>
+              <span class="arrow">&darr;</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:2px;">
+            <div class="toggle-row">
+              <div class="checkbox checked">v</div>
+              <span class="toggle-label" style="font-size:11px;">Ligatures</span>
+            </div>
+          </div>
+          <div class="help-text">Inline code and code blocks in messages</div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">PREVIEW</div>
+          <div class="preview-box">
+            <div class="preview-heading" style="font-size:16px;">Heading Text</div>
+            <div class="preview-body" style="font-size:14px;">Body text looks like this in messages.</div>
+            <div style="font-size:13px;"><span class="preview-code" style="font-family:'JetBrains Mono',monospace;">fn main()</span><span class="preview-body"> inline with body</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Same layout in Midnight Nebula palette. Code font set to JetBrains Mono<br>
+    to show the preview updates per-font. All colors via theme tokens.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 5: Updated General category (Theme removed)               -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">5. General Category — Theme Moved to Appearance</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item selected">General</div>
+        <div class="cat-item">Appearance</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+
+      <div class="content-panel">
+        <!-- Global hotkey -->
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">GLOBAL HOTKEY</div>
+          <div class="font-dropdown" style="width:160px;">
+            <span class="name">&#8984;&#8679;Space</span>
+          </div>
+          <div class="help-text">Activate assistant from anywhere</div>
+        </div>
+
+        <!-- Export directory -->
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="section-hdr">EXPORT DIRECTORY</div>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <div style="flex:1; padding:3px 8px; background:#000; border:1px solid #6a9955; border-radius:4px; font-size:12px; color:#3b7a3b; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">System Downloads (default)</div>
+            <button style="padding:3px 10px; background:#000; border:1px solid #6a9955; border-radius:4px; font-size:11px; color:#6a9955; cursor:pointer; flex-shrink:0;">Browse&hellip;</button>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button style="padding:2px 10px; border:none; background:transparent; font-size:11px; color:#6a9955; cursor:pointer;">Save</button>
+            <button style="padding:2px 10px; border:none; background:transparent; font-size:11px; color:#3b7a3b; cursor:pointer;">Reset</button>
+          </div>
+        </div>
+
+        <div style="flex:1;"></div>
+        <div style="font-size:10px; color:#3b7a3b; text-align:center;">
+          Room for future general settings
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    General now has Hotkey + Export Dir. Theme moves to Appearance where it<br>
+    lives alongside fonts. This groups all visual/appearance settings together<br>
+    and keeps General focused on non-visual app behavior.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 6: Keyboard shortcuts for font zoom                       -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">6. Keyboard Shortcuts — Font Zoom</div>
+
+  <div style="background:#0a0a0a; border:1px solid #6a9955; border-radius:8px; padding:20px 24px; max-width:500px; font-size:12px; color:#6a9955; line-height:2;">
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; color:#6a9955;">Font Zoom (works from any view)</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">&#8984;+</code> / <code style="background:#1a3318; padding:1px 6px; border-radius:3px;">&#8984;=</code> &nbsp;&rarr;&nbsp; Increase base font size by 1px</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">&#8984;-</code> &nbsp;&rarr;&nbsp; Decrease base font size by 1px</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px;">&#8984;0</code> &nbsp;&rarr;&nbsp; Reset to default (14px)</div>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px; color:#6a9955;">Behavior</div>
+    <div>&bull; Affects the same "Font Size" setting in Appearance</div>
+    <div>&bull; Persisted to app_settings immediately</div>
+    <div>&bull; Range: 10px &ndash; 24px (clamped)</div>
+    <div>&bull; All text scales: body, headings (proportional), UI labels, code</div>
+    <div>&bull; &#8984;= and &#8984;+ both zoom in (standard macOS behavior)</div>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px; color:#6a9955;">What Scales</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px; font-size:11px;">base_size</code> &nbsp; = user setting (default 14)</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px; font-size:11px;">H1</code> &nbsp; = base &times; 2.0</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px; font-size:11px;">H2</code> &nbsp; = base &times; 1.5</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px; font-size:11px;">H3</code> &nbsp; = base &times; 1.25</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px; font-size:11px;">H4</code> &nbsp; = base &times; 1.0 (bold)</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px; font-size:11px;">code</code> &nbsp; = base &times; 0.9</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px; font-size:11px;">UI</code> &nbsp;&nbsp;&nbsp; = base &times; 0.85</div>
+    <div><code style="background:#1a3318; padding:1px 6px; border-radius:3px; font-size:11px;">small</code> = base &times; 0.78</div>
+  </div>
+
+  <div class="annotation">
+    &#8984;+ and &#8984;- are global key bindings registered at the window level.<br>
+    They modify the persisted font_size setting and trigger a UI refresh.<br>
+    The stepper in Appearance > Font Size reflects the same value.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 7: Settings model / app_settings keys                     -->
+<!-- ================================================================ -->
+
+<div class="mockup-wrapper">
+  <div class="section-label">7. Settings Model — app_settings Keys</div>
+
+  <div style="background:#0a0a0a; border:1px solid #6a9955; border-radius:8px; padding:20px 24px; max-width:560px; font-size:12px; color:#6a9955; line-height:1.8;">
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Persisted Settings</div>
+    <code style="display:block; background:#0d1a0d; padding:12px; border-radius:4px; font-size:11px; line-height:1.6; white-space:pre; color:#6a9955;">{
+  "font_size": 14,
+  "ui_font_family": null,
+  "code_font_family": "Menlo",
+  "code_ligatures": true
+}</code>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px;">Key Descriptions</div>
+    <div><code style="background:#0d1a0d; padding:1px 4px; border-radius:2px;">font_size</code> &mdash; Base font size in px (10&ndash;24, default 14). Single value drives all scaling.</div>
+    <div><code style="background:#0d1a0d; padding:1px 4px; border-radius:2px;">ui_font_family</code> &mdash; Font name for chrome/UI or null for system default.</div>
+    <div><code style="background:#0d1a0d; padding:1px 4px; border-radius:2px;">mono_font_family</code> &mdash; Font name for backtick/fenced content. Default "Menlo".</div>
+    <div><code style="background:#0d1a0d; padding:1px 4px; border-radius:2px;">mono_ligatures</code> &mdash; Enable OpenType calt feature for mono font. Default true.</div>
+
+    <div style="font-size:13px; font-weight:600; margin-bottom:8px; margin-top:16px;">Theme::font_size() (Proposed)</div>
+    <code style="display:block; background:#0d1a0d; padding:12px; border-radius:4px; font-size:11px; line-height:1.6; white-space:pre; color:#6a9955;">impl Theme {
+    fn base_font_size() -> f32 { /* read from global */ }
+    pub fn font_size_h1() -> f32 { base * 2.0 }
+    pub fn font_size_h2() -> f32 { base * 1.5 }
+    pub fn font_size_h3() -> f32 { base * 1.25 }
+    pub fn font_size_body() -> f32 { base }
+    pub fn font_size_code() -> f32 { base * 0.9 }
+    pub fn font_size_ui() -> f32 { base * 0.85 }
+    pub fn font_size_small() -> f32 { base * 0.78 }
+}</code>
+    <div style="margin-top:8px;">Replaces the current FONT_SIZE_XS/SM/MD/BASE/LG constants<br>with runtime-backed methods that read the persisted setting.</div>
+  </div>
+
+  <div class="annotation">
+    Only 4 persisted keys. Body font family is intentionally omitted &mdash;<br>
+    body text uses the UI font. This keeps settings minimal. If users request<br>
+    separate body font control, it's one more dropdown + key to add later.
+  </div>
+</div>
+
+</body>
+</html>
