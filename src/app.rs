@@ -173,7 +173,7 @@ impl App {
             .await
             .map_err(|e| AppError::ServiceInitFailed(format!("McpService init: {e}")))?;
 
-        let chat_service: Arc<ChatServiceImpl> = Arc::new(ChatServiceImpl::new(
+        let chat_service: Arc<ChatServiceImpl> = Arc::new(ChatServiceImpl::new_stub(
             Arc::clone(&conversation_service) as Arc<dyn ConversationService>,
             Arc::clone(&profile_service) as Arc<dyn ProfileService>,
         ));

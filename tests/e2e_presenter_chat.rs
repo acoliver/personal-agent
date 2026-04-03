@@ -133,7 +133,7 @@ async fn test_chat_presenter_receives_stream_events() {
 
     let _llm_client =
         Arc::new(LlmClient::from_profile(&profile).expect("Failed to create LlmClient"));
-    let chat_service: Arc<dyn ChatService> = Arc::new(ChatServiceImpl::new(
+    let chat_service: Arc<dyn ChatService> = Arc::new(ChatServiceImpl::new_stub(
         conversation_service.clone(),
         profile_service.clone(),
     ));
@@ -405,7 +405,7 @@ async fn test_chat_presenter_manual_events() {
     let profile_service: Arc<dyn personal_agent::services::ProfileService> =
         Arc::new(ProfileServiceImpl::new(profiles_dir).expect("Failed to create ProfileService"));
 
-    let chat_service: Arc<dyn ChatService> = Arc::new(ChatServiceImpl::new(
+    let chat_service: Arc<dyn ChatService> = Arc::new(ChatServiceImpl::new_stub(
         conversation_service.clone(),
         profile_service.clone(),
     ));

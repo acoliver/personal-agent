@@ -15,6 +15,7 @@
 //! - `PA_E2E_KEY_LABEL` (optional; default: `pa-e2e-ollama-cloud`)
 //! - `PA_E2E_API_KEY` (recommended for non-interactive runs)
 
+use personal_agent::llm::client_agent::McpToolContext;
 use personal_agent::llm::AgentClientExt;
 use personal_agent::mcp::{McpRegistry, McpService};
 use personal_agent::services::{McpRegistryService, McpRegistryServiceImpl};
@@ -101,7 +102,7 @@ async fn test_real_exa_search() {
         )];
 
         client
-            .run_agent_stream(&agent, &messages, |event| {
+            .run_agent_stream(&agent, &messages, McpToolContext::default(), |event| {
                 if let StreamEvent::TextDelta(text) = event {
                     print!("{text}");
                 }
@@ -147,39 +148,44 @@ async fn test_real_exa_search() {
     let mut response = String::new();
 
     let result = client
-        .run_agent_stream(&agent, &messages, |event| match &event {
-            StreamEvent::TextDelta(text) => {
-                print!("{text}");
-                std::io::Write::flush(&mut std::io::stdout()).ok();
-                response.push_str(text);
-            }
-            StreamEvent::ToolCallStarted {
-                tool_name: name,
-                call_id,
-            } => {
-                println!("\n\n[TOOL STARTED] {name} ({call_id})");
-                saw_tool_start = true;
-                tool_name = name.clone();
-            }
-            StreamEvent::ToolCallCompleted {
-                tool_name: name,
-                success,
-                result,
-                call_id,
-                ..
-            } => {
-                println!("[TOOL COMPLETED] {name} success={success} ({call_id})");
-                if let Some(r) = result {
-                    let preview = if r.len() > 200 { &r[..200] } else { r };
-                    println!("[RESULT PREVIEW] {preview}...");
+        .run_agent_stream(
+            &agent,
+            &messages,
+            McpToolContext::default(),
+            |event| match &event {
+                StreamEvent::TextDelta(text) => {
+                    print!("{text}");
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                    response.push_str(text);
                 }
-                saw_tool_complete = true;
-            }
-            StreamEvent::Complete => {
-                println!("\n[STREAM COMPLETE]");
-            }
-            _ => {}
-        })
+                StreamEvent::ToolCallStarted {
+                    tool_name: name,
+                    call_id,
+                } => {
+                    println!("\n\n[TOOL STARTED] {name} ({call_id})");
+                    saw_tool_start = true;
+                    tool_name = name.clone();
+                }
+                StreamEvent::ToolCallCompleted {
+                    tool_name: name,
+                    success,
+                    result,
+                    call_id,
+                    ..
+                } => {
+                    println!("[TOOL COMPLETED] {name} success={success} ({call_id})");
+                    if let Some(r) = result {
+                        let preview = if r.len() > 200 { &r[..200] } else { r };
+                        println!("[RESULT PREVIEW] {preview}...");
+                    }
+                    saw_tool_complete = true;
+                }
+                StreamEvent::Complete => {
+                    println!("\n[STREAM COMPLETE]");
+                }
+                _ => {}
+            },
+        )
         .await;
 
     println!("\n");

@@ -3,12 +3,15 @@
 /// @plan PLAN-20250127-REMEDIATE.P02, PLAN-20250127-REMEDIATE.P03
 /// @requirement REM-001, REM-002, REM-003, REM-004, REM-005, REM-006, REM-007
 use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
+use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::events::types::ChatEvent;
 use crate::events::{emit, AppEvent};
+use crate::llm::client_agent::ApprovalGate;
 use crate::llm::AgentClientExt;
 use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::mcp::McpService;
 use crate::models::MessageRole;
+use crate::presentation::view_command::ViewCommand;
 use crate::services::template::{expand_system_prompt, TemplateContext};
 use crate::services::ConversationService;
 use futures::{stream, Stream};
@@ -24,6 +27,12 @@ pub struct ChatServiceImpl {
     profile_service: Arc<dyn super::ProfileService>,
     is_streaming: Arc<AtomicBool>,
     current_conversation_id: Arc<RwLock<Option<Uuid>>>,
+    /// Channel for sending view commands (used for tool approval UI)
+    view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
+    /// Approval gate for coordinating user approval of tool execution
+    approval_gate: Arc<ApprovalGate>,
+    /// Policy for evaluating tool approval requirements
+    policy: Arc<ToolApprovalPolicy>,
 }
 
 impl ChatServiceImpl {
@@ -32,13 +41,37 @@ impl ChatServiceImpl {
     pub fn new(
         conversation_service: Arc<dyn ConversationService>,
         profile_service: Arc<dyn super::ProfileService>,
+        view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
+        approval_gate: Arc<ApprovalGate>,
+        policy: Arc<ToolApprovalPolicy>,
     ) -> Self {
         Self {
             conversation_service,
             profile_service,
             is_streaming: Arc::new(AtomicBool::new(false)),
             current_conversation_id: Arc::new(RwLock::new(None)),
+            view_tx,
+            approval_gate,
+            policy,
         }
+    }
+
+    /// Create a new `ChatServiceImpl` with a stub view channel for testing.
+    #[must_use]
+    pub fn new_stub(
+        conversation_service: Arc<dyn ConversationService>,
+        profile_service: Arc<dyn super::ProfileService>,
+    ) -> Self {
+        let (view_tx, _view_rx) = tokio::sync::mpsc::channel(100);
+        let approval_gate = Arc::new(ApprovalGate::new());
+        let policy = Arc::new(ToolApprovalPolicy::default());
+        Self::new(
+            conversation_service,
+            profile_service,
+            view_tx,
+            approval_gate,
+            policy,
+        )
     }
 
     async fn begin_stream(&self, conversation_id: Uuid) -> ServiceResult<()> {
@@ -199,6 +232,9 @@ impl ChatServiceImpl {
     ) {
         let is_streaming = self.is_streaming.clone();
         let conversation_service = self.conversation_service.clone();
+        let view_tx = self.view_tx.clone();
+        let approval_gate = self.approval_gate.clone();
+        let policy = self.policy.clone();
 
         tokio::spawn(async move {
             run_stream_task(
@@ -208,6 +244,9 @@ impl ChatServiceImpl {
                 is_streaming,
                 conversation_service,
                 conversation_id,
+                view_tx,
+                approval_gate,
+                policy,
             )
             .await;
         });
@@ -221,6 +260,7 @@ struct PreparedMessageContext {
     system_prompt: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_stream_task(
     prepared: PreparedMessageContext,
     mcp_tools: Vec<crate::llm::tools::Tool>,
@@ -228,6 +268,9 @@ async fn run_stream_task(
     is_streaming: Arc<AtomicBool>,
     conversation_service: Arc<dyn ConversationService>,
     conversation_id: Uuid,
+    view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
+    approval_gate: Arc<ApprovalGate>,
+    policy: Arc<ToolApprovalPolicy>,
 ) {
     let PreparedMessageContext {
         profile: _,
@@ -253,8 +296,14 @@ async fn run_stream_task(
         }
     };
 
+    let context = crate::llm::client_agent::McpToolContext {
+        view_tx: view_tx.clone(),
+        approval_gate: approval_gate.clone(),
+        policy: policy.clone(),
+    };
+
     if let Err(e) = client
-        .run_agent_stream(&agent, &messages, |event| match event {
+        .run_agent_stream(&agent, &messages, context, |event| match event {
             LlmStreamEvent::TextDelta(text) => {
                 tracing::info!("ChatService emitting TextDelta: '{}'", text);
                 let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
@@ -567,7 +616,7 @@ mod tests {
 
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
-        let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
+        let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
 
         let conversation_id = Uuid::new_v4();
         let result = chat_service
@@ -609,7 +658,7 @@ mod tests {
 
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
-        let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
+        let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
 
         // Cancel should work even without streaming
         chat_service.cancel();
@@ -638,7 +687,7 @@ mod tests {
 
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
-        let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
+        let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
 
         // Initially not streaming
         assert!(!chat_service.is_streaming());
@@ -688,7 +737,7 @@ mod tests {
         mock_profile_service.add_profile(kimi_profile).await;
 
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
-        let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
+        let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
 
         let prepared = chat_service
             .prepare_message_context(Uuid::new_v4(), "hello".to_string())

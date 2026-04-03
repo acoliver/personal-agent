@@ -15,6 +15,7 @@
 //! - An MCP server configured with search capability (e.g., Exa)
 //!   OR the test will gracefully skip tool verification if no MCPs configured
 
+use personal_agent::llm::client_agent::McpToolContext;
 use personal_agent::llm::AgentClientExt;
 use personal_agent::services::McpRegistryService;
 use personal_agent::{LlmClient, ModelProfile, StreamEvent};
@@ -52,18 +53,23 @@ async fn test_agent_mode_basic() {
     let mut response = String::new();
 
     let result = client
-        .run_agent_stream(&agent, &messages, |event| match &event {
-            StreamEvent::TextDelta(text) => {
-                print!("{text}");
-                std::io::Write::flush(&mut std::io::stdout()).ok();
-                response.push_str(text);
-                saw_text = true;
-            }
-            StreamEvent::Complete => {
-                saw_done = true;
-            }
-            _ => {}
-        })
+        .run_agent_stream(
+            &agent,
+            &messages,
+            McpToolContext::default(),
+            |event| match &event {
+                StreamEvent::TextDelta(text) => {
+                    print!("{text}");
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                    response.push_str(text);
+                    saw_text = true;
+                }
+                StreamEvent::Complete => {
+                    saw_done = true;
+                }
+                _ => {}
+            },
+        )
         .await;
 
     println!("\n");
@@ -141,33 +147,38 @@ async fn test_agent_tool_events() {
     let mut tool_name = String::new();
 
     let result = client
-        .run_agent_stream(&agent, &messages, |event| match &event {
-            StreamEvent::TextDelta(text) => {
-                print!("{text}");
-                std::io::Write::flush(&mut std::io::stdout()).ok();
-            }
-            StreamEvent::ToolCallStarted {
-                tool_name: name,
-                call_id,
-            } => {
-                println!("\n[TOOL STARTED] {name} ({call_id})");
-                saw_tool_start = true;
-                tool_name = name.clone();
-            }
-            StreamEvent::ToolCallCompleted {
-                tool_name: name,
-                success,
-                call_id,
-                ..
-            } => {
-                println!("[TOOL COMPLETED] {name} success={success} ({call_id})");
-                saw_tool_complete = true;
-            }
-            StreamEvent::Complete => {
-                println!("\n[DONE]");
-            }
-            _ => {}
-        })
+        .run_agent_stream(
+            &agent,
+            &messages,
+            McpToolContext::default(),
+            |event| match &event {
+                StreamEvent::TextDelta(text) => {
+                    print!("{text}");
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                }
+                StreamEvent::ToolCallStarted {
+                    tool_name: name,
+                    call_id,
+                } => {
+                    println!("\n[TOOL STARTED] {name} ({call_id})");
+                    saw_tool_start = true;
+                    tool_name = name.clone();
+                }
+                StreamEvent::ToolCallCompleted {
+                    tool_name: name,
+                    success,
+                    call_id,
+                    ..
+                } => {
+                    println!("[TOOL COMPLETED] {name} success={success} ({call_id})");
+                    saw_tool_complete = true;
+                }
+                StreamEvent::Complete => {
+                    println!("\n[DONE]");
+                }
+                _ => {}
+            },
+        )
         .await;
 
     println!("\n");

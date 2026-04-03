@@ -506,8 +506,10 @@ async fn create_services(runtime_paths: &RuntimePaths) -> Services {
         Arc::new(ModelsRegistryServiceImpl::new().expect("Failed to create ModelsRegistryService"));
     let mcp_registry: Arc<dyn McpRegistryService> =
         Arc::new(McpRegistryServiceImpl::new().expect("Failed to create McpRegistryService"));
-    let chat: Arc<dyn ChatService> =
-        Arc::new(ChatServiceImpl::new(conversation.clone(), profile.clone()));
+    let chat: Arc<dyn ChatService> = Arc::new(ChatServiceImpl::new_stub(
+        conversation.clone(),
+        profile.clone(),
+    ));
 
     Services {
         _secrets: secrets,

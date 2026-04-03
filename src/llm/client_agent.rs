@@ -2,7 +2,9 @@
 //!
 //! This module provides Agent integration for `PersonalAgent` using `SerdesAI` Agent.
 
+use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::llm::{LlmError, Message, Role, StreamEvent};
+use crate::presentation::view_command::ViewCommand;
 use futures::StreamExt;
 use serdes_ai::core::messages::{
     ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart, TextPart, ThinkingPart,
@@ -12,15 +14,86 @@ use serdes_ai::UserContent;
 use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
 
 // Use std Result to avoid conflict with serdes_ai::prelude::Result
 type StdResult<T, E> = std::result::Result<T, E>;
 
+/// Gate for coordinating tool approval requests between tool executors and the presenter.
+///
+/// This uses oneshot channels keyed by `request_id` to pause tool execution pending
+/// user approval decisions.
+#[derive(Debug)]
+pub struct ApprovalGate {
+    pending: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+}
+
+impl ApprovalGate {
+    /// Create a new approval gate.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pending: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Register a pending approval and return the receiver to await the user's decision.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    pub fn wait_for_approval(&self, request_id: String) -> oneshot::Receiver<bool> {
+        let (tx, rx) = oneshot::channel();
+        let mut pending = self.pending.lock().unwrap();
+        pending.insert(request_id, tx);
+        rx
+    }
+
+    /// Resolve a pending approval with the user's decision.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    pub fn resolve(&self, request_id: &str, approved: bool) {
+        let mut pending = self.pending.lock().unwrap();
+        if let Some(tx) = pending.remove(request_id) {
+            let _ = tx.send(approved);
+        }
+    }
+}
+
+impl Default for ApprovalGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Context for MCP tool execution
 ///
-/// This provides access to the global MCP service for tool execution
-#[derive(Clone, Default)]
-pub struct McpToolContext;
+/// This provides access to the global MCP service for tool execution,
+/// as well as the approval gate and view channel for tool approval flow.
+#[derive(Clone)]
+pub struct McpToolContext {
+    /// Channel for sending view commands to the UI layer
+    pub view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
+    /// Approval gate for coordinating user approval of tool execution
+    pub approval_gate: Arc<ApprovalGate>,
+    /// Policy for evaluating tool approval requirements
+    pub policy: Arc<ToolApprovalPolicy>,
+}
+
+impl Default for McpToolContext {
+    fn default() -> Self {
+        let (view_tx, _) = tokio::sync::mpsc::channel(1);
+        Self {
+            view_tx,
+            approval_gate: Arc::new(ApprovalGate::new()),
+            policy: Arc::new(ToolApprovalPolicy::default()),
+        }
+    }
+}
 
 /// Register native (built-in) tools with the agent builder.
 ///
@@ -33,6 +106,10 @@ fn register_native_tools(
     // Register ReadFile tool
     let read_file_def = crate::agent::tools::get_read_file_tool_definition();
     builder = builder.tool_with_executor(read_file_def, crate::agent::tools::ReadFileExecutor);
+
+    // Register WriteFile tool
+    let write_file_def = crate::agent::tools::get_write_file_tool_definition();
+    builder = builder.tool_with_executor(write_file_def, crate::agent::tools::WriteFileExecutor);
 
     builder
 }
@@ -72,6 +149,7 @@ pub trait AgentClientExt {
         &self,
         agent: &Agent<McpToolContext>,
         messages: &[Message],
+        context: McpToolContext,
         on_event: F,
     ) -> impl std::future::Future<Output = StdResult<(), LlmError>> + Send
     where
@@ -90,12 +168,13 @@ impl AgentClientExt for crate::llm::LlmClient {
         &self,
         agent: &Agent<McpToolContext>,
         messages: &[Message],
+        context: McpToolContext,
         mut on_event: F,
     ) -> StdResult<(), LlmError>
     where
         F: FnMut(StreamEvent) + Send,
     {
-        self.do_run_agent_stream(agent, messages, &mut on_event)
+        self.do_run_agent_stream(agent, messages, context, &mut on_event)
             .await
     }
 
@@ -126,6 +205,7 @@ impl crate::llm::LlmClient {
         &self,
         agent: &Agent<McpToolContext>,
         messages: &[Message],
+        context: McpToolContext,
         on_event: &mut F,
     ) -> StdResult<(), LlmError>
     where
@@ -141,7 +221,6 @@ impl crate::llm::LlmClient {
             message_history.len()
         );
 
-        let context = McpToolContext;
         let options = if message_history.is_empty() {
             RunOptions::default()
         } else {

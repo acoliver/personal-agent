@@ -245,7 +245,7 @@ fn temp_storage_path(name: &str) -> PathBuf {
 async fn chat_service_new_sets_initial_streaming_state() {
     let conversation_service = Arc::new(InMemoryConversationService::new(vec![]));
     let profile_service = Arc::new(MockProfileService::new(None));
-    let _ = ChatServiceImpl::new(conversation_service, profile_service);
+    let _ = ChatServiceImpl::new_stub(conversation_service, profile_service);
 }
 
 #[tokio::test]
@@ -258,7 +258,7 @@ async fn chat_service_send_message_errors_without_default_profile_when_creating_
     profile_service
         .set_fail_get_default("default missing")
         .await;
-    let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
+    let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
 
     let result = chat_service
         .send_message(Uuid::new_v4(), "hello".to_string())
@@ -280,7 +280,7 @@ async fn chat_service_send_message_reports_add_user_message_failures() {
         .set_fail_add_user("cannot persist user message")
         .await;
     let profile_service = Arc::new(MockProfileService::new(Some(profile)));
-    let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
+    let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
 
     let result = chat_service
         .send_message(conversation_id, "hello".to_string())
@@ -299,7 +299,7 @@ async fn chat_service_cancel_clears_streaming_flag() {
         profile.id,
     )]));
     let profile_service = Arc::new(MockProfileService::new(Some(profile)));
-    let chat_service = ChatServiceImpl::new(conversation_service, profile_service);
+    let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
 
     chat_service.cancel();
 
