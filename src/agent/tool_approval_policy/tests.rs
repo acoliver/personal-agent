@@ -212,6 +212,23 @@ fn evaluate_compound_command_returns_allow_when_all_segments_allowed() {
 }
 
 #[test]
+fn evaluate_compound_command_does_not_auto_approve_read_like_shell_identifiers() {
+    let policy = ToolApprovalPolicy {
+        auto_approve_reads: true,
+        ..ToolApprovalPolicy::default()
+    };
+
+    assert_eq!(
+        policy.evaluate_compound_command("git fetch origin"),
+        ToolApprovalDecision::AskUser
+    );
+    assert_eq!(
+        policy.evaluate_compound_command("cat Cargo.toml | grep name"),
+        ToolApprovalDecision::AskUser
+    );
+}
+
+#[test]
 fn evaluate_auto_approve_reads_handles_mcp_snake_case_tools() {
     let policy = ToolApprovalPolicy {
         auto_approve_reads: true,

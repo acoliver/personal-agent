@@ -109,22 +109,30 @@ fn parse_params(args: &serde_json::Value) -> Result<ShellExecParams, ToolError> 
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
 
-    let timeout_secs_raw = args
-        .get("timeout_secs")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or_else(|| u64::from(DEFAULT_TIMEOUT_SECS));
+    let timeout_secs_u32 = match args.get("timeout_secs") {
+        None => DEFAULT_TIMEOUT_SECS,
+        Some(value) => {
+            let timeout_secs_raw = value.as_u64().ok_or_else(|| {
+                ToolError::execution_failed(format!(
+                    "Invalid timeout_secs: {value} (must be between 1 and {MAX_TIMEOUT_SECS})"
+                ))
+            })?;
 
-    let timeout_secs_u32 = u32::try_from(timeout_secs_raw).map_err(|_| {
-        ToolError::execution_failed(format!(
-            "Invalid timeout_secs: {timeout_secs_raw} (must be between 1 and {MAX_TIMEOUT_SECS})"
-        ))
-    })?;
+            let timeout_secs_u32 = u32::try_from(timeout_secs_raw).map_err(|_| {
+                ToolError::execution_failed(format!(
+                    "Invalid timeout_secs: {timeout_secs_raw} (must be between 1 and {MAX_TIMEOUT_SECS})"
+                ))
+            })?;
 
-    if !(1..=MAX_TIMEOUT_SECS).contains(&timeout_secs_u32) {
-        return Err(ToolError::execution_failed(format!(
-            "Invalid timeout_secs: {timeout_secs_u32} (must be between 1 and {MAX_TIMEOUT_SECS})"
-        )));
-    }
+            if !(1..=MAX_TIMEOUT_SECS).contains(&timeout_secs_u32) {
+                return Err(ToolError::execution_failed(format!(
+                    "Invalid timeout_secs: {timeout_secs_u32} (must be between 1 and {MAX_TIMEOUT_SECS})"
+                )));
+            }
+
+            timeout_secs_u32
+        }
+    };
 
     Ok(ShellExecParams {
         command,
@@ -162,16 +170,17 @@ async fn check_approval(tool_context: &McpToolContext, command: &str) -> Result<
 
             if tool_context
                 .view_tx
-                .try_send(ViewCommand::ToolApprovalRequest {
+                .send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
                     tool_name: "ShellExec".to_string(),
                     tool_argument: command.to_string(),
                 })
+                .await
                 .is_err()
             {
                 let _ = tool_context.approval_gate.resolve(&request_id, false);
                 return Err(ToolError::execution_failed(
-                    "Failed to send approval request to UI (channel full or closed)",
+                    "Failed to send approval request to UI (channel closed)",
                 ));
             }
 
@@ -411,6 +420,36 @@ mod tests {
             "timeout_secs": 901
         }))
         .expect_err("timeout greater than max should fail");
+
+        assert!(error.to_string().contains("Invalid timeout_secs"));
+    }
+
+    #[test]
+    fn parse_params_rejects_malformed_timeout_values() {
+        for value in [
+            serde_json::json!("5"),
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!(true),
+            serde_json::json!({"secs": 5}),
+        ] {
+            let error = parse_params(&serde_json::json!({
+                "command": "echo hi",
+                "timeout_secs": value,
+            }))
+            .expect_err("malformed timeout should fail");
+
+            assert!(error.to_string().contains("Invalid timeout_secs"));
+        }
+    }
+
+    #[test]
+    fn parse_params_rejects_null_timeout() {
+        let error = parse_params(&serde_json::json!({
+            "command": "echo hi",
+            "timeout_secs": null,
+        }))
+        .expect_err("null timeout should fail");
 
         assert!(error.to_string().contains("Invalid timeout_secs"));
     }

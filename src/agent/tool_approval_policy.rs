@@ -376,6 +376,27 @@ impl ToolApprovalPolicy {
             .collect()
     }
 
+    #[must_use]
+    fn evaluate_shell_identifier(&self, tool_identifier: &str) -> ToolApprovalDecision {
+        if Self::matches_prefix_in_slice(&self.persistent_denylist, tool_identifier) {
+            return ToolApprovalDecision::Deny;
+        }
+
+        if Self::matches_prefix_in_slice(&self.persistent_allowlist, tool_identifier) {
+            return ToolApprovalDecision::Allow;
+        }
+
+        if self.yolo_mode {
+            return ToolApprovalDecision::Allow;
+        }
+
+        if Self::matches_prefix_in_set(&self.session_allowlist, tool_identifier) {
+            return ToolApprovalDecision::Allow;
+        }
+
+        ToolApprovalDecision::AskUser
+    }
+
     /// Evaluate shell command approval by combining decisions for each segment.
     ///
     /// Most restrictive decision wins: `Deny > AskUser > Allow`.
@@ -383,13 +404,13 @@ impl ToolApprovalPolicy {
     pub fn evaluate_compound_command(&self, command: &str) -> ToolApprovalDecision {
         let identifiers = Self::extract_shell_identifiers(command);
         if identifiers.is_empty() {
-            return self.evaluate(command.trim());
+            return self.evaluate_shell_identifier(command.trim());
         }
 
         let mut has_ask_user = false;
 
         for identifier in identifiers {
-            match self.evaluate(&identifier) {
+            match self.evaluate_shell_identifier(&identifier) {
                 ToolApprovalDecision::Deny => return ToolApprovalDecision::Deny,
                 ToolApprovalDecision::AskUser => {
                     has_ask_user = true;
