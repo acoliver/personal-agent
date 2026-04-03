@@ -194,6 +194,10 @@ fn register_native_tools(
     let write_file_def = crate::agent::tools::get_write_file_tool_definition();
     builder = builder.tool_with_executor(write_file_def, crate::agent::tools::WriteFileExecutor);
 
+    // Register ShellExec tool
+    let shell_exec_def = crate::agent::tools::get_shell_exec_tool_definition();
+    builder = builder.tool_with_executor(shell_exec_def, crate::agent::tools::ShellExecExecutor);
+
     builder
 }
 
