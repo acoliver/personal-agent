@@ -93,6 +93,7 @@ impl ConversationService for InMemoryConversationService {
         &self,
         conversation_id: Uuid,
         content: String,
+        _thinking_content: Option<String>,
     ) -> ServiceResult<Message> {
         let mut convs = self.conversations.lock().await;
         let conv = convs
@@ -246,7 +247,7 @@ async fn bug4_conversation_preserves_full_history() {
         .await
         .unwrap();
     conv_service
-        .add_assistant_message(conv_id, "Hello Alice!".to_string())
+        .add_assistant_message(conv_id, "Hello Alice!".to_string(), None)
         .await
         .unwrap();
     conv_service

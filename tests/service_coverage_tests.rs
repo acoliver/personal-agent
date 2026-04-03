@@ -106,6 +106,7 @@ impl ConversationService for InMemoryConversationService {
         &self,
         conversation_id: Uuid,
         content: String,
+        _thinking_content: Option<String>,
     ) -> Result<Message, ServiceError> {
         let message = Message::assistant(content);
         {
@@ -324,7 +325,7 @@ async fn conversation_service_persists_messages_and_updates_active_conversation(
         .await
         .expect("add user message");
     let assistant_message = service
-        .add_assistant_message(conversation_id, "hi there".to_string())
+        .add_assistant_message(conversation_id, "hi there".to_string(), None)
         .await
         .expect("add assistant message");
     service

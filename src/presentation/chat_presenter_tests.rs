@@ -54,6 +54,7 @@ impl ConversationService for MockConversationService {
         &self,
         _conversation_id: Uuid,
         _content: String,
+        _thinking_content: Option<String>,
     ) -> Result<crate::models::Message, crate::services::ServiceError> {
         Err(crate::services::ServiceError::NotFound(
             "Not implemented".to_string(),

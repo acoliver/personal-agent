@@ -82,6 +82,7 @@ impl ConversationService for MockConversationService {
         &self,
         _conversation_id: Uuid,
         _content: String,
+        _thinking_content: Option<String>,
     ) -> Result<Message, ServiceError> {
         Err(ServiceError::NotFound("not implemented".to_string()))
     }

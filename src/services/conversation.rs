@@ -49,10 +49,12 @@ pub trait ConversationService: Send + Sync {
     /// # Arguments
     /// * `conversation_id` - The conversation to add to
     /// * `content` - The message content
+    /// * `thinking_content` - Optional persisted thinking/reasoning content
     async fn add_assistant_message(
         &self,
         conversation_id: Uuid,
         content: String,
+        thinking_content: Option<String>,
     ) -> ServiceResult<Message>;
 
     /// Rename a conversation

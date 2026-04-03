@@ -105,6 +105,7 @@ impl ConversationService for CoverageConversationService {
         &self,
         conversation_id: Uuid,
         content: String,
+        _thinking_content: Option<String>,
     ) -> Result<Message, ServiceError> {
         let message = Message::assistant(content);
         let mut conversations = self.conversations.lock().await;

@@ -135,6 +135,7 @@ impl ConversationService for MockConversationService {
         &self,
         conversation_id: Uuid,
         content: String,
+        _thinking_content: Option<String>,
     ) -> Result<Message, ServiceError> {
         let message = Message::assistant(content);
         {
