@@ -110,6 +110,21 @@ impl ChatServiceImpl {
         )
     }
 
+    async fn refresh_tool_approval_policy_from_settings(&self) {
+        match ToolApprovalPolicy::load_from_settings(self.app_settings_service.as_ref()).await {
+            Ok(mut loaded_policy) => {
+                let mut policy = self.policy.lock().await;
+                loaded_policy
+                    .session_allowlist
+                    .clone_from(&policy.session_allowlist);
+                *policy = loaded_policy;
+            }
+            Err(error) => {
+                tracing::warn!("Failed to refresh tool approval policy before send: {error}");
+            }
+        }
+    }
+
     async fn begin_stream(&self, conversation_id: Uuid) -> ServiceResult<()> {
         if self
             .is_streaming
@@ -444,6 +459,7 @@ impl ChatService for ChatServiceImpl {
         content: String,
     ) -> ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> {
         self.begin_stream(conversation_id).await?;
+        self.refresh_tool_approval_policy_from_settings().await;
 
         let prepared = self
             .prepare_message_context(conversation_id, content)
