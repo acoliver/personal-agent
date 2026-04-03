@@ -592,4 +592,52 @@ mod tests {
     fn test_render_markdown_empty_returns_empty() {
         assert!(render_markdown("").is_empty());
     }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P08
+    /// @requirement:REQ-MD-RENDER-001
+    #[test]
+    fn test_render_markdown_for_heading_paragraph_and_list() {
+        let rendered = render_markdown("### Title\n\nParagraph\n\n1. one\n2. two");
+        assert_eq!(rendered.len(), 3);
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P08
+    /// @requirement:REQ-MD-RENDER-005
+    #[test]
+    fn test_render_markdown_for_code_block() {
+        let rendered = render_markdown("```rust\nfn main() {}\n```");
+        assert_eq!(rendered.len(), 1);
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P08
+    /// @requirement:REQ-MD-RENDER-007
+    #[test]
+    fn test_render_markdown_for_blockquote() {
+        let rendered = render_markdown("> quote");
+        assert_eq!(rendered.len(), 1);
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P08
+    /// @requirement:REQ-MD-RENDER-009
+    #[test]
+    fn test_render_markdown_for_table() {
+        let rendered = render_markdown("| A | B |\n|---|---|\n| 1 | 2 |");
+        assert_eq!(rendered.len(), 1);
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P08
+    /// @requirement:REQ-MD-RENDER-010
+    #[test]
+    fn test_render_markdown_for_thematic_break() {
+        let rendered = render_markdown("---");
+        assert_eq!(rendered.len(), 1);
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P08
+    /// @requirement:REQ-MD-RENDER-011
+    #[test]
+    fn test_render_markdown_for_image_fallback() {
+        let rendered = render_markdown("![diagram](image.png)");
+        assert_eq!(rendered.len(), 1);
+    }
 }
