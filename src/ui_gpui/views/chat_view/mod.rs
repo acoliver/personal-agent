@@ -265,14 +265,22 @@ impl ChatView {
         }
 
         let was_streaming = matches!(self.state.streaming, StreamingState::Streaming { .. });
+        let was_thinking = self
+            .state
+            .thinking_content
+            .as_ref()
+            .is_some_and(|content| !content.is_empty());
         self.state.streaming = Self::streaming_state_from_snapshot(&streaming, &load_state);
         // show_thinking is view-local and sticky — do NOT overwrite from store snapshot
-        self.state.thinking_content =
-            (!streaming.thinking_buffer.is_empty()).then_some(streaming.thinking_buffer);
+        let has_thinking = !streaming.thinking_buffer.is_empty();
+        self.state.thinking_content = has_thinking.then_some(streaming.thinking_buffer);
         self.state.sync_conversation_dropdown_index();
 
         if !should_reset_autoscroll
-            && (was_streaming || matches!(self.state.streaming, StreamingState::Streaming { .. }))
+            && (was_streaming
+                || was_thinking
+                || has_thinking
+                || matches!(self.state.streaming, StreamingState::Streaming { .. }))
         {
             self.maybe_scroll_chat_to_bottom(cx);
         }

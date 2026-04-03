@@ -284,6 +284,108 @@ async fn apply_store_snapshot_stream_finalize_skips_maybe_scroll_when_autoscroll
 }
 
 #[gpui::test]
+async fn apply_store_snapshot_thinking_only_calls_maybe_scroll_when_autoscroll_enabled(
+    cx: &mut TestAppContext,
+) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            let conversation_id = Uuid::new_v4();
+            let snapshot = ChatStoreSnapshot {
+                selected_conversation_id: Some(conversation_id),
+                selected_conversation_title: "Conv".to_string(),
+                selection_generation: 1,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id,
+                    generation: 1,
+                },
+                transcript: Vec::new(),
+                streaming: StreamingStoreSnapshot {
+                    thinking_buffer: "thinking...".to_string(),
+                    active_target: Some(conversation_id),
+                    ..StreamingStoreSnapshot::default()
+                },
+                conversations: vec![ConversationSummary {
+                    id: conversation_id,
+                    title: "Conv".to_string(),
+                    updated_at: Utc::now(),
+                    message_count: 0,
+                }],
+            };
+
+            view.conversation_id = Some(conversation_id);
+            view.selection_generation = 1;
+            view.state.chat_autoscroll_enabled = true;
+            view.state.streaming = StreamingState::Idle;
+            view.state.thinking_content = None;
+            view.maybe_scroll_chat_to_bottom_invocations.set(0);
+
+            view.apply_store_snapshot(snapshot, cx);
+
+            assert!(matches!(
+                view.state.streaming,
+                StreamingState::Streaming { .. }
+            ));
+            assert_eq!(view.state.thinking_content.as_deref(), Some("thinking..."));
+            assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 1);
+        });
+    });
+}
+
+#[gpui::test]
+async fn apply_store_snapshot_thinking_only_skips_maybe_scroll_when_autoscroll_disabled(
+    cx: &mut TestAppContext,
+) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            let conversation_id = Uuid::new_v4();
+            let snapshot = ChatStoreSnapshot {
+                selected_conversation_id: Some(conversation_id),
+                selected_conversation_title: "Conv".to_string(),
+                selection_generation: 1,
+                load_state: ConversationLoadState::Ready {
+                    conversation_id,
+                    generation: 1,
+                },
+                transcript: Vec::new(),
+                streaming: StreamingStoreSnapshot {
+                    thinking_buffer: "thinking...".to_string(),
+                    active_target: Some(conversation_id),
+                    ..StreamingStoreSnapshot::default()
+                },
+                conversations: vec![ConversationSummary {
+                    id: conversation_id,
+                    title: "Conv".to_string(),
+                    updated_at: Utc::now(),
+                    message_count: 0,
+                }],
+            };
+
+            view.conversation_id = Some(conversation_id);
+            view.selection_generation = 1;
+            view.state.chat_autoscroll_enabled = false;
+            view.state.streaming = StreamingState::Idle;
+            view.state.thinking_content = None;
+            view.maybe_scroll_chat_to_bottom_invocations.set(0);
+
+            view.apply_store_snapshot(snapshot, cx);
+
+            assert!(matches!(
+                view.state.streaming,
+                StreamingState::Streaming { .. }
+            ));
+            assert_eq!(view.state.thinking_content.as_deref(), Some("thinking..."));
+            assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 0);
+        });
+    });
+}
+
+#[gpui::test]
 async fn send_message_and_start_streaming_reenables_autoscroll_and_starts_stream(
     cx: &mut TestAppContext,
 ) {
