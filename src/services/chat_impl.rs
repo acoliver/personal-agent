@@ -322,6 +322,7 @@ impl ChatServiceImpl {
                 ServiceError::NotFound(format!("Tool approval request {request_id} not found"))
             })?;
 
+        let mut emit_policy_snapshot = false;
         match decision {
             ToolApprovalResponseAction::ProceedSession => {
                 self.policy
@@ -335,6 +336,7 @@ impl ChatServiceImpl {
                     .await
                     .allow_persistently(tool_identifier, self.app_settings_service.as_ref())
                     .await?;
+                emit_policy_snapshot = true;
             }
             ToolApprovalResponseAction::ProceedOnce | ToolApprovalResponseAction::Denied => {}
         }
@@ -343,6 +345,22 @@ impl ChatServiceImpl {
             request_id,
             approved,
         });
+
+        if emit_policy_snapshot {
+            let policy = self.policy.lock().await.clone();
+            let _ = self
+                .view_tx
+                .try_send(ViewCommand::ToolApprovalPolicyUpdated {
+                    yolo_mode: policy.yolo_mode,
+                    auto_approve_reads: policy.auto_approve_reads,
+                    mcp_approval_mode: policy.mcp_approval_mode,
+                    persistent_allowlist: policy.persistent_allowlist,
+                    persistent_denylist: policy.persistent_denylist,
+                });
+            let _ = self.view_tx.try_send(ViewCommand::YoloModeChanged {
+                active: policy.yolo_mode,
+            });
+        }
 
         Ok(())
     }

@@ -269,9 +269,33 @@ async fn resolve_tool_approval_proceed_always_persists_policy() {
     assert_eq!(
         resolved,
         ViewCommand::ToolApprovalResolved {
-            request_id,
+            request_id: request_id.clone(),
             approved: true,
         }
+    );
+
+    let policy_snapshot = view_rx
+        .recv()
+        .await
+        .expect("view should receive ToolApprovalPolicyUpdated after ProceedAlways");
+    assert_eq!(
+        policy_snapshot,
+        ViewCommand::ToolApprovalPolicyUpdated {
+            yolo_mode: false,
+            auto_approve_reads: false,
+            mcp_approval_mode: McpApprovalMode::PerTool,
+            persistent_allowlist: vec!["WriteFile".to_string()],
+            persistent_denylist: Vec::new(),
+        }
+    );
+
+    let yolo_snapshot = view_rx
+        .recv()
+        .await
+        .expect("view should receive YoloModeChanged after ProceedAlways");
+    assert_eq!(
+        yolo_snapshot,
+        ViewCommand::YoloModeChanged { active: false }
     );
 
     let persisted = app_settings

@@ -118,6 +118,15 @@ impl McpService {
         result
     }
 
+    /// Find MCP provider metadata for a tool by name.
+    #[must_use]
+    pub fn find_tool_provider_metadata(
+        &self,
+        tool_name: &str,
+    ) -> Option<crate::mcp::runtime::McpToolProvider> {
+        self.runtime.find_tool_provider_metadata(tool_name)
+    }
+
     /// Check if any MCPs are currently active
     #[must_use]
     pub fn has_active_mcps(&self) -> bool {

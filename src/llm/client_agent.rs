@@ -2,7 +2,7 @@
 //!
 //! This module provides Agent integration for `PersonalAgent` using `SerdesAI` Agent.
 
-use crate::agent::tool_approval_policy::ToolApprovalPolicy;
+use crate::agent::tool_approval_policy::{ToolApprovalDecision, ToolApprovalPolicy};
 use crate::llm::{LlmError, Message, Role, StreamEvent};
 use crate::presentation::view_command::ViewCommand;
 use futures::StreamExt;
@@ -200,6 +200,7 @@ fn register_native_tools(
 /// Executor that bridges Agent tools to MCP
 struct McpToolExecutor {
     tool_name: String,
+    display_tool_name: String,
 }
 
 #[async_trait::async_trait]
@@ -207,8 +208,70 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
     async fn execute(
         &self,
         args: serde_json::Value,
-        _ctx: &RunContext<McpToolContext>,
+        ctx: &RunContext<McpToolContext>,
     ) -> Result<ToolReturn, ToolError> {
+        let provider = {
+            let service_arc = crate::mcp::McpService::global();
+            let provider = service_arc
+                .lock()
+                .await
+                .find_tool_provider_metadata(&self.tool_name)
+                .ok_or_else(|| {
+                    ToolError::execution_failed(format!(
+                        "No MCP provider found for tool {}",
+                        self.tool_name
+                    ))
+                })?;
+            provider
+        };
+
+        let tool_identifier = {
+            let policy = ctx.deps().policy.lock().await;
+            policy.mcp_tool_identifier(&provider.mcp_name, &self.tool_name)
+        };
+
+        let decision = {
+            let policy = ctx.deps().policy.lock().await;
+            policy.evaluate(&tool_identifier)
+        };
+
+        match decision {
+            ToolApprovalDecision::Allow => {}
+            ToolApprovalDecision::Deny => {
+                return Err(ToolError::execution_failed(
+                    "Tool execution denied by policy",
+                ));
+            }
+            ToolApprovalDecision::AskUser => {
+                let request_id = uuid::Uuid::new_v4().to_string();
+                let waiter = ctx
+                    .deps()
+                    .approval_gate
+                    .wait_for_approval(request_id.clone(), tool_identifier.clone());
+
+                if ctx
+                    .deps()
+                    .view_tx
+                    .try_send(ViewCommand::ToolApprovalRequest {
+                        request_id: request_id.clone(),
+                        tool_name: self.display_tool_name.clone(),
+                        tool_argument: args.to_string(),
+                    })
+                    .is_err()
+                {
+                    let _ = ctx.deps().approval_gate.resolve(&request_id, false);
+                    return Err(ToolError::execution_failed(
+                        "Failed to send approval request to UI (channel full or closed)",
+                    ));
+                }
+
+                let approved = waiter.wait().await.unwrap_or(false);
+                if !approved {
+                    return Err(ToolError::execution_failed("Tool execution denied by user"));
+                }
+            }
+        }
+
         // Get the global MCP service and call the tool
         let service_arc = crate::mcp::McpService::global();
         let result = service_arc
@@ -407,7 +470,10 @@ impl crate::llm::LlmClient {
             let tool_name = tool.name.clone();
             let tool_def = ToolDefinition::new(&tool_name, &tool.description)
                 .with_parameters(tool.input_schema.clone());
-            let executor = McpToolExecutor { tool_name };
+            let executor = McpToolExecutor {
+                tool_name,
+                display_tool_name: tool_def.name.clone(),
+            };
             builder = builder.tool_with_executor(tool_def, executor);
         }
         builder
@@ -639,5 +705,16 @@ mod tests {
             .parts
             .iter()
             .any(|part| matches!(part, ModelRequestPart::ToolReturn(_))));
+    }
+
+    #[test]
+    fn mcp_tool_executor_stores_display_tool_name() {
+        let executor = McpToolExecutor {
+            tool_name: "weather/get_forecast".to_string(),
+            display_tool_name: "weather.get_forecast".to_string(),
+        };
+
+        assert_eq!(executor.tool_name, "weather/get_forecast");
+        assert_eq!(executor.display_tool_name, "weather.get_forecast");
     }
 }

@@ -19,6 +19,13 @@ pub struct McpConnection {
     pub tools: Vec<McpTool>,
 }
 
+/// Provider metadata for an MCP tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpToolProvider {
+    pub mcp_id: Uuid,
+    pub mcp_name: String,
+}
+
 /// MCP Tool definition  
 #[derive(Debug, Clone)]
 pub struct McpTool {
@@ -292,12 +299,22 @@ impl McpRuntime {
     /// Find which MCP provides a tool
     #[must_use]
     pub fn find_tool_provider(&self, tool_name: &str) -> Option<Uuid> {
-        for (id, conn) in &self.connections {
-            if conn.tools.iter().any(|t| t.name == tool_name) {
-                return Some(*id);
-            }
-        }
-        None
+        self.find_tool_provider_metadata(tool_name)
+            .map(|provider| provider.mcp_id)
+    }
+
+    /// Find MCP provider metadata for a tool.
+    #[must_use]
+    pub fn find_tool_provider_metadata(&self, tool_name: &str) -> Option<McpToolProvider> {
+        self.connections.iter().find_map(|(id, conn)| {
+            conn.tools
+                .iter()
+                .any(|tool| tool.name == tool_name)
+                .then(|| McpToolProvider {
+                    mcp_id: *id,
+                    mcp_name: conn.config.name.clone(),
+                })
+        })
     }
 
     /// Call a tool on an MCP
@@ -369,5 +386,72 @@ impl McpRuntime {
                 self.connections.remove(&id);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcp::{
+        EnvVarConfig, McpAuthType, McpConfig, McpPackage, McpPackageArg, McpSource, McpTransport,
+    };
+
+    fn make_config(id: Uuid, name: &str) -> McpConfig {
+        McpConfig {
+            id,
+            name: name.to_string(),
+            enabled: true,
+            source: McpSource::Manual {
+                url: "https://example.com".to_string(),
+            },
+            package: McpPackage {
+                package_type: crate::mcp::McpPackageType::Http,
+                identifier: "https://example.com".to_string(),
+                runtime_hint: None,
+            },
+            transport: McpTransport::Http,
+            auth_type: McpAuthType::None,
+            env_vars: Vec::<EnvVarConfig>::new(),
+            package_args: Vec::<McpPackageArg>::new(),
+            keyfile_path: None,
+            config: serde_json::Value::Null,
+            oauth_token: None,
+        }
+    }
+
+    #[test]
+    fn find_tool_provider_metadata_returns_name_and_id() {
+        let mut runtime = McpRuntime::new(crate::mcp::SecretsManager::new());
+        let mcp_id = Uuid::new_v4();
+
+        runtime.connections.insert(
+            mcp_id,
+            McpConnection {
+                config: make_config(mcp_id, "weather"),
+                client: Arc::new(Mutex::new(McpClient::new(
+                    serdes_ai::mcp::transport::HttpTransport::new("https://example.com"),
+                ))),
+                tools: vec![McpTool {
+                    name: "get_forecast".to_string(),
+                    description: "Get forecast".to_string(),
+                    input_schema: serde_json::json!({"type":"object"}),
+                    mcp_id,
+                }],
+            },
+        );
+
+        let provider = runtime
+            .find_tool_provider_metadata("get_forecast")
+            .expect("provider should be found");
+
+        assert_eq!(provider.mcp_id, mcp_id);
+        assert_eq!(provider.mcp_name, "weather");
+    }
+
+    #[test]
+    fn find_tool_provider_returns_none_for_unknown_tool() {
+        let runtime = McpRuntime::new(crate::mcp::SecretsManager::new());
+        assert!(runtime.find_tool_provider_metadata("missing").is_none());
+        assert!(runtime.find_tool_provider("missing").is_none());
     }
 }
