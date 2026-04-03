@@ -949,7 +949,7 @@ async fn handle_command_forwards_yolo_mode_changed_to_settings_and_chat(cx: &mut
 }
 
 #[gpui::test]
-async fn handle_command_forwards_tool_approval_request_to_chat(cx: &mut TestAppContext) {
+async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestAppContext) {
     let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
     cx.set_global(app_state);
     let panel = cx.new(MainPanel::new);
@@ -969,38 +969,21 @@ async fn handle_command_forwards_tool_approval_request_to_chat(cx: &mut TestAppC
         let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
         chat_view.read_with(cx, |view, _| {
             assert_eq!(view.state.approval_bubbles.len(), 1);
-            let bubble = &view.state.approval_bubbles[0];
-            assert_eq!(bubble.request_id, "req-1");
-            assert_eq!(bubble.tool_name, "WriteFile");
-            assert_eq!(bubble.tool_argument, "/tmp/example.txt");
+            assert_eq!(view.state.approval_bubbles[0].request_id, "req-1");
+            assert_eq!(view.state.approval_bubbles[0].tool_name, "WriteFile");
             assert_eq!(
-                bubble.state,
+                view.state.approval_bubbles[0].tool_argument,
+                "/tmp/example.txt"
+            );
+            assert_eq!(
+                view.state.approval_bubbles[0].state,
                 crate::ui_gpui::views::chat_view::ApprovalBubbleState::Pending
             );
         });
-    });
-}
 
-#[gpui::test]
-async fn handle_command_forwards_tool_approval_resolved_to_chat(cx: &mut TestAppContext) {
-    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
-    cx.set_global(app_state);
-    let panel = cx.new(MainPanel::new);
-
-    panel.update(cx, |panel: &mut MainPanel, cx| {
-        panel.init(cx);
-
-        panel.handle_command(
-            ViewCommand::ToolApprovalRequest {
-                request_id: "req-2".to_string(),
-                tool_name: "WriteFile".to_string(),
-                tool_argument: "/tmp/example2.txt".to_string(),
-            },
-            cx,
-        );
         panel.handle_command(
             ViewCommand::ToolApprovalResolved {
-                request_id: "req-2".to_string(),
+                request_id: "req-1".to_string(),
                 approved: false,
             },
             cx,
