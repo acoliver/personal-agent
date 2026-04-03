@@ -69,6 +69,7 @@ impl ApprovalBubble {
         id: &str,
         label: &str,
         bg: gpui::Hsla,
+        fg: gpui::Hsla,
         handler: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     ) -> gpui::Stateful<gpui::Div> {
         let btn = div()
@@ -78,7 +79,7 @@ impl ApprovalBubble {
             .rounded(px(Theme::RADIUS_SM))
             .bg(bg)
             .text_size(px(Theme::FONT_SIZE_XS))
-            .text_color(Theme::text_primary())
+            .text_color(fg)
             .cursor_pointer()
             .hover(|s| s.opacity(0.8))
             .child(label.to_string());
@@ -141,24 +142,28 @@ impl IntoElement for ApprovalBubble {
                             &yes_id,
                             "Yes",
                             Theme::accent(),
+                            Theme::accent_fg(),
                             self.on_yes,
                         ))
                         .child(Self::render_action_button(
                             &session_id,
                             "Session",
                             Theme::bg_dark(),
+                            Theme::text_primary(),
                             self.on_session,
                         ))
                         .child(Self::render_action_button(
                             &always_id,
                             "Always",
                             Theme::bg_dark(),
+                            Theme::text_primary(),
                             self.on_always,
                         ))
                         .child(Self::render_action_button(
                             &no_id,
                             "No",
                             Theme::error(),
+                            Theme::error_fg(),
                             self.on_no,
                         )),
                 );

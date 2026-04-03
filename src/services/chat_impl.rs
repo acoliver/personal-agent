@@ -110,6 +110,28 @@ impl ChatServiceImpl {
         )
     }
 
+    async fn refresh_tool_approval_policy_from_settings(&self) {
+        match ToolApprovalPolicy::load_from_settings(self.app_settings_service.as_ref()).await {
+            Ok(mut loaded_policy) => {
+                let mut policy = self.policy.lock().await;
+                let should_clear_session_allowlist = policy.yolo_mode && !loaded_policy.yolo_mode;
+
+                if should_clear_session_allowlist {
+                    loaded_policy.clear_session_allowlist();
+                } else {
+                    loaded_policy
+                        .session_allowlist
+                        .clone_from(&policy.session_allowlist);
+                }
+
+                *policy = loaded_policy;
+            }
+            Err(error) => {
+                tracing::warn!("Failed to refresh tool approval policy before send: {error}");
+            }
+        }
+    }
+
     async fn begin_stream(&self, conversation_id: Uuid) -> ServiceResult<()> {
         if self
             .is_streaming
@@ -318,6 +340,7 @@ impl ChatServiceImpl {
                 ServiceError::NotFound(format!("Tool approval request {request_id} not found"))
             })?;
 
+        let mut emit_policy_snapshot = false;
         match decision {
             ToolApprovalResponseAction::ProceedSession => {
                 self.policy
@@ -331,6 +354,7 @@ impl ChatServiceImpl {
                     .await
                     .allow_persistently(tool_identifier, self.app_settings_service.as_ref())
                     .await?;
+                emit_policy_snapshot = true;
             }
             ToolApprovalResponseAction::ProceedOnce | ToolApprovalResponseAction::Denied => {}
         }
@@ -339,6 +363,22 @@ impl ChatServiceImpl {
             request_id,
             approved,
         });
+
+        if emit_policy_snapshot {
+            let policy = self.policy.lock().await.clone();
+            let _ = self
+                .view_tx
+                .try_send(ViewCommand::ToolApprovalPolicyUpdated {
+                    yolo_mode: policy.yolo_mode,
+                    auto_approve_reads: policy.auto_approve_reads,
+                    mcp_approval_mode: policy.mcp_approval_mode,
+                    persistent_allowlist: policy.persistent_allowlist,
+                    persistent_denylist: policy.persistent_denylist,
+                });
+            let _ = self.view_tx.try_send(ViewCommand::YoloModeChanged {
+                active: policy.yolo_mode,
+            });
+        }
 
         Ok(())
     }
@@ -456,6 +496,7 @@ impl ChatService for ChatServiceImpl {
         content: String,
     ) -> ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> {
         self.begin_stream(conversation_id).await?;
+        self.refresh_tool_approval_policy_from_settings().await;
 
         let prepared = self
             .prepare_message_context(conversation_id, content)
