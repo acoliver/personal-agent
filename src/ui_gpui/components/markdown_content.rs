@@ -304,478 +304,8 @@ fn extract_language(info: &str) -> Option<String> {
 /// @plan:PLAN-20260402-MARKDOWN.P05
 /// @requirement:REQ-MD-PARSE-001
 /// @pseudocode parse-markdown-blocks.md lines 1-10
-#[allow(dead_code, clippy::too_many_lines)]
 pub(crate) fn parse_markdown_blocks(content: &str) -> Vec<MarkdownBlock> {
-    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
-    let parser = Parser::new_ext(content, options);
-
-    let mut blocks: Vec<MarkdownBlock> = Vec::new();
-    let mut text_buffer = String::new();
-    let mut current_spans: Vec<MarkdownInline> = Vec::new();
-    let mut current_links: Vec<(Range<usize>, String)> = Vec::new();
-    let mut current_heading_level: Option<u8> = None;
-    let mut inline_stack: Vec<InlineStyle> = Vec::new();
-    let mut link_start_offset: usize = 0;
-    let mut current_url: Option<String> = None;
-
-    let mut container_stack: Vec<Container> = Vec::new();
-    let mut image_alt_buffer = String::new();
-    let mut in_image = false;
-    let mut footnote_label = String::new();
-    let mut in_html_block = false;
-    let mut html_buffer = String::new();
-
-    // Helper to push a block, respecting container hierarchy
-    let push_block = |block: MarkdownBlock,
-                      blocks: &mut Vec<MarkdownBlock>,
-                      container_stack: &mut Vec<Container>| {
-        for container in container_stack.iter_mut().rev() {
-            match container {
-                Container::BlockQuote { children } => {
-                    children.push(block);
-                    return;
-                }
-                Container::List { current_item, .. } => {
-                    current_item.push(block);
-                    return;
-                }
-                _ => {}
-            }
-        }
-        blocks.push(block);
-    };
-
-    // Helper to finalize current text buffer into spans
-    let flush_text_buffer = |text_buffer: &mut String,
-                             current_spans: &mut Vec<MarkdownInline>,
-                             inline_stack: &[InlineStyle]| {
-        if !text_buffer.is_empty() {
-            let span = create_inline_span(text_buffer, inline_stack);
-            current_spans.push(span);
-            text_buffer.clear();
-        }
-    };
-
-    for event in parser {
-        match event {
-            // Block-level: Paragraph / Item / TableCell
-            Event::Start(Tag::Paragraph | Tag::Item | Tag::TableCell) => {
-                text_buffer.clear();
-                current_spans.clear();
-                current_links.clear();
-            }
-            Event::End(TagEnd::Paragraph) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                if !current_spans.is_empty() {
-                    let block = MarkdownBlock::Paragraph {
-                        spans: std::mem::take(&mut current_spans),
-                        links: std::mem::take(&mut current_links),
-                    };
-                    push_block(block, &mut blocks, &mut container_stack);
-                }
-            }
-
-            // Block-level: Heading
-            Event::Start(Tag::Heading { level, .. }) => {
-                text_buffer.clear();
-                current_spans.clear();
-                current_links.clear();
-                current_heading_level = Some(level as u8);
-            }
-            Event::End(TagEnd::Heading(_)) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                let block = MarkdownBlock::Heading {
-                    level: current_heading_level.unwrap_or(1),
-                    spans: std::mem::take(&mut current_spans),
-                    links: std::mem::take(&mut current_links),
-                };
-                current_heading_level = None;
-                push_block(block, &mut blocks, &mut container_stack);
-            }
-
-            // Block-level: Code Block
-            Event::Start(Tag::CodeBlock(kind)) => {
-                let language = match kind {
-                    pulldown_cmark::CodeBlockKind::Fenced(info) => extract_language(info.as_ref()),
-                    pulldown_cmark::CodeBlockKind::Indented => None,
-                };
-                text_buffer.clear();
-                container_stack.push(Container::CodeBlock { language });
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                let language =
-                    if let Some(Container::CodeBlock { language }) = container_stack.pop() {
-                        language
-                    } else {
-                        None
-                    };
-                let block = MarkdownBlock::CodeBlock {
-                    language,
-                    code: std::mem::take(&mut text_buffer),
-                };
-                push_block(block, &mut blocks, &mut container_stack);
-            }
-
-            // Block-level: BlockQuote
-            Event::Start(Tag::BlockQuote(_)) => {
-                container_stack.push(Container::BlockQuote { children: vec![] });
-            }
-            Event::End(TagEnd::BlockQuote(_)) => {
-                if let Some(Container::BlockQuote { children }) = container_stack.pop() {
-                    let block = MarkdownBlock::BlockQuote { blocks: children };
-                    push_block(block, &mut blocks, &mut container_stack);
-                }
-            }
-
-            // Block-level: List
-            Event::Start(Tag::List(start_num)) => {
-                container_stack.push(Container::List {
-                    ordered: start_num.is_some(),
-                    start: start_num.unwrap_or(0),
-                    items: vec![],
-                    current_item: vec![],
-                });
-            }
-            Event::End(TagEnd::List(_)) => {
-                if let Some(Container::List {
-                    ordered,
-                    start,
-                    mut items,
-                    current_item,
-                }) = container_stack.pop()
-                {
-                    if !current_item.is_empty() {
-                        items.push(current_item);
-                    }
-                    let block = MarkdownBlock::List {
-                        ordered,
-                        start,
-                        items,
-                    };
-                    push_block(block, &mut blocks, &mut container_stack);
-                }
-            }
-
-            // Block-level: Item
-            Event::End(TagEnd::Item) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                if let Some(Container::List {
-                    items,
-                    current_item,
-                    ..
-                }) = container_stack.last_mut()
-                {
-                    if !current_spans.is_empty() {
-                        current_item.push(MarkdownBlock::Paragraph {
-                            spans: std::mem::take(&mut current_spans),
-                            links: std::mem::take(&mut current_links),
-                        });
-                    }
-
-                    if !current_item.is_empty() {
-                        items.push(std::mem::take(current_item));
-                    }
-                }
-            }
-
-            // Block-level: Table
-            Event::Start(Tag::Table(alignments)) => {
-                let aln: Vec<Alignment> = alignments.iter().map(|&a| a.into()).collect();
-                container_stack.push(Container::Table {
-                    alignments: aln,
-                    header: vec![],
-                    rows: vec![],
-                    current_row: vec![],
-                    in_header: false,
-                });
-            }
-            Event::Start(Tag::TableHead) => {
-                if let Some(Container::Table { in_header, .. }) = container_stack.last_mut() {
-                    *in_header = true;
-                }
-            }
-            Event::End(TagEnd::TableHead) => {
-                if let Some(Container::Table { .. }) = container_stack.last_mut() {
-                    // Keep header state until the corresponding TableRow ends.
-                }
-            }
-            Event::Start(Tag::TableRow) => {
-                if let Some(Container::Table {
-                    in_header,
-                    header,
-                    rows,
-                    current_row,
-                    ..
-                }) = container_stack.last_mut()
-                {
-                    if !current_row.is_empty() {
-                        let previous_row = std::mem::take(current_row);
-                        if *in_header {
-                            header.extend(previous_row);
-                            *in_header = false;
-                        } else {
-                            rows.push(previous_row);
-                        }
-                    }
-                    current_row.clear();
-                }
-            }
-            Event::End(TagEnd::TableRow) => {
-                if let Some(Container::Table {
-                    in_header,
-                    header,
-                    rows,
-                    current_row,
-                    ..
-                }) = container_stack.last_mut()
-                {
-                    let row = std::mem::take(current_row);
-                    if *in_header {
-                        header.extend(row);
-                        *in_header = false;
-                    } else {
-                        rows.push(row);
-                    }
-                }
-            }
-            Event::End(TagEnd::TableCell) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                let cell = TableCell {
-                    spans: std::mem::take(&mut current_spans),
-                    links: std::mem::take(&mut current_links),
-                };
-                if let Some(Container::Table { current_row, .. }) = container_stack.last_mut() {
-                    current_row.push(cell);
-                }
-            }
-            Event::End(TagEnd::Table) => {
-                if let Some(Container::Table {
-                    alignments,
-                    header,
-                    rows,
-                    ..
-                }) = container_stack.pop()
-                {
-                    let block = MarkdownBlock::Table {
-                        alignments,
-                        header,
-                        rows,
-                    };
-                    push_block(block, &mut blocks, &mut container_stack);
-                }
-            }
-
-            // Block-level: Thematic Break
-            Event::Rule => {
-                let block = MarkdownBlock::ThematicBreak;
-                push_block(block, &mut blocks, &mut container_stack);
-            }
-
-            // Inline: Bold
-            Event::Start(Tag::Strong) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                inline_stack.push(InlineStyle::Bold);
-            }
-            Event::End(TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                inline_stack.pop();
-            }
-
-            // Inline: Italic
-            Event::Start(Tag::Emphasis) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                inline_stack.push(InlineStyle::Italic);
-            }
-
-            // Inline: Strikethrough
-            Event::Start(Tag::Strikethrough) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                inline_stack.push(InlineStyle::Strikethrough);
-            }
-
-            // Inline: Link
-            Event::Start(Tag::Link { dest_url, .. }) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                link_start_offset = count_bytes_in_spans(&current_spans);
-                let url_str = dest_url.to_string();
-                current_url = Some(url_str.clone());
-                inline_stack.push(InlineStyle::Link(url_str));
-            }
-            Event::End(TagEnd::Link) => {
-                flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-                if let Some(url) = current_url.take() {
-                    let link_end_offset = count_bytes_in_spans(&current_spans);
-                    current_links.push((link_start_offset..link_end_offset, url));
-                }
-                inline_stack.pop();
-            }
-
-            // Text events
-            Event::Text(text) => {
-                if in_image {
-                    image_alt_buffer.push_str(&text);
-                } else {
-                    text_buffer.push_str(&text);
-                }
-            }
-
-            // Inline code + inline math
-            Event::Code(text) | Event::InlineMath(text) => {
-                current_spans.push(MarkdownInline {
-                    text: text.to_string(),
-                    bold: false,
-                    italic: false,
-                    strikethrough: false,
-                    code: true,
-                    link_url: None,
-                });
-            }
-
-            // Breaks
-            Event::SoftBreak => {
-                text_buffer.push(' ');
-            }
-            Event::HardBreak => {
-                text_buffer.push('\n');
-            }
-
-            // HTML
-            Event::Start(Tag::HtmlBlock) => {
-                in_html_block = true;
-                html_buffer.clear();
-            }
-            Event::End(TagEnd::HtmlBlock) => {
-                in_html_block = false;
-                let stripped = strip_html_tags(&html_buffer);
-                if !stripped.is_empty() {
-                    blocks.push(MarkdownBlock::Paragraph {
-                        spans: vec![MarkdownInline::plain(stripped)],
-                        links: vec![],
-                    });
-                }
-                html_buffer.clear();
-            }
-            Event::Html(html) => {
-                if in_html_block {
-                    html_buffer.push_str(&html);
-                } else {
-                    let stripped = strip_html_tags(&html);
-                    if !stripped.is_empty() {
-                        blocks.push(MarkdownBlock::Paragraph {
-                            spans: vec![MarkdownInline::plain(stripped)],
-                            links: vec![],
-                        });
-                    }
-                }
-            }
-            Event::InlineHtml(html) => {
-                let stripped = strip_html_tags(&html);
-                text_buffer.push_str(&stripped);
-            }
-
-            // Image
-            Event::Start(Tag::Image { .. }) => {
-                in_image = true;
-                image_alt_buffer.clear();
-            }
-            Event::End(TagEnd::Image) => {
-                in_image = false;
-                let block = MarkdownBlock::ImageFallback {
-                    alt: std::mem::take(&mut image_alt_buffer),
-                };
-                push_block(block, &mut blocks, &mut container_stack);
-            }
-
-            // Task list marker
-            Event::TaskListMarker(checked) => {
-                if checked {
-                    text_buffer.push('\u{2611}');
-                } else {
-                    text_buffer.push('\u{2610}');
-                }
-                text_buffer.push_str("  ");
-            }
-
-            // Footnote reference
-            Event::FootnoteReference(label) => {
-                use std::fmt::Write as _;
-                let _ = write!(text_buffer, "[^{label}]");
-            }
-
-            // Fallbacks
-            Event::Start(Tag::Superscript | Tag::Subscript | Tag::MetadataBlock(_))
-            | Event::End(TagEnd::Superscript | TagEnd::Subscript | TagEnd::MetadataBlock(_)) => {}
-
-            // Footnote definition
-            Event::Start(Tag::FootnoteDefinition(label)) => {
-                footnote_label = label.to_string();
-                text_buffer.clear();
-            }
-            Event::End(TagEnd::FootnoteDefinition) => {
-                if !text_buffer.is_empty() {
-                    let prefixed_text = format!("[^{footnote_label}]: {text_buffer}");
-                    blocks.push(MarkdownBlock::Paragraph {
-                        spans: vec![MarkdownInline::plain(prefixed_text)],
-                        links: vec![],
-                    });
-                }
-                footnote_label.clear();
-            }
-
-            // Unhandled
-            _ => {
-                if let Some(Container::CodeBlock { .. }) = container_stack.last() {
-                    // Keep raw text behavior inside fenced/indented code blocks.
-                }
-            }
-        }
-    }
-
-    // Flush remaining content at end of document
-    flush_text_buffer(&mut text_buffer, &mut current_spans, &inline_stack);
-    if !current_spans.is_empty() {
-        let block = MarkdownBlock::Paragraph {
-            spans: std::mem::take(&mut current_spans),
-            links: std::mem::take(&mut current_links),
-        };
-        push_block(block, &mut blocks, &mut container_stack);
-    }
-
-    // Handle any unclosed containers (edge cases where markdown is incomplete)
-    // These should be appended, not prepended, to preserve order
-    let mut remaining: Vec<MarkdownBlock> = vec![];
-    while let Some(container) = container_stack.pop() {
-        match container {
-            Container::BlockQuote { children } => {
-                remaining.push(MarkdownBlock::BlockQuote { blocks: children });
-            }
-            Container::List {
-                ordered,
-                start,
-                mut items,
-                current_item,
-            } => {
-                if !current_item.is_empty() {
-                    items.push(current_item);
-                }
-                remaining.push(MarkdownBlock::List {
-                    ordered,
-                    start,
-                    items,
-                });
-            }
-            _ => {}
-        }
-    }
-    // Append in reverse order since we were popping
-    for block in remaining.into_iter().rev() {
-        blocks.push(block);
-    }
-
-    blocks
+    ParseState::new().parse(content)
 }
 
 #[derive(Debug)]
@@ -799,6 +329,511 @@ enum Container {
     CodeBlock {
         language: Option<String>,
     },
+}
+
+struct ParseState {
+    blocks: Vec<MarkdownBlock>,
+    text_buffer: String,
+    current_spans: Vec<MarkdownInline>,
+    current_links: Vec<(Range<usize>, String)>,
+    current_heading_level: Option<u8>,
+    inline_stack: Vec<InlineStyle>,
+    link_start_offset: usize,
+    current_url: Option<String>,
+    container_stack: Vec<Container>,
+    image_alt_buffer: String,
+    in_image: bool,
+    footnote_label: String,
+    in_html_block: bool,
+    html_buffer: String,
+}
+
+impl ParseState {
+    fn new() -> Self {
+        Self {
+            blocks: Vec::new(),
+            text_buffer: String::new(),
+            current_spans: Vec::new(),
+            current_links: Vec::new(),
+            current_heading_level: None,
+            inline_stack: Vec::new(),
+            link_start_offset: 0,
+            current_url: None,
+            container_stack: Vec::new(),
+            image_alt_buffer: String::new(),
+            in_image: false,
+            footnote_label: String::new(),
+            in_html_block: false,
+            html_buffer: String::new(),
+        }
+    }
+
+    fn parse(mut self, content: &str) -> Vec<MarkdownBlock> {
+        use pulldown_cmark::{Options, Parser};
+
+        let options =
+            Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+        for event in Parser::new_ext(content, options) {
+            self.handle_event(event);
+        }
+        self.finish()
+    }
+
+    fn finish(mut self) -> Vec<MarkdownBlock> {
+        self.flush_text_buffer();
+        if !self.current_spans.is_empty() {
+            let spans = std::mem::take(&mut self.current_spans);
+            let links = std::mem::take(&mut self.current_links);
+            self.push_block(MarkdownBlock::Paragraph { spans, links });
+        }
+        self.flush_unclosed_containers();
+        self.blocks
+    }
+
+    fn handle_event(&mut self, event: pulldown_cmark::Event<'_>) {
+        use pulldown_cmark::Event;
+
+        match event {
+            Event::Start(tag) => self.handle_start_tag(tag),
+            Event::End(tag_end) => self.handle_end_tag(tag_end),
+            Event::Text(text) => self.handle_text(text.as_ref()),
+            Event::Code(text) | Event::InlineMath(text) => self.push_code_span(text.as_ref()),
+            Event::DisplayMath(text) => self.push_display_math_block(text.as_ref()),
+            Event::SoftBreak => self.text_buffer.push(' '),
+            Event::HardBreak => self.text_buffer.push('\n'),
+            Event::Rule => self.push_block(MarkdownBlock::ThematicBreak),
+            Event::Html(html) => self.handle_html(html.as_ref()),
+            Event::InlineHtml(html) => {
+                let stripped = strip_html_tags(html.as_ref());
+                self.text_buffer.push_str(&stripped);
+            }
+            Event::TaskListMarker(checked) => self.push_task_marker(checked),
+            Event::FootnoteReference(label) => self.push_footnote_reference(label.as_ref()),
+        }
+    }
+
+    fn handle_start_tag(&mut self, tag: pulldown_cmark::Tag<'_>) {
+        use pulldown_cmark::Tag;
+
+        match tag {
+            Tag::Paragraph | Tag::Item | Tag::TableCell => self.reset_inline_buffers(),
+            Tag::Heading { level, .. } => self.begin_heading(level as u8),
+            Tag::CodeBlock(kind) => self.begin_code_block(kind),
+            Tag::BlockQuote(_) => self.begin_blockquote(),
+            Tag::List(start_num) => self.begin_list(start_num),
+            Tag::Table(alignments) => self.begin_table(alignments),
+            Tag::TableHead => self.begin_table_head(),
+            Tag::TableRow => self.begin_table_row(),
+            Tag::Strong => self.push_inline_style(InlineStyle::Bold),
+            Tag::Emphasis => self.push_inline_style(InlineStyle::Italic),
+            Tag::Strikethrough => self.push_inline_style(InlineStyle::Strikethrough),
+            Tag::Link { dest_url, .. } => self.begin_link(dest_url.as_ref()),
+            Tag::HtmlBlock => self.begin_html_block(),
+            Tag::Image { .. } => self.begin_image(),
+            Tag::FootnoteDefinition(label) => self.begin_footnote_definition(label.as_ref()),
+            _ => {}
+        }
+    }
+
+    fn handle_end_tag(&mut self, tag_end: pulldown_cmark::TagEnd) {
+        use pulldown_cmark::TagEnd;
+
+        match tag_end {
+            TagEnd::Paragraph => self.end_paragraph(),
+            TagEnd::Heading(_) => self.end_heading(),
+            TagEnd::CodeBlock => self.end_code_block(),
+            TagEnd::BlockQuote(_) => self.end_blockquote(),
+            TagEnd::List(_) => self.end_list(),
+            TagEnd::Item => self.end_item(),
+            TagEnd::TableRow => self.end_table_row(),
+            TagEnd::TableCell => self.end_table_cell(),
+            TagEnd::Table => self.end_table(),
+            TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough => self.pop_inline_style(),
+            TagEnd::Link => self.end_link(),
+            TagEnd::HtmlBlock => self.end_html_block(),
+            TagEnd::Image => self.end_image(),
+            TagEnd::FootnoteDefinition => self.end_footnote_definition(),
+            _ => {}
+        }
+    }
+
+    fn reset_inline_buffers(&mut self) {
+        self.text_buffer.clear();
+        self.current_spans.clear();
+        self.current_links.clear();
+    }
+
+    fn begin_heading(&mut self, level: u8) {
+        self.reset_inline_buffers();
+        self.current_heading_level = Some(level);
+    }
+
+    fn begin_code_block(&mut self, kind: pulldown_cmark::CodeBlockKind<'_>) {
+        let language = match kind {
+            pulldown_cmark::CodeBlockKind::Fenced(info) => extract_language(info.as_ref()),
+            pulldown_cmark::CodeBlockKind::Indented => None,
+        };
+        self.text_buffer.clear();
+        self.container_stack.push(Container::CodeBlock { language });
+    }
+
+    fn begin_blockquote(&mut self) {
+        self.container_stack
+            .push(Container::BlockQuote { children: vec![] });
+    }
+
+    fn begin_list(&mut self, start_num: Option<u64>) {
+        self.container_stack.push(Container::List {
+            ordered: start_num.is_some(),
+            start: start_num.unwrap_or(0),
+            items: vec![],
+            current_item: vec![],
+        });
+    }
+
+    fn begin_table(&mut self, alignments: Vec<pulldown_cmark::Alignment>) {
+        self.container_stack.push(Container::Table {
+            alignments: alignments.into_iter().map(Alignment::from).collect(),
+            header: vec![],
+            rows: vec![],
+            current_row: vec![],
+            in_header: false,
+        });
+    }
+
+    fn begin_table_head(&mut self) {
+        if let Some(Container::Table { in_header, .. }) = self.container_stack.last_mut() {
+            *in_header = true;
+        }
+    }
+
+    fn begin_table_row(&mut self) {
+        if let Some(Container::Table {
+            in_header,
+            header,
+            rows,
+            current_row,
+            ..
+        }) = self.container_stack.last_mut()
+        {
+            if !current_row.is_empty() {
+                let previous_row = std::mem::take(current_row);
+                if *in_header {
+                    header.extend(previous_row);
+                    *in_header = false;
+                } else {
+                    rows.push(previous_row);
+                }
+            }
+            current_row.clear();
+        }
+    }
+
+    fn push_inline_style(&mut self, style: InlineStyle) {
+        self.flush_text_buffer();
+        self.inline_stack.push(style);
+    }
+
+    fn pop_inline_style(&mut self) {
+        self.flush_text_buffer();
+        self.inline_stack.pop();
+    }
+
+    fn begin_link(&mut self, url: &str) {
+        self.flush_text_buffer();
+        self.link_start_offset = count_bytes_in_spans(&self.current_spans);
+        self.current_url = Some(url.to_string());
+        self.inline_stack.push(InlineStyle::Link(url.to_string()));
+    }
+
+    fn begin_html_block(&mut self) {
+        self.in_html_block = true;
+        self.html_buffer.clear();
+    }
+
+    fn begin_image(&mut self) {
+        self.in_image = true;
+        self.image_alt_buffer.clear();
+    }
+
+    fn begin_footnote_definition(&mut self, label: &str) {
+        self.footnote_label = label.to_string();
+        self.text_buffer.clear();
+    }
+
+    fn end_paragraph(&mut self) {
+        self.flush_text_buffer();
+        if !self.current_spans.is_empty() {
+            let spans = std::mem::take(&mut self.current_spans);
+            let links = std::mem::take(&mut self.current_links);
+            self.push_block(MarkdownBlock::Paragraph { spans, links });
+        }
+    }
+
+    fn end_heading(&mut self) {
+        self.flush_text_buffer();
+        let spans = std::mem::take(&mut self.current_spans);
+        let links = std::mem::take(&mut self.current_links);
+        self.push_block(MarkdownBlock::Heading {
+            level: self.current_heading_level.unwrap_or(1),
+            spans,
+            links,
+        });
+        self.current_heading_level = None;
+    }
+
+    fn end_code_block(&mut self) {
+        let language = if let Some(Container::CodeBlock { language }) = self.container_stack.pop() {
+            language
+        } else {
+            None
+        };
+
+        let code = std::mem::take(&mut self.text_buffer);
+        self.push_block(MarkdownBlock::CodeBlock { language, code });
+    }
+
+    fn end_blockquote(&mut self) {
+        if let Some(Container::BlockQuote { children }) = self.container_stack.pop() {
+            self.push_block(MarkdownBlock::BlockQuote { blocks: children });
+        }
+    }
+
+    fn end_list(&mut self) {
+        if let Some(Container::List {
+            ordered,
+            start,
+            mut items,
+            current_item,
+        }) = self.container_stack.pop()
+        {
+            if !current_item.is_empty() {
+                items.push(current_item);
+            }
+            self.push_block(MarkdownBlock::List {
+                ordered,
+                start,
+                items,
+            });
+        }
+    }
+
+    fn end_item(&mut self) {
+        self.flush_text_buffer();
+        let paragraph = if self.current_spans.is_empty() {
+            None
+        } else {
+            let spans = std::mem::take(&mut self.current_spans);
+            let links = std::mem::take(&mut self.current_links);
+            Some(MarkdownBlock::Paragraph { spans, links })
+        };
+
+        if let Some(Container::List {
+            items,
+            current_item,
+            ..
+        }) = self.container_stack.last_mut()
+        {
+            if let Some(paragraph) = paragraph {
+                current_item.push(paragraph);
+            }
+
+            if !current_item.is_empty() {
+                items.push(std::mem::take(current_item));
+            }
+        }
+    }
+
+    fn end_table_row(&mut self) {
+        if let Some(Container::Table {
+            in_header,
+            header,
+            rows,
+            current_row,
+            ..
+        }) = self.container_stack.last_mut()
+        {
+            let row = std::mem::take(current_row);
+            if *in_header {
+                header.extend(row);
+                *in_header = false;
+            } else {
+                rows.push(row);
+            }
+        }
+    }
+
+    fn end_table_cell(&mut self) {
+        self.flush_text_buffer();
+        let spans = std::mem::take(&mut self.current_spans);
+        let links = std::mem::take(&mut self.current_links);
+        let cell = TableCell { spans, links };
+
+        if let Some(Container::Table { current_row, .. }) = self.container_stack.last_mut() {
+            current_row.push(cell);
+        }
+    }
+
+    fn end_table(&mut self) {
+        if let Some(Container::Table {
+            alignments,
+            header,
+            rows,
+            ..
+        }) = self.container_stack.pop()
+        {
+            self.push_block(MarkdownBlock::Table {
+                alignments,
+                header,
+                rows,
+            });
+        }
+    }
+
+    fn end_link(&mut self) {
+        self.flush_text_buffer();
+        if let Some(url) = self.current_url.take() {
+            let link_end_offset = count_bytes_in_spans(&self.current_spans);
+            self.current_links
+                .push((self.link_start_offset..link_end_offset, url));
+        }
+        self.inline_stack.pop();
+    }
+
+    fn end_html_block(&mut self) {
+        self.in_html_block = false;
+        let stripped = strip_html_tags(&self.html_buffer);
+        if !stripped.is_empty() {
+            self.push_plain_paragraph_to_root(stripped);
+        }
+        self.html_buffer.clear();
+    }
+
+    fn end_image(&mut self) {
+        self.in_image = false;
+        let alt = std::mem::take(&mut self.image_alt_buffer);
+        self.push_block(MarkdownBlock::ImageFallback { alt });
+    }
+
+    fn end_footnote_definition(&mut self) {
+        if !self.text_buffer.is_empty() {
+            let prefixed_text = format!("[^{}]: {}", self.footnote_label, self.text_buffer);
+            self.push_plain_paragraph_to_root(prefixed_text);
+        }
+        self.footnote_label.clear();
+    }
+
+    fn handle_text(&mut self, text: &str) {
+        if self.in_image {
+            self.image_alt_buffer.push_str(text);
+        } else {
+            self.text_buffer.push_str(text);
+        }
+    }
+
+    fn push_code_span(&mut self, text: &str) {
+        self.current_spans.push(MarkdownInline {
+            text: text.to_string(),
+            bold: false,
+            italic: false,
+            strikethrough: false,
+            code: true,
+            link_url: None,
+        });
+    }
+
+    fn push_display_math_block(&mut self, text: &str) {
+        self.push_block(MarkdownBlock::CodeBlock {
+            language: Some("math".to_string()),
+            code: text.to_string(),
+        });
+    }
+
+    fn handle_html(&mut self, html: &str) {
+        if self.in_html_block {
+            self.html_buffer.push_str(html);
+            return;
+        }
+
+        let stripped = strip_html_tags(html);
+        if !stripped.is_empty() {
+            self.push_plain_paragraph_to_root(stripped);
+        }
+    }
+
+    fn push_task_marker(&mut self, checked: bool) {
+        self.text_buffer
+            .push(if checked { '\u{2611}' } else { '\u{2610}' });
+        self.text_buffer.push_str("  ");
+    }
+
+    fn push_footnote_reference(&mut self, label: &str) {
+        use std::fmt::Write as _;
+        let _ = write!(self.text_buffer, "[^{label}]");
+    }
+
+    fn push_plain_paragraph_to_root(&mut self, text: String) {
+        self.blocks.push(MarkdownBlock::Paragraph {
+            spans: vec![MarkdownInline::plain(text)],
+            links: vec![],
+        });
+    }
+
+    fn flush_text_buffer(&mut self) {
+        if !self.text_buffer.is_empty() {
+            let span = create_inline_span(&self.text_buffer, &self.inline_stack);
+            self.current_spans.push(span);
+            self.text_buffer.clear();
+        }
+    }
+
+    fn push_block(&mut self, block: MarkdownBlock) {
+        for container in self.container_stack.iter_mut().rev() {
+            match container {
+                Container::BlockQuote { children } => {
+                    children.push(block);
+                    return;
+                }
+                Container::List { current_item, .. } => {
+                    current_item.push(block);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        self.blocks.push(block);
+    }
+
+    fn flush_unclosed_containers(&mut self) {
+        let mut remaining: Vec<MarkdownBlock> = vec![];
+        while let Some(container) = self.container_stack.pop() {
+            match container {
+                Container::BlockQuote { children } => {
+                    remaining.push(MarkdownBlock::BlockQuote { blocks: children });
+                }
+                Container::List {
+                    ordered,
+                    start,
+                    mut items,
+                    current_item,
+                } => {
+                    if !current_item.is_empty() {
+                        items.push(current_item);
+                    }
+                    remaining.push(MarkdownBlock::List {
+                        ordered,
+                        start,
+                        items,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        for block in remaining.into_iter().rev() {
+            self.blocks.push(block);
+        }
+    }
 }
 
 /// Convert intermediate representation blocks to GPUI elements.
