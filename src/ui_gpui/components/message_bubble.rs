@@ -3,7 +3,10 @@
 //! @plan PLAN-20250128-GPUI.P06
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, IntoElement};
+use crate::ui_gpui::components::markdown_content::{
+    blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
+};
+use gpui::{div, prelude::*, px, InteractiveElement, IntoElement};
 
 pub struct UserBubble {
     content: String,
@@ -80,6 +83,46 @@ impl AssistantBubble {
     }
 }
 
+fn rendered_content_text(content: &str, is_streaming: bool) -> String {
+    if is_streaming {
+        format!("{content}▋")
+    } else {
+        content.to_string()
+    }
+}
+
+/// @plan:PLAN-20260402-MARKDOWN.P11
+/// @requirement:REQ-MD-INTEGRATE-024
+fn has_any_links(blocks: &[MarkdownBlock]) -> bool {
+    blocks.iter().any(|block| match block {
+        MarkdownBlock::Paragraph { links, .. } | MarkdownBlock::Heading { links, .. } => {
+            !links.is_empty()
+        }
+        MarkdownBlock::BlockQuote { blocks } => has_any_links(blocks),
+        MarkdownBlock::List { items, .. } => {
+            items.iter().any(|item_blocks| has_any_links(item_blocks))
+        }
+        MarkdownBlock::Table { header, rows, .. } => {
+            let header_has_links = header.iter().any(|cell| {
+                !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
+            });
+            let body_has_links = rows.iter().any(|row| {
+                row.iter().any(|cell| {
+                    !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
+                })
+            });
+            header_has_links || body_has_links
+        }
+        _ => false,
+    })
+}
+
+/// @plan:PLAN-20260402-MARKDOWN.P11
+/// @requirement:REQ-MD-INTEGRATE-020
+fn should_enable_bubble_copy(blocks: &[MarkdownBlock], is_streaming: bool) -> bool {
+    !is_streaming && !has_any_links(blocks)
+}
+
 impl IntoElement for AssistantBubble {
     type Element = gpui::Div;
 
@@ -93,12 +136,11 @@ impl IntoElement for AssistantBubble {
             .w_full()
             .gap(px(Theme::SPACING_SM));
 
-        // Thinking section (if show_thinking and thinking is present)
         if self.show_thinking {
             if let Some(thinking_content) = self.thinking {
                 bubble = bubble.child(
                     div()
-                        .w(px(400.0))
+                        .w_full()
                         .px(px(Theme::SPACING_MD))
                         .py(px(Theme::SPACING_SM))
                         .rounded(px(Theme::RADIUS_MD))
@@ -110,25 +152,37 @@ impl IntoElement for AssistantBubble {
             }
         }
 
-        // Main content (with cursor if streaming)
-        let content_text = if self.is_streaming {
-            format!("{}▋", self.content)
-        } else {
-            self.content.clone()
-        };
+        let content_text = rendered_content_text(&self.content, self.is_streaming);
 
-        let main_content = div()
-            .w(px(400.0))
+        // @plan:PLAN-20260402-MARKDOWN.P11
+        // @requirement:REQ-MD-INTEGRATE-002
+        let blocks = parse_markdown_blocks(&content_text);
+        let rendered = blocks_to_elements(&blocks);
+
+        let mut main_content = div()
+            .w_full()
             .px(px(Theme::SPACING_MD))
             .py(px(Theme::SPACING_SM))
             .rounded(px(Theme::RADIUS_LG))
             .bg(Theme::bg_darker())
             .text_color(Theme::text_primary())
-            .child(content_text);
+            .children(rendered)
+            .id(gpui::SharedString::from(format!(
+                "abbl-{}",
+                self.content.len()
+            )));
+
+        if should_enable_bubble_copy(&blocks, self.is_streaming) {
+            let raw_markdown = self.content.clone();
+            main_content = main_content
+                .cursor_pointer()
+                .on_click(move |_event, _window, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(raw_markdown.clone()));
+                });
+        }
 
         bubble = bubble.child(main_content);
 
-        // Model ID (if present)
         if let Some(model_id) = self.model_id {
             bubble = bubble.child(
                 div()
@@ -139,5 +193,32 @@ impl IntoElement for AssistantBubble {
         }
 
         bubble
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_click_link_does_not_copy_to_clipboard() {
+        let blocks = parse_markdown_blocks("[click](https://example.com)");
+        assert!(has_any_links(&blocks));
+        assert!(!should_enable_bubble_copy(&blocks, false));
+    }
+
+    #[test]
+    fn test_streaming_cursor_only_during_streaming() {
+        assert_eq!(rendered_content_text("Hello", true), "Hello▋");
+        assert_eq!(rendered_content_text("Hello", false), "Hello");
+    }
+
+    #[test]
+    fn test_table_cell_links_suppress_bubble_copy() {
+        let markdown = "| Col |\n|---|\n| [link](https://example.com) |";
+        let blocks = parse_markdown_blocks(markdown);
+
+        assert!(has_any_links(&blocks));
+        assert!(!should_enable_bubble_copy(&blocks, false));
     }
 }

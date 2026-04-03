@@ -250,7 +250,13 @@ impl ChatView {
             // Streaming message
             .when(matches!(streaming, StreamingState::Streaming { .. }), |d| {
                 let (content, _done) = match &streaming {
-                    StreamingState::Streaming { content, done } => (content.clone(), *done),
+                    StreamingState::Streaming { content, done } => {
+                        tracing::debug!(
+                            stream_buffer_len = content.len(),
+                            "rendering streaming assistant bubble"
+                        );
+                        (content.clone(), *done)
+                    }
                     _ => (String::new(), false),
                 };
                 let mut bubble = AssistantBubble::new(content)
@@ -303,53 +309,27 @@ impl ChatView {
     }
 
     /// Render assistant message - left aligned, dark bubble with model label
+    /// @plan:PLAN-20260402-MARKDOWN.P11
+    /// @requirement:REQ-MD-INTEGRATE-010
     pub(super) fn render_assistant_message(
         msg: &ChatMessage,
         show_thinking: bool,
     ) -> gpui::AnyElement {
-        let model_id = msg
-            .model_id
-            .clone()
-            .unwrap_or_else(|| "Assistant".to_string());
+        let mut bubble = AssistantBubble::new(msg.content.clone());
 
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            // Model label
-            .child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(Theme::text_muted())
-                    .child(model_id),
-            )
-            // Thinking block (if present and visible)
-            .when(msg.thinking.is_some() && show_thinking, |d| {
-                d.child(Self::render_thinking_block(msg.thinking.as_ref().unwrap()))
-            })
-            // Response bubble — click to copy
-            .child({
-                let content = msg.content.clone();
-                let text = content.clone();
-                div()
-                    .id(SharedString::from(format!("abbl-{}", content.len())))
-                    .max_w(px(300.0))
-                    .px(px(10.0))
-                    .py(px(10.0))
-                    .rounded(px(12.0))
-                    .bg(Theme::assistant_bubble())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .text_size(px(13.0))
-                    .text_color(Theme::text_primary())
-                    .cursor_pointer()
-                    .on_click(move |_event, _window, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
-                    })
-                    .child(content)
-            })
-            .into_any_element()
+        if let Some(ref model_id) = msg.model_id {
+            bubble = bubble.model_id(model_id.clone());
+        } else {
+            bubble = bubble.model_id("Assistant");
+        }
+
+        if show_thinking {
+            if let Some(ref thinking) = msg.thinking {
+                bubble = bubble.thinking(thinking.clone()).show_thinking(true);
+            }
+        }
+
+        bubble.into_any_element()
     }
 
     /// Render a single inline approval bubble with action button callbacks.
@@ -442,6 +422,7 @@ impl ChatView {
     }
 
     /// Render thinking block with blue tint
+    #[allow(dead_code)]
     pub(super) fn render_thinking_block(content: &str) -> impl IntoElement {
         div()
             .max_w(px(300.0))

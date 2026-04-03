@@ -297,7 +297,9 @@ impl LlmClient {
             return self.build_openai_model_with_quirks(base_url);
         }
 
-        let mut config = ExtendedModelConfig::new().with_api_key(&self.api_key);
+        let mut config = ExtendedModelConfig::new()
+            .with_api_key(&self.api_key)
+            .with_timeout(Self::request_timeout());
 
         if let Some(url) = base_url {
             config = config.with_base_url(url);
