@@ -10,6 +10,7 @@
 use super::sse_normalize::NormalizeSseStream;
 use async_trait::async_trait;
 use reqwest::Client;
+use serde::Serialize;
 use serdes_ai::core::messages::request::ModelRequestPart;
 use serdes_ai::core::messages::ModelResponsePart;
 use serdes_ai::core::{ModelRequest, ModelResponse, ModelSettings};
@@ -98,14 +99,14 @@ impl Model for NormalizingSseModel {
         settings: &ModelSettings,
         params: &ModelRequestParameters,
     ) -> Result<StreamedResponse, ModelError> {
-        let body = build_chat_request(
+        let body = build_chat_request_payload(
             &self.model_name,
             messages,
             settings,
             params,
             self.enable_thinking,
             self.thinking_budget,
-        );
+        )?;
         let timeout = settings.timeout.unwrap_or(self.default_timeout);
 
         let response = self
@@ -150,19 +151,20 @@ impl std::fmt::Debug for NormalizingSseModel {
 // Request-body construction
 // ---------------------------------------------------------------------------
 
-/// Build a streaming `ChatCompletionRequest`.
+/// Build a streaming chat request payload.
 ///
 /// When `enable_thinking` is set, `max_completion_tokens` is used instead of
 /// `max_tokens` (the `OpenAI` reasoning API requirement).
-fn build_chat_request(
+fn build_chat_request_payload(
     model_name: &str,
     messages: &[ModelRequest],
     settings: &ModelSettings,
     params: &ModelRequestParameters,
     enable_thinking: bool,
     thinking_budget: Option<u64>,
-) -> ChatCompletionRequest {
-    let chat_messages: Vec<ChatMessage> = messages.iter().flat_map(convert_request).collect();
+) -> Result<serde_json::Value, ModelError> {
+    let chat_messages: Vec<OutboundChatMessage> =
+        messages.iter().flat_map(convert_request).collect();
 
     let tools = if params.tools.is_empty() {
         None
@@ -178,9 +180,9 @@ fn build_chat_request(
         (settings.max_tokens, None)
     };
 
-    ChatCompletionRequest {
+    let request = ChatCompletionRequest {
         model: model_name.to_string(),
-        messages: chat_messages,
+        messages: Vec::new(),
         temperature: settings.temperature,
         top_p: settings.top_p,
         max_tokens,
@@ -200,102 +202,159 @@ fn build_chat_request(
         }),
         logprobs: None,
         top_logprobs: None,
+    };
+
+    let mut request_value = serde_json::to_value(request)?;
+    if !request_value.is_object() {
+        return Err(ModelError::from(serde_json::Error::io(
+            std::io::Error::other(format!(
+                "ChatCompletionRequest must serialize to a JSON object, got: {request_value}"
+            )),
+        )));
+    }
+
+    let encoded_messages = serde_json::to_value(chat_messages)?;
+    request_value
+        .as_object_mut()
+        .expect("request_value object checked above")
+        .insert("messages".to_string(), encoded_messages);
+
+    Ok(request_value)
+}
+
+fn convert_request(req: &ModelRequest) -> Vec<OutboundChatMessage> {
+    req.parts.iter().map(convert_request_part).collect()
+}
+
+fn convert_request_part(part: &ModelRequestPart) -> OutboundChatMessage {
+    match part {
+        ModelRequestPart::SystemPrompt(sys) => {
+            OutboundChatMessage::from_chat_message(ChatMessage {
+                role: "system".to_string(),
+                content: Some(MessageContent::Text(sys.content.clone())),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            })
+        }
+        ModelRequestPart::UserPrompt(user) => OutboundChatMessage::from_chat_message(ChatMessage {
+            role: "user".to_string(),
+            content: Some(convert_user_content(&user.content)),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }),
+        ModelRequestPart::ToolReturn(tool_ret) => {
+            OutboundChatMessage::from_chat_message(ChatMessage {
+                role: "tool".to_string(),
+                content: Some(MessageContent::Text(tool_ret.content.to_string_content())),
+                name: None,
+                tool_calls: None,
+                tool_call_id: tool_ret.tool_call_id.clone(),
+            })
+        }
+        ModelRequestPart::RetryPrompt(retry) => {
+            OutboundChatMessage::from_chat_message(ChatMessage {
+                role: "user".to_string(),
+                content: Some(MessageContent::Text(retry.content.message().to_string())),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            })
+        }
+        ModelRequestPart::BuiltinToolReturn(builtin) => {
+            let content = serde_json::to_string(&builtin.content)
+                .unwrap_or_else(|_| builtin.content_type().to_string());
+            OutboundChatMessage::from_chat_message(ChatMessage::tool(
+                content,
+                builtin.tool_call_id.clone(),
+            ))
+        }
+        ModelRequestPart::ModelResponse(response) => convert_model_response(response),
     }
 }
 
-fn convert_request(req: &ModelRequest) -> Vec<ChatMessage> {
-    let mut messages = Vec::new();
-    for part in &req.parts {
-        match part {
-            ModelRequestPart::SystemPrompt(sys) => {
-                messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    content: Some(MessageContent::Text(sys.content.clone())),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-            }
-            ModelRequestPart::UserPrompt(user) => {
-                let content = match &user.content {
-                    UserContent::Text(text) => MessageContent::Text(text.clone()),
-                    UserContent::Parts(parts) => {
-                        let text: String = parts
-                            .iter()
-                            .filter_map(|p| match p {
-                                UserContentPart::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("");
-                        MessageContent::Text(text)
-                    }
-                };
-                messages.push(ChatMessage {
-                    role: "user".to_string(),
-                    content: Some(content),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-            }
-            ModelRequestPart::ToolReturn(tool_ret) => {
-                messages.push(ChatMessage {
-                    role: "tool".to_string(),
-                    content: Some(MessageContent::Text(tool_ret.content.to_string_content())),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: tool_ret.tool_call_id.clone(),
-                });
-            }
-            ModelRequestPart::RetryPrompt(retry) => {
-                messages.push(ChatMessage {
-                    role: "user".to_string(),
-                    content: Some(MessageContent::Text(retry.content.message().to_string())),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-            }
-            ModelRequestPart::BuiltinToolReturn(builtin) => {
-                let content_str = serde_json::to_string(&builtin.content)
-                    .unwrap_or_else(|_| builtin.content_type().to_string());
-                messages.push(ChatMessage::tool(content_str, builtin.tool_call_id.clone()));
-            }
-            ModelRequestPart::ModelResponse(response) => {
-                let mut text_parts = Vec::new();
-                let mut tool_calls = Vec::new();
-                for rp in &response.parts {
-                    match rp {
-                        ModelResponsePart::Text(t) => text_parts.push(t.content.clone()),
-                        ModelResponsePart::ToolCall(tc) => {
-                            tool_calls.push(ToolCall {
-                                id: tc.tool_call_id.clone().unwrap_or_default(),
-                                tool_type: "function".to_string(),
-                                function: FunctionCall {
-                                    name: tc.tool_name.clone(),
-                                    arguments: tc.args.to_json_string().unwrap_or_default(),
-                                },
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                messages.push(ChatMessage {
-                    role: "assistant".to_string(),
-                    content: Some(MessageContent::Text(text_parts.join(""))),
-                    name: None,
-                    tool_calls: if tool_calls.is_empty() {
-                        None
-                    } else {
-                        Some(tool_calls)
-                    },
-                    tool_call_id: None,
-                });
-            }
+fn convert_user_content(content: &UserContent) -> MessageContent {
+    match content {
+        UserContent::Text(text) => MessageContent::Text(text.clone()),
+        UserContent::Parts(parts) => {
+            let text = parts
+                .iter()
+                .filter_map(|part| match part {
+                    UserContentPart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            MessageContent::Text(text)
         }
     }
-    messages
+}
+
+fn convert_model_response(response: &ModelResponse) -> OutboundChatMessage {
+    let mut text_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+    let mut reasoning_parts = Vec::new();
+
+    for part in &response.parts {
+        match part {
+            ModelResponsePart::Text(text) => text_parts.push(text.content.clone()),
+            ModelResponsePart::Thinking(thinking) => reasoning_parts.push(thinking.content.clone()),
+            ModelResponsePart::ToolCall(tool_call) => {
+                tool_calls.push(ToolCall {
+                    id: tool_call.tool_call_id.clone().unwrap_or_default(),
+                    tool_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: tool_call.tool_name.clone(),
+                        arguments: tool_call.args.to_json_string().unwrap_or_default(),
+                    },
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let reasoning_content = {
+        let merged = reasoning_parts.join("");
+        (!merged.is_empty()).then_some(merged)
+    };
+
+    OutboundChatMessage {
+        role: "assistant".to_string(),
+        content: Some(MessageContent::Text(text_parts.join(""))),
+        name: None,
+        tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
+        tool_call_id: None,
+        reasoning_content,
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OutboundChatMessage {
+    role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<MessageContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+}
+
+impl OutboundChatMessage {
+    fn from_chat_message(message: ChatMessage) -> Self {
+        Self {
+            role: message.role,
+            content: message.content,
+            name: message.name,
+            tool_calls: message.tool_calls,
+            tool_call_id: message.tool_call_id,
+            reasoning_content: None,
+        }
+    }
 }
 
 fn convert_tools(tools: &[serdes_ai::ToolDefinition]) -> Vec<ChatTool> {
@@ -316,5 +375,76 @@ fn convert_tool_choice(choice: &ToolChoice) -> serdes_ai_models::openai::types::
         ToolChoice::Required => ToolChoiceValue::required(),
         ToolChoice::None => ToolChoiceValue::none(),
         ToolChoice::Specific(name) => ToolChoiceValue::function(name),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serdes_ai::core::messages::parts::{ThinkingPart, ToolCallArgs, ToolCallPart};
+    use serdes_ai::core::messages::{ModelRequestPart, ModelResponse, ModelResponsePart};
+
+    #[test]
+    fn convert_request_includes_reasoning_content_for_assistant_history() {
+        let mut response = ModelResponse::new();
+        response.add_part(ModelResponsePart::Thinking(ThinkingPart::new("step one")));
+        response.add_part(ModelResponsePart::Text(
+            serdes_ai::core::messages::parts::TextPart::new("final"),
+        ));
+        response.add_part(ModelResponsePart::ToolCall(
+            ToolCallPart::new(
+                "read_file",
+                ToolCallArgs::json(serde_json::json!({ "path": "a" })),
+            )
+            .with_tool_call_id("call_1"),
+        ));
+
+        let mut request = ModelRequest::new();
+        request.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
+
+        let converted = convert_request(&request);
+        assert_eq!(converted.len(), 1);
+
+        let assistant = &converted[0];
+        assert_eq!(assistant.role, "assistant");
+        assert_eq!(assistant.reasoning_content.as_deref(), Some("step one"));
+        assert!(assistant
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| calls.len() == 1));
+    }
+
+    #[test]
+    fn build_chat_request_payload_serializes_reasoning_content_field() {
+        let mut response = ModelResponse::new();
+        response.add_part(ModelResponsePart::Thinking(ThinkingPart::new("chain")));
+        response.add_part(ModelResponsePart::Text(
+            serdes_ai::core::messages::parts::TextPart::new("answer"),
+        ));
+
+        let mut history_turn = ModelRequest::new();
+        history_turn.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
+
+        let payload = build_chat_request_payload(
+            "kimi-k2-0711-preview",
+            &[history_turn],
+            &ModelSettings::default(),
+            &ModelRequestParameters::default(),
+            true,
+            Some(512),
+        )
+        .expect("payload should serialize");
+
+        let messages = payload
+            .get("messages")
+            .and_then(serde_json::Value::as_array)
+            .expect("messages array should be present");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0]
+                .get("reasoning_content")
+                .and_then(serde_json::Value::as_str),
+            Some("chain")
+        );
     }
 }

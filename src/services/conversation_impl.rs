@@ -207,10 +207,15 @@ impl ConversationService for ConversationServiceImpl {
         &self,
         conversation_id: Uuid,
         content: String,
+        thinking_content: Option<String>,
     ) -> ServiceResult<Message> {
         let mut conversation = self.load_conversation(conversation_id)?;
 
-        let message = Message::assistant(content);
+        let message = if let Some(thinking) = thinking_content {
+            Message::assistant_with_thinking(content, thinking)
+        } else {
+            Message::assistant(content)
+        };
         conversation.add_message(message.clone());
 
         self.save_conversation(&conversation)?;

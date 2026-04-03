@@ -93,6 +93,7 @@ impl ConversationService for StubConversationService {
         &self,
         _conversation_id: Uuid,
         content: String,
+        _thinking_content: Option<String>,
     ) -> Result<personal_agent::models::Message, ServiceError> {
         Ok(personal_agent::models::Message::assistant(content))
     }

@@ -217,7 +217,18 @@ impl ChatServiceImpl {
                     LlmMessage::system(expanded)
                 }
                 MessageRole::User => LlmMessage::user(msg.content.clone()),
-                MessageRole::Assistant => LlmMessage::assistant(msg.content.clone()),
+                MessageRole::Assistant => {
+                    let llm_message = LlmMessage::assistant(msg.content.clone());
+                    if let Some(thinking) = msg.thinking_content.as_deref() {
+                        if thinking.is_empty() {
+                            llm_message
+                        } else {
+                            llm_message.with_thinking(thinking.to_owned())
+                        }
+                    } else {
+                        llm_message
+                    }
+                }
             })
             .collect();
 
@@ -421,8 +432,9 @@ async fn run_stream_task(
     }
 
     if !response_text.is_empty() || !thinking_text.is_empty() {
+        let persisted_thinking = (!thinking_text.is_empty()).then_some(thinking_text.clone());
         let _ = conversation_service
-            .add_assistant_message(conversation_id, response_text.clone())
+            .add_assistant_message(conversation_id, response_text.clone(), persisted_thinking)
             .await;
     }
 

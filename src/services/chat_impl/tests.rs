@@ -402,6 +402,7 @@ impl super::super::ConversationService for MockConversationService {
         &self,
         _conversation_id: Uuid,
         content: String,
+        _thinking_content: Option<String>,
     ) -> Result<Message, crate::services::ServiceError> {
         Ok(Message::assistant(content))
     }
@@ -705,4 +706,35 @@ async fn prepare_message_context_uses_conversation_profile_id() {
     assert_eq!(prepared.profile.provider_id, "kimi-for-coding");
 
     let _ = crate::services::secure_store::api_keys::delete("_test_conv_prof");
+}
+
+#[test]
+fn build_llm_messages_preserves_assistant_thinking_content() {
+    let profile = crate::models::ModelProfile::new(
+        "Test Profile".to_string(),
+        "openai".to_string(),
+        "gpt-4".to_string(),
+        "https://api.openai.com/v1".to_string(),
+        AuthConfig::Keychain {
+            label: "test-key".to_string(),
+        },
+    );
+
+    let mut conversation = crate::models::Conversation::new(profile.id);
+    conversation.add_message(Message::user("hello".to_string()));
+    conversation.add_message(Message::assistant_with_thinking(
+        "answer".to_string(),
+        "chain-of-thought".to_string(),
+    ));
+
+    let messages = ChatServiceImpl::build_llm_messages(&conversation, &profile);
+    let assistant = messages
+        .iter()
+        .find(|message| matches!(message.role, crate::llm::Role::Assistant))
+        .expect("assistant message should be present");
+
+    assert_eq!(
+        assistant.thinking_content.as_deref(),
+        Some("chain-of-thought")
+    );
 }
