@@ -9,7 +9,7 @@ struct MockConversationService {
 use crate::agent::McpApprovalMode;
 use crate::services::{AppSettingsService, ServiceError, ServiceResult};
 use std::collections::HashMap;
-use tokio::sync::Barrier;
+use tokio::sync::{Barrier, RwLock};
 
 struct InMemoryAppSettingsService {
     settings: RwLock<HashMap<String, String>>,
@@ -194,6 +194,63 @@ async fn resolve_tool_approval_denied_does_not_update_policy() {
         crate::agent::tool_approval_policy::ToolApprovalDecision::AskUser,
         "Denied should not add session or persistent allow rules"
     );
+}
+
+#[tokio::test]
+async fn resolve_tool_approval_denied_resolves_all_pending_approvals() {
+    let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+    let (service, mut view_rx, approval_gate) = make_approval_test_chat_service(app_settings);
+
+    let denied_request_id = Uuid::new_v4().to_string();
+    let secondary_request_id = Uuid::new_v4().to_string();
+
+    let denied_waiter =
+        approval_gate.wait_for_approval(denied_request_id.clone(), "WriteFile".to_string());
+    let secondary_waiter =
+        approval_gate.wait_for_approval(secondary_request_id.clone(), "Search".to_string());
+
+    service
+        .resolve_tool_approval(
+            denied_request_id.clone(),
+            ToolApprovalResponseAction::Denied,
+        )
+        .await
+        .expect("denied resolution should succeed");
+
+    assert!(!denied_waiter
+        .wait()
+        .await
+        .expect("denied waiter should receive decision"));
+    assert!(!secondary_waiter
+        .wait()
+        .await
+        .expect("secondary waiter should receive bulk denied decision"));
+
+    let first = view_rx
+        .recv()
+        .await
+        .expect("first ToolApprovalResolved should be emitted");
+    let second = view_rx
+        .recv()
+        .await
+        .expect("second ToolApprovalResolved should be emitted");
+
+    let resolved_ids = [first, second]
+        .into_iter()
+        .map(|command| match command {
+            ViewCommand::ToolApprovalResolved {
+                request_id,
+                approved,
+            } => {
+                assert!(!approved, "denied flow should not approve any request");
+                request_id
+            }
+            other => panic!("expected ToolApprovalResolved, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+
+    assert!(resolved_ids.contains(&denied_request_id));
+    assert!(resolved_ids.contains(&secondary_request_id));
 }
 
 #[tokio::test]
@@ -804,6 +861,7 @@ async fn prepare_message_context_uses_conversation_profile_id() {
     mock_profile_service.add_profile(kimi_profile).await;
 
     let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
+
     let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
 
     let prepared = chat_service
@@ -818,6 +876,51 @@ async fn prepare_message_context_uses_conversation_profile_id() {
     assert_eq!(prepared.profile.provider_id, "kimi-for-coding");
 
     let _ = crate::services::secure_store::api_keys::delete("_test_conv_prof");
+}
+
+#[tokio::test]
+async fn cancel_clears_current_conversation_and_pending_approvals() {
+    let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+    let (service, mut view_rx, approval_gate) = make_approval_test_chat_service(app_settings);
+
+    let conversation_id = Uuid::new_v4();
+    service
+        .begin_stream(conversation_id)
+        .await
+        .expect("begin_stream should succeed");
+
+    let pending_request_id = Uuid::new_v4().to_string();
+    let waiter =
+        approval_gate.wait_for_approval(pending_request_id.clone(), "WriteFile".to_string());
+
+    service.cancel();
+
+    assert!(!waiter
+        .wait()
+        .await
+        .expect("pending waiter should be resolved as denied on cancel"));
+    assert!(!service.is_streaming());
+
+    let current_conversation = *service
+        .current_conversation_id
+        .lock()
+        .expect("current conversation mutex poisoned");
+    assert!(
+        current_conversation.is_none(),
+        "cancel should clear active conversation tracking"
+    );
+
+    let resolved_command = view_rx
+        .recv()
+        .await
+        .expect("cancel should emit approval resolution for pending request");
+    assert_eq!(
+        resolved_command,
+        ViewCommand::ToolApprovalResolved {
+            request_id: pending_request_id,
+            approved: false,
+        }
+    );
 }
 
 #[test]
