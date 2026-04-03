@@ -194,6 +194,10 @@ fn register_native_tools(
     let write_file_def = crate::agent::tools::get_write_file_tool_definition();
     builder = builder.tool_with_executor(write_file_def, crate::agent::tools::WriteFileExecutor);
 
+    // Register EditFile tool
+    let edit_file_def = crate::agent::tools::get_edit_file_tool_definition();
+    builder = builder.tool_with_executor(edit_file_def, crate::agent::tools::EditFileExecutor);
+
     builder
 }
 
