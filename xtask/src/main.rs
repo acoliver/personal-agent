@@ -157,8 +157,12 @@ fn enforce_no_runtime_stubs_or_todos() -> Result<()> {
     let workspace_root = workspace_root();
     let src_dir = workspace_root.join("src");
 
-    // Keep the dedicated test constructor available, but ban runtime usage.
-    ensure_no_pattern_in_tree(&src_dir, "new_for_tests(", &["services/chat_impl.rs"])?;
+    // Keep the dedicated test constructor available for test modules, but ban runtime usage.
+    ensure_no_pattern_in_tree(
+        &src_dir,
+        "new_for_tests(",
+        &["services/chat_impl.rs", "services/chat_impl/tests.rs"],
+    )?;
 
     // Prevent TODO/FIXME/todo!/unimplemented! from landing in production code.
     for pattern in ["TODO", "FIXME", "todo!(", "unimplemented!("] {
