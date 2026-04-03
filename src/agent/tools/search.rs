@@ -409,23 +409,37 @@ fn is_binary_content(content: &[u8]) -> bool {
 }
 
 fn format_results(pattern: &str, matches: &[SearchMatch], truncated: bool) -> String {
+    use std::collections::BTreeMap;
+
     if matches.is_empty() {
         return format!("No matches found for pattern \"{pattern}\"");
     }
 
+    let mut grouped_matches: BTreeMap<&str, Vec<&SearchMatch>> = BTreeMap::new();
+    for search_match in matches {
+        grouped_matches
+            .entry(search_match.file_path.as_str())
+            .or_default()
+            .push(search_match);
+    }
+
     let mut output = String::new();
-    for (index, search_match) in matches.iter().enumerate() {
+    for (index, (file_path, file_matches)) in grouped_matches.into_iter().enumerate() {
         if index > 0 {
             output.push('\n');
         }
 
         output.push_str("File: ");
-        output.push_str(&search_match.file_path);
-        output.push('\n');
-        output.push('L');
-        output.push_str(&search_match.line_number.to_string());
-        output.push_str(": ");
-        output.push_str(&search_match.line_content);
+        output.push_str(file_path);
+
+        for file_match in file_matches {
+            output.push('\n');
+            output.push('L');
+            output.push_str(&file_match.line_number.to_string());
+            output.push_str(": ");
+            output.push_str(&file_match.line_content);
+        }
+
         output.push('\n');
         output.push_str("---");
     }
@@ -603,6 +617,7 @@ mod tests {
         let result = search_with_builtin("(", ".", None);
         assert!(result.is_err());
         let error = result.expect_err("invalid regex should fail");
+
         assert!(error.contains("Invalid regex pattern"));
     }
 
@@ -664,6 +679,42 @@ mod tests {
 
         assert_eq!(matches.len(), MAX_MATCHES);
         assert!(truncated);
+    }
+
+    #[test]
+    fn format_results_groups_matches_by_file() {
+        let matches = vec![
+            SearchMatch {
+                file_path: "src/main.rs".to_string(),
+                line_number: 10,
+                line_content: "fn main() {".to_string(),
+            },
+            SearchMatch {
+                file_path: "src/main.rs".to_string(),
+                line_number: 15,
+                line_content: "fn helper() {".to_string(),
+            },
+            SearchMatch {
+                file_path: "src/lib.rs".to_string(),
+                line_number: 5,
+                line_content: "pub fn api() {".to_string(),
+            },
+        ];
+
+        let output = format_results("fn", &matches, false);
+
+        let expected = [
+            "File: src/lib.rs",
+            "L5: pub fn api() {",
+            "---",
+            "File: src/main.rs",
+            "L10: fn main() {",
+            "L15: fn helper() {",
+            "---",
+        ]
+        .join("\n");
+
+        assert_eq!(output, expected);
     }
 
     #[test]
