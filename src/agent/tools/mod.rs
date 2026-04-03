@@ -8,6 +8,8 @@
 //!
 //! - `ReadFile`: Read file contents with line range support, truncation,
 //!   and binary file detection
+//! - `WriteFile`: Create or overwrite files with automatic parent directory
+//!   creation
 //!
 //! # Adding New Native Tools
 //!
@@ -19,5 +21,7 @@
 //! 4. Register the tool in `client_agent.rs` in the `register_native_tools` function
 
 pub mod read_file;
+pub mod write_file;
 
 pub use read_file::{get_read_file_tool_definition, ReadFileExecutor};
+pub use write_file::{get_write_file_tool_definition, WriteFileExecutor};

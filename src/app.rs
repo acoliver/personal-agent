@@ -21,6 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::events::EventBus;
+use crate::llm::client_agent::ApprovalGate;
 use crate::presentation::{ChatPresenter, ErrorPresenter, HistoryPresenter, SettingsPresenter};
 use crate::services::{
     AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl, ConversationService,
@@ -173,10 +174,19 @@ impl App {
             .await
             .map_err(|e| AppError::ServiceInitFailed(format!("McpService init: {e}")))?;
 
-        let chat_service: Arc<ChatServiceImpl> = Arc::new(ChatServiceImpl::new(
-            Arc::clone(&conversation_service) as Arc<dyn ConversationService>,
-            Arc::clone(&profile_service) as Arc<dyn ProfileService>,
-        ));
+        let (chat_view_tx, _) = tokio::sync::mpsc::channel(100);
+        let approval_gate = Arc::new(ApprovalGate::new());
+
+        let chat_service: Arc<ChatServiceImpl> = Arc::new(
+            ChatServiceImpl::new_with_settings(
+                Arc::clone(&conversation_service) as Arc<dyn ConversationService>,
+                Arc::clone(&profile_service) as Arc<dyn ProfileService>,
+                Arc::clone(&app_settings_service) as Arc<dyn AppSettingsService>,
+                chat_view_tx,
+                approval_gate,
+            )
+            .await,
+        );
 
         Ok(ServiceRegistry {
             conversation: Arc::clone(&conversation_service) as Arc<dyn ConversationService>,
@@ -245,7 +255,7 @@ impl App {
         };
         presenters.push(Box::new(error_presenter));
 
-        // TODO: Add remaining presenters when their traits are implemented
+        // Remaining presenters can be added once their traits are implemented
         // - ProfileEditorPresenter
         // - McpAddPresenter
         // - McpConfigurePresenter

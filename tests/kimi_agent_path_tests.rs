@@ -4,6 +4,7 @@
 //! The wiremock test verifies the User-Agent header actually gets sent.
 //! The live test hits the real Kimi API to confirm end-to-end.
 
+use personal_agent::llm::client_agent::McpToolContext;
 use personal_agent::llm::AgentClientExt;
 use personal_agent::{AuthConfig, LlmClient, LlmMessage, ModelProfile, StreamEvent};
 use wiremock::matchers::{header, method, path};
@@ -94,18 +95,23 @@ async fn agent_path_sends_user_agent_header_to_kimi() {
     let mut saw_error: Option<String> = None;
 
     let result = client
-        .run_agent_stream(&agent, &[LlmMessage::user("ping")], |event| match event {
-            StreamEvent::TextDelta(text) => {
-                collected_text.push_str(&text);
-            }
-            StreamEvent::Complete => {
-                saw_complete = true;
-            }
-            StreamEvent::Error(e) => {
-                saw_error = Some(e);
-            }
-            _ => {}
-        })
+        .run_agent_stream(
+            &agent,
+            &[LlmMessage::user("ping")],
+            McpToolContext::default(),
+            |event| match event {
+                StreamEvent::TextDelta(text) => {
+                    collected_text.push_str(&text);
+                }
+                StreamEvent::Complete => {
+                    saw_complete = true;
+                }
+                StreamEvent::Error(e) => {
+                    saw_error = Some(e);
+                }
+                _ => {}
+            },
+        )
         .await;
 
     // Also check received requests to verify the header
@@ -198,11 +204,16 @@ async fn agent_path_without_kimi_provider_misses_user_agent() {
 
     let mut saw_error = false;
     let _ = client
-        .run_agent_stream(&agent, &[LlmMessage::user("hi")], |event| {
-            if let StreamEvent::Error(_) = event {
-                saw_error = true;
-            }
-        })
+        .run_agent_stream(
+            &agent,
+            &[LlmMessage::user("hi")],
+            McpToolContext::default(),
+            |event| {
+                if let StreamEvent::Error(_) = event {
+                    saw_error = true;
+                }
+            },
+        )
         .await;
 
     // Without the kimi-for-coding provider_id, User-Agent wasn't sent,
@@ -294,11 +305,16 @@ data: [DONE]
     let mut saw_complete = false;
 
     let result = client
-        .run_agent_stream(&agent, &[LlmMessage::user("hi")], |event| match event {
-            StreamEvent::TextDelta(text) => collected_text.push_str(&text),
-            StreamEvent::Complete => saw_complete = true,
-            _ => {}
-        })
+        .run_agent_stream(
+            &agent,
+            &[LlmMessage::user("hi")],
+            McpToolContext::default(),
+            |event| match event {
+                StreamEvent::TextDelta(text) => collected_text.push_str(&text),
+                StreamEvent::Complete => saw_complete = true,
+                _ => {}
+            },
+        )
         .await;
 
     assert!(
@@ -359,6 +375,7 @@ async fn agent_path_kimi_live_e2e() {
         .run_agent_stream(
             &agent,
             &[LlmMessage::user("Say exactly: pong")],
+            McpToolContext::default(),
             |event| match event {
                 StreamEvent::TextDelta(text) => {
                     print!("{text}");

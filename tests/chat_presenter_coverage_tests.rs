@@ -277,6 +277,14 @@ impl ChatService for MockChatService {
     fn is_streaming(&self) -> bool {
         false
     }
+
+    async fn resolve_tool_approval(
+        &self,
+        _request_id: String,
+        _decision: personal_agent::events::types::ToolApprovalResponseAction,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
 }
 
 struct MockProfileService {

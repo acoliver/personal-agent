@@ -17,6 +17,7 @@
 //! - `PA_E2E_KEY_LABEL` (optional; default: `pa-e2e-ollama-cloud`)
 //! - `PA_E2E_API_KEY` (recommended for non-interactive runs)
 
+use personal_agent::llm::client_agent::McpToolContext;
 use personal_agent::llm::AgentClientExt;
 use personal_agent::mcp::{McpRegistry, McpService};
 use personal_agent::services::{McpRegistryService, McpRegistryServiceImpl};
@@ -145,41 +146,46 @@ async fn test_install_exa_and_search() {
     let mut tool_result_preview = String::new();
 
     let result = client
-        .run_agent_stream(&agent, &messages, |event| match &event {
-            StreamEvent::TextDelta(text) => {
-                print!("{text}");
-                std::io::Write::flush(&mut std::io::stdout()).ok();
-            }
-            StreamEvent::ToolCallStarted { tool_name, call_id } => {
-                println!("\n\n>>> [TOOL STARTED] {tool_name} ({call_id})");
-                saw_tool_start = true;
-            }
-            StreamEvent::ToolCallCompleted {
-                tool_name,
-                success,
-                result,
-                call_id,
-                ..
-            } => {
-                println!(">>> [TOOL COMPLETED] {tool_name} success={success} ({call_id})");
-                if let Some(r) = result {
-                    tool_result_preview = if r.len() > 500 {
-                        format!("{}...", &r[..500])
-                    } else {
-                        r.clone()
-                    };
-                    println!(">>> [RESULT] {tool_result_preview}");
+        .run_agent_stream(
+            &agent,
+            &messages,
+            McpToolContext::default(),
+            |event| match &event {
+                StreamEvent::TextDelta(text) => {
+                    print!("{text}");
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
                 }
-                saw_tool_complete = true;
-            }
-            StreamEvent::Complete => {
-                println!("\n\n>>> [STREAM COMPLETE]");
-            }
-            StreamEvent::Error(e) => {
-                println!("\n>>> [ERROR] {e}");
-            }
-            _ => {}
-        })
+                StreamEvent::ToolCallStarted { tool_name, call_id } => {
+                    println!("\n\n>>> [TOOL STARTED] {tool_name} ({call_id})");
+                    saw_tool_start = true;
+                }
+                StreamEvent::ToolCallCompleted {
+                    tool_name,
+                    success,
+                    result,
+                    call_id,
+                    ..
+                } => {
+                    println!(">>> [TOOL COMPLETED] {tool_name} success={success} ({call_id})");
+                    if let Some(r) = result {
+                        tool_result_preview = if r.len() > 500 {
+                            format!("{}...", &r[..500])
+                        } else {
+                            r.clone()
+                        };
+                        println!(">>> [RESULT] {tool_result_preview}");
+                    }
+                    saw_tool_complete = true;
+                }
+                StreamEvent::Complete => {
+                    println!("\n\n>>> [STREAM COMPLETE]");
+                }
+                StreamEvent::Error(e) => {
+                    println!("\n>>> [ERROR] {e}");
+                }
+                _ => {}
+            },
+        )
         .await;
 
     println!("\n");

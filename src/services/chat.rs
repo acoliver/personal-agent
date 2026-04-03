@@ -4,6 +4,8 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use crate::events::types::ToolApprovalResponseAction;
+
 use super::{ServiceError, ServiceResult};
 
 /// Stream event from chat service
@@ -32,6 +34,13 @@ pub trait ChatService: Send + Sync {
 
     /// Check if currently streaming a response
     fn is_streaming(&self) -> bool;
+
+    /// Resolve a pending tool approval request from user interaction.
+    async fn resolve_tool_approval(
+        &self,
+        request_id: String,
+        decision: ToolApprovalResponseAction,
+    ) -> ServiceResult<()>;
 }
 
 // Note: ChatServiceImpl is implemented in chat_impl.rs

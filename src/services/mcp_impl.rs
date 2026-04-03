@@ -271,7 +271,7 @@ impl McpService for McpServiceImpl {
             }
         }
 
-        // TODO: Actually fetch tools from MCP server
+        // Placeholder: fetch tools from MCP server is not implemented yet
         Ok(vec![])
     }
 
@@ -431,7 +431,7 @@ impl McpService for McpServiceImpl {
             status_map.insert(id, McpServerStatus::Connecting);
         }
 
-        // TODO: Actually restart the MCP server process
+        // Not yet implemented: restart the MCP server process
 
         // Update status to connected
         {

@@ -63,6 +63,7 @@ fn run() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("qa") => qa(),
+        Some("guard") => guard(),
         Some("coverage") => coverage(),
         Some("fmt") => run_checked(command("cargo", ["fmt", "--all", "--", "--check"]), "cargo fmt"),
         Some("clippy") => run_checked(
@@ -72,13 +73,18 @@ fn run() -> Result<()> {
         Some("test") => run_checked(command("cargo", ["test", "--lib", "--tests"]), "cargo test"),
         Some(cmd) => bail!("unknown xtask command: {cmd}"),
         None => {
-            eprintln!("usage: cargo xtask <qa|coverage|fmt|clippy|test>");
+            eprintln!("usage: cargo xtask <qa|guard|coverage|fmt|clippy|test>");
             Ok(())
         }
     }
 }
 
+fn guard() -> Result<()> {
+    enforce_no_runtime_stubs_or_todos()
+}
+
 fn qa() -> Result<()> {
+    enforce_no_runtime_stubs_or_todos()?;
     run_checked(command("cargo", ["fmt", "--all", "--", "--check"]), "cargo fmt")?;
     run_checked(
         command("cargo", ["clippy", "--all-targets", "--", "-D", "warnings"]),
@@ -142,6 +148,85 @@ fn coverage() -> Result<()> {
             coverage.lines.percent(),
             LINE_COVERAGE_GATE
         );
+    }
+
+    Ok(())
+}
+
+fn enforce_no_runtime_stubs_or_todos() -> Result<()> {
+    let workspace_root = workspace_root();
+    let src_dir = workspace_root.join("src");
+
+    // Keep the dedicated test constructor available for test modules, but ban runtime usage.
+    ensure_no_pattern_in_tree(
+        &src_dir,
+        "new_for_tests(",
+        &["services/chat_impl.rs", "services/chat_impl/tests.rs"],
+    )?;
+
+    // Prevent TODO/FIXME/todo!/unimplemented! from landing in production code.
+    for pattern in ["TODO", "FIXME", "todo!(", "unimplemented!("] {
+        ensure_no_pattern_in_tree(&src_dir, pattern, &[])?;
+    }
+
+    Ok(())
+}
+
+fn ensure_no_pattern_in_tree(root: &Path, pattern: &str, allowlist: &[&str]) -> Result<()> {
+    let mut violations = Vec::new();
+    collect_pattern_violations(root, root, pattern, allowlist, &mut violations)?;
+
+    if violations.is_empty() {
+        return Ok(());
+    }
+
+    let details = violations
+        .into_iter()
+        .map(|(path, line, content)| format!("{}:{}: {}", path.display(), line, content.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    bail!(
+        "forbidden source pattern `{pattern}` detected in src/:\n{details}\n\nmove temporary markers or test-only wiring behind #[cfg(test)] and out of runtime source"
+    )
+}
+
+fn collect_pattern_violations(
+    dir: &Path,
+    root: &Path,
+    pattern: &str,
+    allowlist: &[&str],
+    violations: &mut Vec<(PathBuf, usize, String)>,
+) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("read dir {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("read dir entry under {}", dir.display()))?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_pattern_violations(&path, root, pattern, allowlist, violations)?;
+            continue;
+        }
+
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace("\\", "/");
+        if allowlist.iter().any(|allowed| *allowed == relative) {
+            continue;
+        }
+
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("read source file {}", path.display()))?;
+        for (idx, line) in content.lines().enumerate() {
+            if line.contains(pattern) {
+                violations.push((PathBuf::from(&relative), idx + 1, line.to_string()));
+            }
+        }
     }
 
     Ok(())
