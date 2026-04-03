@@ -10,6 +10,7 @@
 //! Clear unviewed badge via `ErrorLogStore::global().mark_all_viewed()`.
 
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -222,6 +223,60 @@ pub fn classify_error_severity(error_msg: &str) -> ErrorSeverityTag {
     }
 }
 
+/// Render a single error log entry as plain text for clipboard/export usage.
+#[must_use]
+pub fn render_error_entry_text(entry: &ErrorLogEntry) -> String {
+    let mut output = String::new();
+    let _ = writeln!(
+        output,
+        "[{}] {}",
+        entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
+        entry.severity
+    );
+    let _ = writeln!(output, "Source: {}", entry.source);
+
+    let conversation_label = entry
+        .conversation_title
+        .clone()
+        .or_else(|| entry.conversation_id.as_ref().map(ToString::to_string));
+    if let Some(conversation) = conversation_label {
+        let _ = writeln!(output, "Conversation: {conversation}");
+    }
+
+    let _ = writeln!(output, "Message:");
+    let _ = writeln!(output, "{}", entry.message.trim_end());
+
+    if let Some(raw_detail) = entry.raw_detail.as_deref().map(str::trim) {
+        if !raw_detail.is_empty() {
+            let _ = writeln!(output);
+            let _ = writeln!(output, "Raw Detail:");
+            let _ = writeln!(output, "{raw_detail}");
+        }
+    }
+
+    output.trim_end().to_string()
+}
+
+/// Render a complete error log snapshot as plain text.
+#[must_use]
+pub fn render_error_log_text(entries: &[ErrorLogEntry]) -> String {
+    if entries.is_empty() {
+        return "No errors recorded".to_string();
+    }
+
+    entries
+        .iter()
+        .map(render_error_entry_text)
+        .collect::<Vec<_>>()
+        .join(
+            "
+
+----------------------------------------
+
+",
+        )
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -393,6 +448,62 @@ mod tests {
         // No assertion on exact count — just confirm no panic and state is accessible
         let _ = store.unviewed_count();
         let _ = store.entries();
+    }
+
+    #[test]
+    fn render_error_entry_text_includes_core_fields() {
+        let entry = ErrorLogEntry {
+            id: 42,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Auth,
+            source: "anthropic / claude".to_string(),
+            message: "401 unauthorized".to_string(),
+            raw_detail: Some("{".to_string()),
+            conversation_title: Some("Bug triage".to_string()),
+            conversation_id: Some(uuid::Uuid::new_v4()),
+        };
+
+        let rendered = render_error_entry_text(&entry);
+        assert!(rendered.contains("AUTH"));
+        assert!(rendered.contains("Source: anthropic / claude"));
+        assert!(rendered.contains("Conversation: Bug triage"));
+        assert!(rendered.contains("Message:"));
+        assert!(rendered.contains("401 unauthorized"));
+        assert!(rendered.contains("Raw Detail:"));
+    }
+
+    #[test]
+    fn render_error_log_text_joins_entries_with_separator() {
+        let first = ErrorLogEntry {
+            id: 1,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Stream,
+            source: "chat".to_string(),
+            message: "stream failed".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        };
+        let second = ErrorLogEntry {
+            id: 2,
+            timestamp: chrono::Utc::now(),
+            severity: ErrorSeverityTag::Mcp,
+            source: "mcp/server".to_string(),
+            message: "tool error".to_string(),
+            raw_detail: None,
+            conversation_title: None,
+            conversation_id: None,
+        };
+
+        let rendered = render_error_log_text(&[first, second]);
+        assert!(rendered.contains("Source: chat"));
+        assert!(rendered.contains("Source: mcp/server"));
+        assert!(rendered.contains("----------------------------------------"));
+    }
+
+    #[test]
+    fn render_error_log_text_handles_empty_entries() {
+        assert_eq!(render_error_log_text(&[]), "No errors recorded");
     }
 
     // --- classify_error_severity ---

@@ -154,6 +154,14 @@ fn assert_mcp_routing_targets(saved_mcp_id: Uuid) {
         1,
         |targets| targets.mcp_config_saved_count,
     );
+
+    assert_route_count(
+        ViewCommand::ErrorLogExportCompleted {
+            path: "/tmp/error-log.txt".to_string(),
+        },
+        1,
+        |targets| targets.error_log_export_completed_commands,
+    );
 }
 
 fn assert_settings_theme_routing_targets() {
@@ -743,6 +751,42 @@ async fn handle_command_forwards_export_format_and_export_feedback_to_chat_view(
             assert!(view.state.export_feedback_is_error);
             assert!(view.state.export_feedback_path.is_none());
         });
+    });
+}
+
+#[gpui::test]
+async fn handle_command_forwards_error_log_export_feedback_to_error_log_view(
+    cx: &mut TestAppContext,
+) {
+    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+    cx.set_global(app_state);
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+
+        panel.handle_command(
+            ViewCommand::ErrorLogExportCompleted {
+                path: "/tmp/error-log.txt".to_string(),
+            },
+            cx,
+        );
+
+        panel.handle_command(
+            ViewCommand::ShowNotification {
+                message: "No errors recorded".to_string(),
+            },
+            cx,
+        );
+
+        panel.handle_command(
+            ViewCommand::ShowError {
+                title: "Save Error Log".to_string(),
+                message: "disk unavailable".to_string(),
+                severity: crate::presentation::view_command::ErrorSeverity::Error,
+            },
+            cx,
+        );
     });
 }
 

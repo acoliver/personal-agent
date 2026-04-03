@@ -66,6 +66,9 @@ pub enum UserEvent {
     /// User requested conversation export with the currently selected format.
     SaveConversation,
 
+    /// User requested error log export as plain text.
+    SaveErrorLog,
+
     /// User selected an export format for conversation save.
     SelectConversationExportFormat {
         format: crate::models::ConversationExportFormat,

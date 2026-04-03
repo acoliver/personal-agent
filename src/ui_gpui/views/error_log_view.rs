@@ -11,13 +11,21 @@ use gpui::{
     ScrollHandle, Styled,
 };
 
-use crate::ui_gpui::error_log::{ErrorLogEntry, ErrorLogStore};
+use crate::events::types::UserEvent;
+use crate::presentation::view_command::ViewCommand;
+use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::error_log::{render_error_entry_text, ErrorLogEntry, ErrorLogStore};
 use crate::ui_gpui::theme::Theme;
+use std::sync::Arc;
 
 /// Full-screen error log view.
 pub struct ErrorLogView {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
+    bridge: Option<Arc<GpuiBridge>>,
+    export_feedback_message: Option<String>,
+    export_feedback_is_error: bool,
+    export_feedback_path: Option<String>,
 }
 
 impl ErrorLogView {
@@ -25,6 +33,146 @@ impl ErrorLogView {
         Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: ScrollHandle::new(),
+            bridge: None,
+            export_feedback_message: None,
+            export_feedback_is_error: false,
+            export_feedback_path: None,
+        }
+    }
+
+    pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
+        self.bridge = Some(bridge);
+    }
+
+    fn emit(&self, event: &UserEvent) {
+        if let Some(bridge) = &self.bridge {
+            if !bridge.emit(event.clone()) {
+                tracing::error!("Failed to emit event {:?}", event);
+            }
+        } else {
+            tracing::warn!("No bridge set - event not emitted: {:?}", event);
+        }
+    }
+
+    pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
+        match command {
+            ViewCommand::ErrorLogExportCompleted { path } => {
+                self.export_feedback_message = Some(format!("Error log saved as {path} (TXT)"));
+                self.export_feedback_is_error = false;
+                self.export_feedback_path = Some(path);
+                cx.notify();
+            }
+            ViewCommand::ShowError {
+                title,
+                message,
+                severity: _,
+            } => {
+                if title == "Save Error Log" {
+                    self.export_feedback_message = Some(format!("{title}: {message}"));
+                    self.export_feedback_is_error = true;
+                    self.export_feedback_path = None;
+                    cx.notify();
+                }
+            }
+            ViewCommand::ShowNotification { message } => {
+                if message.contains("No errors recorded") {
+                    self.export_feedback_message = Some(message);
+                    self.export_feedback_is_error = false;
+                    self.export_feedback_path = None;
+                    cx.notify();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn render_export_feedback_bar(&self) -> Option<gpui::AnyElement> {
+        let _ = self.export_feedback_message.as_ref()?;
+        let is_error = self.export_feedback_is_error;
+        let text_color = if is_error {
+            Theme::error()
+        } else {
+            Theme::text_secondary()
+        };
+
+        let container = div()
+            .id("error-log-export-feedback")
+            .h(px(24.0))
+            .w_full()
+            .bg(Theme::bg_darker())
+            .px(px(Theme::SPACING_MD))
+            .flex()
+            .items_center();
+
+        if let (Some(ref file_path), false) = (&self.export_feedback_path, is_error) {
+            let path_for_open = file_path.clone();
+            let dir_path = std::path::Path::new(file_path)
+                .parent()
+                .map_or_else(String::new, |p| p.display().to_string());
+            let display_path = file_path.clone();
+
+            Some(
+                container
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap(px(Theme::SPACING_SM))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .id("error-log-export-open-file")
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(px(Theme::FONT_SIZE_XS))
+                                    .text_color(Theme::accent())
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(Theme::accent_hover()))
+                                    .child(display_path)
+                                    .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                                        let _ = std::process::Command::new("open")
+                                            .arg(&path_for_open)
+                                            .spawn();
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id("error-log-export-open-dir")
+                                    .flex_shrink_0()
+                                    .text_size(px(Theme::FONT_SIZE_XS))
+                                    .text_color(Theme::accent())
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(Theme::accent_hover()))
+                                    .child("(dir)")
+                                    .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                                        let _ = std::process::Command::new("open")
+                                            .arg(&dir_path)
+                                            .spawn();
+                                    }),
+                            ),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            let message = self.export_feedback_message.clone().unwrap_or_default();
+            Some(
+                container
+                    .child(
+                        div()
+                            .w_full()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(Theme::FONT_SIZE_XS))
+                            .text_color(text_color)
+                            .child(message),
+                    )
+                    .into_any_element(),
+            )
         }
     }
 
@@ -68,7 +216,7 @@ impl ErrorLogView {
                         }),
                     ),
             )
-            // Title (flex-1 to push count + clear to the right)
+            // Title (flex-1 to push count + controls to the right)
             .child(
                 div()
                     .flex_1()
@@ -83,6 +231,32 @@ impl ErrorLogView {
                     .text_size(px(Theme::FONT_SIZE_XS))
                     .text_color(Theme::text_muted())
                     .child(count_label),
+            )
+            // Save export button (download icon parity with chat view)
+            .child(
+                div()
+                    .id("btn-save-error-log")
+                    .size(px(28.0))
+                    .rounded(px(Theme::RADIUS_SM))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .bg(Theme::bg_dark())
+                    .hover(|s| s.bg(Theme::bg_dark()))
+                    .text_size(px(Theme::FONT_SIZE_BASE))
+                    .text_color(Theme::text_primary())
+                    .child("\u{2B07}")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.emit(&UserEvent::SaveErrorLog);
+                            this.export_feedback_message = None;
+                            this.export_feedback_is_error = false;
+                            this.export_feedback_path = None;
+                            cx.notify();
+                        }),
+                    ),
             )
             // Clear All button
             .child(
@@ -125,6 +299,7 @@ impl ErrorLogView {
             .conversation_title
             .clone()
             .or_else(|| entry.conversation_id.as_ref().map(ToString::to_string));
+        let clipboard_text = render_error_entry_text(entry);
 
         // Error tint background: error color with reduced alpha
         let mut bg = Theme::error();
@@ -146,6 +321,11 @@ impl ErrorLogView {
             .bg(bg)
             .border_1()
             .border_color(border_color)
+            .cursor_pointer()
+            .hover(|s| s.bg(Theme::bg_dark()))
+            .on_click(move |_event, _window, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(clipboard_text.clone()));
+            })
             .flex()
             .flex_col()
             .gap(px(Theme::SPACING_XS))
@@ -228,34 +408,39 @@ impl gpui::Render for ErrorLogView {
         let entries = store.entries();
         let entries_len = entries.len();
 
-        div()
+        let mut root = div()
             .id("error-log-view")
             .size_full()
             .bg(Theme::bg_dark())
             .flex()
             .flex_col()
-            .child(Self::render_top_bar(entries_len, cx))
-            .child(
-                div()
-                    .id("error-log-scroll")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .child(if entries.is_empty() {
-                        div()
-                            .p(px(Theme::SPACING_MD))
-                            .child(Self::render_empty_state())
-                            .into_any_element()
-                    } else {
-                        div()
-                            .p(px(Theme::SPACING_MD))
-                            .flex()
-                            .flex_col()
-                            .gap(px(Theme::SPACING_SM))
-                            .children(entries.iter().map(Self::render_entry_card))
-                            .into_any_element()
-                    }),
-            )
+            .child(Self::render_top_bar(entries_len, cx));
+
+        if let Some(feedback) = self.render_export_feedback_bar() {
+            root = root.child(feedback);
+        }
+
+        root.child(
+            div()
+                .id("error-log-scroll")
+                .flex_1()
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll_handle)
+                .child(if entries.is_empty() {
+                    div()
+                        .p(px(Theme::SPACING_MD))
+                        .child(Self::render_empty_state())
+                        .into_any_element()
+                } else {
+                    div()
+                        .p(px(Theme::SPACING_MD))
+                        .flex()
+                        .flex_col()
+                        .gap(px(Theme::SPACING_SM))
+                        .children(entries.iter().map(Self::render_entry_card))
+                        .into_any_element()
+                }),
+        )
     }
 }
 
@@ -465,5 +650,67 @@ mod tests {
             };
             assert_eq!(label, format!("{n} errors"));
         }
+    }
+
+    #[gpui::test]
+    async fn handle_command_sets_feedback_for_export_completed(cx: &mut TestAppContext) {
+        let view = cx.new(ErrorLogView::new);
+        view.update(cx, |this, cx| {
+            this.handle_command(
+                ViewCommand::ErrorLogExportCompleted {
+                    path: "/tmp/error-log.txt".to_string(),
+                },
+                cx,
+            );
+            assert_eq!(
+                this.export_feedback_message.as_deref(),
+                Some("Error log saved as /tmp/error-log.txt (TXT)")
+            );
+            assert!(!this.export_feedback_is_error);
+            assert_eq!(
+                this.export_feedback_path.as_deref(),
+                Some("/tmp/error-log.txt")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn handle_command_sets_feedback_for_save_error_log_failure(cx: &mut TestAppContext) {
+        let view = cx.new(ErrorLogView::new);
+        view.update(cx, |this, cx| {
+            this.handle_command(
+                ViewCommand::ShowError {
+                    title: "Save Error Log".to_string(),
+                    message: "disk unavailable".to_string(),
+                    severity: crate::presentation::view_command::ErrorSeverity::Error,
+                },
+                cx,
+            );
+            assert_eq!(
+                this.export_feedback_message.as_deref(),
+                Some("Save Error Log: disk unavailable")
+            );
+            assert!(this.export_feedback_is_error);
+            assert!(this.export_feedback_path.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn handle_command_sets_feedback_for_empty_error_log_notice(cx: &mut TestAppContext) {
+        let view = cx.new(ErrorLogView::new);
+        view.update(cx, |this, cx| {
+            this.handle_command(
+                ViewCommand::ShowNotification {
+                    message: "No errors recorded".to_string(),
+                },
+                cx,
+            );
+            assert_eq!(
+                this.export_feedback_message.as_deref(),
+                Some("No errors recorded")
+            );
+            assert!(!this.export_feedback_is_error);
+            assert!(this.export_feedback_path.is_none());
+        });
     }
 }
