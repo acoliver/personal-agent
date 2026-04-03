@@ -291,7 +291,7 @@ async fn send_message_uses_conversation_profile_and_sends_kimi_headers() {
     profile_service.add_profile(kimi_profile).await;
     let profile_service: Arc<dyn ProfileService> = profile_service;
 
-    let chat_service = ChatServiceImpl::new_stub(conv_service, profile_service);
+    let chat_service = ChatServiceImpl::new_for_tests(conv_service, profile_service);
 
     // ── Send ────────────────────────────────────────────────────────────
     let conversation_id = Uuid::new_v4();

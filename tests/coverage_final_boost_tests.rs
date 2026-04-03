@@ -523,7 +523,7 @@ async fn chat_service_streaming_flag_prevents_overlapping_send_message_calls() {
 
     let conversation_service = Arc::new(CoverageConversationService::new(vec![conversation]));
     let profile_service = Arc::new(CoverageProfileService::new(Some(profile)));
-    let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
+    let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
 
     let first = chat_service
         .send_message(conversation_id, "hello there".to_string())

@@ -252,6 +252,23 @@ impl ChatPresenter {
             UserEvent::SetExportDirectory { path } => {
                 Self::handle_set_export_directory(app_settings_service, view_tx, path).await;
             }
+            UserEvent::ToolApprovalResponse {
+                request_id,
+                decision,
+            } => {
+                if let Err(error) = chat_service
+                    .resolve_tool_approval(request_id, decision)
+                    .await
+                {
+                    let _ = view_tx
+                        .send(ViewCommand::ShowError {
+                            title: "Tool Approval".to_string(),
+                            message: format!("Failed to resolve tool approval: {error}"),
+                            severity: ErrorSeverity::Error,
+                        })
+                        .await;
+                }
+            }
             _ => {} // Ignore other user events
         }
     }

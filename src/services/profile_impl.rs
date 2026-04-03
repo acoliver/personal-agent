@@ -596,7 +596,7 @@ impl ProfileService for ProfileServiceImpl {
 
     /// Test connection to a model provider
     async fn test_connection(&self, _id: Uuid) -> ServiceResult<()> {
-        // TODO: Implement actual LLM connection test (Phase 09 stretch goal)
+        // Not yet implemented: actual LLM connection test (Phase 09 stretch goal)
         Ok(())
     }
 

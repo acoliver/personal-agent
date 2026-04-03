@@ -123,6 +123,14 @@ impl ChatService for MockChatService {
     fn is_streaming(&self) -> bool {
         false
     }
+
+    async fn resolve_tool_approval(
+        &self,
+        _request_id: String,
+        _decision: crate::events::types::ToolApprovalResponseAction,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
 }
 
 struct MockProfileService;

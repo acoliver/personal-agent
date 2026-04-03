@@ -25,6 +25,7 @@ use tracing_subscriber::FmtSubscriber;
 // Use the library crate
 use personal_agent::events::types::UserEvent;
 use personal_agent::events::EventBus;
+use personal_agent::llm::client_agent::ApprovalGate;
 use personal_agent::presentation::{
     ApiKeyManagerPresenter, ChatPresenter, ErrorPresenter, HistoryPresenter, McpAddPresenter,
     McpConfigurePresenter, ModelSelectorPresenter, ProfileEditorPresenter, SettingsPresenter,
@@ -430,12 +431,12 @@ async fn run_tokio_runtime(
         tracing::warn!("Legacy bootstrap copy failed: {}", e);
     }
 
-    let services = create_services(&runtime_paths).await;
-
     // Create mpsc channel for ViewCommands (presenter -> view_cmd_tx -> flume)
     let (view_tx, view_rx) = tokio::sync::mpsc::channel(256);
     let _main_view_cmd_bridge =
         spawn_mpsc_to_flume_view_command_bridge(view_rx, view_cmd_tx.clone());
+
+    let services = create_services(&runtime_paths, view_tx.clone()).await;
 
     let (presenter_bridges, settings_view_tx_for_snapshot) =
         create_presenter_channels_and_bridges(&event_bus, &services, view_tx).await;
@@ -478,7 +479,10 @@ struct Services {
     chat: Arc<dyn ChatService>,
 }
 
-async fn create_services(runtime_paths: &RuntimePaths) -> Services {
+async fn create_services(
+    runtime_paths: &RuntimePaths,
+    view_tx: tokio::sync::mpsc::Sender<personal_agent::presentation::ViewCommand>,
+) -> Services {
     let secrets: Arc<dyn SecretsService> = Arc::new(
         SecretsServiceImpl::new(runtime_paths.secrets_dir.clone())
             .expect("Failed to create SecretsService"),
@@ -506,10 +510,19 @@ async fn create_services(runtime_paths: &RuntimePaths) -> Services {
         Arc::new(ModelsRegistryServiceImpl::new().expect("Failed to create ModelsRegistryService"));
     let mcp_registry: Arc<dyn McpRegistryService> =
         Arc::new(McpRegistryServiceImpl::new().expect("Failed to create McpRegistryService"));
-    let chat: Arc<dyn ChatService> = Arc::new(ChatServiceImpl::new_stub(
-        conversation.clone(),
-        profile.clone(),
-    ));
+
+    let approval_gate = Arc::new(ApprovalGate::new());
+
+    let chat: Arc<dyn ChatService> = Arc::new(
+        ChatServiceImpl::new_with_settings(
+            conversation.clone(),
+            profile.clone(),
+            app_settings.clone(),
+            view_tx,
+            approval_gate,
+        )
+        .await,
+    );
 
     Services {
         _secrets: secrets,

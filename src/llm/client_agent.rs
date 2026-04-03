@@ -16,7 +16,7 @@ use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 // Use std Result to avoid conflict with serdes_ai::prelude::Result
 type StdResult<T, E> = std::result::Result<T, E>;
@@ -27,7 +27,13 @@ type StdResult<T, E> = std::result::Result<T, E>;
 /// user approval decisions.
 #[derive(Debug)]
 pub struct ApprovalGate {
-    pending: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+    pending: Mutex<HashMap<String, PendingApproval>>,
+}
+
+#[derive(Debug)]
+struct PendingApproval {
+    tx: oneshot::Sender<bool>,
+    tool_identifier: String,
 }
 
 impl ApprovalGate {
@@ -44,10 +50,20 @@ impl ApprovalGate {
     /// # Panics
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
-    pub fn wait_for_approval(&self, request_id: String) -> oneshot::Receiver<bool> {
+    pub fn wait_for_approval(
+        &self,
+        request_id: String,
+        tool_identifier: String,
+    ) -> oneshot::Receiver<bool> {
         let (tx, rx) = oneshot::channel();
         let mut pending = self.pending.lock().unwrap();
-        pending.insert(request_id, tx);
+        pending.insert(
+            request_id,
+            PendingApproval {
+                tx,
+                tool_identifier,
+            },
+        );
         rx
     }
 
@@ -56,11 +72,18 @@ impl ApprovalGate {
     /// # Panics
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
-    pub fn resolve(&self, request_id: &str, approved: bool) {
-        let mut pending = self.pending.lock().unwrap();
-        if let Some(tx) = pending.remove(request_id) {
-            let _ = tx.send(approved);
+    pub fn resolve(&self, request_id: &str, approved: bool) -> Option<String> {
+        let pending_approval = {
+            let mut pending = self.pending.lock().unwrap();
+            pending.remove(request_id)
+        };
+
+        if let Some(pending_approval) = pending_approval {
+            let _ = pending_approval.tx.send(approved);
+            return Some(pending_approval.tool_identifier);
         }
+
+        None
     }
 }
 
@@ -81,7 +104,7 @@ pub struct McpToolContext {
     /// Approval gate for coordinating user approval of tool execution
     pub approval_gate: Arc<ApprovalGate>,
     /// Policy for evaluating tool approval requirements
-    pub policy: Arc<ToolApprovalPolicy>,
+    pub policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
 }
 
 impl Default for McpToolContext {
@@ -90,7 +113,7 @@ impl Default for McpToolContext {
         Self {
             view_tx,
             approval_gate: Arc::new(ApprovalGate::new()),
-            policy: Arc::new(ToolApprovalPolicy::default()),
+            policy: Arc::new(AsyncMutex::new(ToolApprovalPolicy::default())),
         }
     }
 }

@@ -4,7 +4,7 @@
 /// @requirement REM-001, REM-002, REM-003, REM-004, REM-005, REM-006, REM-007
 use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
 use crate::agent::tool_approval_policy::ToolApprovalPolicy;
-use crate::events::types::ChatEvent;
+use crate::events::types::{ChatEvent, ToolApprovalResponseAction};
 use crate::events::{emit, AppEvent};
 use crate::llm::client_agent::ApprovalGate;
 use crate::llm::AgentClientExt;
@@ -18,13 +18,14 @@ use futures::{stream, Stream};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex as AsyncMutex, RwLock};
 use uuid::Uuid;
 
 /// Minimal implementation of `ChatService`
 pub struct ChatServiceImpl {
     conversation_service: Arc<dyn ConversationService>,
     profile_service: Arc<dyn super::ProfileService>,
+    app_settings_service: Arc<dyn super::AppSettingsService>,
     is_streaming: Arc<AtomicBool>,
     current_conversation_id: Arc<RwLock<Option<Uuid>>>,
     /// Channel for sending view commands (used for tool approval UI)
@@ -32,7 +33,7 @@ pub struct ChatServiceImpl {
     /// Approval gate for coordinating user approval of tool execution
     approval_gate: Arc<ApprovalGate>,
     /// Policy for evaluating tool approval requirements
-    policy: Arc<ToolApprovalPolicy>,
+    policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
 }
 
 impl ChatServiceImpl {
@@ -41,13 +42,15 @@ impl ChatServiceImpl {
     pub fn new(
         conversation_service: Arc<dyn ConversationService>,
         profile_service: Arc<dyn super::ProfileService>,
+        app_settings_service: Arc<dyn super::AppSettingsService>,
         view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
         approval_gate: Arc<ApprovalGate>,
-        policy: Arc<ToolApprovalPolicy>,
+        policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
     ) -> Self {
         Self {
             conversation_service,
             profile_service,
+            app_settings_service,
             is_streaming: Arc::new(AtomicBool::new(false)),
             current_conversation_id: Arc::new(RwLock::new(None)),
             view_tx,
@@ -56,21 +59,51 @@ impl ChatServiceImpl {
         }
     }
 
-    /// Create a new `ChatServiceImpl` with a stub view channel for testing.
-    #[must_use]
-    pub fn new_stub(
+    /// Build a fully wired service using settings-backed approval policy state.
+    pub async fn new_with_settings(
+        conversation_service: Arc<dyn ConversationService>,
+        profile_service: Arc<dyn super::ProfileService>,
+        app_settings_service: Arc<dyn super::AppSettingsService>,
+        view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
+        approval_gate: Arc<ApprovalGate>,
+    ) -> Self {
+        let policy = ToolApprovalPolicy::load_from_settings(app_settings_service.as_ref())
+            .await
+            .unwrap_or_default();
+
+        Self::new(
+            conversation_service,
+            profile_service,
+            app_settings_service,
+            view_tx,
+            approval_gate,
+            Arc::new(AsyncMutex::new(policy)),
+        )
+    }
+
+    /// Create a test-scoped `ChatServiceImpl` with default approval wiring.
+    ///
+    /// # Panics
+    ///
+    /// Panics if test app settings initialization fails.
+    pub fn new_for_tests(
         conversation_service: Arc<dyn ConversationService>,
         profile_service: Arc<dyn super::ProfileService>,
     ) -> Self {
         let (view_tx, _view_rx) = tokio::sync::mpsc::channel(100);
         let approval_gate = Arc::new(ApprovalGate::new());
-        let policy = Arc::new(ToolApprovalPolicy::default());
         Self::new(
             conversation_service,
             profile_service,
+            Arc::new(
+                super::AppSettingsServiceImpl::new(std::path::PathBuf::from(
+                    "/tmp/chat-service-test-app-settings.json",
+                ))
+                .expect("failed to create test app settings service"),
+            ) as Arc<dyn super::AppSettingsService>,
             view_tx,
             approval_gate,
-            policy,
+            Arc::new(AsyncMutex::new(ToolApprovalPolicy::default())),
         )
     }
 
@@ -251,6 +284,54 @@ impl ChatServiceImpl {
             .await;
         });
     }
+
+    /// Resolve an in-flight tool approval request from UI input.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ServiceError::NotFound` when `request_id` is unknown, `ServiceError::Internal`
+    /// when emitting the resolution event fails, or persistence-related errors for
+    /// `ProceedAlways` decisions.
+    pub async fn resolve_tool_approval(
+        &self,
+        request_id: String,
+        decision: ToolApprovalResponseAction,
+    ) -> ServiceResult<()> {
+        let approved = !matches!(decision, ToolApprovalResponseAction::Denied);
+        let tool_identifier = self
+            .approval_gate
+            .resolve(&request_id, approved)
+            .ok_or_else(|| {
+                ServiceError::NotFound(format!("Tool approval request {request_id} not found"))
+            })?;
+
+        match decision {
+            ToolApprovalResponseAction::ProceedSession => {
+                self.policy.lock().await.allow_for_session(tool_identifier);
+            }
+            ToolApprovalResponseAction::ProceedAlways => {
+                self.policy
+                    .lock()
+                    .await
+                    .allow_persistently(tool_identifier, self.app_settings_service.as_ref())
+                    .await?;
+            }
+            ToolApprovalResponseAction::ProceedOnce | ToolApprovalResponseAction::Denied => {}
+        }
+
+        self.view_tx
+            .try_send(ViewCommand::ToolApprovalResolved {
+                request_id,
+                approved,
+            })
+            .map_err(|_| {
+                ServiceError::Internal(
+                    "Failed to send tool approval resolution to view channel".to_string(),
+                )
+            })?;
+
+        Ok(())
+    }
 }
 
 struct PreparedMessageContext {
@@ -270,7 +351,7 @@ async fn run_stream_task(
     conversation_id: Uuid,
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     approval_gate: Arc<ApprovalGate>,
-    policy: Arc<ToolApprovalPolicy>,
+    policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
 ) {
     let PreparedMessageContext {
         profile: _,
@@ -391,6 +472,14 @@ impl ChatService for ChatServiceImpl {
     /// Check if currently streaming
     fn is_streaming(&self) -> bool {
         self.is_streaming.load(Ordering::Acquire)
+    }
+
+    async fn resolve_tool_approval(
+        &self,
+        request_id: String,
+        decision: ToolApprovalResponseAction,
+    ) -> ServiceResult<()> {
+        Self::resolve_tool_approval(self, request_id, decision).await
     }
 }
 
@@ -616,7 +705,7 @@ mod tests {
 
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
-        let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
+        let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
 
         let conversation_id = Uuid::new_v4();
         let result = chat_service
@@ -658,7 +747,7 @@ mod tests {
 
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
-        let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
+        let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
 
         // Cancel should work even without streaming
         chat_service.cancel();
@@ -687,7 +776,7 @@ mod tests {
 
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
-        let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
+        let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
 
         // Initially not streaming
         assert!(!chat_service.is_streaming());
@@ -737,7 +826,7 @@ mod tests {
         mock_profile_service.add_profile(kimi_profile).await;
 
         let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
-        let chat_service = ChatServiceImpl::new_stub(conversation_service, profile_service);
+        let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
 
         let prepared = chat_service
             .prepare_message_context(Uuid::new_v4(), "hello".to_string())

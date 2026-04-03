@@ -54,7 +54,12 @@ impl ToolExecutor<McpToolContext> for WriteFileExecutor {
 
 /// Check tool approval policy and await user decision if required.
 async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(), ToolError> {
-    match tool_context.policy.evaluate("WriteFile") {
+    let decision = {
+        let policy = tool_context.policy.lock().await;
+        policy.evaluate("WriteFile")
+    };
+
+    match decision {
         ToolApprovalDecision::Allow => Ok(()),
         ToolApprovalDecision::Deny => Err(ToolError::execution_failed(
             "Tool execution denied by policy",
@@ -63,29 +68,24 @@ async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(),
             let request_id = uuid::Uuid::new_v4().to_string();
             let rx = tool_context
                 .approval_gate
-                .wait_for_approval(request_id.clone());
+                .wait_for_approval(request_id.clone(), "WriteFile".to_string());
 
-            tool_context
+            if tool_context
                 .view_tx
                 .try_send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
                     tool_name: "WriteFile".to_string(),
                     tool_argument: path.to_string(),
                 })
-                .map_err(|_| {
-                    ToolError::execution_failed(
-                        "Failed to send approval request to UI (channel full or closed)",
-                    )
-                })?;
+                .is_err()
+            {
+                let _ = tool_context.approval_gate.resolve(&request_id, false);
+                return Err(ToolError::execution_failed(
+                    "Failed to send approval request to UI (channel full or closed)",
+                ));
+            }
 
             let approved = rx.await.unwrap_or(false);
-
-            let _ = tool_context
-                .view_tx
-                .try_send(ViewCommand::ToolApprovalResolved {
-                    request_id,
-                    approved,
-                });
 
             if approved {
                 Ok(())
@@ -184,10 +184,10 @@ mod tests {
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
 
         // Use YOLO mode to bypass approval
-        let policy = std::sync::Arc::new(ToolApprovalPolicy {
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy {
             yolo_mode: true,
             ..Default::default()
-        });
+        }));
 
         let context = McpToolContext {
             view_tx,
@@ -235,10 +235,10 @@ mod tests {
         let (view_tx, _view_rx) = tokio::sync::mpsc::channel(10);
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
 
-        let policy = std::sync::Arc::new(ToolApprovalPolicy {
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy {
             yolo_mode: true,
             ..Default::default()
-        });
+        }));
 
         let context = McpToolContext {
             view_tx,
@@ -273,10 +273,10 @@ mod tests {
         let (view_tx, _view_rx) = tokio::sync::mpsc::channel(10);
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
 
-        let policy = std::sync::Arc::new(ToolApprovalPolicy {
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy {
             yolo_mode: true,
             ..Default::default()
-        });
+        }));
 
         let context = McpToolContext {
             view_tx,
@@ -308,7 +308,7 @@ mod tests {
         // Create minimal context
         let (view_tx, _view_rx) = tokio::sync::mpsc::channel(10);
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
-        let policy = std::sync::Arc::new(ToolApprovalPolicy::default());
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default()));
         let context = McpToolContext {
             view_tx,
             approval_gate,
@@ -331,7 +331,7 @@ mod tests {
         // Create minimal context
         let (view_tx, _view_rx) = tokio::sync::mpsc::channel(10);
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
-        let policy = std::sync::Arc::new(ToolApprovalPolicy::default());
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default()));
         let context = McpToolContext {
             view_tx,
             approval_gate,
@@ -355,10 +355,10 @@ mod tests {
 
         let (view_tx, _view_rx) = tokio::sync::mpsc::channel(10);
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
-        let policy = std::sync::Arc::new(ToolApprovalPolicy {
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy {
             yolo_mode: true,
             ..Default::default()
-        });
+        }));
         let context = McpToolContext {
             view_tx,
             approval_gate,

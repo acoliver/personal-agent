@@ -55,6 +55,10 @@ jobs:
             -D clippy::type_complexity \
             -D clippy::struct_excessive_bools
 
+      - name: Enforce no runtime stubs or TODO markers
+        run: cargo xtask guard
+
+
       - name: Install complexity tooling (lizard)
         run: |
           set -euo pipefail
