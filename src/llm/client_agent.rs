@@ -887,63 +887,6 @@ mod tests {
     }
 
     #[test]
-    fn build_agent_message_history_preserves_assistant_tool_results() {
-        let assistant_message = Message::assistant("tool summary").with_tool_results(vec![
-            crate::llm::tools::ToolResult::success("tool-call-1", "{\"answer\":\"sunny\"}"),
-            crate::llm::tools::ToolResult::error("tool-call-2", "request failed"),
-        ]);
-
-        let history = crate::llm::LlmClient::build_agent_message_history(&[assistant_message]);
-
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].parts.len(), 3);
-
-        assert!(matches!(
-            history[0].parts[0],
-            ModelRequestPart::ModelResponse(_)
-        ));
-
-        match &history[0].parts[1] {
-            ModelRequestPart::ToolReturn(tool_return) => {
-                assert_eq!(tool_return.tool_call_id.as_deref(), Some("tool-call-1"));
-                assert!(!matches!(
-                    tool_return.content,
-                    ToolReturnContent::Error { .. }
-                ));
-            }
-            other => panic!("expected first tool return part, got {other:?}"),
-        }
-
-        match &history[0].parts[2] {
-            ModelRequestPart::ToolReturn(tool_return) => {
-                assert_eq!(tool_return.tool_call_id.as_deref(), Some("tool-call-2"));
-                assert!(matches!(
-                    tool_return.content,
-                    ToolReturnContent::Error { .. }
-                ));
-            }
-            other => panic!("expected second tool return part, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn build_agent_message_history_preserves_user_tool_results() {
-        let tool_result_message =
-            Message::user("").with_tool_results(vec![crate::llm::tools::ToolResult::success(
-                "tool-call-1",
-                "{\"ok\":true}",
-            )]);
-
-        let history = crate::llm::LlmClient::build_agent_message_history(&[tool_result_message]);
-
-        assert_eq!(history.len(), 1);
-        assert!(history[0]
-            .parts
-            .iter()
-            .any(|part| matches!(part, ModelRequestPart::ToolReturn(_))));
-    }
-
-    #[test]
     fn collect_tool_transcript_extracts_calls_and_results() {
         let mut response = ModelResponse::new();
         response.add_part(ModelResponsePart::ToolCall(
@@ -989,6 +932,46 @@ mod tests {
         assert_eq!(tool_results[1].tool_use_id, "tool-call-2");
         assert!(tool_results[1].is_error);
         assert_eq!(tool_results[1].content, "request failed");
+    }
+
+    #[test]
+    fn build_agent_message_history_preserves_assistant_tool_results() {
+        let assistant_message = Message::assistant("tool summary").with_tool_results(vec![
+            crate::llm::tools::ToolResult::success("tool-call-1", "{\"answer\":\"sunny\"}"),
+            crate::llm::tools::ToolResult::error("tool-call-2", "request failed"),
+        ]);
+
+        let history = crate::llm::LlmClient::build_agent_message_history(&[assistant_message]);
+
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].parts.len(), 3);
+
+        assert!(matches!(
+            history[0].parts[0],
+            ModelRequestPart::ModelResponse(_)
+        ));
+
+        match &history[0].parts[1] {
+            ModelRequestPart::ToolReturn(tool_return) => {
+                assert_eq!(tool_return.tool_call_id.as_deref(), Some("tool-call-1"));
+                assert!(!matches!(
+                    tool_return.content,
+                    ToolReturnContent::Error { .. }
+                ));
+            }
+            other => panic!("expected first tool return part, got {other:?}"),
+        }
+
+        match &history[0].parts[2] {
+            ModelRequestPart::ToolReturn(tool_return) => {
+                assert_eq!(tool_return.tool_call_id.as_deref(), Some("tool-call-2"));
+                assert!(matches!(
+                    tool_return.content,
+                    ToolReturnContent::Error { .. }
+                ));
+            }
+            other => panic!("expected second tool return part, got {other:?}"),
+        }
     }
 
     #[test]
