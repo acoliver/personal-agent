@@ -660,6 +660,7 @@ impl crate::llm::LlmClient {
             }
             Role::Assistant => {
                 let mut response = ModelResponse::new();
+                let mut request = ModelRequest::new();
 
                 if !message.content.is_empty() {
                     response.add_part(ModelResponsePart::Text(TextPart::new(
@@ -688,11 +689,28 @@ impl crate::llm::LlmClient {
                     response.add_part(ModelResponsePart::ToolCall(tool_call));
                 }
 
-                if response.parts.is_empty() {
+                if !response.parts.is_empty() {
+                    request.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
+                }
+
+                for tool_result in &message.tool_results {
+                    let mut tool_return = if tool_result.is_error {
+                        ToolReturnPart::error("tool", tool_result.content.clone())
+                    } else {
+                        ToolReturnPart::success("tool", tool_result.content.clone())
+                    };
+
+                    if !tool_result.tool_use_id.is_empty() {
+                        tool_return =
+                            tool_return.with_tool_call_id(tool_result.tool_use_id.clone());
+                    }
+
+                    request.add_part(ModelRequestPart::ToolReturn(tool_return));
+                }
+
+                if request.parts.is_empty() {
                     None
                 } else {
-                    let mut request = ModelRequest::new();
-                    request.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
                     Some(request)
                 }
             }
@@ -865,6 +883,46 @@ mod tests {
                     .any(|part| matches!(part, ModelResponsePart::ToolCall(_))));
             }
             other => panic!("expected ModelResponse history part, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_agent_message_history_preserves_assistant_tool_results() {
+        let assistant_message = Message::assistant("tool summary").with_tool_results(vec![
+            crate::llm::tools::ToolResult::success("tool-call-1", "{\"answer\":\"sunny\"}"),
+            crate::llm::tools::ToolResult::error("tool-call-2", "request failed"),
+        ]);
+
+        let history = crate::llm::LlmClient::build_agent_message_history(&[assistant_message]);
+
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].parts.len(), 3);
+
+        assert!(matches!(
+            history[0].parts[0],
+            ModelRequestPart::ModelResponse(_)
+        ));
+
+        match &history[0].parts[1] {
+            ModelRequestPart::ToolReturn(tool_return) => {
+                assert_eq!(tool_return.tool_call_id.as_deref(), Some("tool-call-1"));
+                assert!(!matches!(
+                    tool_return.content,
+                    ToolReturnContent::Error { .. }
+                ));
+            }
+            other => panic!("expected first tool return part, got {other:?}"),
+        }
+
+        match &history[0].parts[2] {
+            ModelRequestPart::ToolReturn(tool_return) => {
+                assert_eq!(tool_return.tool_call_id.as_deref(), Some("tool-call-2"));
+                assert!(matches!(
+                    tool_return.content,
+                    ToolReturnContent::Error { .. }
+                ));
+            }
+            other => panic!("expected second tool return part, got {other:?}"),
         }
     }
 
