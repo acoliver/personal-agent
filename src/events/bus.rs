@@ -366,6 +366,7 @@ mod tests {
         // When - publish all event types
         let _ = bus.publish(AppEvent::User(UserEvent::ToggleThinking));
         let _ = bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: "test".to_string(),
         }));
         let _ = bus.publish(AppEvent::Mcp(McpEvent::Starting {
@@ -387,6 +388,7 @@ mod tests {
         // Then - all events received
         let user_event = AppEvent::User(UserEvent::ToggleThinking);
         let chat_event = AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: "test".to_string(),
         });
         let mcp_event = AppEvent::Mcp(McpEvent::Starting {
@@ -440,9 +442,11 @@ mod tests {
             model_id: "claude-3-5-sonnet".to_string(),
         }));
         let _ = bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: "Hi".to_string(),
         }));
         let _ = bus.publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: " there".to_string(),
         }));
         let _ = bus.publish(AppEvent::Chat(ChatEvent::StreamCompleted {

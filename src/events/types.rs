@@ -280,19 +280,21 @@ pub enum ChatEvent {
     },
 
     /// Text content delta received
-    TextDelta { text: String },
+    TextDelta { conversation_id: Uuid, text: String },
 
     /// Thinking content delta received
-    ThinkingDelta { text: String },
+    ThinkingDelta { conversation_id: Uuid, text: String },
 
     /// Tool call started
     ToolCallStarted {
+        conversation_id: Uuid,
         tool_call_id: String,
         tool_name: String,
     },
 
     /// Tool call completed
     ToolCallCompleted {
+        conversation_id: Uuid,
         tool_call_id: String,
         tool_name: String,
         success: bool,

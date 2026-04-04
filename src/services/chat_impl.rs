@@ -495,12 +495,16 @@ async fn run_stream_task(
         .run_agent_stream(&agent, &messages, context, |event| match event {
             LlmStreamEvent::TextDelta(text) => {
                 tracing::info!("ChatService emitting TextDelta: '{}'", text);
-                let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+                let _ = emit(AppEvent::Chat(ChatEvent::TextDelta {
+                    conversation_id,
+                    text: text.clone(),
+                }));
                 let _ = tx.send(ChatStreamEvent::Token(text.clone()));
                 response_text.push_str(&text);
             }
             LlmStreamEvent::ThinkingDelta(text) => {
                 let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
+                    conversation_id,
                     text: text.clone(),
                 }));
                 thinking_text.push_str(&text);

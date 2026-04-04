@@ -29,7 +29,7 @@ pub use crate::ui_gpui::app_store_types::*;
 use crate::ui_gpui::app_store_streaming::{
     append_stream_buffer_if_target_matches_selected_or_nil,
     append_thinking_buffer_if_target_matches_selected_or_nil, clear_streaming_ephemera_for_target,
-    finalize_stream_if_target_matches_selected_or_nil,
+    clear_streaming_visible_state, finalize_stream_if_target_matches_selected_or_nil,
     hide_thinking_if_target_matches_selected_or_nil,
     show_thinking_if_target_matches_selected_or_nil,
 };
@@ -402,7 +402,12 @@ fn begin_selection_locked(
         conversation_id,
         generation: next_generation,
     };
-    clear_streaming_ephemera_only(inner);
+    let should_restore_thinking =
+        inner.snapshot.chat.streaming.active_target == Some(conversation_id);
+    clear_streaming_visible_state(inner);
+    if should_restore_thinking {
+        inner.snapshot.chat.streaming.thinking_visible = true;
+    }
     inner.last_finalized_stream_guard = None;
 
     if !apply_selected_title_from_history(inner, conversation_id) {
@@ -559,7 +564,10 @@ fn reduce_messages_loaded(
         conversation_id,
         generation: selection_generation,
     };
-    clear_streaming_ephemera_only(inner);
+    clear_streaming_visible_state(inner);
+    if inner.snapshot.chat.streaming.active_target == Some(conversation_id) {
+        inner.snapshot.chat.streaming.thinking_visible = true;
+    }
     inner.last_finalized_stream_guard = None;
     true
 }
@@ -588,7 +596,10 @@ fn reduce_conversation_load_failed(
         return false;
     }
     inner.snapshot.chat.load_state = next_state;
-    clear_streaming_ephemera_only(inner);
+    clear_streaming_visible_state(inner);
+    if inner.snapshot.chat.streaming.active_target == Some(conversation_id) {
+        inner.snapshot.chat.streaming.thinking_visible = true;
+    }
     true
 }
 
@@ -972,3 +983,6 @@ fn normalize_title(title: &str) -> String {
         title.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests;

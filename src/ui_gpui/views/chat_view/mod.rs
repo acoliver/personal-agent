@@ -365,10 +365,6 @@ impl ChatView {
         self.state.conversation_dropdown_open = false;
         self.state.conversation_title_editing = false;
         if switching_conversation {
-            if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
-                tracing::info!("ChatView: stopping active stream before conversation switch");
-                self.emit(UserEvent::StopStreaming);
-            }
             self.state.chat_autoscroll_enabled = true;
             self.chat_scroll_handle.scroll_to_bottom();
         }

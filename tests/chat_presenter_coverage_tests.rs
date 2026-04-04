@@ -1220,16 +1220,20 @@ async fn chat_events_surface_errors_and_completion_commands() {
             model_id: "gpt-4o".to_string(),
         }),
         AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: "chunk".to_string(),
         }),
         AppEvent::Chat(ChatEvent::ThinkingDelta {
+            conversation_id,
             text: "thought".to_string(),
         }),
         AppEvent::Chat(ChatEvent::ToolCallStarted {
+            conversation_id,
             tool_call_id: "tool-1".to_string(),
             tool_name: "search".to_string(),
         }),
         AppEvent::Chat(ChatEvent::ToolCallCompleted {
+            conversation_id,
             tool_call_id: "tool-1".to_string(),
             tool_name: "search".to_string(),
             success: false,
@@ -1270,14 +1274,14 @@ async fn chat_events_surface_errors_and_completion_commands() {
         ViewCommand::AppendStream {
             conversation_id: seen_id,
             chunk,
-        } if *seen_id == Uuid::nil() && chunk == "chunk"
+        } if *seen_id == conversation_id && chunk == "chunk"
     )));
     assert!(commands.iter().any(|command| matches!(
         command,
         ViewCommand::AppendThinking {
             conversation_id: seen_id,
             content,
-        } if *seen_id == Uuid::nil() && content == "thought"
+        } if *seen_id == conversation_id && content == "thought"
     )));
     assert!(commands.iter().any(|command| matches!(
         command,
@@ -1285,7 +1289,7 @@ async fn chat_events_surface_errors_and_completion_commands() {
             conversation_id: seen_id,
             tool_name,
             status,
-        } if *seen_id == Uuid::nil() && tool_name == "search" && status == "running"
+        } if *seen_id == conversation_id && tool_name == "search" && status == "running"
     )));
     assert!(commands.iter().any(|command| matches!(
         command,
@@ -1295,7 +1299,7 @@ async fn chat_events_surface_errors_and_completion_commands() {
             status,
             result,
             duration,
-        } if *seen_id == Uuid::nil()
+        } if *seen_id == conversation_id
             && tool_name == "search"
             && status == "failed"
             && result.as_deref() == Some("bad")
