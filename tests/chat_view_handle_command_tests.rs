@@ -1,7 +1,7 @@
 #![allow(clippy::future_not_send, clippy::unused_async)]
 
 use chrono::Utc;
-use gpui::{point, px, size, AppContext, EntityInputHandler, Render, TestAppContext};
+use gpui::{px, size, AppContext, EntityInputHandler, Render, TestAppContext};
 use personal_agent::events::types::UserEvent;
 use personal_agent::presentation::view_command::{
     ConversationMessagePayload, ConversationSummary, MessageRole as ViewMessageRole,
@@ -947,13 +947,5 @@ async fn chat_composer_layout_keeps_send_button_right_aligned_while_input_grows(
     assert!(
         input_bounds_after.right() < send_bounds_after.left(),
         "input field must keep horizontal space for the send button"
-    );
-
-    visual_cx.simulate_click(
-        point(
-            send_bounds_after.left() + px(4.0),
-            send_bounds_after.top() + px(4.0),
-        ),
-        gpui::Modifiers::default(),
     );
 }
