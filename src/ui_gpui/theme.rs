@@ -20,9 +20,24 @@ use crate::ui_gpui::theme_catalog::{ThemeCatalog, ThemeColors, ThemeDefinition, 
 const DEFAULT_SLUG: &str = "green-screen";
 const DEFAULT_THEME_NAME: &str = "Green Screen";
 
-// ── Global active theme slug ─────────────────────────────────────────────────
+pub const DEFAULT_FONT_SIZE: f32 = 14.0;
+pub const DEFAULT_MONO_FONT_FAMILY: &str = "Menlo";
+pub const DEFAULT_MONO_LIGATURES: bool = true;
+pub const MIN_FONT_SIZE: f32 = 10.0;
+pub const MAX_FONT_SIZE: f32 = 24.0;
+
+pub const FONT_SIZE_SETTING_KEY: &str = "font_size";
+pub const UI_FONT_FAMILY_SETTING_KEY: &str = "ui_font_family";
+pub const MONO_FONT_FAMILY_SETTING_KEY: &str = "mono_font_family";
+pub const MONO_LIGATURES_SETTING_KEY: &str = "mono_ligatures";
+
+// ── Global active runtime settings ───────────────────────────────────────────
 
 static ACTIVE_THEME_SLUG: RwLock<String> = RwLock::new(String::new());
+static ACTIVE_FONT_SIZE: RwLock<f32> = RwLock::new(DEFAULT_FONT_SIZE);
+static ACTIVE_UI_FONT_FAMILY: RwLock<String> = RwLock::new(String::new());
+static ACTIVE_MONO_FONT_FAMILY: RwLock<String> = RwLock::new(String::new());
+static ACTIVE_MONO_LIGATURES: RwLock<bool> = RwLock::new(DEFAULT_MONO_LIGATURES);
 
 fn get_active_slug() -> String {
     let guard = ACTIVE_THEME_SLUG
@@ -100,6 +115,158 @@ pub fn set_active_theme_slug(slug: &str) -> bool {
 #[must_use]
 pub fn active_theme_slug() -> String {
     get_active_slug()
+}
+
+/// Set the runtime base font size used by semantic typography tokens.
+///
+/// Values are clamped to [`MIN_FONT_SIZE`]..=[`MAX_FONT_SIZE`].
+///
+/// Returns `true` if the effective value changed.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn set_active_font_size(size: f32) -> bool {
+    if !size.is_finite() {
+        return false;
+    }
+
+    let clamped = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+    let mut guard = ACTIVE_FONT_SIZE.write().expect("font size rwlock poisoned");
+    if (*guard - clamped).abs() <= f32::EPSILON {
+        return false;
+    }
+    *guard = clamped;
+    true
+}
+
+/// Returns the active runtime base font size.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn active_font_size() -> f32 {
+    *ACTIVE_FONT_SIZE.read().expect("font size rwlock poisoned")
+}
+
+/// Set the active UI font family.
+///
+/// Empty/whitespace values normalize to `None` (system UI font).
+///
+/// Returns `true` if the normalized value changed.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn set_active_ui_font_family(family: Option<String>) -> bool {
+    let normalized = family.unwrap_or_default().trim().to_string();
+    let mut guard = ACTIVE_UI_FONT_FAMILY
+        .write()
+        .expect("ui font family rwlock poisoned");
+    if *guard == normalized {
+        return false;
+    }
+    *guard = normalized;
+    true
+}
+
+/// Returns the active UI font family, or `None` for system default.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn active_ui_font_family() -> Option<String> {
+    let value = ACTIVE_UI_FONT_FAMILY
+        .read()
+        .expect("ui font family rwlock poisoned")
+        .clone();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// Set the active monospace font family.
+///
+/// Empty/whitespace values fall back to [`DEFAULT_MONO_FONT_FAMILY`].
+///
+/// Returns `true` if the normalized family changed.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn set_active_mono_font_family(family: impl AsRef<str>) -> bool {
+    let family = family.as_ref();
+    let normalized = if family.trim().is_empty() {
+        DEFAULT_MONO_FONT_FAMILY.to_string()
+    } else {
+        family.trim().to_string()
+    };
+    let mut guard = ACTIVE_MONO_FONT_FAMILY
+        .write()
+        .expect("mono font family rwlock poisoned");
+    if *guard == normalized {
+        return false;
+    }
+    *guard = normalized;
+    true
+}
+
+/// Returns the active monospace font family.
+///
+/// Falls back to [`DEFAULT_MONO_FONT_FAMILY`] when unset.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn active_mono_font_family() -> String {
+    let value = ACTIVE_MONO_FONT_FAMILY
+        .read()
+        .expect("mono font family rwlock poisoned")
+        .clone();
+    if value.is_empty() {
+        DEFAULT_MONO_FONT_FAMILY.to_string()
+    } else {
+        value
+    }
+}
+
+/// Set whether monospace ligatures are enabled.
+///
+/// Returns `true` if the value changed.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn set_active_mono_ligatures(enabled: bool) -> bool {
+    let mut guard = ACTIVE_MONO_LIGATURES
+        .write()
+        .expect("mono ligatures rwlock poisoned");
+    if *guard == enabled {
+        return false;
+    }
+    *guard = enabled;
+    true
+}
+
+/// Returns whether monospace ligatures are enabled.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn active_mono_ligatures() -> bool {
+    *ACTIVE_MONO_LIGATURES
+        .read()
+        .expect("mono ligatures rwlock poisoned")
 }
 
 /// Returns `true` when `slug` maps to a known selectable theme option.
@@ -348,6 +515,41 @@ fn hsla_to_rgb_bytes(color: Hsla) -> (u8, u8, u8) {
 pub struct Theme;
 
 impl Theme {
+    #[must_use]
+    pub fn font_size_h1() -> f32 {
+        active_font_size() * 2.0
+    }
+
+    #[must_use]
+    pub fn font_size_h2() -> f32 {
+        (active_font_size() * 3.0) / 2.0
+    }
+
+    #[must_use]
+    pub fn font_size_h3() -> f32 {
+        (active_font_size() * 5.0) / 4.0
+    }
+
+    #[must_use]
+    pub fn font_size_body() -> f32 {
+        active_font_size()
+    }
+
+    #[must_use]
+    pub fn font_size_mono() -> f32 {
+        (active_font_size() * 9.0) / 10.0
+    }
+
+    #[must_use]
+    pub fn font_size_ui() -> f32 {
+        (active_font_size() * 17.0) / 20.0
+    }
+
+    #[must_use]
+    pub fn font_size_small() -> f32 {
+        (active_font_size() * 39.0) / 50.0
+    }
+
     // ── Public conversion helpers ────────────────────────────────────────────
 
     /// Parse a theme color token and convert it to `Hsla`.
@@ -407,12 +609,6 @@ impl Theme {
     pub const RADIUS_SM: f32 = 4.0;
     pub const RADIUS_MD: f32 = 6.0;
     pub const RADIUS_LG: f32 = 8.0;
-
-    pub const FONT_SIZE_XS: f32 = 11.0;
-    pub const FONT_SIZE_SM: f32 = 12.0;
-    pub const FONT_SIZE_MD: f32 = 13.0;
-    pub const FONT_SIZE_BASE: f32 = 14.0;
-    pub const FONT_SIZE_LG: f32 = 16.0;
 
     // ── Background tokens ────────────────────────────────────────────────────
 

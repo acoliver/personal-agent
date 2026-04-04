@@ -627,7 +627,9 @@ mod history_presenter_tests {
 
 mod settings_presenter_tests {
     use super::*;
-    use personal_agent::ui_gpui::theme::{active_theme_slug, set_active_theme_slug};
+    use personal_agent::ui_gpui::theme::{
+        active_font_size, active_theme_slug, set_active_font_size, set_active_theme_slug,
+    };
 
     static THEME_RUNTIME_TEST_LOCK: std::sync::LazyLock<Mutex<()>> =
         std::sync::LazyLock::new(|| Mutex::new(()));
@@ -635,6 +637,7 @@ mod settings_presenter_tests {
     struct ThemeRuntimeGuard {
         _lock: std::sync::MutexGuard<'static, ()>,
         previous_slug: String,
+        previous_font_size: f32,
     }
 
     impl ThemeRuntimeGuard {
@@ -643,9 +646,11 @@ mod settings_presenter_tests {
                 .lock()
                 .expect("theme runtime test lock poisoned");
             let previous_slug = active_theme_slug();
+            let previous_font_size = active_font_size();
             Self {
                 _lock: lock,
                 previous_slug,
+                previous_font_size,
             }
         }
     }
@@ -653,6 +658,7 @@ mod settings_presenter_tests {
     impl Drop for ThemeRuntimeGuard {
         fn drop(&mut self) {
             set_active_theme_slug(&self.previous_slug);
+            let _ = set_active_font_size(self.previous_font_size);
         }
     }
 
@@ -741,9 +747,9 @@ mod settings_presenter_tests {
         (dir, path, mcp_id)
     }
 
-    /// Drain all 5 startup commands emitted by the settings presenter.
+    /// Drain all startup commands emitted by the settings presenter.
     async fn drain_startup(rx: &mut broadcast::Receiver<ViewCommand>) {
-        for _ in 0..5 {
+        for _ in 0..6 {
             let _ = recv_broadcast_command(rx).await;
         }
     }
@@ -775,7 +781,8 @@ mod settings_presenter_tests {
                 selected_profile_id: Some(profile.id),
             }
         );
-        // Drain ShowSettingsTheme + ToolApprovalPolicyUpdated + YoloModeChanged
+        // Drain ShowSettingsTheme + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
@@ -1661,7 +1668,8 @@ mod settings_presenter_tests {
         let _ = recv_broadcast_command(&mut view_rx).await;
 
         let cmd = recv_broadcast_command(&mut view_rx).await;
-        // Drain ToolApprovalPolicyUpdated + YoloModeChanged
+        // Drain ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
@@ -1882,7 +1890,7 @@ mod settings_presenter_tests {
         send_settings_event(&event_tx, AppEvent::User(UserEvent::RefreshProfiles)).await;
 
         // Should receive ShowSettings + ChatProfilesUpdated + ShowSettingsTheme
-        // + ToolApprovalPolicyUpdated + YoloModeChanged
+        // + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged
         let first = recv_broadcast_command(&mut view_rx).await;
         assert!(
             matches!(first, ViewCommand::ShowSettings { .. }),
@@ -1900,13 +1908,18 @@ mod settings_presenter_tests {
         );
         let fourth = recv_broadcast_command(&mut view_rx).await;
         assert!(
-            matches!(fourth, ViewCommand::ToolApprovalPolicyUpdated { .. }),
-            "expected ToolApprovalPolicyUpdated, got {fourth:?}"
+            matches!(fourth, ViewCommand::ShowFontSettings { .. }),
+            "expected ShowFontSettings, got {fourth:?}"
         );
         let fifth = recv_broadcast_command(&mut view_rx).await;
         assert!(
-            matches!(fifth, ViewCommand::YoloModeChanged { .. }),
-            "expected YoloModeChanged, got {fifth:?}"
+            matches!(fifth, ViewCommand::ToolApprovalPolicyUpdated { .. }),
+            "expected ToolApprovalPolicyUpdated, got {fifth:?}"
+        );
+        let sixth = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(sixth, ViewCommand::YoloModeChanged { .. }),
+            "expected YoloModeChanged, got {sixth:?}"
         );
     }
 
@@ -2004,9 +2017,8 @@ mod settings_presenter_tests {
             }
             other => panic!("expected ToolApprovalPolicyUpdated, got {other:?}"),
         }
-        let _ = recv_broadcast_command(&mut view_rx).await; // YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await; // ShowNotification
 
-        // Remove "git" from allowlist
         let _ = event_tx.send(AppEvent::User(
             UserEvent::RemoveToolApprovalAllowlistPrefix {
                 prefix: "git".to_string(),
@@ -2058,7 +2070,7 @@ mod settings_presenter_tests {
             }
             other => panic!("expected ToolApprovalPolicyUpdated, got {other:?}"),
         }
-        let _ = recv_broadcast_command(&mut view_rx).await; // YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await; // ShowNotification
 
         let _ = event_tx.send(AppEvent::User(
             UserEvent::RemoveToolApprovalDenylistPrefix {
@@ -2079,6 +2091,25 @@ mod settings_presenter_tests {
                 );
             }
             other => panic!("expected ToolApprovalPolicyUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_profiles_emits_additional_font_snapshot_command() {
+        let profile = make_profile(Uuid::new_v4(), "default", "openai", "gpt-4");
+        let profile_service = MockProfileService::new(vec![profile.clone()], Some(profile.id));
+        let app_settings_service = MockAppSettingsService::new(Some(profile.id));
+        let (mut presenter, event_tx, mut view_rx, _ps, _as) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+        drain_startup(&mut view_rx).await;
+
+        send_settings_event(&event_tx, AppEvent::User(UserEvent::RefreshProfiles)).await;
+
+        // RefreshProfiles should emit all snapshots, including the new font settings snapshot.
+        for _ in 0..6 {
+            let _ = recv_broadcast_command(&mut view_rx).await;
         }
     }
 }

@@ -82,6 +82,7 @@ impl MainPanel {
 
             // ── settings + profiles (non-store) ────────────────────────
             ShowSettingsTheme { .. }
+            | ShowFontSettings { .. }
             | ProfileCreated { .. }
             | ProfileUpdated { .. }
             | ProfileDeleted { .. } => self.handle_settings_profile_command(cmd, cx),
@@ -237,6 +238,26 @@ impl MainPanel {
                             ViewCommand::ShowSettingsTheme {
                                 options,
                                 selected_slug,
+                            },
+                            cx,
+                        );
+                    });
+                }
+            }
+            ViewCommand::ShowFontSettings {
+                size,
+                ui_family,
+                mono_family,
+                ligatures,
+            } => {
+                if let Some(ref settings) = self.settings_view {
+                    settings.update(cx, |view, cx| {
+                        view.handle_command(
+                            ViewCommand::ShowFontSettings {
+                                size,
+                                ui_family,
+                                mono_family,
+                                ligatures,
                             },
                             cx,
                         );

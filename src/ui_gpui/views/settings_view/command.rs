@@ -4,9 +4,57 @@ use super::{McpItem, McpStatus, ProfileItem, SettingsView};
 use crate::presentation::view_command::ViewCommand;
 
 impl SettingsView {
+    fn handle_basic_command(&mut self, command: &ViewCommand) -> bool {
+        match command {
+            ViewCommand::ToolApprovalPolicyUpdated {
+                yolo_mode,
+                auto_approve_reads,
+                mcp_approval_mode,
+                persistent_allowlist,
+                persistent_denylist,
+            } => {
+                self.state.yolo_mode = *yolo_mode;
+                self.state.auto_approve_reads = *auto_approve_reads;
+                self.state.mcp_approval_mode = *mcp_approval_mode;
+                self.state
+                    .persistent_allowlist
+                    .clone_from(persistent_allowlist);
+                self.state
+                    .persistent_denylist
+                    .clone_from(persistent_denylist);
+                self.state.allowlist_input.clear();
+                self.state.denylist_input.clear();
+                true
+            }
+            ViewCommand::YoloModeChanged { active } => {
+                self.state.yolo_mode = *active;
+                true
+            }
+            ViewCommand::ExportDirectoryLoaded { path } => {
+                self.state.export_dir_input.clone_from(path);
+                true
+            }
+            ViewCommand::ShowNotification { message } => {
+                self.state.status_message = Some(message.clone());
+                self.state.status_is_error = false;
+                true
+            }
+            ViewCommand::ShowError { title, message, .. } => {
+                self.state.status_message = Some(format!("{title}: {message}"));
+                self.state.status_is_error = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P06
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
+        if self.handle_basic_command(&command) {
+            cx.notify();
+            return;
+        }
         match command {
             ViewCommand::ShowSettings {
                 profiles,
@@ -23,6 +71,14 @@ impl SettingsView {
                 selected_slug,
             } => {
                 self.apply_theme_options(options, selected_slug);
+            }
+            ViewCommand::ShowFontSettings {
+                size,
+                ui_family,
+                mono_family,
+                ligatures,
+            } => {
+                self.apply_font_settings(size, ui_family, &mono_family, ligatures);
             }
             ViewCommand::ProfileCreated { id, name } => {
                 self.state.selected_profile_id = Some(id);
@@ -68,35 +124,6 @@ impl SettingsView {
                 if self.state.selected_mcp_id == Some(id) {
                     self.state.selected_mcp_id = self.state.mcps.first().map(|m| m.id);
                 }
-            }
-            ViewCommand::ToolApprovalPolicyUpdated {
-                yolo_mode,
-                auto_approve_reads,
-                mcp_approval_mode,
-                persistent_allowlist,
-                persistent_denylist,
-            } => {
-                self.state.yolo_mode = yolo_mode;
-                self.state.auto_approve_reads = auto_approve_reads;
-                self.state.mcp_approval_mode = mcp_approval_mode;
-                self.state.persistent_allowlist = persistent_allowlist;
-                self.state.persistent_denylist = persistent_denylist;
-                self.state.allowlist_input.clear();
-                self.state.denylist_input.clear();
-            }
-            ViewCommand::YoloModeChanged { active } => {
-                self.state.yolo_mode = active;
-            }
-            ViewCommand::ExportDirectoryLoaded { path } => {
-                self.state.export_dir_input = path;
-            }
-            ViewCommand::ShowNotification { message } => {
-                self.state.status_message = Some(message);
-                self.state.status_is_error = false;
-            }
-            ViewCommand::ShowError { title, message, .. } => {
-                self.state.status_message = Some(format!("{title}: {message}"));
-                self.state.status_is_error = true;
             }
             _ => {}
         }

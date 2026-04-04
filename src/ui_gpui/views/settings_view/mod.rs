@@ -18,6 +18,9 @@ use crate::agent::McpApprovalMode;
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::{ProfileSummary, ThemeSummary};
 use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::theme::{
+    DEFAULT_FONT_SIZE, DEFAULT_MONO_FONT_FAMILY, MAX_FONT_SIZE, MIN_FONT_SIZE,
+};
 
 /// Represents a profile in the settings list
 /// @plan PLAN-20250130-GPUIREDUX.P06
@@ -134,6 +137,7 @@ pub(super) enum ActiveField {
 
 /// Settings view state
 /// @plan PLAN-20250130-GPUIREDUX.P06
+#[allow(clippy::struct_excessive_bools)]
 pub struct SettingsState {
     pub profiles: Vec<ProfileItem>,
     pub mcps: Vec<McpItem>,
@@ -143,6 +147,10 @@ pub struct SettingsState {
     pub available_themes: Vec<ThemeOption>,
     /// Slug of the currently-selected theme.
     pub selected_theme_slug: String,
+    pub font_size: f32,
+    pub ui_font_family: Option<String>,
+    pub mono_font_family: String,
+    pub mono_ligatures: bool,
     pub yolo_mode: bool,
     pub auto_approve_reads: bool,
     pub mcp_approval_mode: McpApprovalMode,
@@ -172,6 +180,10 @@ impl Default for SettingsState {
             selected_mcp_id: None,
             available_themes: Vec::new(),
             selected_theme_slug: "green-screen".to_string(),
+            font_size: DEFAULT_FONT_SIZE,
+            ui_font_family: None,
+            mono_font_family: DEFAULT_MONO_FONT_FAMILY.to_string(),
+            mono_ligatures: true,
             yolo_mode: false,
             auto_approve_reads: false,
             mcp_approval_mode: McpApprovalMode::PerTool,
@@ -250,6 +262,30 @@ impl SettingsView {
         self.state.selected_theme_slug.clone_from(&slug);
         self.emit(&UserEvent::SelectTheme { slug });
         cx.notify();
+    }
+
+    pub(super) fn apply_font_settings(
+        &mut self,
+        size: f32,
+        ui_family: Option<String>,
+        mono_family: &str,
+        ligatures: bool,
+    ) {
+        self.state.font_size = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+        self.state.ui_font_family = ui_family.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        self.state.mono_font_family = if mono_family.trim().is_empty() {
+            DEFAULT_MONO_FONT_FAMILY.to_string()
+        } else {
+            mono_family.trim().to_string()
+        };
+        self.state.mono_ligatures = ligatures;
     }
 
     /// Set profiles from presenter

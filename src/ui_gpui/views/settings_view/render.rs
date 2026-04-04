@@ -2,7 +2,7 @@
 
 use super::{McpItem, McpStatus, ProfileItem, SettingsView};
 use crate::events::types::UserEvent;
-use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::theme::{Theme, MAX_FONT_SIZE, MIN_FONT_SIZE};
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FontWeight, MouseButton, Pixels,
     SharedString,
@@ -40,7 +40,7 @@ impl SettingsView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_dark()))
-                            .text_size(px(14.0))
+                            .text_size(px(Theme::font_size_body()))
                             .text_color(Theme::text_secondary())
                             .child("<")
                             .on_mouse_down(
@@ -56,7 +56,7 @@ impl SettingsView {
                     // Title
                     .child(
                         div()
-                            .text_size(px(14.0))
+                            .text_size(px(Theme::font_size_body()))
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::text_primary())
                             .child("Settings"),
@@ -71,7 +71,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child("Refresh Models")
                     .on_mouse_down(
@@ -111,7 +111,7 @@ impl SettingsView {
                 d.hover(|s| s.bg(Theme::bg_dark()))
                     .text_color(Theme::text_primary())
             })
-            .text_size(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
             .child(display_text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -136,7 +136,7 @@ impl SettingsView {
             // Section header
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("PROFILES"),
             )
@@ -157,7 +157,7 @@ impl SettingsView {
                     .when(profiles.is_empty(), |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_muted())
                                 .child("No profiles configured"),
                         )
@@ -168,7 +168,7 @@ impl SettingsView {
                                 .w_full()
                                 .px(px(8.0))
                                 .pb(px(2.0))
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::text_muted())
                                 .child(format!("{total_profiles} profiles")),
                         )
@@ -199,7 +199,7 @@ impl SettingsView {
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::danger())))
                     .when(!has_selection, |d| d.text_color(Theme::text_muted()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -227,7 +227,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_primary())
                     .child("+")
                     .on_mouse_down(
@@ -252,7 +252,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -309,7 +309,7 @@ impl SettingsView {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if is_selected {
                         Theme::selection_fg()
                     } else {
@@ -331,7 +331,7 @@ impl SettingsView {
                     } else {
                         Theme::bg_dark()
                     })
-                    .text_size(px(10.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(if enabled {
                         Theme::selection_fg()
                     } else {
@@ -369,7 +369,7 @@ impl SettingsView {
             // Section header
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("MCP TOOLS"),
             )
@@ -390,7 +390,7 @@ impl SettingsView {
                     .when(mcps.is_empty(), |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_muted())
                                 .child("No MCP tools configured"),
                         )
@@ -401,7 +401,7 @@ impl SettingsView {
                                 .w_full()
                                 .px(px(8.0))
                                 .pb(px(2.0))
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::text_muted())
                                 .child(format!("{total_mcps} MCP tools")),
                         )
@@ -431,7 +431,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::danger())))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -459,7 +459,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_primary())
                     .child("+")
                     .on_mouse_down(
@@ -484,7 +484,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -529,7 +529,7 @@ impl SettingsView {
                 d.hover(|s| s.bg(Theme::bg_dark()))
                     .text_color(Theme::text_primary())
             })
-            .text_size(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
             .child(name)
             .on_mouse_down(
                 gpui::MouseButton::Left,
@@ -561,7 +561,7 @@ impl SettingsView {
             .gap(px(6.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("EXPORT DIRECTORY"),
             )
@@ -589,7 +589,7 @@ impl SettingsView {
                             .items_center()
                             .overflow_hidden()
                             .cursor_text()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(text_color)
                             .child(input_text)
                             .on_mouse_down(
@@ -615,7 +615,7 @@ impl SettingsView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::accent()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("Browse…")
                             .on_mouse_down(
@@ -644,7 +644,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("Save")
                     .on_mouse_down(
@@ -663,7 +663,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_secondary())
                     .child("Reset")
                     .on_mouse_down(
@@ -677,7 +677,7 @@ impl SettingsView {
             )
             .child(
                 div()
-                    .text_size(px(10.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_muted())
                     .child("Enter a directory path, or reset for system Downloads"),
             )
@@ -701,7 +701,7 @@ impl SettingsView {
             // Section header
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("THEME"),
             )
@@ -717,7 +717,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child(selected_name),
             )
@@ -738,11 +738,152 @@ impl SettingsView {
                     .when(themes.is_empty(), |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_muted())
                                 .child("No themes available"),
                         )
                     }),
+            )
+    }
+
+    /// Render the appearance (font controls) section.
+    #[allow(clippy::too_many_lines)]
+    fn render_appearance_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let font_size = self.state.font_size;
+        let mono_ligatures = self.state.mono_ligatures;
+
+        let size_minus = (font_size - 1.0).max(MIN_FONT_SIZE);
+        let size_plus = (font_size + 1.0).min(MAX_FONT_SIZE);
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            // Section header
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_muted())
+                    .font_weight(FontWeight::BOLD)
+                    .child("APPEARANCE"),
+            )
+            // Font size stepper row
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    // Label
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(Theme::text_primary())
+                            .child("Font Size"),
+                    )
+                    // [-] button
+                    .child(
+                        div()
+                            .id("btn-font-size-minus")
+                            .size(px(24.0))
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .hover(|s| s.bg(Theme::bg_darker()))
+                            .text_size(px(Theme::font_size_body()))
+                            .text_color(if (font_size - MIN_FONT_SIZE).abs() <= f32::EPSILON {
+                                Theme::text_muted()
+                            } else {
+                                Theme::text_primary()
+                            })
+                            .child("-")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _window, _cx| {
+                                    this.emit(&UserEvent::SetFontSize { size: size_minus });
+                                }),
+                            ),
+                    )
+                    // Current size display
+                    .child(
+                        div()
+                            .w(px(32.0))
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(Theme::text_primary())
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(format!("{font_size:.0}")),
+                    )
+                    // [+] button
+                    .child(
+                        div()
+                            .id("btn-font-size-plus")
+                            .size(px(24.0))
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .hover(|s| s.bg(Theme::bg_darker()))
+                            .text_size(px(Theme::font_size_body()))
+                            .text_color(if (font_size - MAX_FONT_SIZE).abs() <= f32::EPSILON {
+                                Theme::text_muted()
+                            } else {
+                                Theme::text_primary()
+                            })
+                            .child("+")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _window, _cx| {
+                                    this.emit(&UserEvent::SetFontSize { size: size_plus });
+                                }),
+                            ),
+                    )
+                    // Hint text
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_ui()))
+                            .text_color(Theme::text_muted())
+                            .child("⌘+/⌘- to zoom"),
+                    ),
+            )
+            // Mono ligatures toggle row
+            .child(
+                div()
+                    .id("toggle-mono-ligatures")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _window, _cx| {
+                            this.emit(&UserEvent::SetMonoLigatures {
+                                enabled: !mono_ligatures,
+                            });
+                        }),
+                    )
+                    // Checkbox indicator
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(Theme::text_primary())
+                            .child(if mono_ligatures { "[x]" } else { "[ ]" }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(Theme::text_primary())
+                            .child("Mono ligatures"),
+                    ),
             )
     }
 }
@@ -814,7 +955,9 @@ impl gpui::Render for SettingsView {
                     // Export directory section
                     .child(self.render_export_dir_section(cx))
                     // Theme section
-                    .child(self.render_theme_section(cx)),
+                    .child(self.render_theme_section(cx))
+                    // Appearance section (font controls)
+                    .child(self.render_appearance_section(cx)),
             )
     }
 }

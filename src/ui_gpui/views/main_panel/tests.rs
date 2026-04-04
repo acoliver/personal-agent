@@ -998,3 +998,22 @@ async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestApp
         });
     });
 }
+
+#[test]
+fn route_view_command_counts_font_settings_snapshot_for_settings_view() {
+    let mut targets = CommandTargets::default();
+    route_view_command(
+        ViewCommand::ShowFontSettings {
+            size: 14.0,
+            ui_family: None,
+            mono_family: "Menlo".to_string(),
+            ligatures: true,
+        },
+        &mut targets,
+    );
+
+    assert_eq!(
+        targets.settings_theme_commands, 1,
+        "font settings snapshot should route to the settings view bucket"
+    );
+}

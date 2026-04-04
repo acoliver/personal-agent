@@ -22,7 +22,13 @@ use crate::events::{
     AppEvent, EventBus,
 };
 use crate::services::{AppSettingsService, ProfileService};
-use crate::ui_gpui::theme::{available_theme_options, is_valid_theme_slug, set_active_theme_slug};
+use crate::ui_gpui::theme::{
+    available_theme_options, is_valid_theme_slug, set_active_font_size,
+    set_active_mono_font_family, set_active_mono_ligatures, set_active_theme_slug,
+    set_active_ui_font_family, DEFAULT_FONT_SIZE, DEFAULT_MONO_FONT_FAMILY, DEFAULT_MONO_LIGATURES,
+    FONT_SIZE_SETTING_KEY, MAX_FONT_SIZE, MIN_FONT_SIZE, MONO_FONT_FAMILY_SETTING_KEY,
+    MONO_LIGATURES_SETTING_KEY, UI_FONT_FAMILY_SETTING_KEY,
+};
 
 /// `SettingsPresenter` - handles settings and profile management UI
 ///
@@ -129,6 +135,7 @@ impl SettingsPresenter {
         .await;
 
         Self::emit_theme_snapshot(&self.app_settings_service, &self.view_tx, None).await;
+        Self::emit_font_settings_snapshot(&self.app_settings_service, &self.view_tx).await;
         Self::emit_tool_approval_policy_snapshot(&self.app_settings_service, &self.view_tx).await;
 
         let mut rx = self.rx.resubscribe();
@@ -254,6 +261,7 @@ impl SettingsPresenter {
             UserEvent::RefreshProfiles => {
                 Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
                 Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
+                Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
                 Self::emit_tool_approval_policy_snapshot(app_settings_service, view_tx).await;
             }
             UserEvent::RefreshToolApprovalPolicy => {
@@ -305,6 +313,18 @@ impl SettingsPresenter {
             }
             UserEvent::SelectTheme { slug } => {
                 Self::on_select_theme(app_settings_service, view_tx, slug).await;
+            }
+            UserEvent::SetFontSize { size } => {
+                Self::on_set_font_size(app_settings_service, view_tx, size).await;
+            }
+            UserEvent::SetUiFontFamily { family } => {
+                Self::on_set_ui_font_family(app_settings_service, view_tx, family).await;
+            }
+            UserEvent::SetMonoFontFamily { family } => {
+                Self::on_set_mono_font_family(app_settings_service, view_tx, family).await;
+            }
+            UserEvent::SetMonoLigatures { enabled } => {
+                Self::on_set_mono_ligatures(app_settings_service, view_tx, enabled).await;
             }
             _ => {} // Ignore other user events
         }
@@ -819,6 +839,167 @@ impl SettingsPresenter {
             options,
             selected_slug,
         });
+    }
+
+    async fn emit_font_settings_snapshot(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
+        let size = Self::read_font_size_setting(app_settings_service).await;
+        let ui_family = Self::read_ui_font_family_setting(app_settings_service).await;
+        let mono_family = Self::read_mono_font_family_setting(app_settings_service).await;
+        let ligatures = Self::read_mono_ligatures_setting(app_settings_service).await;
+
+        let _ = set_active_font_size(size);
+        let _ = set_active_ui_font_family(ui_family.clone());
+        let _ = set_active_mono_font_family(mono_family.clone());
+        let _ = set_active_mono_ligatures(ligatures);
+
+        let _ = view_tx.send(ViewCommand::ShowFontSettings {
+            size,
+            ui_family,
+            mono_family,
+            ligatures,
+        });
+    }
+
+    async fn on_set_font_size(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        size: f32,
+    ) {
+        let normalized = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+        if let Err(err) = app_settings_service
+            .set_setting(FONT_SIZE_SETTING_KEY, normalized.to_string())
+            .await
+        {
+            tracing::warn!("Failed to persist font size: {err}");
+        }
+        let _ = set_active_font_size(normalized);
+        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+    }
+
+    async fn on_set_ui_font_family(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        family: Option<String>,
+    ) {
+        let normalized = family.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+
+        if let Err(err) = app_settings_service
+            .set_setting(
+                UI_FONT_FAMILY_SETTING_KEY,
+                normalized.clone().unwrap_or_default(),
+            )
+            .await
+        {
+            tracing::warn!("Failed to persist UI font family: {err}");
+        }
+
+        let _ = set_active_ui_font_family(normalized);
+        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+    }
+
+    async fn on_set_mono_font_family(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        family: String,
+    ) {
+        let normalized = if family.trim().is_empty() {
+            DEFAULT_MONO_FONT_FAMILY.to_string()
+        } else {
+            family.trim().to_string()
+        };
+
+        if let Err(err) = app_settings_service
+            .set_setting(MONO_FONT_FAMILY_SETTING_KEY, normalized.clone())
+            .await
+        {
+            tracing::warn!("Failed to persist mono font family: {err}");
+        }
+
+        let _ = set_active_mono_font_family(normalized);
+        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+    }
+
+    async fn on_set_mono_ligatures(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        enabled: bool,
+    ) {
+        if let Err(err) = app_settings_service
+            .set_setting(MONO_LIGATURES_SETTING_KEY, enabled.to_string())
+            .await
+        {
+            tracing::warn!("Failed to persist mono ligatures: {err}");
+        }
+
+        let _ = set_active_mono_ligatures(enabled);
+        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+    }
+
+    async fn read_setting(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        key: &str,
+    ) -> Option<String> {
+        app_settings_service.get_setting(key).await.ok().flatten()
+    }
+
+    async fn read_font_size_setting(app_settings_service: &Arc<dyn AppSettingsService>) -> f32 {
+        Self::read_setting(app_settings_service, FONT_SIZE_SETTING_KEY)
+            .await
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| value.is_finite())
+            .map_or(DEFAULT_FONT_SIZE, |value| {
+                value.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+            })
+    }
+
+    async fn read_ui_font_family_setting(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+    ) -> Option<String> {
+        Self::read_setting(app_settings_service, UI_FONT_FAMILY_SETTING_KEY)
+            .await
+            .and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+    }
+
+    async fn read_mono_font_family_setting(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+    ) -> String {
+        Self::read_setting(app_settings_service, MONO_FONT_FAMILY_SETTING_KEY)
+            .await
+            .and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            .unwrap_or_else(|| DEFAULT_MONO_FONT_FAMILY.to_string())
+    }
+
+    async fn read_mono_ligatures_setting(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+    ) -> bool {
+        Self::read_setting(app_settings_service, MONO_LIGATURES_SETTING_KEY)
+            .await
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(DEFAULT_MONO_LIGATURES)
     }
 
     /// Persist the selected theme slug and apply it to the runtime.

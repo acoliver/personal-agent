@@ -267,11 +267,20 @@ fn theme_color_helpers_return_valid_hsla_and_rgba_values() {
     assert_eq!(Theme::RADIUS_SM, 4.0);
     assert_eq!(Theme::RADIUS_MD, 6.0);
     assert_eq!(Theme::RADIUS_LG, 8.0);
-    assert_eq!(Theme::FONT_SIZE_XS, 11.0);
-    assert_eq!(Theme::FONT_SIZE_SM, 12.0);
-    assert_eq!(Theme::FONT_SIZE_MD, 13.0);
-    assert_eq!(Theme::FONT_SIZE_BASE, 14.0);
-    assert_eq!(Theme::FONT_SIZE_LG, 16.0);
+    // Legacy FONT_SIZE_* constants removed in issue #81;
+    // replaced by Theme::font_size_*() runtime methods tested below.
+}
+
+#[test]
+fn theme_runtime_font_tokens_follow_base_size_scale_contract() {
+    // Issue #81 replaces static FONT_SIZE_* constants with runtime methods.
+    assert_eq!(Theme::font_size_h1(), 28.0);
+    assert_eq!(Theme::font_size_h2(), 21.0);
+    assert_eq!(Theme::font_size_h3(), 17.5);
+    assert_eq!(Theme::font_size_body(), 14.0);
+    assert_eq!(Theme::font_size_mono(), 12.6);
+    assert_eq!(Theme::font_size_ui(), 11.9);
+    assert_eq!(Theme::font_size_small(), 10.92);
 }
 
 #[test]

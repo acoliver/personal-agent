@@ -138,6 +138,14 @@ pub enum ViewCommand {
         selected_slug: String,
     },
 
+    /// Provide font settings snapshot to the settings view.
+    ShowFontSettings {
+        size: f32,
+        ui_family: Option<String>,
+        mono_family: String,
+        ligatures: bool,
+    },
+
     /// Show notification message
     ShowNotification { message: String },
 

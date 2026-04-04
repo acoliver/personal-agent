@@ -27,7 +27,7 @@ macro_rules! icon_btn {
             .when(!$active, |d| {
                 d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
             })
-            .text_size(px(14.0))
+            .text_size(px(Theme::font_size_body()))
             .text_color(Theme::text_primary())
             .child($label)
             .on_mouse_down(MouseButton::Left, $handler)
@@ -58,7 +58,7 @@ impl ChatView {
                     .gap(px(8.0))
                     .child(
                         div()
-                            .text_size(px(14.0))
+                            .text_size(px(Theme::font_size_body()))
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::text_primary())
                             .child("PersonalAgent"),
@@ -76,7 +76,7 @@ impl ChatView {
             .py(px(2.0))
             .rounded(px(Theme::RADIUS_SM))
             .bg(Theme::warning())
-            .text_size(px(Theme::FONT_SIZE_XS))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::bg_darkest())
             .font_weight(FontWeight::BOLD)
             .child("YOLO")
@@ -167,7 +167,7 @@ impl ChatView {
                     .bg(Theme::bg_darker())
                     .hover(|s| s.bg(Theme::danger()))
                     .active(|s| s.bg(Theme::danger()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_primary())
                     .child("\u{23FB}")
                     .on_mouse_down(
@@ -218,7 +218,7 @@ impl ChatView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::accent())
                             .cursor_pointer()
                             .hover(|s| s.text_color(Theme::accent_hover()))
@@ -233,7 +233,7 @@ impl ChatView {
                         div()
                             .id("export-open-dir")
                             .flex_shrink_0()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::accent())
                             .cursor_pointer()
                             .hover(|s| s.text_color(Theme::accent_hover()))
@@ -255,7 +255,7 @@ impl ChatView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(text_color)
                     .child(message),
             )
@@ -345,7 +345,7 @@ impl ChatView {
                         .justify_center()
                         .px(px(2.0))
                         .bg(Theme::error())
-                        .text_size(px(8.0))
+                        .text_size(px(Theme::font_size_small()))
                         .font_weight(FontWeight::BOLD)
                         .text_color(Theme::selection_fg())
                         .child(count_label),
@@ -368,7 +368,7 @@ impl ChatView {
                 .border_color(Theme::accent())
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(Theme::font_size_mono()))
                         .text_color(Theme::text_primary())
                         .child(if input.is_empty() {
                             "Enter conversation name".to_string()
@@ -403,14 +403,14 @@ impl ChatView {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_size(px(13.0))
+                        .text_size(px(Theme::font_size_mono()))
                         .text_color(Theme::text_primary())
                         .child(title),
                 )
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_size(px(10.0))
+                        .text_size(px(Theme::font_size_ui()))
                         .text_color(Theme::text_primary())
                         .child(if open { "\u{25B2}" } else { "\u{25BC}" }),
                 )
@@ -435,7 +435,7 @@ impl ChatView {
             .justify_center()
             .cursor_pointer()
             .hover(|s| s.bg(Theme::bg_dark()))
-            .text_size(px(14.0))
+            .text_size(px(Theme::font_size_body()))
             .text_color(Theme::text_primary())
             .child("+")
             .on_mouse_down(
@@ -499,14 +499,14 @@ impl ChatView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis_start()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child(selected_profile),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_size(px(9.0))
+                            .text_size(px(Theme::font_size_small()))
                             .text_color(Theme::text_secondary())
                             .child(if open { "\u{25B2}" } else { "\u{25BC}" }),
                     ),
@@ -623,10 +623,10 @@ impl ChatView {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_size(px(11.0)).child(title))
+                    .child(div().text_size(px(Theme::font_size_ui())).child(title))
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_secondary())
                             .child(count_label),
                     ),
@@ -740,10 +740,10 @@ impl ChatView {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_size(px(11.0)).child(label))
+                    .child(div().text_size(px(Theme::font_size_ui())).child(label))
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_secondary())
                             .child(model_id),
                     ),

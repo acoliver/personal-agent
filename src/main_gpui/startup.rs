@@ -136,6 +136,70 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
         raw_theme
     );
 
+    // Apply persisted font settings before first render
+    let font_size = app_settings
+        .get_setting(personal_agent::ui_gpui::theme::FONT_SIZE_SETTING_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .map_or(personal_agent::ui_gpui::theme::DEFAULT_FONT_SIZE, |v| {
+            v.clamp(
+                personal_agent::ui_gpui::theme::MIN_FONT_SIZE,
+                personal_agent::ui_gpui::theme::MAX_FONT_SIZE,
+            )
+        });
+    let _ = personal_agent::ui_gpui::theme::set_active_font_size(font_size);
+
+    let ui_font_family = app_settings
+        .get_setting(personal_agent::ui_gpui::theme::UI_FONT_FAMILY_SETTING_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+    let _ = personal_agent::ui_gpui::theme::set_active_ui_font_family(ui_font_family.clone());
+
+    let mono_font_family = app_settings
+        .get_setting(personal_agent::ui_gpui::theme::MONO_FONT_FAMILY_SETTING_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .unwrap_or_else(|| personal_agent::ui_gpui::theme::DEFAULT_MONO_FONT_FAMILY.to_string());
+    let _ = personal_agent::ui_gpui::theme::set_active_mono_font_family(&mono_font_family);
+
+    let mono_ligatures = app_settings
+        .get_setting(personal_agent::ui_gpui::theme::MONO_LIGATURES_SETTING_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(personal_agent::ui_gpui::theme::DEFAULT_MONO_LIGATURES);
+    let _ = personal_agent::ui_gpui::theme::set_active_mono_ligatures(mono_ligatures);
+
+    tracing::info!(
+        font_size,
+        ?ui_font_family,
+        mono_font_family,
+        mono_ligatures,
+        "Startup: applied font settings"
+    );
+
     let selected_profile_id = match app_settings.get_default_profile_id().await {
         Ok(Some(id)) => Some(id),
         _ => profile_service_impl

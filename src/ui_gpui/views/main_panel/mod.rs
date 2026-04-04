@@ -12,7 +12,7 @@ mod startup;
 
 pub use routing::{
     route_view_command, CommandTargets, NavigateBack, NavigateToHistory, NavigateToSettings,
-    NewConversation,
+    NewConversation, ZoomIn, ZoomOut, ZoomReset,
 };
 pub use startup::MainPanelAppState;
 

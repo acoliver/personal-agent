@@ -1,3 +1,5 @@
+#![allow(clippy::float_cmp)]
+
 use personal_agent::ui_gpui::mac_native::{MAC_NATIVE_NAME, MAC_NATIVE_SLUG};
 use personal_agent::ui_gpui::theme::{
     active_theme_slug, available_theme_options, set_active_theme_slug, Theme,
@@ -288,6 +290,30 @@ fn green_screen_background_is_file_driven() -> TestResult {
     );
 
     Ok(())
+}
+
+#[test]
+fn runtime_font_settings_defaults_and_scaling_contract() {
+    // Defaults from issue contract: base 14, UI font system default (None), mono Menlo, ligatures on.
+    assert_eq!(personal_agent::ui_gpui::theme::active_font_size(), 14.0);
+    assert_eq!(
+        personal_agent::ui_gpui::theme::active_ui_font_family(),
+        None
+    );
+    assert_eq!(
+        personal_agent::ui_gpui::theme::active_mono_font_family(),
+        "Menlo".to_string()
+    );
+    assert!(personal_agent::ui_gpui::theme::active_mono_ligatures());
+
+    // Token multipliers required by issue #81.
+    assert_eq!(Theme::font_size_h1(), 28.0);
+    assert_eq!(Theme::font_size_h2(), 21.0);
+    assert_eq!(Theme::font_size_h3(), 17.5);
+    assert_eq!(Theme::font_size_body(), 14.0);
+    assert_eq!(Theme::font_size_mono(), 12.6);
+    assert_eq!(Theme::font_size_ui(), 11.9);
+    assert_eq!(Theme::font_size_small(), 10.92);
 }
 
 #[test]

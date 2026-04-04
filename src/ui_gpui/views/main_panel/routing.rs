@@ -22,7 +22,10 @@ mod _actions {
             NavigateToHistory,
             NavigateToSettings,
             NewConversation,
-            NavigateBack
+            NavigateBack,
+            ZoomIn,
+            ZoomOut,
+            ZoomReset
         ]
     );
 }
@@ -110,7 +113,7 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         }
 
         // ── Settings / Profile view ─────────────────────────────────────
-        ViewCommand::ShowSettingsTheme { .. } => {
+        ViewCommand::ShowSettingsTheme { .. } | ViewCommand::ShowFontSettings { .. } => {
             targets.settings_theme_commands += 1;
         }
         ViewCommand::ProfileCreated { .. }
