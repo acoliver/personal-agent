@@ -196,7 +196,7 @@ async fn check_approval(tool_context: &McpToolContext, command: &str) -> Result<
 }
 
 async fn execute_shell_command(params: &ShellExecParams) -> Result<ShellExecResult, ToolError> {
-    let resolved_directory = resolve_working_directory(params.working_dir.as_deref())?;
+    let resolved_directory = resolve_working_directory(params.working_dir.as_deref()).await?;
     let mut child = spawn_shell_child(params, &resolved_directory)?;
     let (stdout_task, stderr_task) = spawn_output_readers(&mut child, &params.command)?;
     let (status, timed_out) =
@@ -248,14 +248,29 @@ fn spawn_output_readers(
         ToolError::execution_failed(format!("Failed to capture stderr for command '{command}'"))
     })?;
 
+    let command_for_stdout = command.to_string();
+    let command_for_stderr = command.to_string();
+
     let stdout_task = tokio::spawn(async move {
         let mut buffer = Vec::new();
-        let _ = stdout_pipe.read_to_end(&mut buffer).await;
+        if let Err(error) = stdout_pipe.read_to_end(&mut buffer).await {
+            tracing::debug!(
+                "failed to read stdout for command '{}': {}",
+                command_for_stdout,
+                error
+            );
+        }
         buffer
     });
     let stderr_task = tokio::spawn(async move {
         let mut buffer = Vec::new();
-        let _ = stderr_pipe.read_to_end(&mut buffer).await;
+        if let Err(error) = stderr_pipe.read_to_end(&mut buffer).await {
+            tracing::debug!(
+                "failed to read stderr for command '{}': {}",
+                command_for_stderr,
+                error
+            );
+        }
         buffer
     });
 
@@ -314,7 +329,7 @@ async fn collect_output(
     ))
 }
 
-fn resolve_working_directory(working_dir: Option<&str>) -> Result<PathBuf, ToolError> {
+async fn resolve_working_directory(working_dir: Option<&str>) -> Result<PathBuf, ToolError> {
     match working_dir {
         Some(path) => {
             let candidate = Path::new(path);
@@ -330,7 +345,7 @@ fn resolve_working_directory(working_dir: Option<&str>) -> Result<PathBuf, ToolE
                     .join(candidate)
             };
 
-            let metadata = std::fs::metadata(&directory).map_err(|error| {
+            let metadata = tokio::fs::metadata(&directory).await.map_err(|error| {
                 ToolError::execution_failed(format!(
                     "Invalid working_dir '{}': {}",
                     directory.display(),
@@ -528,7 +543,7 @@ mod tests {
         let context = make_context_with_policy(policy);
 
         let executor = ShellExecExecutor;
-        let args = serde_json::json!({"command": "sleep 2", "timeout_secs": 1});
+        let args = serde_json::json!({"command": "sleep 10", "timeout_secs": 1});
         let run_ctx = RunContext::new(context, "test-model");
 
         let output = executor
