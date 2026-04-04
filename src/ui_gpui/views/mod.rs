@@ -28,5 +28,5 @@ pub use profile_editor_view::{
     ApiType, AuthMethod, ProfileEditorData, ProfileEditorState, ProfileEditorView,
 };
 pub use settings_view::{
-    McpItem, McpStatus, ProfileItem, SettingsState, SettingsView, ThemeOption,
+    McpItem, McpStatus, ProfileItem, SettingsCategory, SettingsState, SettingsView, ThemeOption,
 };

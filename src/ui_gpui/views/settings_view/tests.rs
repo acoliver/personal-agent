@@ -1,5 +1,8 @@
 #![allow(clippy::future_not_send)]
 
+#[path = "tests_category.rs"]
+mod tests_category;
+
 use super::*;
 use crate::presentation::view_command::{ViewCommand, ViewId};
 use gpui::AppContext;
@@ -367,6 +370,8 @@ async fn key_handling_navigates_and_emits_profile_events(cx: &mut TestAppContext
         view.set_mcps(vec![McpItem::new(mcp_a, "Fetcher").with_enabled(true)]);
         view.state.selected_profile_id = Some(profile_b);
 
+        // Arrow keys on Models category scroll profiles
+        view.select_category(SettingsCategory::Models);
         view.handle_key_down(&settings_key_event("up"), cx);
         assert_eq!(view.state.selected_profile_id, Some(profile_a));
 
@@ -387,6 +392,9 @@ async fn key_handling_navigates_and_emits_profile_events(cx: &mut TestAppContext
             Some(ViewId::McpAdd)
         );
 
+        // Theme scrolling requires General category with dropdown open
+        view.select_category(SettingsCategory::General);
+        view.state.theme_dropdown_open = true;
         view.state.available_themes = vec![
             ThemeOption {
                 name: "Green Screen".to_string(),
@@ -401,6 +409,7 @@ async fn key_handling_navigates_and_emits_profile_events(cx: &mut TestAppContext
         view.handle_key_down(&settings_key_event("down"), cx);
         assert_eq!(view.state.selected_theme_slug, "default");
         view.handle_key_down(&settings_key_event("enter"), cx);
+        assert!(!view.state.theme_dropdown_open, "enter closes dropdown");
 
         view.handle_key_down(&settings_key_event("cmd-w"), cx);
         assert_eq!(
@@ -420,10 +429,6 @@ async fn key_handling_navigates_and_emits_profile_events(cx: &mut TestAppContext
     assert_eq!(
         user_rx.recv().unwrap(),
         UserEvent::EditProfile { id: profile_b }
-    );
-    assert_eq!(
-        user_rx.recv().unwrap(),
-        UserEvent::SelectProfile { id: profile_b }
     );
     assert_eq!(
         user_rx.recv().unwrap(),
