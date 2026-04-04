@@ -1,6 +1,8 @@
 use super::*;
 use crate::models::{AuthConfig, Message, ModelParameters};
+use futures::StreamExt;
 use std::sync::Arc;
+use std::time::Duration;
 
 struct MockConversationService {
     profile_id: Uuid,
@@ -733,13 +735,11 @@ impl crate::services::ProfileService for MockProfileService {
     }
 }
 
-#[tokio::test]
-async fn test_send_message() {
+async fn setup_send_message_test() -> Arc<MockConversationService> {
     crate::services::secure_store::use_mock_backend();
     crate::services::secure_store::api_keys::store("_test_send_msg", "fake-key-for-test")
         .expect("store test key");
 
-    // Set default profile
     let profile = crate::models::ModelProfile::new(
         "Test Profile".to_string(),
         "openai".to_string(),
@@ -751,37 +751,80 @@ async fn test_send_message() {
     );
     let profile_id = profile.id;
 
-    let conversation_service = Arc::new(MockConversationService::new(profile_id))
-        as Arc<dyn super::super::ConversationService>;
+    let conversation_service_impl = Arc::new(MockConversationService::new(profile_id));
+    let conversation_service =
+        conversation_service_impl.clone() as Arc<dyn super::super::ConversationService>;
     let mock_profile_service = Arc::new(MockProfileService::new());
-
-    // Set the default profile directly on the mock
     mock_profile_service.set_default_profile(profile).await;
-
     let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
     let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
-
     let conversation_id = Uuid::new_v4();
     let result = chat_service
         .send_message(conversation_id, "Hello, world!".to_string())
         .await;
 
-    // The send_message call should succeed in creating the stream
-    // The actual LLM call happens asynchronously and will fail with invalid API key
-    // but the important thing is we got a stream back (not a placeholder)
     assert!(
         result.is_ok(),
         "send_message should return Ok with a stream, got: {:?}",
         result.err()
     );
 
-    // Clean up test key
-    let _ = crate::services::secure_store::api_keys::delete("_test_send_msg");
+    let mut stream = result.expect("send_message should produce stream");
+    while let Some(event) = stream.next().await {
+        if matches!(event, ChatStreamEvent::Complete | ChatStreamEvent::Error(_)) {
+            break;
+        }
+    }
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    conversation_service_impl
+}
+
+async fn run_send_message_and_find_assistant(
+    conversation_service_impl: Arc<MockConversationService>,
+) -> Option<Message> {
+    let messages = conversation_service_impl.messages.read().await;
+    messages
+        .iter()
+        .rfind(|message| matches!(message.role, crate::models::MessageRole::Assistant))
+        .cloned()
+}
+
+fn assert_non_empty_tool_json<T: serde::de::DeserializeOwned>(
+    maybe_json: Option<&str>,
+    deserialize_err: &str,
+    empty_err: &str,
+) {
+    if let Some(json) = maybe_json {
+        let parsed: Vec<T> = serde_json::from_str(json).expect(deserialize_err);
+        assert!(!parsed.is_empty(), "{empty_err}");
+    }
 }
 
 #[tokio::test]
-async fn test_cancel() {
+async fn test_send_message() {
+    let conversation_service_impl = setup_send_message_test().await;
+    let assistant_message =
+        run_send_message_and_find_assistant(conversation_service_impl.clone()).await;
+
+    if let Some(assistant_message) = assistant_message {
+        assert_non_empty_tool_json::<crate::llm::tools::ToolUse>(
+            assistant_message.tool_calls.as_deref(),
+            "persisted tool calls JSON should deserialize",
+            "persisted tool calls should not be empty",
+        );
+        assert_non_empty_tool_json::<crate::llm::tools::ToolResult>(
+            assistant_message.tool_results.as_deref(),
+            "persisted tool results JSON should deserialize",
+            "persisted tool results should not be empty",
+        );
+    }
+
+    let _ = crate::services::secure_store::api_keys::delete("_test_send_msg");
+}
+
+async fn make_basic_chat_service() -> ChatServiceImpl {
     let profile = crate::models::ModelProfile::new(
         "Test Profile".to_string(),
         "openai".to_string(),
@@ -791,50 +834,26 @@ async fn test_cancel() {
             label: "test-key".to_string(),
         },
     );
-    let profile_id = profile.id;
 
-    let conversation_service = Arc::new(MockConversationService::new(profile_id))
+    let conversation_service = Arc::new(MockConversationService::new(profile.id))
         as Arc<dyn super::super::ConversationService>;
     let mock_profile_service = Arc::new(MockProfileService::new());
-
-    // Set the default profile directly on the mock
     mock_profile_service.set_default_profile(profile).await;
 
     let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
+    ChatServiceImpl::new_for_tests(conversation_service, profile_service)
+}
 
-    let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
-
-    // Cancel should work even without streaming
+#[tokio::test]
+async fn test_cancel() {
+    let chat_service = make_basic_chat_service().await;
     chat_service.cancel();
     assert!(!chat_service.is_streaming());
 }
 
 #[tokio::test]
 async fn test_is_streaming() {
-    let profile = crate::models::ModelProfile::new(
-        "Test Profile".to_string(),
-        "openai".to_string(),
-        "gpt-4".to_string(),
-        "https://api.openai.com/v1".to_string(),
-        AuthConfig::Keychain {
-            label: "test-key".to_string(),
-        },
-    );
-    let profile_id = profile.id;
-
-    let conversation_service = Arc::new(MockConversationService::new(profile_id))
-        as Arc<dyn super::super::ConversationService>;
-    let mock_profile_service = Arc::new(MockProfileService::new());
-
-    // Set the default profile directly on the mock
-    mock_profile_service.set_default_profile(profile).await;
-
-    let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
-
-    let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
-
-    // Initially not streaming
-    assert!(!chat_service.is_streaming());
+    assert!(!make_basic_chat_service().await.is_streaming());
 }
 
 /// Proves that `prepare_message_context` resolves the profile via the

@@ -8,7 +8,7 @@ use crate::presentation::view_command::ViewCommand;
 use futures::StreamExt;
 use serdes_ai::core::messages::{
     ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart, TextPart, ThinkingPart,
-    ToolCallArgs, ToolCallPart, ToolReturnPart,
+    ToolCallArgs, ToolCallPart, ToolReturnContent, ToolReturnPart,
 };
 use serdes_ai::UserContent;
 use serdes_ai_agent::prelude::*;
@@ -408,6 +408,63 @@ impl AgentClientExt for crate::llm::LlmClient {
 }
 
 impl crate::llm::LlmClient {
+    fn collect_tool_transcript(
+        messages: &[ModelRequest],
+    ) -> (
+        Vec<crate::llm::tools::ToolUse>,
+        Vec<crate::llm::tools::ToolResult>,
+    ) {
+        let mut tool_calls = Vec::new();
+        let mut tool_results = Vec::new();
+
+        for request in messages {
+            for part in &request.parts {
+                match part {
+                    ModelRequestPart::ModelResponse(response) => {
+                        for response_part in &response.parts {
+                            if let ModelResponsePart::ToolCall(tool_call) = response_part {
+                                tool_calls.push(crate::llm::tools::ToolUse::new(
+                                    tool_call.tool_call_id.clone().unwrap_or_default(),
+                                    tool_call.tool_name.clone(),
+                                    tool_call.args.to_json(),
+                                ));
+                            }
+                        }
+                    }
+                    ModelRequestPart::ToolReturn(tool_return) => {
+                        let content = match &tool_return.content {
+                            ToolReturnContent::Text { content } => content.clone(),
+                            ToolReturnContent::Json { content } => serde_json::to_string(content)
+                                .unwrap_or_else(|_| content.to_string()),
+                            ToolReturnContent::Image { .. } => "[image]".to_string(),
+                            ToolReturnContent::Error { error } => error.message.clone(),
+                            ToolReturnContent::Multiple { items } => {
+                                serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string())
+                            }
+                        };
+                        let is_error =
+                            matches!(tool_return.content, ToolReturnContent::Error { .. });
+                        let result = if is_error {
+                            crate::llm::tools::ToolResult::error(
+                                tool_return.tool_call_id.clone().unwrap_or_default(),
+                                content,
+                            )
+                        } else {
+                            crate::llm::tools::ToolResult::success(
+                                tool_return.tool_call_id.clone().unwrap_or_default(),
+                                content,
+                            )
+                        };
+                        tool_results.push(result);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        (tool_calls, tool_results)
+    }
+
     async fn do_run_agent_stream<F>(
         &self,
         agent: &Agent<McpToolContext>,
@@ -478,8 +535,13 @@ impl crate::llm::LlmClient {
                             error,
                         });
                     }
-                    AgentStreamEvent::RunComplete { .. } => {
+                    AgentStreamEvent::RunComplete { messages, .. } => {
                         tracing::info!("run_agent_stream: RunComplete");
+                        let (tool_calls, tool_results) = Self::collect_tool_transcript(&messages);
+                        on_event(StreamEvent::ToolTranscript {
+                            tool_calls,
+                            tool_results,
+                        });
                         on_event(StreamEvent::Complete);
                     }
                     AgentStreamEvent::Error { message } => {
@@ -648,6 +710,7 @@ impl crate::llm::LlmClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serdes_ai::core::messages::parts::ToolCallArgs;
     use uuid::Uuid;
 
     #[test]
@@ -820,6 +883,54 @@ mod tests {
             .parts
             .iter()
             .any(|part| matches!(part, ModelRequestPart::ToolReturn(_))));
+    }
+
+    #[test]
+    fn collect_tool_transcript_extracts_calls_and_results() {
+        let mut response = ModelResponse::new();
+        response.add_part(ModelResponsePart::ToolCall(
+            ToolCallPart::new(
+                "web_search",
+                ToolCallArgs::json(serde_json::json!({"query":"weather"})),
+            )
+            .with_tool_call_id("tool-call-1"),
+        ));
+
+        let mut request_with_tool_call = ModelRequest::new();
+        request_with_tool_call.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
+
+        let mut request_with_tool_return = ModelRequest::new();
+        request_with_tool_return.add_part(ModelRequestPart::ToolReturn(
+            ToolReturnPart::new(
+                "web_search",
+                ToolReturnContent::json(serde_json::json!({"answer":"sunny"})),
+            )
+            .with_tool_call_id("tool-call-1"),
+        ));
+
+        let mut request_with_tool_error = ModelRequest::new();
+        request_with_tool_error.add_part(ModelRequestPart::ToolReturn(
+            ToolReturnPart::error("web_search", "request failed").with_tool_call_id("tool-call-2"),
+        ));
+
+        let (tool_calls, tool_results) = crate::llm::LlmClient::collect_tool_transcript(&[
+            request_with_tool_call,
+            request_with_tool_return,
+            request_with_tool_error,
+        ]);
+
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "tool-call-1");
+        assert_eq!(tool_calls[0].name, "web_search");
+
+        assert_eq!(tool_results.len(), 2);
+        assert_eq!(tool_results[0].tool_use_id, "tool-call-1");
+        assert!(!tool_results[0].is_error);
+        assert!(tool_results[0].content.contains("\"answer\":\"sunny\""));
+
+        assert_eq!(tool_results[1].tool_use_id, "tool-call-2");
+        assert!(tool_results[1].is_error);
+        assert_eq!(tool_results[1].content, "request failed");
     }
 
     #[test]
