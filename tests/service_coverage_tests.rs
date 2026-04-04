@@ -4,10 +4,14 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use personal_agent::models::{AuthConfig, Conversation, Message, ModelParameters, ModelProfile};
+use personal_agent::db::spawn_db_thread;
+use personal_agent::models::{
+    AuthConfig, ContextState, Conversation, ConversationMetadata, Message, ModelParameters,
+    ModelProfile, SearchResult,
+};
 use personal_agent::services::{
-    chat_impl::ChatServiceImpl, conversation_impl::ConversationServiceImpl, secure_store,
-    ChatService, ConversationService, ProfileService, ServiceError,
+    chat_impl::ChatServiceImpl, secure_store, ChatService, ConversationService, ProfileService,
+    ServiceError, SqliteConversationService,
 };
 
 struct InMemoryConversationService {
@@ -71,52 +75,88 @@ impl ConversationService for InMemoryConversationService {
             .ok_or_else(|| ServiceError::NotFound(format!("conversation {id} not found")))
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
-        _limit: Option<usize>,
-        _offset: Option<usize>,
-    ) -> Result<Vec<Conversation>, ServiceError> {
-        Ok(self.conversations.lock().await.values().cloned().collect())
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<Vec<ConversationMetadata>, ServiceError> {
+        let all: Vec<ConversationMetadata> = {
+            let convs = self.conversations.lock().await;
+            convs
+                .values()
+                .map(|c| ConversationMetadata {
+                    id: c.id,
+                    title: c.title.clone(),
+                    profile_id: Some(c.profile_id),
+                    created_at: c.created_at,
+                    updated_at: c.updated_at,
+                    message_count: c.messages.len(),
+                    last_message_preview: c
+                        .messages
+                        .last()
+                        .map(|m| m.content.chars().take(100).collect()),
+                })
+                .collect()
+        };
+        let o = offset.unwrap_or(0);
+        let l = limit.unwrap_or(all.len());
+        let end = std::cmp::min(o + l, all.len());
+        if o >= all.len() {
+            return Ok(Vec::new());
+        }
+        Ok(all[o..end].to_vec())
     }
 
     #[allow(clippy::significant_drop_tightening)]
-    async fn add_user_message(
+    async fn add_message(
         &self,
         conversation_id: Uuid,
-        content: String,
+        message: Message,
     ) -> Result<Message, ServiceError> {
         let fail_add_user = self.fail_add_user.lock().await.clone();
-        if let Some(message) = fail_add_user {
-            return Err(ServiceError::Internal(message));
+        if let Some(err) = fail_add_user {
+            return Err(ServiceError::Internal(err));
         }
 
-        let message = Message::user(content);
-        {
-            let mut conversations = self.conversations.lock().await;
-            let conversation = conversations
-                .get_mut(&conversation_id)
-                .ok_or_else(|| ServiceError::NotFound("conversation missing".to_string()))?;
-            conversation.add_message(message.clone());
-        }
+        let mut conversations = self.conversations.lock().await;
+        let conversation = conversations
+            .get_mut(&conversation_id)
+            .ok_or_else(|| ServiceError::NotFound("conversation missing".to_string()))?;
+        conversation.add_message(message.clone());
         Ok(message)
     }
 
-    #[allow(clippy::significant_drop_tightening)]
-    async fn add_assistant_message(
+    async fn search(
         &self,
-        conversation_id: Uuid,
-        content: String,
-        _thinking_content: Option<String>,
-    ) -> Result<Message, ServiceError> {
-        let message = Message::assistant(content);
-        {
-            let mut conversations = self.conversations.lock().await;
-            let conversation = conversations
-                .get_mut(&conversation_id)
-                .ok_or_else(|| ServiceError::NotFound("conversation missing".to_string()))?;
-            conversation.add_message(message.clone());
-        }
-        Ok(message)
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<SearchResult>, ServiceError> {
+        Ok(vec![])
+    }
+
+    async fn message_count(&self, conversation_id: Uuid) -> Result<usize, ServiceError> {
+        let count = {
+            let convs = self.conversations.lock().await;
+            convs
+                .get(&conversation_id)
+                .ok_or_else(|| ServiceError::NotFound("conversation missing".to_string()))?
+                .messages
+                .len()
+        };
+        Ok(count)
+    }
+
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &ContextState,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_context_state(&self, _id: Uuid) -> Result<Option<ContextState>, ServiceError> {
+        Ok(None)
     }
 
     async fn rename(&self, _id: Uuid, _new_title: String) -> Result<(), ServiceError> {
@@ -309,9 +349,14 @@ async fn chat_service_cancel_clears_streaming_flag() {
 
 #[tokio::test]
 async fn conversation_service_persists_messages_and_updates_active_conversation() {
-    let storage_dir = temp_storage_path("conversation-success");
-    let service =
-        ConversationServiceImpl::new(storage_dir.clone()).expect("create conversation service");
+    let db_path = temp_storage_path("conversation-success.db");
+    let db_path_clone = db_path.clone();
+    let db = tokio::task::spawn_blocking(move || {
+        spawn_db_thread(&db_path_clone).expect("spawn db thread")
+    })
+    .await
+    .expect("spawn_blocking failed");
+    let service = SqliteConversationService::new(db);
 
     let profile_id = Uuid::new_v4();
     let created = service
@@ -321,11 +366,11 @@ async fn conversation_service_persists_messages_and_updates_active_conversation(
     let conversation_id = created.id;
 
     let user_message = service
-        .add_user_message(conversation_id, "hello".to_string())
+        .add_message(conversation_id, Message::user("hello".to_string()))
         .await
         .expect("add user message");
     let assistant_message = service
-        .add_assistant_message(conversation_id, "hi there".to_string(), None)
+        .add_message(conversation_id, Message::assistant("hi there".to_string()))
         .await
         .expect("add assistant message");
     service
@@ -343,8 +388,8 @@ async fn conversation_service_persists_messages_and_updates_active_conversation(
         .expect("load conversation");
     assert_eq!(loaded.title.as_deref(), Some("Renamed"));
     assert_eq!(loaded.messages.len(), 2);
-    assert_eq!(loaded.messages[0], user_message);
-    assert_eq!(loaded.messages[1], assistant_message);
+    assert_eq!(loaded.messages[0].content, user_message.content);
+    assert_eq!(loaded.messages[1].content, assistant_message.content);
     assert_eq!(
         service.get_active().await.expect("get active"),
         Some(conversation_id)
@@ -358,14 +403,19 @@ async fn conversation_service_persists_messages_and_updates_active_conversation(
         2
     );
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    let _ = std::fs::remove_file(&db_path);
 }
 
 #[tokio::test]
 async fn conversation_service_update_delete_and_missing_paths_behave_as_expected() {
-    let storage_dir = temp_storage_path("conversation-errors");
-    let service =
-        ConversationServiceImpl::new(storage_dir.clone()).expect("create conversation service");
+    let db_path = temp_storage_path("conversation-errors.db");
+    let db_path_clone = db_path.clone();
+    let db = tokio::task::spawn_blocking(move || {
+        spawn_db_thread(&db_path_clone).expect("spawn db thread")
+    })
+    .await
+    .expect("spawn_blocking failed");
+    let service = SqliteConversationService::new(db);
 
     let profile_id = Uuid::new_v4();
     let created = service
@@ -398,7 +448,7 @@ async fn conversation_service_update_delete_and_missing_paths_behave_as_expected
     let load_missing = service.load(created.id).await;
     assert!(matches!(load_missing, Err(ServiceError::NotFound(_))));
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    let _ = std::fs::remove_file(&db_path);
 }
 
 #[test]

@@ -32,33 +32,51 @@ impl ConversationService for MockConversationService {
         ))
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
         _limit: Option<usize>,
         _offset: Option<usize>,
-    ) -> Result<Vec<crate::models::Conversation>, crate::services::ServiceError> {
+    ) -> Result<Vec<crate::models::ConversationMetadata>, crate::services::ServiceError> {
         Ok(vec![])
     }
 
-    async fn add_user_message(
+    async fn add_message(
         &self,
         _conversation_id: Uuid,
-        _content: String,
+        message: crate::models::Message,
     ) -> Result<crate::models::Message, crate::services::ServiceError> {
-        Err(crate::services::ServiceError::NotFound(
-            "Not implemented".to_string(),
-        ))
+        Ok(message)
     }
 
-    async fn add_assistant_message(
+    async fn search(
+        &self,
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<crate::models::SearchResult>, crate::services::ServiceError> {
+        Ok(vec![])
+    }
+
+    async fn message_count(
         &self,
         _conversation_id: Uuid,
-        _content: String,
-        _thinking_content: Option<String>,
-    ) -> Result<crate::models::Message, crate::services::ServiceError> {
-        Err(crate::services::ServiceError::NotFound(
-            "Not implemented".to_string(),
-        ))
+    ) -> Result<usize, crate::services::ServiceError> {
+        Ok(0)
+    }
+
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &crate::models::ContextState,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+
+    async fn get_context_state(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<crate::models::ContextState>, crate::services::ServiceError> {
+        Ok(None)
     }
 
     async fn rename(

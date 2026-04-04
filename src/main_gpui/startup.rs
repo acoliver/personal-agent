@@ -5,9 +5,10 @@
 
 use std::sync::Arc;
 
+use personal_agent::db::spawn_db_thread;
 use personal_agent::services::{
-    AppSettingsService, AppSettingsServiceImpl, ConversationService, ConversationServiceImpl,
-    ProfileService, ProfileServiceImpl,
+    AppSettingsService, AppSettingsServiceImpl, ConversationService, ProfileService,
+    ProfileServiceImpl, SqliteConversationService,
 };
 use personal_agent::ui_gpui::app_store::{
     StartupInputs, StartupMode, StartupSelectedConversation, StartupTranscriptResult,
@@ -74,10 +75,12 @@ pub fn build_startup_inputs(runtime_paths: &RuntimePaths) -> Result<StartupInput
 async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<StartupInputs, String> {
     let app_settings = AppSettingsServiceImpl::new(runtime_paths.app_settings_path.clone())
         .map_err(|e| format!("Failed to create AppSettingsService for startup bootstrap: {e}"))?;
-    let conversation_service =
-        ConversationServiceImpl::new(runtime_paths.conversations_dir.clone()).map_err(|e| {
-            format!("Failed to create ConversationService for startup bootstrap: {e}")
-        })?;
+    let db_path = runtime_paths.base_dir.join("personalagent.db");
+    let db = tokio::task::spawn_blocking(move || spawn_db_thread(&db_path))
+        .await
+        .map_err(|e| format!("Failed to join DB spawn task for startup bootstrap: {e}"))?
+        .map_err(|e| format!("Failed to spawn DB thread for startup bootstrap: {e}"))?;
+    let conversation_service = SqliteConversationService::new(db);
     let profile_service_impl = ProfileServiceImpl::new(runtime_paths.profiles_dir.clone())
         .map_err(|e| format!("Failed to create ProfileService for startup bootstrap: {e}"))?;
     profile_service_impl
@@ -148,7 +151,7 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
 
     let profiles = build_profile_summaries(&profile_service_impl, selected_profile_id).await?;
     let (conversation_summaries, selected_conversation) =
-        build_conversation_data(&conversation_service, &runtime_paths.conversations_dir).await?;
+        build_conversation_data(&conversation_service).await?;
 
     Ok(StartupInputs {
         profiles,
@@ -182,8 +185,7 @@ async fn build_profile_summaries(
 }
 
 async fn build_conversation_data(
-    conversation_service: &ConversationServiceImpl,
-    conversations_dir: &std::path::Path,
+    conversation_service: &SqliteConversationService,
 ) -> Result<
     (
         Vec<personal_agent::presentation::view_command::ConversationSummary>,
@@ -192,30 +194,30 @@ async fn build_conversation_data(
     String,
 > {
     let conversations = conversation_service
-        .list(None, None)
+        .list_metadata(None, None)
         .await
         .map_err(|e| format!("Failed to list conversations for startup bootstrap: {e}"))?;
 
     let summaries = conversations
         .iter()
         .map(
-            |conversation| personal_agent::presentation::view_command::ConversationSummary {
-                id: conversation.id,
-                title: conversation
+            |metadata| personal_agent::presentation::view_command::ConversationSummary {
+                id: metadata.id,
+                title: metadata
                     .title
                     .clone()
                     .filter(|title| !title.trim().is_empty())
                     .unwrap_or_else(|| "Untitled Conversation".to_string()),
-                updated_at: conversation.updated_at,
-                message_count: conversation.messages.len(),
+                updated_at: metadata.updated_at,
+                message_count: metadata.message_count,
             },
         )
         .collect::<Vec<_>>();
 
-    let selected = match conversations.first().map(|c| c.id) {
+    let selected = match conversations.first().map(|m| m.id) {
         Some(conversation_id) => {
             let transcript_result =
-                load_startup_transcript(conversations_dir, conversation_id).await;
+                load_startup_transcript(conversation_service, conversation_id).await;
             Some(StartupSelectedConversation {
                 conversation_id,
                 mode: StartupMode::ModeA { transcript_result },
@@ -228,19 +230,10 @@ async fn build_conversation_data(
 }
 
 async fn load_startup_transcript(
-    conversations_dir: &std::path::Path,
+    conversation_service: &SqliteConversationService,
     conversation_id: uuid::Uuid,
 ) -> StartupTranscriptResult {
-    let conv_svc = match ConversationServiceImpl::new(conversations_dir.to_path_buf()) {
-        Ok(svc) => svc,
-        Err(e) => {
-            return StartupTranscriptResult::Failure(format!(
-                "Failed to create ConversationService for transcript: {e}"
-            ))
-        }
-    };
-
-    conv_svc
+    conversation_service
         .get_messages(conversation_id)
         .await
         .map(|messages| {

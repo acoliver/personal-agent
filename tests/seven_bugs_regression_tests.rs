@@ -13,7 +13,9 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use personal_agent::models::{Conversation, Message};
+use personal_agent::models::{
+    ContextState, Conversation, ConversationMetadata, Message, SearchResult,
+};
 use personal_agent::presentation::view_command::ConversationSummary;
 use personal_agent::services::conversation::ConversationService;
 use personal_agent::services::{ServiceError, ServiceResult};
@@ -59,11 +61,11 @@ impl ConversationService for InMemoryConversationService {
             .ok_or(ServiceError::NotFound(format!("No conversation {id}")))
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
         limit: Option<usize>,
         offset: Option<usize>,
-    ) -> ServiceResult<Vec<Conversation>> {
+    ) -> ServiceResult<Vec<ConversationMetadata>> {
         let convs = self.conversations.lock().await;
         let o = offset.unwrap_or(0);
         let l = limit.unwrap_or(convs.len());
@@ -71,38 +73,57 @@ impl ConversationService for InMemoryConversationService {
         if o >= convs.len() {
             return Ok(Vec::new());
         }
-        Ok(convs[o..end].to_vec())
+        Ok(convs[o..end]
+            .iter()
+            .map(|c| ConversationMetadata {
+                id: c.id,
+                title: c.title.clone(),
+                profile_id: Some(c.profile_id),
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+                message_count: c.messages.len(),
+                last_message_preview: c
+                    .messages
+                    .last()
+                    .map(|m| m.content.chars().take(100).collect()),
+            })
+            .collect())
     }
 
-    async fn add_user_message(
-        &self,
-        conversation_id: Uuid,
-        content: String,
-    ) -> ServiceResult<Message> {
+    async fn add_message(&self, conversation_id: Uuid, message: Message) -> ServiceResult<Message> {
         let mut convs = self.conversations.lock().await;
         let conv = convs
             .iter_mut()
             .find(|c| c.id == conversation_id)
             .ok_or(ServiceError::NotFound("no conv".into()))?;
-        let msg = Message::user(content);
-        conv.add_message(msg.clone());
-        Ok(msg)
+        conv.add_message(message.clone());
+        Ok(message)
     }
 
-    async fn add_assistant_message(
+    async fn search(
         &self,
-        conversation_id: Uuid,
-        content: String,
-        _thinking_content: Option<String>,
-    ) -> ServiceResult<Message> {
-        let mut convs = self.conversations.lock().await;
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> ServiceResult<Vec<SearchResult>> {
+        Ok(vec![])
+    }
+
+    async fn message_count(&self, conversation_id: Uuid) -> ServiceResult<usize> {
+        let convs = self.conversations.lock().await;
         let conv = convs
-            .iter_mut()
+            .iter()
             .find(|c| c.id == conversation_id)
             .ok_or(ServiceError::NotFound("no conv".into()))?;
-        let msg = Message::assistant(content);
-        conv.add_message(msg.clone());
-        Ok(msg)
+        Ok(conv.messages.len())
+    }
+
+    async fn update_context_state(&self, _id: Uuid, _state: &ContextState) -> ServiceResult<()> {
+        Ok(())
+    }
+
+    async fn get_context_state(&self, _id: Uuid) -> ServiceResult<Option<ContextState>> {
+        Ok(None)
     }
 
     async fn rename(&self, id: Uuid, new_title: String) -> ServiceResult<()> {
@@ -243,15 +264,15 @@ async fn bug4_conversation_preserves_full_history() {
     let conv_id = conv.id;
 
     conv_service
-        .add_user_message(conv_id, "My name is Alice".to_string())
+        .add_message(conv_id, Message::user("My name is Alice".to_string()))
         .await
         .unwrap();
     conv_service
-        .add_assistant_message(conv_id, "Hello Alice!".to_string(), None)
+        .add_message(conv_id, Message::assistant("Hello Alice!".to_string()))
         .await
         .unwrap();
     conv_service
-        .add_user_message(conv_id, "What is my name?".to_string())
+        .add_message(conv_id, Message::user("What is my name?".to_string()))
         .await
         .unwrap();
 
@@ -272,7 +293,7 @@ async fn bug4_conversation_preserves_full_history() {
     );
 }
 
-/// `chat_impl` adds the user message via `add_user_message()`, then loads
+/// `chat_impl` adds the user message via `add_message()`, then loads
 /// the conversation (which now includes it), then ALSO pushes a duplicate.
 #[tokio::test]
 async fn bug4_no_duplicate_user_message_after_add_and_load() {
@@ -286,7 +307,7 @@ async fn bug4_no_duplicate_user_message_after_add_and_load() {
     let conv_id = conv.id;
 
     conv_service
-        .add_user_message(conv_id, "Hello world".to_string())
+        .add_message(conv_id, Message::user("Hello world".to_string()))
         .await
         .unwrap();
     let loaded = conv_service.load(conv_id).await.unwrap();

@@ -14,12 +14,30 @@ pub struct Conversation {
     pub messages: Vec<Message>,
 }
 
+/// Lightweight conversation metadata for listing without loading messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationMetadata {
+    pub id: Uuid,
+    pub title: Option<String>,
+    pub profile_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub message_count: usize,
+    pub last_message_preview: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub role: MessageRole,
     pub content: String,
     pub thinking_content: Option<String>,
     pub timestamp: DateTime<Utc>,
+    #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<String>,
+    #[serde(default)]
+    pub tool_results: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -76,6 +94,9 @@ impl Message {
             content,
             thinking_content: None,
             timestamp: Utc::now(),
+            model_id: None,
+            tool_calls: None,
+            tool_results: None,
         }
     }
 
@@ -87,6 +108,9 @@ impl Message {
             content,
             thinking_content: None,
             timestamp: Utc::now(),
+            model_id: None,
+            tool_calls: None,
+            tool_results: None,
         }
     }
 
@@ -98,6 +122,9 @@ impl Message {
             content,
             thinking_content: Some(thinking),
             timestamp: Utc::now(),
+            model_id: None,
+            tool_calls: None,
+            tool_results: None,
         }
     }
 
@@ -109,6 +136,9 @@ impl Message {
             content,
             thinking_content: None,
             timestamp: Utc::now(),
+            model_id: None,
+            tool_calls: None,
+            tool_results: None,
         }
     }
 }

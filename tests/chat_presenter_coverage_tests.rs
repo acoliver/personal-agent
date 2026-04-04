@@ -18,8 +18,8 @@ use personal_agent::events::{
     AppEvent,
 };
 use personal_agent::models::{
-    AuthConfig, Conversation, ConversationExportFormat, Message, MessageRole as DomainMessageRole,
-    ModelParameters, ModelProfile,
+    AuthConfig, ContextState, Conversation, ConversationExportFormat, ConversationMetadata,
+    Message, MessageRole as DomainMessageRole, ModelParameters, ModelProfile, SearchResult,
 };
 use personal_agent::presentation::{
     chat_presenter::ChatPresenter,
@@ -104,49 +104,82 @@ impl ConversationService for MockConversationService {
             .ok_or_else(|| ServiceError::NotFound(format!("conversation {id} not found")))
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<Vec<ConversationMetadata>, ServiceError> {
+        let convs = self.conversations.lock().await;
+        let o = offset.unwrap_or(0);
+        let l = limit.unwrap_or(convs.len());
+        let end = std::cmp::min(o + l, convs.len());
+        if o >= convs.len() {
+            return Ok(Vec::new());
+        }
+        Ok(convs[o..end]
+            .iter()
+            .map(|c| ConversationMetadata {
+                id: c.id,
+                title: c.title.clone(),
+                profile_id: Some(c.profile_id),
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+                message_count: c.messages.len(),
+                last_message_preview: c
+                    .messages
+                    .last()
+                    .map(|m| m.content.chars().take(100).collect()),
+            })
+            .collect())
+    }
+
+    #[allow(clippy::significant_drop_tightening)]
+    async fn add_message(
+        &self,
+        conversation_id: Uuid,
+        message: Message,
+    ) -> Result<Message, ServiceError> {
+        let mut conversations = self.conversations.lock().await;
+        let conversation = conversations
+            .iter_mut()
+            .find(|conversation| conversation.id == conversation_id)
+            .ok_or_else(|| ServiceError::NotFound("missing conversation".to_string()))?;
+        conversation.add_message(message.clone());
+        Ok(message)
+    }
+
+    async fn search(
+        &self,
+        _query: &str,
         _limit: Option<usize>,
         _offset: Option<usize>,
-    ) -> Result<Vec<Conversation>, ServiceError> {
-        Ok(self.conversations.lock().await.clone())
+    ) -> Result<Vec<SearchResult>, ServiceError> {
+        Ok(vec![])
     }
 
-    #[allow(clippy::significant_drop_tightening)]
-    async fn add_user_message(
-        &self,
-        conversation_id: Uuid,
-        content: String,
-    ) -> Result<Message, ServiceError> {
-        let message = Message::user(content);
-        {
-            let mut conversations = self.conversations.lock().await;
-            let conversation = conversations
-                .iter_mut()
-                .find(|conversation| conversation.id == conversation_id)
-                .ok_or_else(|| ServiceError::NotFound("missing conversation".to_string()))?;
-            conversation.add_message(message.clone());
-        }
-        Ok(message)
+    async fn message_count(&self, conversation_id: Uuid) -> Result<usize, ServiceError> {
+        let count = {
+            let convs = self.conversations.lock().await;
+            convs
+                .iter()
+                .find(|c| c.id == conversation_id)
+                .ok_or_else(|| ServiceError::NotFound("missing conversation".to_string()))?
+                .messages
+                .len()
+        };
+        Ok(count)
     }
 
-    #[allow(clippy::significant_drop_tightening)]
-    async fn add_assistant_message(
+    async fn update_context_state(
         &self,
-        conversation_id: Uuid,
-        content: String,
-        _thinking_content: Option<String>,
-    ) -> Result<Message, ServiceError> {
-        let message = Message::assistant(content);
-        {
-            let mut conversations = self.conversations.lock().await;
-            let conversation = conversations
-                .iter_mut()
-                .find(|conversation| conversation.id == conversation_id)
-                .ok_or_else(|| ServiceError::NotFound("missing conversation".to_string()))?;
-            conversation.add_message(message.clone());
-        }
-        Ok(message)
+        _id: Uuid,
+        _state: &ContextState,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_context_state(&self, _id: Uuid) -> Result<Option<ContextState>, ServiceError> {
+        Ok(None)
     }
 
     #[allow(clippy::significant_drop_tightening)]
@@ -871,12 +904,18 @@ async fn select_conversation_replays_messages_and_filters_system_messages() {
                 content: "hi".to_string(),
                 thinking_content: None,
                 timestamp: Utc::now(),
+                model_id: None,
+                tool_calls: None,
+                tool_results: None,
             },
             Message {
                 role: DomainMessageRole::Assistant,
                 content: "hello".to_string(),
                 thinking_content: Some("reasoning".to_string()),
                 timestamp: Utc::now(),
+                model_id: None,
+                tool_calls: None,
+                tool_results: None,
             },
         ],
     );

@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use personal_agent::events::{bus::EventBus, types::UserEvent, AppEvent};
 use personal_agent::models::{
-    AuthConfig, Conversation, Message, MessageRole as DomainMessageRole, ModelParameters,
-    ModelProfile,
+    AuthConfig, ContextState, Conversation, ConversationMetadata, Message,
+    MessageRole as DomainMessageRole, ModelParameters, ModelProfile, SearchResult,
 };
 use personal_agent::presentation::{
     chat_presenter::ChatPresenter,
@@ -49,29 +49,45 @@ impl ConversationService for SelectConversationService {
         Err(ServiceError::NotFound("not implemented".to_string()))
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
         _limit: Option<usize>,
         _offset: Option<usize>,
-    ) -> Result<Vec<Conversation>, ServiceError> {
+    ) -> Result<Vec<ConversationMetadata>, ServiceError> {
         Ok(vec![])
     }
 
-    async fn add_user_message(
+    async fn add_message(
         &self,
         _conversation_id: Uuid,
-        _content: String,
+        _message: Message,
     ) -> Result<Message, ServiceError> {
         Err(ServiceError::NotFound("not implemented".to_string()))
     }
 
-    async fn add_assistant_message(
+    async fn search(
         &self,
-        _conversation_id: Uuid,
-        _content: String,
-        _thinking_content: Option<String>,
-    ) -> Result<Message, ServiceError> {
-        Err(ServiceError::NotFound("not implemented".to_string()))
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<SearchResult>, ServiceError> {
+        Ok(vec![])
+    }
+
+    async fn message_count(&self, _conversation_id: Uuid) -> Result<usize, ServiceError> {
+        Ok(0)
+    }
+
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &ContextState,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_context_state(&self, _id: Uuid) -> Result<Option<ContextState>, ServiceError> {
+        Ok(None)
     }
 
     async fn rename(&self, _id: Uuid, _new_title: String) -> Result<(), ServiceError> {
@@ -342,12 +358,18 @@ async fn select_conversation_emits_activation_and_replays_messages() {
                 content: "first".to_string(),
                 thinking_content: None,
                 timestamp: Utc::now(),
+                model_id: None,
+                tool_calls: None,
+                tool_results: None,
             },
             Message {
                 role: DomainMessageRole::Assistant,
                 content: "second".to_string(),
                 thinking_content: None,
                 timestamp: Utc::now(),
+                model_id: None,
+                tool_calls: None,
+                tool_results: None,
             },
         ],
     }) as Arc<dyn ConversationService>;
@@ -556,6 +578,9 @@ async fn selection_generation_protocol_is_present() {
             content: "first".to_string(),
             thinking_content: None,
             timestamp: Utc::now(),
+            model_id: None,
+            tool_calls: None,
+            tool_results: None,
         }],
     }) as Arc<dyn ConversationService>;
 

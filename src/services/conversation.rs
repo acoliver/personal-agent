@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::models::{Conversation, Message};
+use crate::models::{ContextState, Conversation, ConversationMetadata, Message, SearchResult};
 use crate::services::ServiceResult;
 
 /// Conversation service trait
@@ -26,36 +26,42 @@ pub trait ConversationService: Send + Sync {
     /// Load a conversation by ID
     async fn load(&self, id: Uuid) -> ServiceResult<Conversation>;
 
-    /// List all conversations, optionally filtered
-    async fn list(
+    /// List conversation metadata, ordered by `updated_at` DESC.
+    ///
+    /// Returns lightweight metadata without loading message content.
+    /// `limit` defaults to 100 (max 1000). `offset` defaults to 0.
+    async fn list_metadata(
         &self,
         limit: Option<usize>,
         offset: Option<usize>,
-    ) -> ServiceResult<Vec<Conversation>>;
+    ) -> ServiceResult<Vec<ConversationMetadata>>;
 
-    /// Add a user message to a conversation
+    /// Add a message to a conversation.
     ///
-    /// # Arguments
-    /// * `conversation_id` - The conversation to add to
-    /// * `content` - The message content
-    async fn add_user_message(
-        &self,
-        conversation_id: Uuid,
-        content: String,
-    ) -> ServiceResult<Message>;
+    /// Replaces the former `add_user_message` and `add_assistant_message` methods.
+    /// The caller constructs the `Message` (using `Message::user()`, `Message::assistant()`,
+    /// etc.) and passes it here. The returned `Message` is the persisted form.
+    async fn add_message(&self, conversation_id: Uuid, message: Message) -> ServiceResult<Message>;
 
-    /// Add an assistant message to a conversation
+    /// Full-text search across conversation titles and message content.
     ///
-    /// # Arguments
-    /// * `conversation_id` - The conversation to add to
-    /// * `content` - The message content
-    /// * `thinking_content` - Optional persisted thinking/reasoning content
-    async fn add_assistant_message(
+    /// Returns results ranked by relevance (title matches rank higher than content).
+    /// `limit` defaults to 100 (max 1000). `offset` defaults to 0.
+    async fn search(
         &self,
-        conversation_id: Uuid,
-        content: String,
-        thinking_content: Option<String>,
-    ) -> ServiceResult<Message>;
+        query: &str,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> ServiceResult<Vec<SearchResult>>;
+
+    /// Return the number of messages in a conversation.
+    async fn message_count(&self, conversation_id: Uuid) -> ServiceResult<usize>;
+
+    /// Persist context state for a conversation (e.g., summarization window).
+    async fn update_context_state(&self, id: Uuid, state: &ContextState) -> ServiceResult<()>;
+
+    /// Retrieve persisted context state, or `None` if none has been stored.
+    async fn get_context_state(&self, id: Uuid) -> ServiceResult<Option<ContextState>>;
 
     /// Rename a conversation
     ///
@@ -84,8 +90,3 @@ pub trait ConversationService: Send + Sync {
         model_profile_id: Option<Uuid>,
     ) -> ServiceResult<Conversation>;
 }
-
-/// @plan PLAN-20250125-REFACTOR.P09
-/// Conversation service implementation stub (replaced by `conversation_impl`)
-#[deprecated(note = "Use conversation_impl::ConversationServiceImpl instead")]
-pub struct ConversationServiceImplStub;

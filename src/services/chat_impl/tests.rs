@@ -547,33 +547,52 @@ impl super::super::ConversationService for MockConversationService {
         Ok(conversation)
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
         _limit: Option<usize>,
         _offset: Option<usize>,
-    ) -> Result<Vec<crate::models::Conversation>, crate::services::ServiceError> {
+    ) -> Result<Vec<crate::models::ConversationMetadata>, crate::services::ServiceError> {
         Ok(vec![])
     }
 
-    async fn add_user_message(
+    async fn add_message(
         &self,
         _conversation_id: Uuid,
-        content: String,
+        message: Message,
     ) -> Result<Message, crate::services::ServiceError> {
-        let message = Message::user(content);
         self.messages.write().await.push(message.clone());
         Ok(message)
     }
 
-    async fn add_assistant_message(
+    async fn search(
+        &self,
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<crate::models::SearchResult>, crate::services::ServiceError> {
+        Ok(vec![])
+    }
+
+    async fn message_count(
         &self,
         _conversation_id: Uuid,
-        content: String,
-        _thinking_content: Option<String>,
-    ) -> Result<Message, crate::services::ServiceError> {
-        let message = Message::assistant(content);
-        self.messages.write().await.push(message.clone());
-        Ok(message)
+    ) -> Result<usize, crate::services::ServiceError> {
+        Ok(0)
+    }
+
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &crate::models::ContextState,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+
+    async fn get_context_state(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<crate::models::ContextState>, crate::services::ServiceError> {
+        Ok(None)
     }
 
     async fn rename(
