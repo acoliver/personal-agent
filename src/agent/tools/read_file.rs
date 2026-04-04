@@ -3,7 +3,9 @@
 //! This module provides a built-in `ReadFileExecutor` that reads file contents
 //! with support for line ranges, truncation, and binary file detection.
 
+use crate::agent::tool_approval_policy::ToolApprovalDecision;
 use crate::llm::client_agent::McpToolContext;
+use crate::presentation::view_command::ViewCommand;
 use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
@@ -29,7 +31,7 @@ impl ToolExecutor<McpToolContext> for ReadFileExecutor {
     async fn execute(
         &self,
         args: serde_json::Value,
-        _ctx: &RunContext<McpToolContext>,
+        ctx: &RunContext<McpToolContext>,
     ) -> Result<ToolReturn, ToolError> {
         // Parse arguments
         let path = args
@@ -58,6 +60,9 @@ impl ToolExecutor<McpToolContext> for ReadFileExecutor {
                 })?
                 .join(file_path)
         };
+
+        let approval_path = absolute_path.display().to_string();
+        check_approval(ctx.deps(), &approval_path).await?;
 
         // Check if file exists and is accessible
         match tokio::fs::metadata(&absolute_path).await {
@@ -120,6 +125,49 @@ impl ToolExecutor<McpToolContext> for ReadFileExecutor {
 
         // Handle line range extraction or full content with truncation
         Self::process_content(&lines, total_lines, &content_str, start_line, end_line)
+    }
+}
+
+/// Check tool approval policy and await user decision if required.
+async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(), ToolError> {
+    let decision = {
+        let policy = tool_context.policy.lock().await;
+        policy.evaluate("ReadFile")
+    };
+
+    match decision {
+        ToolApprovalDecision::Allow => Ok(()),
+        ToolApprovalDecision::Deny => Err(ToolError::execution_failed(
+            "Tool execution denied by policy",
+        )),
+        ToolApprovalDecision::AskUser => {
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let waiter = tool_context
+                .approval_gate
+                .wait_for_approval(request_id.clone(), "ReadFile".to_string());
+
+            if tool_context
+                .view_tx
+                .try_send(ViewCommand::ToolApprovalRequest {
+                    request_id: request_id.clone(),
+                    tool_name: "ReadFile".to_string(),
+                    tool_argument: path.to_string(),
+                })
+                .is_err()
+            {
+                let _ = tool_context.approval_gate.resolve(&request_id, false);
+                return Err(ToolError::execution_failed(
+                    "Failed to send approval request to UI (channel full or closed)",
+                ));
+            }
+
+            let approved = waiter.wait().await.unwrap_or(false);
+            if approved {
+                Ok(())
+            } else {
+                Err(ToolError::execution_failed("Tool execution denied by user"))
+            }
+        }
     }
 }
 
@@ -301,8 +349,27 @@ pub fn get_read_file_tool_definition() -> ToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::tool_approval_policy::ToolApprovalPolicy;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    fn yolo_context() -> RunContext<McpToolContext> {
+        let (view_tx, _view_rx) = tokio::sync::mpsc::channel(10);
+        let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy {
+            yolo_mode: true,
+            ..Default::default()
+        }));
+
+        RunContext::new(
+            McpToolContext {
+                view_tx,
+                approval_gate,
+                policy,
+            },
+            "test-model",
+        )
+    }
 
     #[tokio::test]
     async fn read_simple_file() {
@@ -312,7 +379,8 @@ mod tests {
 
         let executor = ReadFileExecutor;
         let args = serde_json::json!({"path": path});
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_ok());
         let tool_return = result.unwrap();
@@ -328,7 +396,8 @@ mod tests {
     async fn read_file_not_found() {
         let executor = ReadFileExecutor;
         let args = serde_json::json!({"path": "/nonexistent/path/file.txt"});
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -339,7 +408,8 @@ mod tests {
     async fn read_file_missing_path() {
         let executor = ReadFileExecutor;
         let args = serde_json::json!({});
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -359,7 +429,8 @@ mod tests {
             "start_line": 2,
             "end_line": 4
         });
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_ok());
         let tool_return = result.unwrap();
@@ -382,7 +453,8 @@ mod tests {
             "path": path,
             "start_line": 2
         });
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_ok());
         let tool_return = result.unwrap();
@@ -406,7 +478,8 @@ mod tests {
             "start_line": 3,
             "end_line": 2
         });
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -424,7 +497,8 @@ mod tests {
             "path": path,
             "start_line": 10
         });
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -439,7 +513,8 @@ mod tests {
 
         let executor = ReadFileExecutor;
         let args = serde_json::json!({"path": path});
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -457,7 +532,8 @@ mod tests {
             "path": path,
             "end_line": 2
         });
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -483,7 +559,8 @@ line2
             "path": path,
             "start_line": 0
         });
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -503,7 +580,8 @@ line2
             "start_line": 1,
             "end_line": 0
         });
-        let result = executor.execute(args, &RunContext::default()).await;
+        let run_ctx = yolo_context();
+        let result = executor.execute(args, &run_ctx).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -516,5 +594,55 @@ line2
         assert_eq!(def.name, "ReadFile");
         assert!(!def.description.is_empty());
         assert!(def.parameters().is_object());
+    }
+
+    #[tokio::test]
+    async fn read_file_requires_approval_when_not_yolo() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(
+            b"line1
+line2
+",
+        )
+        .unwrap();
+        let path = file.path().to_str().unwrap().to_string();
+
+        let executor = ReadFileExecutor;
+        let args = serde_json::json!({"path": path});
+
+        let (view_tx, mut view_rx) = tokio::sync::mpsc::channel(10);
+        let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default()));
+        let run_ctx = RunContext::new(
+            McpToolContext {
+                view_tx,
+                approval_gate: approval_gate.clone(),
+                policy,
+            },
+            "test-model",
+        );
+
+        let handle = tokio::spawn(async move { executor.execute(args, &run_ctx).await });
+
+        let request = view_rx
+            .recv()
+            .await
+            .expect("approval request should be emitted");
+        let request_id = match request {
+            ViewCommand::ToolApprovalRequest {
+                request_id,
+                tool_name,
+                ..
+            } => {
+                assert_eq!(tool_name, "ReadFile");
+                request_id
+            }
+            other => panic!("expected ToolApprovalRequest, got {other:?}"),
+        };
+
+        let _ = approval_gate.resolve(&request_id, true);
+
+        let result = handle.await.expect("task should complete");
+        assert!(result.is_ok(), "approval should allow read execution");
     }
 }

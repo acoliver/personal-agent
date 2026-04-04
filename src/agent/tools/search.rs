@@ -4,7 +4,9 @@
 //! using regex across a directory tree. It prefers ripgrep when available and
 //! falls back to a built-in recursive search implementation.
 
+use crate::agent::tool_approval_policy::ToolApprovalDecision;
 use crate::llm::client_agent::McpToolContext;
+use crate::presentation::view_command::ViewCommand;
 use glob::Pattern;
 use ignore::WalkBuilder;
 use regex::Regex;
@@ -58,12 +60,56 @@ impl ToolExecutor<McpToolContext> for SearchExecutor {
     async fn execute(
         &self,
         args: serde_json::Value,
-        _ctx: &RunContext<McpToolContext>,
+        ctx: &RunContext<McpToolContext>,
     ) -> Result<ToolReturn, ToolError> {
+        check_approval(ctx.deps()).await?;
         execute_search(args)
             .await
             .map(ToolReturn::text)
             .map_err(ToolError::execution_failed)
+    }
+}
+
+/// Check tool approval policy and await user decision if required.
+async fn check_approval(tool_context: &McpToolContext) -> Result<(), ToolError> {
+    let decision = {
+        let policy = tool_context.policy.lock().await;
+        policy.evaluate("Search")
+    };
+
+    match decision {
+        ToolApprovalDecision::Allow => Ok(()),
+        ToolApprovalDecision::Deny => Err(ToolError::execution_failed(
+            "Tool execution denied by policy",
+        )),
+        ToolApprovalDecision::AskUser => {
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let waiter = tool_context
+                .approval_gate
+                .wait_for_approval(request_id.clone(), "Search".to_string());
+
+            if tool_context
+                .view_tx
+                .try_send(ViewCommand::ToolApprovalRequest {
+                    request_id: request_id.clone(),
+                    tool_name: "Search".to_string(),
+                    tool_argument: String::new(),
+                })
+                .is_err()
+            {
+                let _ = tool_context.approval_gate.resolve(&request_id, false);
+                return Err(ToolError::execution_failed(
+                    "Failed to send approval request to UI (channel full or closed)",
+                ));
+            }
+
+            let approved = waiter.wait().await.unwrap_or(false);
+            if approved {
+                Ok(())
+            } else {
+                Err(ToolError::execution_failed("Tool execution denied by user"))
+            }
+        }
     }
 }
 
@@ -483,8 +529,27 @@ pub fn get_search_tool_definition() -> ToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::tool_approval_policy::ToolApprovalPolicy;
     use std::io::Write;
     use tempfile::tempdir;
+
+    fn yolo_context() -> RunContext<McpToolContext> {
+        let (view_tx, _view_rx) = tokio::sync::mpsc::channel(8);
+        let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy {
+            yolo_mode: true,
+            ..Default::default()
+        }));
+
+        RunContext::new(
+            McpToolContext {
+                view_tx,
+                approval_gate,
+                policy,
+            },
+            "test-model",
+        )
+    }
 
     #[test]
     fn parse_search_args_defaults_path_to_dot() {
@@ -606,10 +671,15 @@ mod tests {
 
     #[tokio::test]
     async fn execute_search_requires_pattern() {
-        let result = execute_search(serde_json::json!({})).await;
+        let executor = SearchExecutor;
+        let run_ctx = yolo_context();
+
+        let result = executor.execute(serde_json::json!({}), &run_ctx).await;
         assert!(result.is_err());
         let error = result.expect_err("missing pattern should fail");
-        assert!(error.contains("Missing required 'pattern' argument"));
+        assert!(error
+            .to_string()
+            .contains("Missing required 'pattern' argument"));
     }
 
     #[test]
@@ -721,5 +791,46 @@ mod tests {
     fn format_results_handles_no_matches() {
         let output = format_results("missing", &[], false);
         assert_eq!(output, "No matches found for pattern \"missing\"");
+    }
+
+    #[tokio::test]
+    async fn search_requires_approval_when_not_yolo() {
+        let executor = SearchExecutor;
+        let args = serde_json::json!({ "pattern": "needle", "path": "." });
+
+        let (view_tx, mut view_rx) = tokio::sync::mpsc::channel(10);
+        let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
+        let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default()));
+        let run_ctx = RunContext::new(
+            McpToolContext {
+                view_tx,
+                approval_gate: approval_gate.clone(),
+                policy,
+            },
+            "test-model",
+        );
+
+        let handle = tokio::spawn(async move { executor.execute(args, &run_ctx).await });
+
+        let request = view_rx
+            .recv()
+            .await
+            .expect("approval request should be emitted");
+        let request_id = match request {
+            ViewCommand::ToolApprovalRequest {
+                request_id,
+                tool_name,
+                ..
+            } => {
+                assert_eq!(tool_name, "Search");
+                request_id
+            }
+            other => panic!("expected ToolApprovalRequest, got {other:?}"),
+        };
+
+        let _ = approval_gate.resolve(&request_id, true);
+
+        let result = handle.await.expect("task should complete");
+        assert!(result.is_ok(), "approval should allow search execution");
     }
 }
