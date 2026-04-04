@@ -608,7 +608,7 @@ line2
         let path = file.path().to_str().unwrap().to_string();
 
         let executor = ReadFileExecutor;
-        let args = serde_json::json!({"path": path});
+        let args = serde_json::json!({"path": path.clone()});
 
         let (view_tx, mut view_rx) = tokio::sync::mpsc::channel(10);
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
@@ -632,9 +632,10 @@ line2
             ViewCommand::ToolApprovalRequest {
                 request_id,
                 tool_name,
-                ..
+                tool_argument,
             } => {
                 assert_eq!(tool_name, "ReadFile");
+                assert_eq!(tool_argument, path);
                 request_id
             }
             other => panic!("expected ToolApprovalRequest, got {other:?}"),

@@ -42,6 +42,20 @@ struct SearchArgs {
     include: Option<String>,
 }
 
+impl SearchArgs {
+    fn approval_summary(&self) -> String {
+        self.include.as_ref().map_or_else(
+            || format!("pattern={} path={}", self.pattern, self.path),
+            |include| {
+                format!(
+                    "pattern={} path={} include={include}",
+                    self.pattern, self.path
+                )
+            },
+        )
+    }
+}
+
 #[derive(Debug)]
 enum RipgrepError {
     NotFound,
@@ -62,8 +76,11 @@ impl ToolExecutor<McpToolContext> for SearchExecutor {
         args: serde_json::Value,
         ctx: &RunContext<McpToolContext>,
     ) -> Result<ToolReturn, ToolError> {
-        check_approval(ctx.deps()).await?;
-        execute_search(args)
+        let search_args = parse_search_args(&args).map_err(ToolError::execution_failed)?;
+        let approval_summary = search_args.approval_summary();
+
+        check_approval(ctx.deps(), &approval_summary).await?;
+        execute_search(search_args)
             .await
             .map(ToolReturn::text)
             .map_err(ToolError::execution_failed)
@@ -71,7 +88,10 @@ impl ToolExecutor<McpToolContext> for SearchExecutor {
 }
 
 /// Check tool approval policy and await user decision if required.
-async fn check_approval(tool_context: &McpToolContext) -> Result<(), ToolError> {
+async fn check_approval(
+    tool_context: &McpToolContext,
+    tool_argument: &str,
+) -> Result<(), ToolError> {
     let decision = {
         let policy = tool_context.policy.lock().await;
         policy.evaluate("Search")
@@ -93,7 +113,7 @@ async fn check_approval(tool_context: &McpToolContext) -> Result<(), ToolError> 
                 .try_send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
                     tool_name: "Search".to_string(),
-                    tool_argument: String::new(),
+                    tool_argument: tool_argument.to_string(),
                 })
                 .is_err()
             {
@@ -113,9 +133,7 @@ async fn check_approval(tool_context: &McpToolContext) -> Result<(), ToolError> 
     }
 }
 
-async fn execute_search(args: serde_json::Value) -> Result<String, String> {
-    let search_args = parse_search_args(&args)?;
-
+async fn execute_search(search_args: SearchArgs) -> Result<String, String> {
     let result = match search_with_ripgrep(
         &search_args.pattern,
         &search_args.path,
@@ -795,8 +813,18 @@ mod tests {
 
     #[tokio::test]
     async fn search_requires_approval_when_not_yolo() {
+        let dir = tempdir().expect("temp dir should be created");
+        let file_path = dir.path().join("sample.txt");
+        std::fs::write(&file_path, "needle\n").expect("file write should succeed");
+
+        let path = dir
+            .path()
+            .to_str()
+            .expect("temp dir path should be utf-8")
+            .to_string();
+
         let executor = SearchExecutor;
-        let args = serde_json::json!({ "pattern": "needle", "path": "." });
+        let args = serde_json::json!({ "pattern": "needle", "path": path.clone() });
 
         let (view_tx, mut view_rx) = tokio::sync::mpsc::channel(10);
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
@@ -820,9 +848,10 @@ mod tests {
             ViewCommand::ToolApprovalRequest {
                 request_id,
                 tool_name,
-                ..
+                tool_argument,
             } => {
                 assert_eq!(tool_name, "Search");
+                assert_eq!(tool_argument, format!("pattern=needle path={path}"));
                 request_id
             }
             other => panic!("expected ToolApprovalRequest, got {other:?}"),
