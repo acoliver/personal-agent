@@ -241,7 +241,7 @@ impl ChatState {
     pub(super) fn sync_current_model_from_profile(&mut self) {
         self.current_model = self.selected_profile().map_or_else(
             || "No profile selected".to_string(),
-            |profile| profile.model_id.clone(),
+            |profile| profile.name.clone(),
         );
     }
 
@@ -366,7 +366,7 @@ mod tests {
         state.profiles = vec![profile];
 
         state.sync_current_model_from_profile();
-        assert_eq!(state.current_model, "gpt-4o-mini");
+        assert_eq!(state.current_model, "Test");
 
         state.profiles.clear();
         state.sync_current_model_from_profile();
