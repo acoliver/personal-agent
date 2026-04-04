@@ -17,8 +17,9 @@ use crate::services::ConversationService;
 use futures::{stream, Stream};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tokio::sync::{Mutex as AsyncMutex, RwLock};
+use std::sync::{Arc, Mutex as StdMutex};
+use tokio::sync::Mutex as AsyncMutex;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 /// Minimal implementation of `ChatService`
@@ -27,7 +28,8 @@ pub struct ChatServiceImpl {
     profile_service: Arc<dyn super::ProfileService>,
     app_settings_service: Arc<dyn super::AppSettingsService>,
     is_streaming: Arc<AtomicBool>,
-    current_conversation_id: Arc<RwLock<Option<Uuid>>>,
+    current_conversation_id: Arc<StdMutex<Option<Uuid>>>,
+    stream_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
     /// Channel for sending view commands (used for tool approval UI)
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     /// Approval gate for coordinating user approval of tool execution
@@ -52,7 +54,8 @@ impl ChatServiceImpl {
             profile_service,
             app_settings_service,
             is_streaming: Arc::new(AtomicBool::new(false)),
-            current_conversation_id: Arc::new(RwLock::new(None)),
+            current_conversation_id: Arc::new(StdMutex::new(None)),
+            stream_task: Arc::new(StdMutex::new(None)),
             view_tx,
             approval_gate,
             policy,
@@ -143,8 +146,56 @@ impl ChatServiceImpl {
             ));
         }
 
-        *self.current_conversation_id.write().await = Some(conversation_id);
+        {
+            let mut current = self
+                .current_conversation_id
+                .lock()
+                .expect("current conversation mutex poisoned");
+            *current = Some(conversation_id);
+        }
         Ok(())
+    }
+
+    fn cancel_active_stream(&self) {
+        self.is_streaming.store(false, Ordering::Release);
+
+        let conversation_id = *self
+            .current_conversation_id
+            .lock()
+            .expect("current conversation mutex poisoned");
+
+        let task_to_abort = self
+            .stream_task
+            .lock()
+            .expect("stream task mutex poisoned")
+            .take();
+        if let Some(task) = task_to_abort {
+            task.abort();
+        }
+
+        let resolved_requests = self.approval_gate.resolve_all(false);
+        for request_id in resolved_requests {
+            let _ = self.view_tx.try_send(ViewCommand::ToolApprovalResolved {
+                request_id,
+                approved: false,
+            });
+        }
+
+        if let Some(conversation_id) = conversation_id {
+            let _ = emit(AppEvent::Chat(ChatEvent::StreamCancelled {
+                conversation_id,
+                message_id: Uuid::new_v4(),
+                partial_content: String::new(),
+            }));
+        }
+
+        {
+            let mut current = self
+                .current_conversation_id
+                .lock()
+                .expect("current conversation mutex poisoned");
+            *current = None;
+        }
     }
 
     async fn prepare_message_context(
@@ -292,7 +343,7 @@ impl ChatServiceImpl {
         }));
     }
 
-    fn spawn_stream_task(
+    async fn spawn_stream_task(
         &self,
         conversation_id: Uuid,
         prepared: PreparedMessageContext,
@@ -300,17 +351,19 @@ impl ChatServiceImpl {
         tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     ) {
         let is_streaming = self.is_streaming.clone();
+        let current_conversation_id = self.current_conversation_id.clone();
         let conversation_service = self.conversation_service.clone();
         let view_tx = self.view_tx.clone();
         let approval_gate = self.approval_gate.clone();
         let policy = self.policy.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             run_stream_task(
                 prepared,
                 mcp_tools,
                 tx,
                 is_streaming,
+                current_conversation_id,
                 conversation_service,
                 conversation_id,
                 view_tx,
@@ -319,6 +372,11 @@ impl ChatServiceImpl {
             )
             .await;
         });
+
+        let mut stream_task = self.stream_task.lock().expect("stream task mutex poisoned");
+        if let Some(previous_task) = stream_task.replace(handle) {
+            previous_task.abort();
+        }
     }
 
     /// Resolve an in-flight tool approval request from UI input.
@@ -358,7 +416,10 @@ impl ChatServiceImpl {
                 }
                 emit_policy_snapshot = true;
             }
-            ToolApprovalResponseAction::ProceedOnce | ToolApprovalResponseAction::Denied => {}
+            ToolApprovalResponseAction::ProceedOnce => {}
+            ToolApprovalResponseAction::Denied => {
+                self.cancel_active_stream();
+            }
         }
 
         let _ = self.view_tx.try_send(ViewCommand::ToolApprovalResolved {
@@ -399,6 +460,7 @@ async fn run_stream_task(
     mcp_tools: Vec<crate::llm::tools::Tool>,
     tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     is_streaming: Arc<AtomicBool>,
+    current_conversation_id: Arc<StdMutex<Option<Uuid>>>,
     conversation_service: Arc<dyn ConversationService>,
     conversation_id: Uuid,
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
@@ -418,13 +480,8 @@ async fn run_stream_task(
         Ok(agent) => agent,
         Err(e) => {
             let err_msg = format!("Failed to create agent: {e}");
-            let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
-                conversation_id,
-                error: err_msg.clone(),
-                recoverable: false,
-            }));
-            let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err_msg)));
-            is_streaming.store(false, Ordering::Release);
+            emit_stream_error(conversation_id, err_msg, false, &tx);
+            clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
             return;
         }
     };
@@ -453,39 +510,77 @@ async fn run_stream_task(
                 let _ = tx.send(ChatStreamEvent::Complete);
             }
             LlmStreamEvent::Error(err) => {
-                let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
-                    conversation_id,
-                    error: err.clone(),
-                    recoverable: false,
-                }));
-                let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err)));
+                emit_stream_error(conversation_id, err, false, &tx);
             }
             _ => {}
         })
         .await
     {
-        let err_msg = e.to_string();
-        let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
-            conversation_id,
-            error: err_msg.clone(),
-            recoverable: false,
-        }));
-        let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(err_msg)));
+        emit_stream_error(conversation_id, e.to_string(), false, &tx);
     }
 
-    if !response_text.is_empty() || !thinking_text.is_empty() {
-        let persisted_thinking = (!thinking_text.is_empty()).then_some(thinking_text.clone());
-        let _ = conversation_service
-            .add_assistant_message(conversation_id, response_text.clone(), persisted_thinking)
-            .await;
-    }
+    persist_assistant_response(
+        &conversation_service,
+        conversation_id,
+        &response_text,
+        &thinking_text,
+    )
+    .await;
 
     let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
         conversation_id,
         message_id: Uuid::new_v4(),
         total_tokens: None,
     }));
+    clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
+}
+
+fn emit_stream_error(
+    conversation_id: Uuid,
+    error: String,
+    recoverable: bool,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+) {
+    let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
+        conversation_id,
+        error: error.clone(),
+        recoverable,
+    }));
+    let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(error)));
+}
+
+async fn persist_assistant_response(
+    conversation_service: &Arc<dyn ConversationService>,
+    conversation_id: Uuid,
+    response_text: &str,
+    thinking_text: &str,
+) {
+    if response_text.is_empty() && thinking_text.is_empty() {
+        return;
+    }
+
+    let persisted_thinking = (!thinking_text.is_empty()).then(|| thinking_text.to_string());
+    let _ = conversation_service
+        .add_assistant_message(
+            conversation_id,
+            response_text.to_string(),
+            persisted_thinking,
+        )
+        .await;
+}
+
+fn clear_streaming_state(
+    is_streaming: &Arc<AtomicBool>,
+    current_conversation_id: &Arc<StdMutex<Option<Uuid>>>,
+    conversation_id: Uuid,
+) {
     is_streaming.store(false, Ordering::Release);
+    let mut current = current_conversation_id
+        .lock()
+        .expect("current conversation mutex poisoned");
+    if *current == Some(conversation_id) {
+        *current = None;
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -507,7 +602,8 @@ impl ChatService for ChatServiceImpl {
         let mcp_tools = self.load_mcp_tools().await;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ChatStreamEvent>();
-        self.spawn_stream_task(conversation_id, prepared, mcp_tools, tx);
+        self.spawn_stream_task(conversation_id, prepared, mcp_tools, tx)
+            .await;
 
         let message_stream: Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>> =
             Box::pin(stream::unfold(rx, move |mut rx| async move {
@@ -519,8 +615,8 @@ impl ChatService for ChatServiceImpl {
 
     /// Cancel the current streaming operation
     fn cancel(&self) {
-        // Reset streaming flag to allow new messages
-        self.is_streaming.store(false, Ordering::Release);
+        // Force-cancel the active stream task so tool loops stop immediately.
+        self.cancel_active_stream();
     }
 
     /// Check if currently streaming

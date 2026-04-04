@@ -87,6 +87,9 @@ smol = "2"
 pulldown-cmark = "0.13"
 url = "2"
 bytes = "1"
+regex = "1"
+ignore = "0.4"
+glob = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

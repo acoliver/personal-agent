@@ -458,6 +458,7 @@ impl ToolApprovalPolicy {
             "ReadManyFiles",
             "ListDirectory",
             "Glob",
+            "Search",
             "SearchFileContent",
             "AstReadFile",
             "AstGrep",
@@ -575,3 +576,4 @@ impl ToolApprovalPolicy {
 
 #[cfg(test)]
 mod tests;
+
