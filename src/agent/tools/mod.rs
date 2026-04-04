@@ -12,6 +12,8 @@
 //!   creation
 //! - `EditFile`: Apply an exact literal find-and-replace edit in an existing
 //!   file, with optional line range scoping for disambiguation
+//! - `Search`: Search file contents recursively by regex with ripgrep-first
+//!   execution and built-in fallback
 //!
 //! # Adding New Native Tools
 //!
@@ -24,8 +26,10 @@
 
 pub mod edit_file;
 pub mod read_file;
+pub mod search;
 pub mod write_file;
 
 pub use edit_file::{get_edit_file_tool_definition, EditFileExecutor};
 pub use read_file::{get_read_file_tool_definition, ReadFileExecutor};
+pub use search::{get_search_tool_definition, SearchExecutor};
 pub use write_file::{get_write_file_tool_definition, WriteFileExecutor};

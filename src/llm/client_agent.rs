@@ -145,6 +145,29 @@ impl ApprovalGate {
     pub fn resolve(&self, request_id: &str, approved: bool) -> Option<String> {
         self.resolve_and_take_identifier(request_id, approved)
     }
+
+    /// Resolve all pending approvals with a shared decision.
+    ///
+    /// Returns the request IDs that were resolved.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    #[must_use]
+    pub fn resolve_all(&self, approved: bool) -> Vec<String> {
+        let pending_approvals = {
+            let mut pending = self.pending.lock().unwrap();
+            pending.drain().collect::<Vec<_>>()
+        };
+
+        let mut request_ids = Vec::with_capacity(pending_approvals.len());
+        for (request_id, pending_approval) in pending_approvals {
+            let _ = pending_approval.tx.send(approved);
+            request_ids.push(request_id);
+        }
+
+        request_ids
+    }
 }
 
 impl Default for ApprovalGate {
@@ -189,6 +212,10 @@ fn register_native_tools(
     // Register ReadFile tool
     let read_file_def = crate::agent::tools::get_read_file_tool_definition();
     builder = builder.tool_with_executor(read_file_def, crate::agent::tools::ReadFileExecutor);
+
+    // Register Search tool
+    let search_def = crate::agent::tools::get_search_tool_definition();
+    builder = builder.tool_with_executor(search_def, crate::agent::tools::SearchExecutor);
 
     // Register WriteFile tool
     let write_file_def = crate::agent::tools::get_write_file_tool_definition();
@@ -649,6 +676,38 @@ mod tests {
 
         assert!(approved);
         assert_eq!(identifier, "WriteFile");
+    }
+
+    #[tokio::test]
+    async fn resolve_all_resolves_every_pending_waiter() {
+        let gate = ApprovalGate::new();
+
+        let request_id_a = Uuid::new_v4().to_string();
+        let request_id_b = Uuid::new_v4().to_string();
+
+        let waiter_a = gate.wait_for_approval(request_id_a.clone(), "WriteFile".to_string());
+        let waiter_b = gate.wait_for_approval(request_id_b.clone(), "Search".to_string());
+
+        let resolved_ids = gate.resolve_all(false);
+
+        assert_eq!(resolved_ids.len(), 2);
+        assert!(resolved_ids.contains(&request_id_a));
+        assert!(resolved_ids.contains(&request_id_b));
+
+        let approved_a = waiter_a
+            .wait()
+            .await
+            .expect("waiter a should receive resolution");
+        let approved_b = waiter_b
+            .wait()
+            .await
+            .expect("waiter b should receive resolution");
+
+        assert!(!approved_a);
+        assert!(!approved_b);
+
+        assert!(gate.resolve(&request_id_a, false).is_none());
+        assert!(gate.resolve(&request_id_b, false).is_none());
     }
 
     #[test]

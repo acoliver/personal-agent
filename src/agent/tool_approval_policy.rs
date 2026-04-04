@@ -321,6 +321,7 @@ impl ToolApprovalPolicy {
             "ReadManyFiles",
             "ListDirectory",
             "Glob",
+            "Search",
             "SearchFileContent",
             "AstReadFile",
             "AstGrep",
@@ -505,6 +506,7 @@ mod tests {
         };
 
         assert_eq!(policy.evaluate("ReadFile"), ToolApprovalDecision::Allow);
+        assert_eq!(policy.evaluate("Search"), ToolApprovalDecision::Allow);
     }
 
     #[test]
