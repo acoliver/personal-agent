@@ -18,7 +18,7 @@ pub mod app_settings_impl;
 pub mod chat;
 pub mod chat_impl;
 pub mod conversation;
-pub mod conversation_impl;
+pub mod conversation_sqlite;
 pub mod mcp;
 pub mod mcp_impl;
 pub mod mcp_registry;
@@ -86,7 +86,7 @@ pub use template::{expand_system_prompt, TemplateContext};
 // Re-export service implementations
 pub use app_settings_impl::AppSettingsServiceImpl;
 pub use chat_impl::ChatServiceImpl;
-pub use conversation_impl::ConversationServiceImpl;
+pub use conversation_sqlite::SqliteConversationService;
 pub use mcp_impl::McpServiceImpl;
 pub use mcp_registry_impl::McpRegistryServiceImpl;
 pub use models_registry_impl::ModelsRegistryServiceImpl;

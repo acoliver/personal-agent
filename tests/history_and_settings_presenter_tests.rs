@@ -10,7 +10,10 @@ use personal_agent::events::{
     bus::EventBus,
     types::{AppEvent, ConversationEvent, McpEvent, ProfileEvent, SystemEvent, UserEvent},
 };
-use personal_agent::models::{AuthConfig, Conversation, Message, ModelParameters, ModelProfile};
+use personal_agent::models::{
+    AuthConfig, ContextState, Conversation, ConversationMetadata, Message, ModelParameters,
+    ModelProfile, SearchResult,
+};
 use personal_agent::presentation::{
     history_presenter::HistoryPresenter,
     settings_presenter::SettingsPresenter,
@@ -62,29 +65,45 @@ impl ConversationService for MockConversationService {
         Err(ServiceError::NotFound("not implemented".to_string()))
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
         _limit: Option<usize>,
         _offset: Option<usize>,
-    ) -> Result<Vec<Conversation>, ServiceError> {
+    ) -> Result<Vec<ConversationMetadata>, ServiceError> {
         Ok(vec![])
     }
 
-    async fn add_user_message(
+    async fn add_message(
         &self,
         _conversation_id: Uuid,
-        _content: String,
+        _message: Message,
     ) -> Result<Message, ServiceError> {
         Err(ServiceError::NotFound("not implemented".to_string()))
     }
 
-    async fn add_assistant_message(
+    async fn search(
         &self,
-        _conversation_id: Uuid,
-        _content: String,
-        _thinking_content: Option<String>,
-    ) -> Result<Message, ServiceError> {
-        Err(ServiceError::NotFound("not implemented".to_string()))
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<SearchResult>, ServiceError> {
+        Ok(vec![])
+    }
+
+    async fn message_count(&self, _conversation_id: Uuid) -> Result<usize, ServiceError> {
+        Ok(0)
+    }
+
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &ContextState,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_context_state(&self, _id: Uuid) -> Result<Option<ContextState>, ServiceError> {
+        Ok(None)
     }
 
     async fn rename(&self, _id: Uuid, _new_title: String) -> Result<(), ServiceError> {

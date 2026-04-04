@@ -12,16 +12,15 @@
 
 pub mod agent;
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod events;
 pub mod llm;
 pub mod mcp;
-pub mod migration;
 pub mod models;
 pub mod presentation;
 pub mod registry;
 pub mod services;
-pub mod storage;
 pub mod ui_gpui;
 
 // Re-export commonly used types
@@ -35,7 +34,6 @@ pub use services::{
     AppSettingsService, ChatService, ConversationService, McpRegistryService, McpService,
     ModelsRegistryService, ProfileService, SecretsService, ServiceError, ServiceResult,
 };
-pub use storage::ConversationStorage;
 
 // @plan PLAN-20250125-REFACTOR.P04
 // Events module added for EventBus implementation
@@ -45,5 +43,3 @@ pub use storage::ConversationStorage;
 // Presentation module added for presenter layer stubs
 // @plan PLAN-20250127-REFACTOR.P13
 // App and AppContext modules added for application bootstrap and shared state
-// @plan PLAN-20250125-REFACTOR.P14
-// Migration module added for data compatibility and migration paths

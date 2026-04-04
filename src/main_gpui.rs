@@ -23,6 +23,7 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 // Use the library crate
+use personal_agent::db::spawn_db_thread;
 use personal_agent::events::types::UserEvent;
 use personal_agent::events::EventBus;
 use personal_agent::llm::client_agent::ApprovalGate;
@@ -33,9 +34,9 @@ use personal_agent::presentation::{
 };
 use personal_agent::services::{
     AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl, ConversationService,
-    ConversationServiceImpl, McpRegistryService, McpRegistryServiceImpl, McpService,
-    McpServiceImpl, ModelsRegistryService, ModelsRegistryServiceImpl, ProfileService,
-    ProfileServiceImpl, SecretsService, SecretsServiceImpl,
+    McpRegistryService, McpRegistryServiceImpl, McpService, McpServiceImpl, ModelsRegistryService,
+    ModelsRegistryServiceImpl, ProfileService, ProfileServiceImpl, SecretsService,
+    SecretsServiceImpl, SqliteConversationService,
 };
 use personal_agent::ui_gpui::app_store::{
     BeginSelectionMode, BeginSelectionResult, StartupInputs, StartupMode,
@@ -491,10 +492,12 @@ async fn create_services(
         AppSettingsServiceImpl::new(runtime_paths.app_settings_path.clone())
             .expect("Failed to create AppSettingsService"),
     );
-    let conversation: Arc<dyn ConversationService> = Arc::new(
-        ConversationServiceImpl::new(runtime_paths.conversations_dir.clone())
-            .expect("Failed to create ConversationService"),
-    );
+    let db_path = runtime_paths.base_dir.join("personalagent.db");
+    let db = tokio::task::spawn_blocking(move || spawn_db_thread(&db_path))
+        .await
+        .expect("spawn_blocking join failed")
+        .expect("Failed to spawn DB thread");
+    let conversation: Arc<dyn ConversationService> = Arc::new(SqliteConversationService::new(db));
     let profile_impl = ProfileServiceImpl::new(runtime_paths.profiles_dir.clone())
         .expect("Failed to create ProfileService");
     profile_impl

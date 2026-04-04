@@ -10,7 +10,7 @@ use crate::llm::client_agent::ApprovalGate;
 use crate::llm::AgentClientExt;
 use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::mcp::McpService;
-use crate::models::MessageRole;
+use crate::models::{Message, MessageRole};
 use crate::presentation::view_command::ViewCommand;
 use crate::services::template::{expand_system_prompt, TemplateContext};
 use crate::services::ConversationService;
@@ -214,7 +214,7 @@ impl ChatServiceImpl {
             };
 
         self.conversation_service
-            .add_user_message(conversation_id, content)
+            .add_message(conversation_id, Message::user(content))
             .await?;
 
         let conversation = self
@@ -557,14 +557,12 @@ async fn persist_assistant_response(
         return;
     }
 
-    let persisted_thinking = (!thinking_text.is_empty()).then(|| thinking_text.to_string());
-    let _ = conversation_service
-        .add_assistant_message(
-            conversation_id,
-            response_text.to_string(),
-            persisted_thinking,
-        )
-        .await;
+    let msg = if thinking_text.is_empty() {
+        Message::assistant(response_text.to_string())
+    } else {
+        Message::assistant_with_thinking(response_text.to_string(), thinking_text.to_string())
+    };
+    let _ = conversation_service.add_message(conversation_id, msg).await;
 }
 
 fn clear_streaming_state(

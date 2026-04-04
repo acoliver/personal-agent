@@ -73,29 +73,48 @@ impl ConversationService for StubConversationService {
         Ok(personal_agent::models::Conversation::new(self.profile_id))
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
         _limit: Option<usize>,
         _offset: Option<usize>,
-    ) -> Result<Vec<personal_agent::models::Conversation>, ServiceError> {
+    ) -> Result<Vec<personal_agent::models::ConversationMetadata>, ServiceError> {
         Ok(vec![])
     }
 
-    async fn add_user_message(
+    async fn add_message(
         &self,
         _conversation_id: Uuid,
-        content: String,
+        message: personal_agent::models::Message,
     ) -> Result<personal_agent::models::Message, ServiceError> {
-        Ok(personal_agent::models::Message::user(content))
+        Ok(message)
     }
 
-    async fn add_assistant_message(
+    async fn search(
         &self,
-        _conversation_id: Uuid,
-        content: String,
-        _thinking_content: Option<String>,
-    ) -> Result<personal_agent::models::Message, ServiceError> {
-        Ok(personal_agent::models::Message::assistant(content))
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<personal_agent::models::SearchResult>, ServiceError> {
+        Ok(vec![])
+    }
+
+    async fn message_count(&self, _conversation_id: Uuid) -> Result<usize, ServiceError> {
+        Ok(0)
+    }
+
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &personal_agent::models::ContextState,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_context_state(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<personal_agent::models::ContextState>, ServiceError> {
+        Ok(None)
     }
 
     async fn rename(&self, _id: Uuid, _new_title: String) -> Result<(), ServiceError> {

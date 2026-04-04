@@ -9,10 +9,11 @@
 use tempfile::TempDir;
 use uuid::Uuid;
 
+use personal_agent::db::spawn_db_thread;
 use personal_agent::events::{types::SystemEvent, AppEvent, EventBus};
 use personal_agent::services::{
-    AppSettingsService, AppSettingsServiceImpl, ConversationService, ConversationServiceImpl,
-    SecretsService, SecretsServiceImpl,
+    AppSettingsService, AppSettingsServiceImpl, ConversationService, SecretsService,
+    SecretsServiceImpl, SqliteConversationService,
 };
 
 /// ============================================================================
@@ -62,11 +63,15 @@ async fn test_eventbus_round_trip() {
 async fn test_conversation_service_crud() {
     // Create temp directory for isolation
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let storage_dir = temp_dir.path().join("conversations");
 
-    // Create ConversationServiceImpl with temp dir
-    let service = ConversationServiceImpl::new(storage_dir.clone())
-        .expect("Failed to create ConversationServiceImpl");
+    // Create SqliteConversationService with temp db path
+    let db_path = temp_dir.path().join("personalagent.db");
+    let db = tokio::task::spawn_blocking(move || {
+        spawn_db_thread(&db_path).expect("Failed to spawn db thread")
+    })
+    .await
+    .expect("spawn_blocking failed");
+    let service = SqliteConversationService::new(db);
 
     let profile_id = Uuid::new_v4();
 

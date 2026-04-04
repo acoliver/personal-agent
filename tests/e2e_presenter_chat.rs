@@ -18,6 +18,7 @@
 //! Run with: cargo test --test `e2e_presenter_chat` -- --ignored --nocapture
 
 use personal_agent::{
+    db::spawn_db_thread,
     events::{
         bus::EventBus,
         types::{ChatEvent, UserEvent},
@@ -27,8 +28,8 @@ use personal_agent::{
     presentation::{chat_presenter::ChatPresenter, view_command::ViewCommand},
     services::{
         app_settings_impl::AppSettingsServiceImpl, chat_impl::ChatServiceImpl,
-        conversation_impl::ConversationServiceImpl, profile_impl::ProfileServiceImpl,
-        secrets_impl::SecretsServiceImpl, AppSettingsService, ChatService, ConversationService,
+        profile_impl::ProfileServiceImpl, secrets_impl::SecretsServiceImpl, AppSettingsService,
+        ChatService, ConversationService, SqliteConversationService,
     },
     LlmClient,
 };
@@ -117,11 +118,16 @@ async fn test_chat_presenter_receives_stream_events() {
     let profile_service: Arc<dyn personal_agent::services::ProfileService> =
         Arc::new(profile_service_impl);
 
-    // Setup: Create ConversationService
-    let conversation_service: Arc<dyn ConversationService> = Arc::new(
-        ConversationServiceImpl::new(data_dir.clone())
-            .expect("Failed to create ConversationService"),
-    );
+    // Setup: Create ConversationService (isolated temp dir to avoid lock contention
+    // when tests run in parallel)
+    let db_dir = tempfile::TempDir::new().expect("Failed to create temp dir for DB");
+    let db_path = db_dir.path().join("personalagent.db");
+    let db = tokio::task::spawn_blocking(move || spawn_db_thread(&db_path))
+        .await
+        .expect("spawn_blocking join failed")
+        .expect("Failed to spawn db thread");
+    let conversation_service: Arc<dyn ConversationService> =
+        Arc::new(SqliteConversationService::new(db));
 
     // Setup: Create ChatService with PA_E2E profile
     let profile = load_e2e_profile();
@@ -291,12 +297,16 @@ async fn test_chat_presenter_error_handling() {
     let (view_tx, view_rx) = mpsc::channel::<ViewCommand>(100);
 
     let home = dirs::home_dir().expect("No home directory");
-    let data_dir = home.join(".llxprt/test-data");
     let app_settings_path = home.join(".llxprt/test-data/app_settings.e2e.json");
 
-    let conversation_service: Arc<dyn ConversationService> = Arc::new(
-        ConversationServiceImpl::new(data_dir).expect("Failed to create ConversationService"),
-    );
+    let db_dir = tempfile::TempDir::new().expect("Failed to create temp dir for DB");
+    let db_path = db_dir.path().join("personalagent.db");
+    let db = tokio::task::spawn_blocking(move || spawn_db_thread(&db_path))
+        .await
+        .expect("spawn_blocking join failed")
+        .expect("Failed to spawn db thread");
+    let conversation_service: Arc<dyn ConversationService> =
+        Arc::new(SqliteConversationService::new(db));
 
     let profiles_dir = home.join(".llxprt/profiles");
     std::fs::create_dir_all(&profiles_dir).expect("Failed to create profiles dir");
@@ -398,12 +408,16 @@ async fn test_chat_presenter_manual_events() {
     let (view_tx, view_rx) = mpsc::channel::<ViewCommand>(100);
 
     let home = dirs::home_dir().expect("No home directory");
-    let data_dir = home.join(".llxprt/test-data");
     let app_settings_path = home.join(".llxprt/test-data/app_settings.e2e.json");
 
-    let conversation_service: Arc<dyn ConversationService> = Arc::new(
-        ConversationServiceImpl::new(data_dir).expect("Failed to create ConversationService"),
-    );
+    let db_dir = tempfile::TempDir::new().expect("Failed to create temp dir for DB");
+    let db_path = db_dir.path().join("personalagent.db");
+    let db = tokio::task::spawn_blocking(move || spawn_db_thread(&db_path))
+        .await
+        .expect("spawn_blocking join failed")
+        .expect("Failed to spawn db thread");
+    let conversation_service: Arc<dyn ConversationService> =
+        Arc::new(SqliteConversationService::new(db));
 
     let profile = load_e2e_profile();
     let _llm_client =

@@ -17,7 +17,10 @@ use personal_agent::mcp::registry::{
 use personal_agent::mcp::{
     McpAuthType, McpPackageArgType, McpPackageType, McpSource, McpTransport,
 };
-use personal_agent::models::{AuthConfig, Conversation, Message, ModelParameters, ModelProfile};
+use personal_agent::models::{
+    AuthConfig, ContextState, Conversation, ConversationMetadata, Message, ModelParameters,
+    ModelProfile, SearchResult,
+};
 use personal_agent::services::chat_impl::ChatServiceImpl;
 use personal_agent::services::{ChatService, ConversationService, ProfileService, ServiceError};
 use personal_agent::ui_gpui::theme::Theme;
@@ -78,43 +81,77 @@ impl ConversationService for CoverageConversationService {
             .ok_or_else(|| ServiceError::NotFound(format!("missing conversation {id}")))
     }
 
-    async fn list(
+    async fn list_metadata(
         &self,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<Vec<ConversationMetadata>, ServiceError> {
+        let convs = self.conversations.lock().await;
+        let o = offset.unwrap_or(0);
+        let l = limit.unwrap_or(convs.len());
+        let end = std::cmp::min(o + l, convs.len());
+        if o >= convs.len() {
+            return Ok(Vec::new());
+        }
+        Ok(convs[o..end]
+            .iter()
+            .map(|c| ConversationMetadata {
+                id: c.id,
+                title: c.title.clone(),
+                profile_id: Some(c.profile_id),
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+                message_count: c.messages.len(),
+                last_message_preview: c
+                    .messages
+                    .last()
+                    .map(|m| m.content.chars().take(100).collect()),
+            })
+            .collect())
+    }
+
+    async fn add_message(
+        &self,
+        conversation_id: Uuid,
+        message: Message,
+    ) -> Result<Message, ServiceError> {
+        let mut conversations = self.conversations.lock().await;
+        let conversation = conversations
+            .iter_mut()
+            .find(|conversation| conversation.id == conversation_id)
+            .ok_or_else(|| ServiceError::NotFound("conversation missing".to_string()))?;
+        conversation.add_message(message.clone());
+        Ok(message)
+    }
+
+    async fn search(
+        &self,
+        _query: &str,
         _limit: Option<usize>,
         _offset: Option<usize>,
-    ) -> Result<Vec<Conversation>, ServiceError> {
-        Ok(self.conversations.lock().await.clone())
+    ) -> Result<Vec<SearchResult>, ServiceError> {
+        Ok(vec![])
     }
 
-    async fn add_user_message(
-        &self,
-        conversation_id: Uuid,
-        content: String,
-    ) -> Result<Message, ServiceError> {
-        let message = Message::user(content);
-        let mut conversations = self.conversations.lock().await;
-        let conversation = conversations
-            .iter_mut()
-            .find(|conversation| conversation.id == conversation_id)
+    async fn message_count(&self, conversation_id: Uuid) -> Result<usize, ServiceError> {
+        let convs = self.conversations.lock().await;
+        let conv = convs
+            .iter()
+            .find(|c| c.id == conversation_id)
             .ok_or_else(|| ServiceError::NotFound("conversation missing".to_string()))?;
-        conversation.add_message(message.clone());
-        Ok(message)
+        Ok(conv.messages.len())
     }
 
-    async fn add_assistant_message(
+    async fn update_context_state(
         &self,
-        conversation_id: Uuid,
-        content: String,
-        _thinking_content: Option<String>,
-    ) -> Result<Message, ServiceError> {
-        let message = Message::assistant(content);
-        let mut conversations = self.conversations.lock().await;
-        let conversation = conversations
-            .iter_mut()
-            .find(|conversation| conversation.id == conversation_id)
-            .ok_or_else(|| ServiceError::NotFound("conversation missing".to_string()))?;
-        conversation.add_message(message.clone());
-        Ok(message)
+        _id: Uuid,
+        _state: &ContextState,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_context_state(&self, _id: Uuid) -> Result<Option<ContextState>, ServiceError> {
+        Ok(None)
     }
 
     async fn rename(&self, _id: Uuid, _new_title: String) -> Result<(), ServiceError> {

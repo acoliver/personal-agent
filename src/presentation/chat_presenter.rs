@@ -296,7 +296,7 @@ impl ChatPresenter {
         conversation_service: &Arc<dyn ConversationService>,
         view_tx: &mpsc::Sender<ViewCommand>,
     ) {
-        match conversation_service.list(Some(1), Some(0)).await {
+        match conversation_service.list_metadata(Some(1), Some(0)).await {
             Ok(conversations) => {
                 if let Some(conversation) = conversations.first() {
                     Self::activate_startup_conversation(
@@ -398,17 +398,17 @@ impl ChatPresenter {
         conversation_service: &Arc<dyn ConversationService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
     ) -> Result<(), ServiceError> {
-        let conversations = conversation_service.list(None, None).await?;
+        let conversations = conversation_service.list_metadata(None, None).await?;
         let summaries = conversations
             .into_iter()
-            .map(|conversation| ConversationSummary {
-                id: conversation.id,
-                title: conversation
+            .map(|metadata| ConversationSummary {
+                id: metadata.id,
+                title: metadata
                     .title
                     .filter(|title| !title.trim().is_empty())
                     .unwrap_or_else(|| "Untitled Conversation".to_string()),
-                updated_at: conversation.updated_at,
-                message_count: conversation.messages.len(),
+                updated_at: metadata.updated_at,
+                message_count: metadata.message_count,
             })
             .collect();
 
