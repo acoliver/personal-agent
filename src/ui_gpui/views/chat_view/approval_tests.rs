@@ -3,9 +3,18 @@
 #![allow(clippy::future_not_send)]
 #![allow(unused_imports)]
 
+use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::ViewCommand;
+use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::views::chat_view::{ApprovalBubbleState, ChatState, ChatView};
 use gpui::{AppContext, TestAppContext};
+use std::sync::Arc;
+
+fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
+    let (user_tx, user_rx) = flume::bounded(16);
+    let (_view_tx, view_rx) = flume::bounded(16);
+    (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
+}
 
 #[gpui::test]
 async fn handle_tool_approval_request_adds_pending_bubble(cx: &mut TestAppContext) {
@@ -134,6 +143,53 @@ async fn handle_yolo_mode_changed(cx: &mut TestAppContext) {
             assert!(!view.state.yolo_mode);
         });
     });
+}
+
+#[gpui::test]
+async fn yolo_mode_auto_approves_tool_requests_without_rendering_bubble(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ChatView::new(ChatState::default(), cx);
+        view.set_bridge(bridge);
+        view
+    });
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.handle_command(ViewCommand::YoloModeChanged { active: true }, cx);
+            assert!(view.state.yolo_mode);
+
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "req-yolo".into(),
+                    tool_name: "shell".into(),
+                    tool_argument: "rm -rf /tmp/sandbox".into(),
+                },
+                cx,
+            );
+
+            assert!(
+                view.state.approval_bubbles.is_empty(),
+                "YOLO mode should suppress approval bubble rendering"
+            );
+        });
+    });
+
+    let event = user_rx
+        .try_recv()
+        .expect("YOLO mode should auto-emit approval response");
+    assert_eq!(
+        event,
+        UserEvent::ToolApprovalResponse {
+            request_id: "req-yolo".into(),
+            decision: ToolApprovalResponseAction::ProceedOnce,
+        }
+    );
+    assert!(
+        user_rx.try_recv().is_err(),
+        "only one approval response should be emitted"
+    );
 }
 
 #[gpui::test]

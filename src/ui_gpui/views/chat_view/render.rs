@@ -496,7 +496,9 @@ impl ChatView {
         div()
             .w_full()
             .flex()
+            .debug_selector(|| "chat-input-bar".to_string())
             .items_end()
+            .justify_between()
             .min_h(px(56.0))
             .gap(px(Theme::SPACING_SM))
             .p(px(Theme::SPACING_MD))
@@ -525,6 +527,7 @@ impl ChatView {
     ) -> impl IntoElement {
         div()
             .id("input-field")
+            .debug_selector(|| "chat-input-field".to_string())
             .flex_1()
             .min_w(px(0.0))
             .h(px(input_box_height))
@@ -567,6 +570,13 @@ impl ChatView {
     ) -> impl IntoElement {
         div()
             .id(if is_streaming { "stop-btn" } else { "send-btn" })
+            .debug_selector(|| {
+                if is_streaming {
+                    "chat-stop-button".to_string()
+                } else {
+                    "chat-send-button".to_string()
+                }
+            })
             .flex_shrink_0()
             .min_h(px(36.0))
             .px(px(Theme::SPACING_MD))
@@ -626,6 +636,7 @@ impl gpui::Render for ChatView {
 
         div()
             .id("chat-view")
+            .debug_selector(|| "chat-view-root".to_string())
             .flex()
             .flex_col()
             .size_full()
