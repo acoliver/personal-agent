@@ -765,16 +765,18 @@ async fn setup_send_message_test() -> (Arc<MockConversationService>, bool) {
         .await
         .expect("send_message should return Ok with a stream");
 
-    let mut completed = false;
-    while let Some(event) = stream.next().await {
-        if matches!(event, ChatStreamEvent::Complete) {
-            completed = true;
-            break;
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while let Some(event) = stream.next().await {
+            match event {
+                ChatStreamEvent::Complete => return true,
+                ChatStreamEvent::Error(_) => return false,
+                ChatStreamEvent::Token(_) => {}
+            }
         }
-        if matches!(event, ChatStreamEvent::Error(_)) {
-            break;
-        }
-    }
+        false
+    })
+    .await
+    .unwrap_or(false);
 
     (conversation_service_impl, completed)
 }
@@ -803,18 +805,23 @@ async fn test_send_message() {
                 .cloned()
         };
 
-        if let Some(assistant_message) = maybe_assistant {
-            assert_non_empty_tool_json::<crate::llm::tools::ToolUse>(
-                assistant_message.tool_calls.as_deref(),
-                "persisted tool calls JSON should deserialize",
-                "persisted tool calls should not be empty",
-            );
-            assert_non_empty_tool_json::<crate::llm::tools::ToolResult>(
-                assistant_message.tool_results.as_deref(),
-                "persisted tool results JSON should deserialize",
-                "persisted tool results should not be empty",
-            );
-        }
+        let assistant_message = maybe_assistant
+            .expect("assistant message should be persisted after successful stream completion");
+
+        assert!(
+            assistant_message.tool_calls.is_some() || assistant_message.tool_results.is_some(),
+            "expected at least one persisted tool transcript field"
+        );
+        assert_non_empty_tool_json::<crate::llm::tools::ToolUse>(
+            assistant_message.tool_calls.as_deref(),
+            "persisted tool calls JSON should deserialize",
+            "persisted tool calls should not be empty",
+        );
+        assert_non_empty_tool_json::<crate::llm::tools::ToolResult>(
+            assistant_message.tool_results.as_deref(),
+            "persisted tool results JSON should deserialize",
+            "persisted tool results should not be empty",
+        );
     }
 
     let _ = crate::services::secure_store::api_keys::delete("_test_send_msg");
@@ -845,11 +852,6 @@ async fn test_cancel() {
     let chat_service = make_basic_chat_service().await;
     chat_service.cancel();
     assert!(!chat_service.is_streaming());
-}
-
-#[tokio::test]
-async fn test_is_streaming() {
-    assert!(!make_basic_chat_service().await.is_streaming());
 }
 
 /// Proves that `prepare_message_context` resolves the profile via the
