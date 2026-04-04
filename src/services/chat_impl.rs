@@ -333,9 +333,9 @@ impl ChatServiceImpl {
         decision: ToolApprovalResponseAction,
     ) -> ServiceResult<()> {
         let approved = !matches!(decision, ToolApprovalResponseAction::Denied);
-        let tool_identifier = self
+        let tool_identifiers = self
             .approval_gate
-            .resolve_and_take_identifier(&request_id, approved)
+            .resolve_and_take_identifiers(&request_id, approved)
             .ok_or_else(|| {
                 ServiceError::NotFound(format!("Tool approval request {request_id} not found"))
             })?;
@@ -343,17 +343,19 @@ impl ChatServiceImpl {
         let mut emit_policy_snapshot = false;
         match decision {
             ToolApprovalResponseAction::ProceedSession => {
-                self.policy
-                    .lock()
-                    .await
-                    .allow_for_session(tool_identifier.clone());
+                let mut policy = self.policy.lock().await;
+                for tool_identifier in tool_identifiers {
+                    policy.allow_for_session(tool_identifier);
+                }
             }
             ToolApprovalResponseAction::ProceedAlways => {
-                self.policy
-                    .lock()
-                    .await
-                    .allow_persistently(tool_identifier, self.app_settings_service.as_ref())
-                    .await?;
+                for tool_identifier in tool_identifiers {
+                    self.policy
+                        .lock()
+                        .await
+                        .allow_persistently(tool_identifier, self.app_settings_service.as_ref())
+                        .await?;
+                }
                 emit_policy_snapshot = true;
             }
             ToolApprovalResponseAction::ProceedOnce | ToolApprovalResponseAction::Denied => {}

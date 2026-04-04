@@ -33,7 +33,7 @@ pub struct ApprovalGate {
 #[derive(Debug)]
 struct PendingApproval {
     tx: oneshot::Sender<bool>,
-    tool_identifier: String,
+    tool_identifiers: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -97,6 +97,20 @@ impl ApprovalGate {
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
     #[must_use]
     pub fn wait_for_approval(&self, request_id: String, tool_identifier: String) -> ApprovalWaiter {
+        self.wait_for_approvals(request_id, vec![tool_identifier])
+    }
+
+    /// Register a pending approval with multiple identifiers and return a waiter.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    #[must_use]
+    pub fn wait_for_approvals(
+        &self,
+        request_id: String,
+        tool_identifiers: Vec<String>,
+    ) -> ApprovalWaiter {
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().unwrap();
@@ -104,7 +118,7 @@ impl ApprovalGate {
                 request_id.clone(),
                 PendingApproval {
                     tx,
-                    tool_identifier,
+                    tool_identifiers,
                 },
             );
         }
@@ -116,24 +130,39 @@ impl ApprovalGate {
         }
     }
 
-    /// Resolve a pending approval with the user's decision, returning the claimed tool identifier
+    /// Resolve a pending approval and return all claimed tool identifiers
     /// only when a live waiter exists.
     ///
     /// # Panics
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
     #[must_use]
-    pub fn resolve_and_take_identifier(&self, request_id: &str, approved: bool) -> Option<String> {
+    pub fn resolve_and_take_identifiers(
+        &self,
+        request_id: &str,
+        approved: bool,
+    ) -> Option<Vec<String>> {
         let pending_approval = {
             let mut pending = self.pending.lock().unwrap();
             pending.remove(request_id)
         }?;
 
         if pending_approval.tx.send(approved).is_ok() {
-            Some(pending_approval.tool_identifier)
+            Some(pending_approval.tool_identifiers)
         } else {
             None
         }
+    }
+
+    /// Resolve a pending approval and return the first claimed tool identifier.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    #[must_use]
+    pub fn resolve_and_take_identifier(&self, request_id: &str, approved: bool) -> Option<String> {
+        self.resolve_and_take_identifiers(request_id, approved)
+            .and_then(|tool_identifiers| tool_identifiers.into_iter().next())
     }
 
     /// Resolve a pending approval with the user's decision.
@@ -653,6 +682,31 @@ mod tests {
 
         assert!(approved);
         assert_eq!(identifier, "WriteFile");
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_all_identifiers_when_waiter_is_alive() {
+        let gate = ApprovalGate::new();
+        let request_id = Uuid::new_v4().to_string();
+        let waiter = gate.wait_for_approvals(
+            request_id.clone(),
+            vec!["ls".to_string(), "pwd".to_string()],
+        );
+
+        let resolver = {
+            let gate = gate;
+            let request_id = request_id.clone();
+            tokio::spawn(async move { gate.resolve_and_take_identifiers(&request_id, true) })
+        };
+
+        let approved = waiter.wait().await.expect("waiter should receive decision");
+        let identifiers = resolver
+            .await
+            .expect("resolver task should complete")
+            .expect("identifiers should be returned for live waiter");
+
+        assert!(approved);
+        assert_eq!(identifiers, vec!["ls".to_string(), "pwd".to_string()]);
     }
 
     #[test]

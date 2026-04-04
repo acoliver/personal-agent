@@ -143,19 +143,17 @@ fn parse_params(args: &serde_json::Value) -> Result<ShellExecParams, ToolError> 
 
 /// Check tool approval policy and await user decision if required.
 async fn check_approval(tool_context: &McpToolContext, command: &str) -> Result<(), ToolError> {
-    let (decision, identifier) = {
+    let (decision, mut identifiers) = {
         let policy = tool_context.policy.lock().await;
         (
             policy.evaluate_compound_command(command),
-            ToolApprovalPolicy::extract_shell_identifier(command),
+            ToolApprovalPolicy::extract_shell_identifiers(command),
         )
     };
 
-    let tool_identifier = if identifier.is_empty() {
-        "ShellExec".to_string()
-    } else {
-        identifier
-    };
+    if identifiers.is_empty() {
+        identifiers.push("ShellExec".to_string());
+    }
 
     match decision {
         ToolApprovalDecision::Allow => Ok(()),
@@ -166,7 +164,7 @@ async fn check_approval(tool_context: &McpToolContext, command: &str) -> Result<
             let request_id = uuid::Uuid::new_v4().to_string();
             let waiter = tool_context
                 .approval_gate
-                .wait_for_approval(request_id.clone(), tool_identifier.clone());
+                .wait_for_approvals(request_id.clone(), identifiers);
 
             if tool_context
                 .view_tx
