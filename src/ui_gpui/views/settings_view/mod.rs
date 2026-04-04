@@ -124,6 +124,30 @@ pub struct ThemeOption {
     pub slug: String,
 }
 
+/// Categories shown in the settings sidebar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SettingsCategory {
+    #[default]
+    General,
+    Models,
+    Security,
+    McpTools,
+}
+
+impl SettingsCategory {
+    pub const ALL: [Self; 4] = [Self::General, Self::Models, Self::Security, Self::McpTools];
+
+    #[must_use]
+    pub const fn display_name(&self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Models => "Models",
+            Self::Security => "Security",
+            Self::McpTools => "MCP Tools",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
 pub(super) enum ActiveField {
@@ -134,6 +158,7 @@ pub(super) enum ActiveField {
 
 /// Settings view state
 /// @plan PLAN-20250130-GPUIREDUX.P06
+#[allow(clippy::struct_excessive_bools)]
 pub struct SettingsState {
     pub profiles: Vec<ProfileItem>,
     pub mcps: Vec<McpItem>,
@@ -143,6 +168,8 @@ pub struct SettingsState {
     pub available_themes: Vec<ThemeOption>,
     /// Slug of the currently-selected theme.
     pub selected_theme_slug: String,
+    pub selected_category: SettingsCategory,
+    pub theme_dropdown_open: bool,
     pub yolo_mode: bool,
     pub auto_approve_reads: bool,
     pub mcp_approval_mode: McpApprovalMode,
@@ -172,6 +199,8 @@ impl Default for SettingsState {
             selected_mcp_id: None,
             available_themes: Vec::new(),
             selected_theme_slug: "green-screen".to_string(),
+            selected_category: SettingsCategory::General,
+            theme_dropdown_open: false,
             yolo_mode: false,
             auto_approve_reads: false,
             mcp_approval_mode: McpApprovalMode::PerTool,
@@ -605,20 +634,35 @@ impl SettingsView {
         }
 
         if key == "up" {
-            self.scroll_profiles(-1);
-            self.scroll_themes(-1);
+            match self.state.selected_category {
+                SettingsCategory::Models => self.scroll_profiles(-1),
+                SettingsCategory::McpTools => self.scroll_mcps(-1),
+                SettingsCategory::General if self.state.theme_dropdown_open => {
+                    self.scroll_themes(-1);
+                }
+                _ => {}
+            }
             cx.notify();
             return;
         }
 
         if key == "down" {
-            self.scroll_profiles(1);
-            self.scroll_themes(1);
+            match self.state.selected_category {
+                SettingsCategory::Models => self.scroll_profiles(1),
+                SettingsCategory::McpTools => self.scroll_mcps(1),
+                SettingsCategory::General if self.state.theme_dropdown_open => {
+                    self.scroll_themes(1);
+                }
+                _ => {}
+            }
             cx.notify();
             return;
         }
 
-        if key == "space" {
+        if key == "space"
+            && self.state.selected_category == SettingsCategory::General
+            && self.state.theme_dropdown_open
+        {
             self.apply_selected_theme(cx);
         }
     }
@@ -642,7 +686,13 @@ impl SettingsView {
             }
             None => {}
         }
-        self.apply_selected_theme(cx);
+        if self.state.selected_category == SettingsCategory::General
+            && self.state.theme_dropdown_open
+        {
+            self.apply_selected_theme(cx);
+            self.state.theme_dropdown_open = false;
+            cx.notify();
+        }
     }
 
     fn save_export_directory(&self) {
@@ -694,6 +744,54 @@ impl SettingsView {
             });
         if let Some(slug) = selected_slug {
             self.select_theme(slug, cx);
+        }
+    }
+
+    pub(super) const fn select_category(&mut self, category: SettingsCategory) {
+        self.state.selected_category = category;
+        self.state.theme_dropdown_open = false;
+        self.state.active_field = None;
+        self.ime_marked_byte_count = 0;
+    }
+
+    pub(super) const fn toggle_theme_dropdown(&mut self) {
+        self.state.theme_dropdown_open = !self.state.theme_dropdown_open;
+    }
+
+    pub(super) const fn close_theme_dropdown(&mut self) {
+        self.state.theme_dropdown_open = false;
+    }
+
+    pub(super) fn select_theme_from_dropdown(
+        &mut self,
+        slug: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.select_theme(slug, cx);
+        self.state.theme_dropdown_open = false;
+    }
+
+    fn scroll_mcps(&mut self, delta_steps: i32) {
+        if self.state.mcps.is_empty() || delta_steps == 0 {
+            return;
+        }
+
+        let current = self
+            .state
+            .selected_mcp_id
+            .and_then(|id| self.state.mcps.iter().position(|m| m.id == id))
+            .unwrap_or(0);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_possible_wrap,
+            clippy::cast_sign_loss
+        )]
+        let next = {
+            let max_index = self.state.mcps.len().saturating_sub(1) as i32;
+            (current as i32 + delta_steps).clamp(0, max_index) as usize
+        };
+        if let Some(mcp) = self.state.mcps.get(next) {
+            self.state.selected_mcp_id = Some(mcp.id);
         }
     }
 

@@ -1,6 +1,6 @@
 //! Render implementation for `SettingsView`.
 
-use super::{McpItem, McpStatus, ProfileItem, SettingsView};
+use super::{McpItem, McpStatus, ProfileItem, SettingsCategory, SettingsView};
 use crate::events::types::UserEvent;
 use crate::ui_gpui::theme::Theme;
 use gpui::{
@@ -10,7 +10,6 @@ use gpui::{
 
 impl SettingsView {
     /// Render the top bar with back button and title
-    /// @plan PLAN-20250130-GPUIREDUX.P06
     fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("settings-top-bar")
@@ -22,14 +21,11 @@ impl SettingsView {
             .px(px(12.0))
             .flex()
             .items_center()
-            .justify_between()
-            // Left: back button + title
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    // Back button - uses navigation_channel
                     .child(
                         div()
                             .id("btn-back")
@@ -53,33 +49,12 @@ impl SettingsView {
                                 }),
                             ),
                     )
-                    // Title
                     .child(
                         div()
                             .text_size(px(14.0))
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::text_primary())
                             .child("Settings"),
-                    ),
-            )
-            // Right: Refresh Models button
-            .child(
-                div()
-                    .id("btn-refresh-models")
-                    .px(px(12.0))
-                    .py(px(6.0))
-                    .rounded(px(4.0))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(12.0))
-                    .text_color(Theme::text_primary())
-                    .child("Refresh Models")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, _cx| {
-                            tracing::info!("Refresh Models clicked");
-                            this.emit(&UserEvent::RefreshModelsRegistry);
-                        }),
                     ),
             )
     }
@@ -123,8 +98,7 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// Render the profiles section
-    /// @plan PLAN-20250130-GPUIREDUX.P06
+    /// Render the profiles list and toolbar (no header — caller provides it).
     fn render_profiles_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let profiles = &self.state.profiles;
         let total_profiles = profiles.len();
@@ -132,20 +106,13 @@ impl SettingsView {
         div()
             .flex()
             .flex_col()
+            .flex_1()
             .gap(px(6.0))
-            // Section header
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(Theme::text_primary())
-                    .child("PROFILES"),
-            )
-            // List box
             .child(
                 div()
                     .id("profiles-list")
                     .w_full()
-                    .h(px(100.0))
+                    .flex_1()
                     .bg(Theme::bg_darker())
                     .border_1()
                     .border_color(Theme::border())
@@ -174,7 +141,6 @@ impl SettingsView {
                         )
                     }),
             )
-            // Toolbar: [-] [+] [spacer] [Edit]
             .child(self.render_profiles_toolbar(cx))
     }
 
@@ -356,8 +322,7 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// Render the MCP tools section
-    /// @plan PLAN-20250130-GPUIREDUX.P06
+    /// Render the MCP tools section with full-height list.
     fn render_mcp_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let mcps = &self.state.mcps;
         let total_mcps = mcps.len();
@@ -365,20 +330,19 @@ impl SettingsView {
         div()
             .flex()
             .flex_col()
+            .flex_1()
             .gap(px(6.0))
-            // Section header
             .child(
                 div()
                     .text_size(px(11.0))
                     .text_color(Theme::text_primary())
                     .child("MCP TOOLS"),
             )
-            // List box
             .child(
                 div()
                     .id("mcps-list")
                     .w_full()
-                    .h(px(100.0))
+                    .flex_1()
                     .bg(Theme::bg_darker())
                     .border_1()
                     .border_color(Theme::border())
@@ -407,7 +371,6 @@ impl SettingsView {
                         )
                     }),
             )
-            // Toolbar: [-] [+] [spacer] [Edit]
             .child(self.render_mcp_toolbar(cx))
     }
 
@@ -501,44 +464,6 @@ impl SettingsView {
                         }),
                     ),
             )
-    }
-
-    /// Render a single row in the theme dropdown list.
-    fn render_theme_row(
-        &self,
-        option: &super::ThemeOption,
-        cx: &mut gpui::Context<Self>,
-    ) -> gpui::AnyElement {
-        let slug = option.slug.clone();
-        let name = option.name.clone();
-        let is_selected = self.state.selected_theme_slug == slug;
-
-        div()
-            .id(gpui::SharedString::from(format!("theme-{slug}")))
-            .w_full()
-            .h(px(24.0))
-            .px(px(8.0))
-            .flex()
-            .items_center()
-            .cursor_pointer()
-            .when(is_selected, |d| {
-                d.bg(Theme::selection_bg())
-                    .text_color(Theme::selection_fg())
-            })
-            .when(!is_selected, |d| {
-                d.hover(|s| s.bg(Theme::bg_dark()))
-                    .text_color(Theme::text_primary())
-            })
-            .text_size(px(12.0))
-            .child(name)
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    tracing::info!("Theme selected: {}", slug);
-                    this.select_theme(slug.clone(), cx);
-                }),
-            )
-            .into_any_element()
     }
 
     /// Render the export directory setting section.
@@ -683,8 +608,76 @@ impl SettingsView {
             )
     }
 
-    /// Render the theme selection section.
-    fn render_theme_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    /// Render the category sidebar (120px, left side).
+    fn render_category_sidebar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let selected = self.state.selected_category;
+
+        div()
+            .id("settings-sidebar")
+            .w(px(120.0))
+            .h_full()
+            .bg(Theme::bg_darkest())
+            .border_r_1()
+            .border_color(Theme::border())
+            .flex()
+            .flex_col()
+            .children(SettingsCategory::ALL.iter().map(|&cat| {
+                let is_active = cat == selected;
+                div()
+                    .id(SharedString::from(format!(
+                        "cat-{}",
+                        cat.display_name().to_lowercase().replace(' ', "-")
+                    )))
+                    .w_full()
+                    .py(px(8.0))
+                    .px(px(12.0))
+                    .cursor_pointer()
+                    .border_l_2()
+                    .when(is_active, |d| {
+                        d.border_color(Theme::accent())
+                            .bg(Theme::bg_dark())
+                            .font_weight(FontWeight::SEMIBOLD)
+                    })
+                    .when(!is_active, |d| {
+                        d.border_color(gpui::transparent_black())
+                            .hover(|s| s.bg(Theme::bg_dark()))
+                    })
+                    .text_size(px(12.0))
+                    .text_color(Theme::text_primary())
+                    .child(cat.display_name())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _window, cx| {
+                            this.select_category(cat);
+                            cx.notify();
+                        }),
+                    )
+                    .into_any_element()
+            }))
+    }
+
+    /// Dispatch to the appropriate category panel renderer.
+    fn render_content_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let panel: gpui::AnyElement = match self.state.selected_category {
+            SettingsCategory::General => self.render_general_panel(cx).into_any_element(),
+            SettingsCategory::Models => self.render_models_panel(cx).into_any_element(),
+            SettingsCategory::Security => self.render_security_panel(cx).into_any_element(),
+            SettingsCategory::McpTools => self.render_mcp_tools_panel(cx).into_any_element(),
+        };
+
+        div()
+            .id("settings-content-panel")
+            .flex_1()
+            .h_full()
+            .p(px(12.0))
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .child(panel)
+    }
+
+    /// General panel: theme dropdown trigger + export directory.
+    fn render_general_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let themes = &self.state.available_themes;
         let selected_name = themes
             .iter()
@@ -697,53 +690,203 @@ impl SettingsView {
         div()
             .flex()
             .flex_col()
-            .gap(px(6.0))
-            // Section header
+            .gap(px(16.0))
+            // Theme dropdown trigger
             .child(
                 div()
-                    .text_size(px(11.0))
-                    .text_color(Theme::text_primary())
-                    .child("THEME"),
-            )
-            // Current selection indicator
-            .child(
-                div()
-                    .w_full()
-                    .h(px(24.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .text_size(px(12.0))
-                    .text_color(Theme::text_primary())
-                    .child(selected_name),
-            )
-            // Theme list
-            .child(
-                div()
-                    .id("themes-list")
-                    .w_full()
-                    .h(px(80.0))
-                    .bg(Theme::bg_darker())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .children(themes.iter().map(|t| self.render_theme_row(t, cx)))
-                    .when(themes.is_empty(), |d| {
-                        d.items_center().justify_center().child(
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(Theme::text_muted())
-                                .child("No themes available"),
-                        )
-                    }),
+                    .gap(px(6.0))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(Theme::text_primary())
+                            .child("THEME"),
+                    )
+                    .child(
+                        div()
+                            .id("theme-dropdown-trigger")
+                            .w_full()
+                            .h(px(28.0))
+                            .px(px(8.0))
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(if self.state.theme_dropdown_open {
+                                Theme::accent()
+                            } else {
+                                Theme::border()
+                            })
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .cursor_pointer()
+                            .text_size(px(12.0))
+                            .text_color(Theme::text_primary())
+                            .child(selected_name)
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(Theme::text_muted())
+                                    .child(if self.state.theme_dropdown_open {
+                                        "▲"
+                                    } else {
+                                        "▼"
+                                    }),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.toggle_theme_dropdown();
+                                    cx.notify();
+                                }),
+                            ),
+                    ),
             )
+            // Export directory section
+            .child(self.render_export_dir_section(cx))
+    }
+
+    /// Models panel: full-height profiles list + Refresh Models button.
+    fn render_models_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(Theme::text_primary())
+                            .child("PROFILES"),
+                    )
+                    .child(
+                        div()
+                            .id("btn-refresh-models")
+                            .px(px(12.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::bg_dark()))
+                            .text_size(px(11.0))
+                            .text_color(Theme::text_primary())
+                            .child("Refresh Models")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    this.emit(&UserEvent::RefreshModelsRegistry);
+                                }),
+                            ),
+                    ),
+            )
+            .child(self.render_profiles_section(cx))
+    }
+
+    /// Security panel: reuses the tool approval section.
+    fn render_security_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("security-panel-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .overflow_y_scroll()
+            .child(self.render_tool_approval_section(cx))
+    }
+
+    /// MCP Tools panel: full-height MCP server list.
+    fn render_mcp_tools_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        self.render_mcp_section(cx)
+    }
+
+    /// Render backdrop for theme dropdown (click to dismiss).
+    #[allow(clippy::unused_self)]
+    fn render_theme_dropdown_backdrop(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("theme-dropdown-backdrop")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.close_theme_dropdown();
+                    cx.notify();
+                }),
+            )
+    }
+
+    /// Render the theme dropdown menu overlay.
+    fn render_theme_dropdown_menu(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let themes = &self.state.available_themes;
+
+        div()
+            .id("theme-dropdown-menu")
+            .absolute()
+            // Position below the top bar (44px) + sidebar item + some padding
+            .top(px(120.0))
+            .left(px(140.0))
+            .w(px(200.0))
+            .max_h(px(200.0))
+            .bg(Theme::bg_dark())
+            .border_1()
+            .border_color(Theme::accent())
+            .rounded(px(4.0))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .children(themes.iter().map(|t| self.render_theme_row(t, cx)))
+            .when(themes.is_empty(), |d| {
+                d.items_center().justify_center().child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(Theme::text_muted())
+                        .child("No themes available"),
+                )
+            })
+    }
+
+    /// Render a single row in the theme dropdown list.
+    fn render_theme_row(
+        &self,
+        option: &super::ThemeOption,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        let slug = option.slug.clone();
+        let name = option.name.clone();
+        let is_selected = self.state.selected_theme_slug == slug;
+
+        div()
+            .id(gpui::SharedString::from(format!("theme-{slug}")))
+            .w_full()
+            .h(px(24.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .when(is_selected, |d| {
+                d.bg(Theme::selection_bg())
+                    .text_color(Theme::selection_fg())
+            })
+            .when(!is_selected, |d| {
+                d.hover(|s| s.bg(Theme::bg_dark()))
+                    .text_color(Theme::text_primary())
+            })
+            .text_size(px(12.0))
+            .child(name)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    tracing::info!("Theme selected: {}", slug);
+                    this.select_theme_from_dropdown(slug.clone(), cx);
+                }),
+            )
+            .into_any_element()
     }
 }
 
@@ -759,6 +902,8 @@ impl gpui::Render for SettingsView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        let dropdown_open = self.state.theme_dropdown_open;
+
         div()
             .id("settings-view")
             .flex()
@@ -794,27 +939,22 @@ impl gpui::Render for SettingsView {
             )
             // Top bar (44px)
             .child(Self::render_top_bar(cx))
-            // Content scroll area
+            // Body: sidebar + content panel
             .child(
                 div()
-                    .id("settings-scroll-area")
+                    .id("settings-body")
                     .flex_1()
                     .w_full()
-                    .p(px(12.0))
                     .flex()
-                    .flex_col()
-                    .gap(px(16.0))
-                    .overflow_y_scroll()
-                    // Profiles section
-                    .child(self.render_profiles_section(cx))
-                    // MCP Tools section
-                    .child(self.render_mcp_section(cx))
-                    // Tool approval section
-                    .child(self.render_tool_approval_section(cx))
-                    // Export directory section
-                    .child(self.render_export_dir_section(cx))
-                    // Theme section
-                    .child(self.render_theme_section(cx)),
+                    .flex_row()
+                    .overflow_hidden()
+                    .child(self.render_category_sidebar(cx))
+                    .child(self.render_content_panel(cx)),
             )
+            // Theme dropdown overlay (rendered at root level for z-ordering)
+            .when(dropdown_open, |d| {
+                d.child(self.render_theme_dropdown_backdrop(cx))
+                    .child(self.render_theme_dropdown_menu(cx))
+            })
     }
 }

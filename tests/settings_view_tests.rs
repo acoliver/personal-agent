@@ -1,7 +1,9 @@
 use personal_agent::presentation::view_command::{
     McpStatus as CommandMcpStatus, ProfileSummary, ThemeSummary,
 };
-use personal_agent::ui_gpui::views::{McpItem, McpStatus, ProfileItem, SettingsState, ThemeOption};
+use personal_agent::ui_gpui::views::{
+    McpItem, McpStatus, ProfileItem, SettingsCategory, SettingsState, ThemeOption,
+};
 use uuid::Uuid;
 
 fn apply_theme_options(options: &[ThemeOption], selected_slug: &str) -> (Vec<String>, usize) {
@@ -273,6 +275,8 @@ fn settings_state_new_uses_expected_defaults() {
     assert_eq!(state.selected_mcp_id, None);
     assert!(state.available_themes.is_empty());
     assert_eq!(state.selected_theme_slug, "green-screen");
+    assert_eq!(state.selected_category, SettingsCategory::General);
+    assert!(!state.theme_dropdown_open);
 }
 
 #[test]
