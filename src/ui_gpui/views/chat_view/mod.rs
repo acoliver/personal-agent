@@ -28,6 +28,8 @@ use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, Stream
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
 use gpui::{point, px, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent};
+#[cfg(test)]
+use std::cell::Cell;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -41,6 +43,8 @@ pub struct ChatView {
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
     pub(super) chat_scroll_handle: ScrollHandle,
+    #[cfg(test)]
+    pub(super) maybe_scroll_chat_to_bottom_invocations: Cell<usize>,
 }
 
 impl ChatView {
@@ -52,6 +56,8 @@ impl ChatView {
             conversation_id: None,
             selection_generation: 0,
             chat_scroll_handle: ScrollHandle::new(),
+            #[cfg(test)]
+            maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
         }
     }
 
@@ -75,10 +81,9 @@ impl ChatView {
             return;
         }
 
-        // Any downward wheel movement while sticky-follow is disabled should re-enable follow.
-        // This avoids depending on offset timing when content height changes in the same frame.
+        // Re-enable sticky-follow only once the viewport is actually near the bottom.
         if delta.y < px(0.0) {
-            self.state.chat_autoscroll_enabled = true;
+            self.refresh_autoscroll_state_from_handle();
             return;
         }
 
@@ -87,6 +92,10 @@ impl ChatView {
 
     pub(super) fn maybe_scroll_chat_to_bottom(&self, cx: &mut gpui::Context<Self>) {
         if self.state.chat_autoscroll_enabled {
+            #[cfg(test)]
+            self.maybe_scroll_chat_to_bottom_invocations
+                .set(self.maybe_scroll_chat_to_bottom_invocations.get() + 1);
+
             self.chat_scroll_handle.scroll_to_bottom();
             let entity = cx.entity();
             cx.defer(move |cx| {
@@ -255,11 +264,27 @@ impl ChatView {
             }
         }
 
+        let was_streaming = matches!(self.state.streaming, StreamingState::Streaming { .. });
+        let was_thinking = self
+            .state
+            .thinking_content
+            .as_ref()
+            .is_some_and(|content| !content.is_empty());
         self.state.streaming = Self::streaming_state_from_snapshot(&streaming, &load_state);
         // show_thinking is view-local and sticky — do NOT overwrite from store snapshot
-        self.state.thinking_content =
-            (!streaming.thinking_buffer.is_empty()).then_some(streaming.thinking_buffer);
+        let has_thinking = !streaming.thinking_buffer.is_empty();
+        self.state.thinking_content = has_thinking.then_some(streaming.thinking_buffer);
         self.state.sync_conversation_dropdown_index();
+
+        if !should_reset_autoscroll
+            && (was_streaming
+                || was_thinking
+                || has_thinking
+                || matches!(self.state.streaming, StreamingState::Streaming { .. }))
+        {
+            self.maybe_scroll_chat_to_bottom(cx);
+        }
+
         cx.notify();
     }
 
@@ -730,16 +755,25 @@ impl ChatView {
         if !self.state.input_text.trim().is_empty() {
             let text = self.state.input_text.clone();
             tracing::info!("ChatView::handle_enter - emitting SendMessage: {}", text);
-            self.emit(UserEvent::SendMessage { text });
-            self.state.input_text.clear();
-            self.state.cursor_position = 0;
-            self.state.streaming = StreamingState::Streaming {
-                content: String::new(),
-                done: false,
-            };
-            self.maybe_scroll_chat_to_bottom(cx);
-            cx.notify();
+            self.send_message_and_start_streaming(text, cx);
         }
+    }
+
+    pub(super) fn send_message_and_start_streaming(
+        &mut self,
+        text: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.emit(UserEvent::SendMessage { text });
+        self.state.input_text.clear();
+        self.state.cursor_position = 0;
+        self.state.chat_autoscroll_enabled = true;
+        self.state.streaming = StreamingState::Streaming {
+            content: String::new(),
+            done: false,
+        };
+        self.maybe_scroll_chat_to_bottom(cx);
+        cx.notify();
     }
 }
 
@@ -748,83 +782,5 @@ impl ChatView {
 mod approval_tests;
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::future_not_send)]
-
-    use super::*;
-    use gpui::{AppContext, KeyDownEvent, Keystroke, Modifiers, TestAppContext};
-
-    fn chat_key_event(key: &str) -> KeyDownEvent {
-        KeyDownEvent {
-            keystroke: Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),
-            is_held: false,
-            prefer_character_input: false,
-        }
-    }
-
-    #[gpui::test]
-    async fn page_scroll_helpers_disable_and_reenable_autoscroll(cx: &mut gpui::TestAppContext) {
-        let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
-        let mut visual_cx = cx.add_empty_window().clone();
-
-        visual_cx.update(|_window, app| {
-            view.update(app, |view: &mut ChatView, cx| {
-                view.state.chat_autoscroll_enabled = true;
-                view.scroll_chat_page_up(cx);
-                assert!(!view.state.chat_autoscroll_enabled);
-
-                view.state.chat_autoscroll_enabled = true;
-                view.scroll_chat_to_top(cx);
-                assert!(!view.state.chat_autoscroll_enabled);
-
-                view.state.chat_autoscroll_enabled = false;
-                view.scroll_chat_to_end(cx);
-                assert!(view.state.chat_autoscroll_enabled);
-            });
-        });
-    }
-
-    #[gpui::test]
-    async fn home_pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(
-        cx: &mut TestAppContext,
-    ) {
-        let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
-        let mut visual_cx = cx.add_empty_window().clone();
-
-        visual_cx.update(|_window, app| {
-            view.update(app, |view: &mut ChatView, cx| {
-                view.state.chat_autoscroll_enabled = true;
-                view.handle_key_down(&chat_key_event("home"), cx);
-                assert!(!view.state.chat_autoscroll_enabled);
-
-                view.state.chat_autoscroll_enabled = true;
-                view.handle_key_down(&chat_key_event("pageup"), cx);
-                assert!(!view.state.chat_autoscroll_enabled);
-
-                view.state.chat_autoscroll_enabled = true;
-                view.handle_key_down(&chat_key_event("pagedown"), cx);
-                assert!(view.state.chat_autoscroll_enabled);
-
-                view.state.chat_autoscroll_enabled = false;
-                view.handle_key_down(&chat_key_event("end"), cx);
-                assert!(view.state.chat_autoscroll_enabled);
-
-                view.state.chat_autoscroll_enabled = false;
-                view.handle_key_down(
-                    &KeyDownEvent {
-                        keystroke: Keystroke {
-                            modifiers: Modifiers {
-                                platform: true,
-                                ..Modifiers::default()
-                            },
-                            ..chat_key_event("right").keystroke
-                        },
-                        ..chat_key_event("right")
-                    },
-                    cx,
-                );
-                assert!(view.state.chat_autoscroll_enabled);
-            });
-        });
-    }
-}
+#[path = "mod_tests.rs"]
+mod mod_tests;
