@@ -1,7 +1,7 @@
 #![allow(clippy::future_not_send, clippy::unused_async)]
 
 use chrono::Utc;
-use gpui::{AppContext, EntityInputHandler, TestAppContext};
+use gpui::{point, px, size, AppContext, EntityInputHandler, Render, TestAppContext};
 use personal_agent::events::types::UserEvent;
 use personal_agent::presentation::view_command::{
     ConversationMessagePayload, ConversationSummary, MessageRole as ViewMessageRole,
@@ -869,4 +869,91 @@ async fn conversation_lifecycle_via_store_snapshots_and_cleared_resets_ephemeral
         assert!(!view.state.conversation_dropdown_open);
         assert!(!view.state.conversation_title_editing);
     });
+}
+
+#[gpui::test]
+async fn chat_composer_layout_keeps_send_button_right_aligned_while_input_grows(
+    cx: &mut TestAppContext,
+) {
+    let (view, visual_cx) =
+        cx.add_window_view(|_window, cx| ChatView::new(ChatState::default(), cx));
+
+    visual_cx.simulate_resize(size(px(780.0), px(600.0)));
+    visual_cx.run_until_parked();
+
+    let long_input = "layout stability ".repeat(30);
+
+    visual_cx.update(|window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.state.input_text = "short".to_string();
+            view.state.cursor_position = view.state.input_text.len();
+            cx.notify();
+
+            let _ = view.render(window, cx);
+        });
+    });
+
+    let input_bar_bounds_before = visual_cx
+        .debug_bounds("chat-input-bar")
+        .expect("chat input bar bounds after initial render");
+    let input_bounds_before = visual_cx
+        .debug_bounds("chat-input-field")
+        .expect("chat input field bounds after initial render");
+    let send_bounds_before = visual_cx
+        .debug_bounds("chat-send-button")
+        .expect("send button bounds after initial render");
+
+    visual_cx.update(|window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.state.input_text = long_input.clone();
+            view.state.cursor_position = view.state.input_text.len();
+            cx.notify();
+
+            let _ = view.render(window, cx);
+        });
+    });
+
+    let input_bar_bounds_after = visual_cx
+        .debug_bounds("chat-input-bar")
+        .expect("chat input bar bounds after long input render");
+    let input_bounds_after = visual_cx
+        .debug_bounds("chat-input-field")
+        .expect("chat input field bounds after long input render");
+    let send_bounds_after = visual_cx
+        .debug_bounds("chat-send-button")
+        .expect("send button bounds after long input render");
+
+    assert_eq!(
+        send_bounds_before.right(),
+        send_bounds_after.right(),
+        "send button must not drift horizontally while composing"
+    );
+    assert_eq!(
+        send_bounds_after.right(),
+        input_bar_bounds_after.right() - px(12.0),
+        "send button should stay pinned to the input bar right padding"
+    );
+
+    assert_eq!(
+        input_bar_bounds_before.left(),
+        input_bar_bounds_after.left(),
+        "input bar origin should remain stable"
+    );
+    assert_eq!(
+        input_bounds_before.left(),
+        input_bounds_after.left(),
+        "composer text field should stay anchored to the left edge"
+    );
+    assert!(
+        input_bounds_after.right() < send_bounds_after.left(),
+        "input field must keep horizontal space for the send button"
+    );
+
+    visual_cx.simulate_click(
+        point(
+            send_bounds_after.left() + px(4.0),
+            send_bounds_after.top() + px(4.0),
+        ),
+        gpui::Modifiers::default(),
+    );
 }
