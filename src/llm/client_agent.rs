@@ -465,6 +465,25 @@ impl crate::llm::LlmClient {
         (tool_calls, tool_results)
     }
 
+    fn emit_tool_executed_transcript<F>(on_event: &mut F, call_id: String, success: bool)
+    where
+        F: FnMut(StreamEvent) + Send,
+    {
+        if call_id.is_empty() {
+            return;
+        }
+        let content = if success { "" } else { "tool execution failed" };
+        let result = if success {
+            crate::llm::tools::ToolResult::success(call_id, content)
+        } else {
+            crate::llm::tools::ToolResult::error(call_id, content)
+        };
+        on_event(StreamEvent::ToolTranscript {
+            tool_calls: Vec::new(),
+            tool_results: vec![result],
+        });
+    }
+
     async fn do_run_agent_stream<F>(
         &self,
         agent: &Agent<McpToolContext>,
@@ -527,13 +546,15 @@ impl crate::llm::LlmClient {
                         error,
                         ..
                     } => {
+                        let call_id = tool_call_id.unwrap_or_default();
                         on_event(StreamEvent::ToolCallCompleted {
                             tool_name,
-                            call_id: tool_call_id.unwrap_or_default(),
+                            call_id: call_id.clone(),
                             success,
                             result: None,
                             error,
                         });
+                        Self::emit_tool_executed_transcript(on_event, call_id, success);
                     }
                     AgentStreamEvent::RunComplete { messages, .. } => {
                         tracing::info!("run_agent_stream: RunComplete");
@@ -923,7 +944,6 @@ mod tests {
         assert_eq!(tool_calls.len(), 1);
         assert_eq!(tool_calls[0].id, "tool-call-1");
         assert_eq!(tool_calls[0].name, "web_search");
-
         assert_eq!(tool_results.len(), 2);
         assert_eq!(tool_results[0].tool_use_id, "tool-call-1");
         assert!(!tool_results[0].is_error);
@@ -933,7 +953,6 @@ mod tests {
         assert!(tool_results[1].is_error);
         assert_eq!(tool_results[1].content, "request failed");
     }
-
     #[test]
     fn build_agent_message_history_preserves_assistant_tool_results() {
         let assistant_message = Message::assistant("tool summary").with_tool_results(vec![
@@ -972,14 +991,5 @@ mod tests {
             }
             other => panic!("expected second tool return part, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn mcp_tool_executor_stores_tool_name() {
-        let executor = McpToolExecutor {
-            tool_name: "weather/get_forecast".to_string(),
-        };
-
-        assert_eq!(executor.tool_name, "weather/get_forecast");
     }
 }
