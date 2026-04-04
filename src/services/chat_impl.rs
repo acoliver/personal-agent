@@ -407,13 +407,12 @@ impl ChatServiceImpl {
                 }
             }
             ToolApprovalResponseAction::ProceedAlways => {
-                for tool_identifier in tool_identifiers {
-                    self.policy
-                        .lock()
-                        .await
-                        .allow_persistently(tool_identifier, self.app_settings_service.as_ref())
-                        .await?;
-                }
+                let mut updated_policy = self.policy.lock().await.clone();
+                updated_policy
+                    .allow_persistently_batch(tool_identifiers, self.app_settings_service.as_ref())
+                    .await?;
+
+                self.policy.lock().await.persistent_allowlist = updated_policy.persistent_allowlist;
                 emit_policy_snapshot = true;
             }
             ToolApprovalResponseAction::ProceedOnce => {}

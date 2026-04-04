@@ -3,7 +3,7 @@ use tempfile::TempDir;
 use super::{
     McpApprovalMode, ToolApprovalDecision, ToolApprovalPolicy, TOOL_APPROVAL_POLICY_SETTINGS_KEY,
 };
-use crate::services::{AppSettingsService, AppSettingsServiceImpl};
+use crate::services::{AppSettingsService, AppSettingsServiceImpl, ServiceError, ServiceResult};
 
 fn create_settings_service() -> (AppSettingsServiceImpl, TempDir) {
     let temp_dir = TempDir::new().expect("tempdir should be created");
@@ -11,6 +11,57 @@ fn create_settings_service() -> (AppSettingsServiceImpl, TempDir) {
     let service =
         AppSettingsServiceImpl::new(settings_path).expect("settings service should initialize");
     (service, temp_dir)
+}
+
+struct FailingAppSettingsService;
+
+#[async_trait::async_trait]
+impl AppSettingsService for FailingAppSettingsService {
+    async fn get_default_profile_id(&self) -> ServiceResult<Option<uuid::Uuid>> {
+        Ok(None)
+    }
+
+    async fn set_default_profile_id(&self, _id: uuid::Uuid) -> ServiceResult<()> {
+        Ok(())
+    }
+
+    async fn get_current_conversation_id(&self) -> ServiceResult<Option<uuid::Uuid>> {
+        Ok(None)
+    }
+
+    async fn set_current_conversation_id(&self, _id: uuid::Uuid) -> ServiceResult<()> {
+        Ok(())
+    }
+
+    async fn get_hotkey(&self) -> ServiceResult<Option<String>> {
+        Ok(None)
+    }
+
+    async fn set_hotkey(&self, _hotkey: String) -> ServiceResult<()> {
+        Ok(())
+    }
+
+    async fn get_theme(&self) -> ServiceResult<Option<String>> {
+        Ok(None)
+    }
+
+    async fn set_theme(&self, _theme: String) -> ServiceResult<()> {
+        Ok(())
+    }
+
+    async fn get_setting(&self, _key: &str) -> ServiceResult<Option<String>> {
+        Ok(None)
+    }
+
+    async fn set_setting(&self, _key: &str, _value: String) -> ServiceResult<()> {
+        Err(ServiceError::Storage(
+            "simulated settings persistence failure".to_string(),
+        ))
+    }
+
+    async fn reset_to_defaults(&self) -> ServiceResult<()> {
+        Ok(())
+    }
 }
 
 #[test]
@@ -392,6 +443,54 @@ async fn allow_persistently_noops_for_duplicate_identifier_without_resaving() {
     assert_eq!(
         policy.persistent_allowlist,
         vec!["examcp/web_search".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn allow_persistently_batch_updates_all_identifiers_and_saves_once() {
+    let (service, _temp_dir) = create_settings_service();
+    let mut policy = ToolApprovalPolicy::default();
+
+    policy
+        .allow_persistently_batch(
+            vec![
+                "git status".to_string(),
+                "pwd".to_string(),
+                "git status".to_string(),
+                String::new(),
+            ],
+            &service,
+        )
+        .await
+        .expect("batch allow should succeed");
+
+    let loaded = ToolApprovalPolicy::load_from_settings(&service)
+        .await
+        .expect("load should succeed");
+
+    assert_eq!(
+        loaded.persistent_allowlist,
+        vec!["git status".to_string(), "pwd".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn allow_persistently_batch_is_atomic_when_save_fails() {
+    let mut policy = ToolApprovalPolicy::default();
+    let failing_settings = FailingAppSettingsService;
+
+    let error = policy
+        .allow_persistently_batch(
+            vec!["git status".to_string(), "pwd".to_string()],
+            &failing_settings,
+        )
+        .await
+        .expect_err("batch allow should fail when save fails");
+
+    assert!(matches!(error, ServiceError::Storage(_)));
+    assert!(
+        policy.persistent_allowlist.is_empty(),
+        "in-memory allowlist should remain unchanged when save fails"
     );
 }
 

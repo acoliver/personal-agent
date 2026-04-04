@@ -173,6 +173,42 @@ impl ToolApprovalPolicy {
         self.save_to_settings(app_settings).await
     }
 
+    /// Add multiple identifiers to persistent allowlist and save once to settings.
+    ///
+    /// Empty identifiers and duplicates are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when persisting updated policy fails.
+    pub async fn allow_persistently_batch(
+        &mut self,
+        identifiers: impl IntoIterator<Item = String>,
+        app_settings: &dyn AppSettingsService,
+    ) -> ServiceResult<()> {
+        let mut updated_allowlist = self.persistent_allowlist.clone();
+        let mut changed = false;
+
+        for identifier in identifiers {
+            if identifier.is_empty() || updated_allowlist.contains(&identifier) {
+                continue;
+            }
+
+            updated_allowlist.push(identifier);
+            changed = true;
+        }
+
+        if !changed {
+            return Ok(());
+        }
+
+        let mut updated_policy = self.clone();
+        updated_policy.persistent_allowlist = updated_allowlist;
+        updated_policy.save_to_settings(app_settings).await?;
+        self.persistent_allowlist = updated_policy.persistent_allowlist;
+
+        Ok(())
+    }
+
     /// Add identifier to persistent denylist and save to settings.
     ///
     /// # Errors
