@@ -126,21 +126,23 @@ pub(super) fn finalize_stream_if_target_matches_selected_or_nil(
     if inner.snapshot.chat.streaming.active_target != Some(target) {
         return false;
     }
+
     if inner.snapshot.chat.streaming.stream_buffer.is_empty() {
-        return false;
+        inner.last_finalized_stream_guard = None;
+    } else {
+        let assistant_payload = ConversationMessagePayload {
+            role: MessageRole::Assistant,
+            content: inner.snapshot.chat.streaming.stream_buffer.clone(),
+            thinking_content: non_empty_or_none(&inner.snapshot.chat.streaming.thinking_buffer),
+            timestamp: None,
+        };
+        inner.snapshot.chat.transcript.push(assistant_payload);
+        inner.last_finalized_stream_guard = Some(FinalizedStreamGuard {
+            conversation_id: target,
+            transcript_len_after_finalize: inner.snapshot.chat.transcript.len(),
+        });
     }
 
-    let assistant_payload = ConversationMessagePayload {
-        role: MessageRole::Assistant,
-        content: inner.snapshot.chat.streaming.stream_buffer.clone(),
-        thinking_content: non_empty_or_none(&inner.snapshot.chat.streaming.thinking_buffer),
-        timestamp: None,
-    };
-    inner.snapshot.chat.transcript.push(assistant_payload);
-    inner.last_finalized_stream_guard = Some(FinalizedStreamGuard {
-        conversation_id: target,
-        transcript_len_after_finalize: inner.snapshot.chat.transcript.len(),
-    });
     clear_streaming_ephemera_only(inner);
     true
 }

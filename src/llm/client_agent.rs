@@ -2,7 +2,7 @@
 //!
 //! This module provides Agent integration for `PersonalAgent` using `SerdesAI` Agent.
 
-use crate::agent::tool_approval_policy::ToolApprovalPolicy;
+use crate::agent::tool_approval_policy::{ToolApprovalDecision, ToolApprovalPolicy};
 use crate::llm::{LlmError, Message, Role, StreamEvent};
 use crate::presentation::view_command::ViewCommand;
 use futures::StreamExt;
@@ -194,6 +194,10 @@ fn register_native_tools(
     let write_file_def = crate::agent::tools::get_write_file_tool_definition();
     builder = builder.tool_with_executor(write_file_def, crate::agent::tools::WriteFileExecutor);
 
+    // Register EditFile tool
+    let edit_file_def = crate::agent::tools::get_edit_file_tool_definition();
+    builder = builder.tool_with_executor(edit_file_def, crate::agent::tools::EditFileExecutor);
+
     // Register ShellExec tool
     let shell_exec_def = crate::agent::tools::get_shell_exec_tool_definition();
     builder = builder.tool_with_executor(shell_exec_def, crate::agent::tools::ShellExecExecutor);
@@ -211,8 +215,68 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
     async fn execute(
         &self,
         args: serde_json::Value,
-        _ctx: &RunContext<McpToolContext>,
+        ctx: &RunContext<McpToolContext>,
     ) -> Result<ToolReturn, ToolError> {
+        let provider = {
+            let service_arc = crate::mcp::McpService::global();
+            let provider = service_arc
+                .lock()
+                .await
+                .find_tool_provider_metadata(&self.tool_name)
+                .ok_or_else(|| {
+                    ToolError::execution_failed(format!(
+                        "No MCP provider found for tool {}",
+                        self.tool_name
+                    ))
+                })?;
+            provider
+        };
+
+        let (tool_identifier, decision) = {
+            let policy = ctx.deps().policy.lock().await;
+            let tool_identifier = policy.mcp_tool_identifier(&provider.mcp_name, &self.tool_name);
+            let decision = policy.evaluate(&tool_identifier);
+            drop(policy);
+            (tool_identifier, decision)
+        };
+
+        match decision {
+            ToolApprovalDecision::Allow => {}
+            ToolApprovalDecision::Deny => {
+                return Err(ToolError::execution_failed(
+                    "Tool execution denied by policy",
+                ));
+            }
+            ToolApprovalDecision::AskUser => {
+                let request_id = uuid::Uuid::new_v4().to_string();
+                let waiter = ctx
+                    .deps()
+                    .approval_gate
+                    .wait_for_approval(request_id.clone(), tool_identifier.clone());
+
+                if ctx
+                    .deps()
+                    .view_tx
+                    .try_send(ViewCommand::ToolApprovalRequest {
+                        request_id: request_id.clone(),
+                        tool_name: self.tool_name.clone(),
+                        tool_argument: args.to_string(),
+                    })
+                    .is_err()
+                {
+                    let _ = ctx.deps().approval_gate.resolve(&request_id, false);
+                    return Err(ToolError::execution_failed(
+                        "Failed to send approval request to UI (channel full or closed)",
+                    ));
+                }
+
+                let approved = waiter.wait().await.unwrap_or(false);
+                if !approved {
+                    return Err(ToolError::execution_failed("Tool execution denied by user"));
+                }
+            }
+        }
+
         // Get the global MCP service and call the tool
         let service_arc = crate::mcp::McpService::global();
         let result = service_arc
@@ -643,5 +707,14 @@ mod tests {
             .parts
             .iter()
             .any(|part| matches!(part, ModelRequestPart::ToolReturn(_))));
+    }
+
+    #[test]
+    fn mcp_tool_executor_stores_tool_name() {
+        let executor = McpToolExecutor {
+            tool_name: "weather/get_forecast".to_string(),
+        };
+
+        assert_eq!(executor.tool_name, "weather/get_forecast");
     }
 }

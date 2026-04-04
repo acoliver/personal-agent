@@ -10,6 +10,8 @@
 //!   and binary file detection
 //! - `WriteFile`: Create or overwrite files with automatic parent directory
 //!   creation
+//! - `EditFile`: Apply an exact literal find-and-replace edit in an existing
+//!   file, with optional line range scoping for disambiguation
 //! - `ShellExec`: Execute shell commands with timeout and approval-policy
 //!   checks
 //!
@@ -22,10 +24,12 @@
 //! 3. Define a function that returns `ToolDefinition` for your tool
 //! 4. Register the tool in `client_agent.rs` in the `register_native_tools` function
 
+pub mod edit_file;
 pub mod read_file;
 pub mod shell_exec;
 pub mod write_file;
 
+pub use edit_file::{get_edit_file_tool_definition, EditFileExecutor};
 pub use read_file::{get_read_file_tool_definition, ReadFileExecutor};
 pub use shell_exec::{get_shell_exec_tool_definition, ShellExecExecutor};
 pub use write_file::{get_write_file_tool_definition, WriteFileExecutor};

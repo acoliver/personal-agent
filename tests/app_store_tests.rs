@@ -747,7 +747,8 @@ mod reduce_batch_streaming_and_thinking_commands {
     }
 
     #[test]
-    fn finalize_stream_with_empty_buffer_is_no_op() {
+    fn finalize_stream_with_empty_buffer_clears_streaming_without_materializing_assistant_message()
+    {
         let id = Uuid::new_v4();
         let store = make_store_with_conversation(id, "Chat");
         begin_and_ready(&store, id, Vec::new());
@@ -760,8 +761,10 @@ mod reduce_batch_streaming_and_thinking_commands {
             tokens: 0,
         }]);
 
-        assert!(!changed);
-        assert!(current_snapshot(&store).chat.transcript.is_empty());
+        assert!(changed);
+        let snapshot = current_snapshot(&store);
+        assert!(snapshot.chat.transcript.is_empty());
+        assert_eq!(snapshot.chat.streaming, StreamingStoreSnapshot::default());
     }
 
     #[test]

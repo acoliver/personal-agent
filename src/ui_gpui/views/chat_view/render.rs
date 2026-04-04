@@ -606,15 +606,7 @@ impl ChatView {
                                     "Send button clicked - emitting SendMessage: {}",
                                     text
                                 );
-                                this.emit(UserEvent::SendMessage { text });
-                                this.state.input_text.clear();
-                                this.state.cursor_position = 0;
-                                this.state.streaming = StreamingState::Streaming {
-                                    content: String::new(),
-                                    done: false,
-                                };
-                                this.maybe_scroll_chat_to_bottom(cx);
-                                cx.notify();
+                                this.send_message_and_start_streaming(text, cx);
                             }
                         }),
                     )

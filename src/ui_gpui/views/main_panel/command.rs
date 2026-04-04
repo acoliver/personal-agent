@@ -58,7 +58,9 @@ impl MainPanel {
             ConversationCleared
             | ToggleThinkingVisibility
             | ShowConversationExportFormat { .. }
-            | ExportCompleted { .. } => self.forward_to_chat(cmd, cx),
+            | ExportCompleted { .. }
+            | ToolApprovalRequest { .. }
+            | ToolApprovalResolved { .. } => self.forward_to_chat(cmd, cx),
 
             ErrorLogExportCompleted { .. } => self.forward_to_error_log(cmd, cx),
 

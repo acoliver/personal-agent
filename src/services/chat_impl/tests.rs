@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 struct MockConversationService {
     profile_id: Uuid,
+    messages: Arc<RwLock<Vec<Message>>>,
 }
 use crate::agent::McpApprovalMode;
 use crate::services::{AppSettingsService, ServiceError, ServiceResult};
@@ -269,9 +270,33 @@ async fn resolve_tool_approval_proceed_always_persists_policy() {
     assert_eq!(
         resolved,
         ViewCommand::ToolApprovalResolved {
-            request_id,
+            request_id: request_id.clone(),
             approved: true,
         }
+    );
+
+    let policy_snapshot = view_rx
+        .recv()
+        .await
+        .expect("view should receive ToolApprovalPolicyUpdated after ProceedAlways");
+    assert_eq!(
+        policy_snapshot,
+        ViewCommand::ToolApprovalPolicyUpdated {
+            yolo_mode: false,
+            auto_approve_reads: false,
+            mcp_approval_mode: McpApprovalMode::PerTool,
+            persistent_allowlist: vec!["WriteFile".to_string()],
+            persistent_denylist: Vec::new(),
+        }
+    );
+
+    let yolo_snapshot = view_rx
+        .recv()
+        .await
+        .expect("view should receive YoloModeChanged after ProceedAlways");
+    assert_eq!(
+        yolo_snapshot,
+        ViewCommand::YoloModeChanged { active: false }
     );
 
     let persisted = app_settings
@@ -280,6 +305,84 @@ async fn resolve_tool_approval_proceed_always_persists_policy() {
         .expect("settings read should succeed")
         .expect("ProceedAlways should persist policy payload");
     assert!(persisted.contains("WriteFile"));
+}
+
+#[tokio::test]
+async fn send_message_clears_session_allowlist_when_yolo_turns_off_in_settings() {
+    crate::services::secure_store::use_mock_backend();
+    crate::services::secure_store::api_keys::store("_test_yolo_refresh", "fake-key-for-test")
+        .expect("store test key");
+
+    let profile = crate::models::ModelProfile::new(
+        "Test Profile".to_string(),
+        "openai".to_string(),
+        "gpt-4".to_string(),
+        "https://api.openai.com/v1".to_string(),
+        AuthConfig::Keychain {
+            label: "_test_yolo_refresh".to_string(),
+        },
+    );
+    let profile_id = profile.id;
+
+    let conversation_service = Arc::new(MockConversationService::new(profile_id))
+        as Arc<dyn super::super::ConversationService>;
+    let mock_profile_service = Arc::new(MockProfileService::new());
+    mock_profile_service
+        .set_default_profile(profile.clone())
+        .await;
+    mock_profile_service.add_profile(profile.clone()).await;
+    let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
+
+    let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+    let persisted_policy = crate::agent::ToolApprovalPolicy {
+        yolo_mode: false,
+        auto_approve_reads: false,
+        mcp_approval_mode: McpApprovalMode::PerTool,
+        persistent_allowlist: Vec::new(),
+        persistent_denylist: Vec::new(),
+        session_allowlist: std::collections::HashSet::new(),
+    };
+    persisted_policy
+        .save_to_settings(app_settings.as_ref())
+        .await
+        .expect("persisted policy should be writable");
+
+    let (view_tx, _view_rx) = tokio::sync::mpsc::channel(8);
+    let approval_gate = Arc::new(ApprovalGate::new());
+    let mut session_allowlist = std::collections::HashSet::new();
+    session_allowlist.insert("WriteFile".to_string());
+    let in_memory_policy = crate::agent::ToolApprovalPolicy {
+        yolo_mode: true,
+        auto_approve_reads: false,
+        mcp_approval_mode: McpApprovalMode::PerTool,
+        persistent_allowlist: Vec::new(),
+        persistent_denylist: Vec::new(),
+        session_allowlist,
+    };
+
+    let chat_service = ChatServiceImpl::new(
+        conversation_service,
+        profile_service,
+        app_settings,
+        view_tx,
+        approval_gate,
+        Arc::new(AsyncMutex::new(in_memory_policy)),
+    );
+
+    let conversation_id = Uuid::new_v4();
+    let stream = chat_service
+        .send_message(conversation_id, "hello".to_string())
+        .await
+        .expect("send_message should return a stream");
+    drop(stream);
+
+    let policy_after = chat_service.policy.lock().await.clone();
+    assert!(
+        policy_after.session_allowlist.is_empty(),
+        "session allowlist should be cleared when persisted yolo mode turns off"
+    );
+
+    let _ = crate::services::secure_store::api_keys::delete("_test_yolo_refresh");
 }
 
 #[tokio::test]
@@ -360,7 +463,10 @@ async fn resolve_tool_approval_returns_error_when_persistence_fails() {
 
 impl MockConversationService {
     fn new(profile_id: Uuid) -> Self {
-        Self { profile_id }
+        Self {
+            profile_id,
+            messages: Arc::new(RwLock::new(Vec::new())),
+        }
     }
 }
 
@@ -379,7 +485,9 @@ impl super::super::ConversationService for MockConversationService {
         _id: Uuid,
     ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
         // Return a valid conversation so the test can proceed
-        Ok(crate::models::Conversation::new(self.profile_id))
+        let mut conversation = crate::models::Conversation::new(self.profile_id);
+        conversation.messages = self.messages.read().await.clone();
+        Ok(conversation)
     }
 
     async fn list(
@@ -395,7 +503,9 @@ impl super::super::ConversationService for MockConversationService {
         _conversation_id: Uuid,
         content: String,
     ) -> Result<Message, crate::services::ServiceError> {
-        Ok(Message::user(content))
+        let message = Message::user(content);
+        self.messages.write().await.push(message.clone());
+        Ok(message)
     }
 
     async fn add_assistant_message(
@@ -404,7 +514,9 @@ impl super::super::ConversationService for MockConversationService {
         content: String,
         _thinking_content: Option<String>,
     ) -> Result<Message, crate::services::ServiceError> {
-        Ok(Message::assistant(content))
+        let message = Message::assistant(content);
+        self.messages.write().await.push(message.clone());
+        Ok(message)
     }
 
     async fn rename(
