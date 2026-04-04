@@ -323,6 +323,20 @@ impl ChatServiceImpl {
                             llm_message = llm_message.with_tool_uses(parsed);
                         }
                     }
+                    if let Some(tool_results_raw) = msg.tool_results.as_deref() {
+                        let parsed = serde_json::from_str::<Vec<crate::llm::tools::ToolResult>>(
+                            tool_results_raw,
+                        )
+                        .unwrap_or_else(|error| {
+                            tracing::warn!(
+                                "Failed to parse persisted assistant tool results: {error}"
+                            );
+                            Vec::new()
+                        });
+                        if !parsed.is_empty() {
+                            llm_message = llm_message.with_tool_results(parsed);
+                        }
+                    }
                     llm_message
                 }
             })
