@@ -481,7 +481,7 @@ impl ChatView {
 
         let max_composer_height = 150.0;
         let min_composer_height = 44.0;
-        let line_height = 18.0;
+        let line_height = Theme::font_size_mono().mul_add(0.4, Theme::font_size_mono());
         #[allow(clippy::cast_precision_loss)]
         let computed_height = (wrapped_line_count as f32).mul_add(line_height, 14.0);
         let input_box_height = computed_height.clamp(min_composer_height, max_composer_height);

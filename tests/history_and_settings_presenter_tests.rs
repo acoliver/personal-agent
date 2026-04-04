@@ -1904,7 +1904,7 @@ mod settings_presenter_tests {
         send_settings_event(&event_tx, AppEvent::User(UserEvent::RefreshProfiles)).await;
 
         // Should receive ShowSettings + ChatProfilesUpdated + ShowSettingsTheme
-        // + ToolApprovalPolicyUpdated + YoloModeChanged (ShowFontSettings may interleave)
+        // + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged.
         let first = recv_broadcast_command(&mut view_rx).await;
         assert!(
             matches!(first, ViewCommand::ShowSettings { .. }),
@@ -1922,13 +1922,18 @@ mod settings_presenter_tests {
         );
         let fourth = recv_broadcast_command(&mut view_rx).await;
         assert!(
-            matches!(fourth, ViewCommand::ToolApprovalPolicyUpdated { .. }),
-            "expected ToolApprovalPolicyUpdated, got {fourth:?}"
+            matches!(fourth, ViewCommand::ShowFontSettings { .. }),
+            "expected ShowFontSettings, got {fourth:?}"
         );
         let fifth = recv_broadcast_command(&mut view_rx).await;
         assert!(
-            matches!(fifth, ViewCommand::YoloModeChanged { .. }),
-            "expected YoloModeChanged, got {fifth:?}"
+            matches!(fifth, ViewCommand::ToolApprovalPolicyUpdated { .. }),
+            "expected ToolApprovalPolicyUpdated, got {fifth:?}"
+        );
+        let sixth = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(sixth, ViewCommand::YoloModeChanged { .. }),
+            "expected YoloModeChanged, got {sixth:?}"
         );
     }
 

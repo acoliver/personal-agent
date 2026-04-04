@@ -35,6 +35,7 @@ fn mono_font_options(cx: &gpui::App) -> Vec<String> {
 
     let mut options = all_font_names(cx)
         .into_iter()
+        .filter(|name| !name.starts_with('.'))
         .filter(|name| {
             let lower = name.to_ascii_lowercase();
             MONO_HINTS.iter().any(|hint| lower.contains(hint))
@@ -67,7 +68,7 @@ impl SettingsView {
             .child(self.render_font_size_section(cx))
             .child(self.render_ui_font_section(cx))
             .child(self.render_mono_font_section(cx))
-            .child(Self::render_font_preview_section())
+            .child(self.render_font_preview_section())
     }
 
     /// Theme section (moved from General panel).
@@ -583,10 +584,18 @@ impl SettingsView {
     }
 
     /// Live font preview section.
-    pub(super) fn render_font_preview_section() -> impl IntoElement {
-        let h3_size = Theme::font_size_h3();
-        let body_size = Theme::font_size_body();
-        let mono_size = Theme::font_size_mono();
+    pub(super) fn render_font_preview_section(&self) -> impl IntoElement {
+        let base_size = self.state.font_size;
+        let h3_size = base_size * 1.25;
+        let body_size = base_size;
+        let mono_size = (base_size * 9.0) / 10.0;
+        let ui_family = self.state.ui_font_family.clone().map(SharedString::from);
+        let mono_family = SharedString::from(self.state.mono_font_family.clone());
+        let mono_features = if self.state.mono_ligatures {
+            gpui::FontFeatures::default()
+        } else {
+            gpui::FontFeatures::disable_ligatures()
+        };
 
         div()
             .flex()
@@ -634,11 +643,9 @@ impl SettingsView {
                             .child(
                                 div()
                                     .text_size(px(mono_size))
-                                    .when_some(Theme::ui_font_family(), |div, family| {
-                                        div.font_family(family)
-                                    })
-                                    .font_family(Theme::mono_font_family())
-                                    .font_features(Theme::mono_font_features())
+                                    .when_some(ui_family, gpui::Styled::font_family)
+                                    .font_family(mono_family)
+                                    .font_features(mono_features)
                                     .text_color(Theme::accent())
                                     .bg(Theme::bg_dark())
                                     .px(px(4.0))

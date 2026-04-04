@@ -464,7 +464,7 @@ fn render_paragraph(
     links: &[(Range<usize>, String)],
 ) -> gpui::AnyElement {
     div()
-        .text_size(px(crate::ui_gpui::theme::Theme::font_size_mono()))
+        .text_size(px(crate::ui_gpui::theme::Theme::font_size_body()))
         .text_color(crate::ui_gpui::theme::Theme::text_primary())
         .child(spans_to_styled_text(spans, links))
         .into_any_element()

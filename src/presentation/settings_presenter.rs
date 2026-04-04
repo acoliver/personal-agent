@@ -21,8 +21,9 @@ use crate::services::{AppSettingsService, ProfileService};
 use crate::ui_gpui::theme::{
     active_mono_font_family, active_mono_ligatures, available_theme_options, is_valid_theme_slug,
     set_active_font_size, set_active_mono_font_family, set_active_mono_ligatures,
-    set_active_theme_slug, set_active_ui_font_family, SETTING_KEY_FONT_SIZE,
-    SETTING_KEY_MONO_FONT_FAMILY, SETTING_KEY_MONO_LIGATURES, SETTING_KEY_UI_FONT_FAMILY,
+    set_active_theme_slug, set_active_ui_font_family, MAX_FONT_SIZE, MIN_FONT_SIZE,
+    SETTING_KEY_FONT_SIZE, SETTING_KEY_MONO_FONT_FAMILY, SETTING_KEY_MONO_LIGATURES,
+    SETTING_KEY_UI_FONT_FAMILY,
 };
 
 /// `SettingsPresenter` - handles settings and profile management UI
@@ -256,6 +257,7 @@ impl SettingsPresenter {
             UserEvent::RefreshProfiles => {
                 Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
                 Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
+                Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
                 Self::emit_tool_approval_policy_snapshot(app_settings_service, view_tx).await;
             }
             UserEvent::RefreshToolApprovalPolicy => {
@@ -457,13 +459,16 @@ impl SettingsPresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
         size: f32,
     ) {
+        let clamped_size = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
         if let Err(e) = app_settings_service
-            .set_setting(SETTING_KEY_FONT_SIZE, size.to_string())
+            .set_setting(SETTING_KEY_FONT_SIZE, clamped_size.to_string())
             .await
         {
             tracing::warn!("Failed to persist font_size: {}", e);
+            Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+            return;
         }
-        set_active_font_size(size);
+        set_active_font_size(clamped_size);
         Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
     }
 
@@ -479,6 +484,8 @@ impl SettingsPresenter {
             .await
         {
             tracing::warn!("Failed to persist ui_font_family: {}", e);
+            Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+            return;
         }
         set_active_ui_font_family(name);
         Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
@@ -495,6 +502,8 @@ impl SettingsPresenter {
             .await
         {
             tracing::warn!("Failed to persist mono_font_family: {}", e);
+            Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+            return;
         }
         set_active_mono_font_family(&name);
         Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
@@ -511,6 +520,8 @@ impl SettingsPresenter {
             .await
         {
             tracing::warn!("Failed to persist mono_ligatures: {}", e);
+            Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+            return;
         }
         set_active_mono_ligatures(enabled);
         Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
@@ -529,7 +540,8 @@ impl SettingsPresenter {
             .ok()
             .flatten()
             .and_then(|v| v.parse::<f32>().ok())
-            .unwrap_or(DEFAULT_FONT_SIZE);
+            .unwrap_or(DEFAULT_FONT_SIZE)
+            .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
 
         let ui_family = app_settings_service
             .get_setting(SETTING_KEY_UI_FONT_FAMILY)

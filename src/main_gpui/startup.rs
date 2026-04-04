@@ -16,8 +16,9 @@ use personal_agent::ui_gpui::app_store::{
 use personal_agent::ui_gpui::theme::{
     is_valid_theme_slug, migrate_legacy_theme_slug, set_active_font_size,
     set_active_mono_font_family, set_active_mono_ligatures, set_active_theme_slug,
-    set_active_ui_font_family, DEFAULT_FONT_SIZE, DEFAULT_MONO_FONT_FAMILY, SETTING_KEY_FONT_SIZE,
-    SETTING_KEY_MONO_FONT_FAMILY, SETTING_KEY_MONO_LIGATURES, SETTING_KEY_UI_FONT_FAMILY,
+    set_active_ui_font_family, DEFAULT_FONT_SIZE, DEFAULT_MONO_FONT_FAMILY, MAX_FONT_SIZE,
+    MIN_FONT_SIZE, SETTING_KEY_FONT_SIZE, SETTING_KEY_MONO_FONT_FAMILY, SETTING_KEY_MONO_LIGATURES,
+    SETTING_KEY_UI_FONT_FAMILY,
 };
 
 // ============================================================================
@@ -186,7 +187,8 @@ async fn apply_startup_font_settings(app_settings: &AppSettingsServiceImpl) {
         .ok()
         .flatten()
         .and_then(|v| v.parse::<f32>().ok())
-        .unwrap_or(DEFAULT_FONT_SIZE);
+        .unwrap_or(DEFAULT_FONT_SIZE)
+        .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
     set_active_font_size(font_size);
 
     let ui_font_family = app_settings
