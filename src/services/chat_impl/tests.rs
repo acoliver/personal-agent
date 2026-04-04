@@ -310,54 +310,6 @@ async fn resolve_tool_approval_proceed_session_updates_all_identifiers() {
 }
 
 #[tokio::test]
-async fn resolve_tool_approval_proceed_session_updates_session_policy() {
-    let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
-    let (service, mut view_rx, approval_gate) =
-        make_approval_test_chat_service(app_settings.clone());
-    let request_id = Uuid::new_v4().to_string();
-    let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
-
-    service
-        .resolve_tool_approval(
-            request_id.clone(),
-            ToolApprovalResponseAction::ProceedSession,
-        )
-        .await
-        .expect("session resolution should succeed");
-
-    let approved = waiter.wait().await.expect("waiter should receive decision");
-    assert!(approved, "ProceedSession should propagate true to waiter");
-
-    let resolved = view_rx
-        .recv()
-        .await
-        .expect("view should receive ToolApprovalResolved");
-    assert_eq!(
-        resolved,
-        ViewCommand::ToolApprovalResolved {
-            request_id,
-            approved: true,
-        }
-    );
-
-    let policy_after = service.policy.lock().await.clone();
-    assert_eq!(
-        policy_after.evaluate("WriteFile"),
-        crate::agent::tool_approval_policy::ToolApprovalDecision::Allow,
-        "ProceedSession should add an in-memory session allow rule"
-    );
-
-    let persisted = app_settings
-        .get_setting(crate::agent::tool_approval_policy::TOOL_APPROVAL_POLICY_SETTINGS_KEY)
-        .await
-        .expect("settings read should succeed");
-    assert!(
-        persisted.is_none(),
-        "ProceedSession should not persist policy to settings"
-    );
-}
-
-#[tokio::test]
 async fn resolve_tool_approval_proceed_always_persists_all_identifiers() {
     let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
     let (service, mut view_rx, approval_gate) =
