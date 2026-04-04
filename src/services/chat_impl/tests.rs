@@ -735,7 +735,7 @@ impl crate::services::ProfileService for MockProfileService {
     }
 }
 
-async fn setup_send_message_test() -> Arc<MockConversationService> {
+async fn setup_send_message_test() -> (Arc<MockConversationService>, bool) {
     crate::services::secure_store::use_mock_backend();
     crate::services::secure_store::api_keys::store("_test_send_msg", "fake-key-for-test")
         .expect("store test key");
@@ -760,35 +760,23 @@ async fn setup_send_message_test() -> Arc<MockConversationService> {
 
     let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
     let conversation_id = Uuid::new_v4();
-    let result = chat_service
+    let mut stream = chat_service
         .send_message(conversation_id, "Hello, world!".to_string())
-        .await;
+        .await
+        .expect("send_message should return Ok with a stream");
 
-    assert!(
-        result.is_ok(),
-        "send_message should return Ok with a stream, got: {:?}",
-        result.err()
-    );
-
-    let mut stream = result.expect("send_message should produce stream");
+    let mut completed = false;
     while let Some(event) = stream.next().await {
-        if matches!(event, ChatStreamEvent::Complete | ChatStreamEvent::Error(_)) {
+        if matches!(event, ChatStreamEvent::Complete) {
+            completed = true;
+            break;
+        }
+        if matches!(event, ChatStreamEvent::Error(_)) {
             break;
         }
     }
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    conversation_service_impl
-}
-
-async fn run_send_message_and_find_assistant(
-    conversation_service_impl: Arc<MockConversationService>,
-) -> Option<Message> {
-    let messages = conversation_service_impl.messages.read().await;
-    messages
-        .iter()
-        .rfind(|message| matches!(message.role, crate::models::MessageRole::Assistant))
-        .cloned()
+    (conversation_service_impl, completed)
 }
 
 fn assert_non_empty_tool_json<T: serde::de::DeserializeOwned>(
@@ -804,11 +792,29 @@ fn assert_non_empty_tool_json<T: serde::de::DeserializeOwned>(
 
 #[tokio::test]
 async fn test_send_message() {
-    let conversation_service_impl = setup_send_message_test().await;
-    let assistant_message =
-        run_send_message_and_find_assistant(conversation_service_impl.clone()).await;
+    let (conversation_service_impl, completed) = setup_send_message_test().await;
 
-    if let Some(assistant_message) = assistant_message {
+    if completed {
+        let assistant_message = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let maybe_message = {
+                    let messages = conversation_service_impl.messages.read().await;
+                    messages
+                        .iter()
+                        .rfind(|message| {
+                            matches!(message.role, crate::models::MessageRole::Assistant)
+                        })
+                        .cloned()
+                };
+                if let Some(message) = maybe_message {
+                    break message;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("assistant message should be persisted after successful stream completion");
+
         assert_non_empty_tool_json::<crate::llm::tools::ToolUse>(
             assistant_message.tool_calls.as_deref(),
             "persisted tool calls JSON should deserialize",
