@@ -14,6 +14,7 @@
 
 use super::state::{ApprovalBubbleState, ToolApprovalBubble};
 use super::ChatView;
+use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::ViewCommand;
 
 impl ChatView {
@@ -25,11 +26,38 @@ impl ChatView {
         title == "Save Conversation"
     }
 
+    fn handle_tool_approval_request(
+        &mut self,
+        request_id: String,
+        tool_name: String,
+        tool_argument: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.state.yolo_mode {
+            self.emit(UserEvent::ToolApprovalResponse {
+                request_id,
+                decision: ToolApprovalResponseAction::ProceedOnce,
+            });
+            cx.notify();
+            return;
+        }
+
+        self.state.approval_bubbles.push(ToolApprovalBubble {
+            request_id,
+            tool_name,
+            tool_argument,
+            state: ApprovalBubbleState::Pending,
+        });
+        self.maybe_scroll_chat_to_bottom(cx);
+        cx.notify();
+    }
+
     /// Handle incoming `ViewCommands` that are NOT store-managed.
     ///
     /// All shared state commands arrive exclusively through
     /// `apply_store_snapshot` via the store subscription. This method
     /// only handles ephemeral / view-local commands.
+    #[allow(clippy::too_many_lines)]
     pub fn handle_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
             ViewCommand::ConversationCleared => {
@@ -88,14 +116,7 @@ impl ChatView {
                 tool_name,
                 tool_argument,
             } => {
-                self.state.approval_bubbles.push(ToolApprovalBubble {
-                    request_id,
-                    tool_name,
-                    tool_argument,
-                    state: ApprovalBubbleState::Pending,
-                });
-                self.maybe_scroll_chat_to_bottom(cx);
-                cx.notify();
+                self.handle_tool_approval_request(request_id, tool_name, tool_argument, cx);
             }
             ViewCommand::ToolApprovalResolved {
                 request_id,
