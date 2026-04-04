@@ -173,10 +173,52 @@ impl MainPanel {
             d.child(div().child(placeholder.to_string()))
         }
     }
+
+    fn handle_zoom(delta: f32, reset: bool, cx: &mut gpui::Context<Self>) {
+        let new_size = if reset {
+            DEFAULT_FONT_SIZE
+        } else {
+            active_font_size() + delta
+        };
+        if set_active_font_size(new_size) {
+            if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
+                let _ = app_state
+                    .gpui_bridge
+                    .emit(UserEvent::SetFontSize { size: new_size });
+            }
+            cx.notify();
+        }
+    }
+
+    fn handle_non_modifier_key(&mut self, key: &str, modifiers: gpui::Modifiers) {
+        match self.navigation.current() {
+            ViewId::Settings => self.handle_settings_shortcuts(key, modifiers),
+            ViewId::ModelSelector => {
+                if key == "escape" {
+                    self.navigation.navigate_back();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_settings_shortcuts(&mut self, key: &str, modifiers: gpui::Modifiers) {
+        match key {
+            "escape" => {
+                self.navigation.navigate_back();
+            }
+            "+" | "=" if modifiers.shift => {
+                crate::ui_gpui::navigation_channel().request_navigate(ViewId::ProfileEditor);
+            }
+            "m" => {
+                crate::ui_gpui::navigation_channel().request_navigate(ViewId::McpAdd);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl gpui::Render for MainPanel {
-    #[allow(clippy::too_many_lines)]
     fn render(
         &mut self,
         window: &mut gpui::Window,
@@ -222,37 +264,13 @@ impl gpui::Render for MainPanel {
                 }
             }))
             .on_action(cx.listener(|_this, _: &ZoomIn, _window, cx| {
-                let new_size = active_font_size() + 1.0;
-                if set_active_font_size(new_size) {
-                    if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
-                        let _ = app_state
-                            .gpui_bridge
-                            .emit(UserEvent::SetFontSize { size: new_size });
-                    }
-                    cx.notify();
-                }
+                Self::handle_zoom(1.0, false, cx);
             }))
             .on_action(cx.listener(|_this, _: &ZoomOut, _window, cx| {
-                let new_size = active_font_size() - 1.0;
-                if set_active_font_size(new_size) {
-                    if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
-                        let _ = app_state
-                            .gpui_bridge
-                            .emit(UserEvent::SetFontSize { size: new_size });
-                    }
-                    cx.notify();
-                }
+                Self::handle_zoom(-1.0, false, cx);
             }))
             .on_action(cx.listener(|_this, _: &ZoomReset, _window, cx| {
-                let new_size = DEFAULT_FONT_SIZE;
-                if set_active_font_size(new_size) {
-                    if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
-                        let _ = app_state
-                            .gpui_bridge
-                            .emit(UserEvent::SetFontSize { size: new_size });
-                    }
-                    cx.notify();
-                }
+                Self::handle_zoom(0.0, true, cx);
             }))
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
@@ -261,33 +279,7 @@ impl gpui::Render for MainPanel {
                     if modifiers.platform || modifiers.control {
                         return;
                     }
-                    let current = this.navigation.current();
-                    match current {
-                        ViewId::Settings => match key.as_str() {
-                            "escape" => {
-                                this.navigation.navigate_back();
-                            }
-                            "+" => {
-                                crate::ui_gpui::navigation_channel()
-                                    .request_navigate(ViewId::ProfileEditor);
-                            }
-                            "=" if modifiers.shift => {
-                                crate::ui_gpui::navigation_channel()
-                                    .request_navigate(ViewId::ProfileEditor);
-                            }
-                            "m" => {
-                                crate::ui_gpui::navigation_channel()
-                                    .request_navigate(ViewId::McpAdd);
-                            }
-                            _ => {}
-                        },
-                        ViewId::ModelSelector => {
-                            if key == "escape" {
-                                this.navigation.navigate_back();
-                            }
-                        }
-                        _ => {}
-                    }
+                    this.handle_non_modifier_key(key, *modifiers);
                 }),
             )
             .child(self.render_view_content(current_view))

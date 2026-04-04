@@ -6,8 +6,27 @@ use crate::presentation::view_command::ViewCommand;
 impl SettingsView {
     /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P06
-    #[allow(clippy::too_many_lines)]
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
+        let should_notify = self.apply_command(command, cx);
+        if should_notify {
+            cx.notify();
+        }
+    }
+
+    fn apply_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) -> bool {
+        if self.apply_profile_command(&command) {
+            return true;
+        }
+        if self.apply_mcp_command(&command) {
+            return true;
+        }
+        if self.apply_policy_command(&command) {
+            return true;
+        }
+        self.apply_misc_command(command, cx)
+    }
+
+    fn apply_profile_command(&mut self, command: &ViewCommand) -> bool {
         match command {
             ViewCommand::ShowSettings {
                 profiles,
@@ -17,71 +36,59 @@ impl SettingsView {
                 profiles,
                 selected_profile_id,
             } => {
-                self.apply_profile_summaries(profiles, selected_profile_id);
-            }
-            ViewCommand::ShowSettingsTheme {
-                options,
-                selected_slug,
-            } => {
-                self.apply_theme_options(options, selected_slug);
-            }
-            ViewCommand::ShowFontSettings {
-                size,
-                ui_family,
-                mono_family,
-                ligatures,
-            } => {
-                self.state.font_size = size;
-                self.state.ui_font_family = ui_family;
-                self.state.mono_font_family = mono_family;
-                self.state.mono_ligatures = ligatures;
-                cx.notify();
+                self.apply_profile_summaries(profiles.clone(), *selected_profile_id);
+                true
             }
             ViewCommand::ProfileCreated { id, name } => {
-                self.state.selected_profile_id = Some(id);
-                if self.state.profiles.iter().all(|p| p.id != id) {
-                    self.state
-                        .profiles
-                        .push(ProfileItem::new(id, name).with_model("", ""));
-                }
+                self.handle_profile_created(*id, name.clone());
+                true
             }
             ViewCommand::ProfileUpdated { id, name } => {
-                if let Some(profile) = self.state.profiles.iter_mut().find(|p| p.id == id) {
-                    profile.name = name;
-                }
+                self.handle_profile_updated(*id, name.clone());
+                true
             }
             ViewCommand::ProfileDeleted { id } => {
-                self.state.profiles.retain(|p| p.id != id);
-                if self.state.selected_profile_id == Some(id) {
-                    self.state.selected_profile_id = self.state.profiles.first().map(|p| p.id);
-                }
+                self.handle_profile_deleted(*id);
+                true
             }
             ViewCommand::DefaultProfileChanged { profile_id } => {
-                self.state.selected_profile_id = profile_id;
-                for profile in &mut self.state.profiles {
-                    profile.is_default = Some(profile.id) == profile_id;
-                }
+                self.handle_default_profile_changed(*profile_id);
+                true
             }
+            _ => false,
+        }
+    }
+
+    fn apply_mcp_command(&mut self, command: &ViewCommand) -> bool {
+        match command {
             ViewCommand::McpStatusChanged { id, status } => {
-                self.handle_mcp_status_changed(id, status);
+                self.handle_mcp_status_changed(*id, *status);
+                true
             }
             ViewCommand::McpServerStarted {
                 id, name, enabled, ..
             } => {
-                self.handle_mcp_server_started(id, name, enabled);
+                self.handle_mcp_server_started(*id, name.clone(), *enabled);
+                true
             }
             ViewCommand::McpServerFailed { id, .. } => {
-                self.handle_mcp_server_failed(id);
+                self.handle_mcp_server_failed(*id);
+                true
             }
             ViewCommand::McpConfigSaved { id, name } => {
-                self.handle_mcp_config_saved(id, name);
+                self.handle_mcp_config_saved(*id, name.clone());
+                true
             }
             ViewCommand::McpDeleted { id } => {
-                self.state.mcps.retain(|m| m.id != id);
-                if self.state.selected_mcp_id == Some(id) {
-                    self.state.selected_mcp_id = self.state.mcps.first().map(|m| m.id);
-                }
+                self.handle_mcp_deleted(*id);
+                true
             }
+            _ => false,
+        }
+    }
+
+    fn apply_policy_command(&mut self, command: &ViewCommand) -> bool {
+        match command {
             ViewCommand::ToolApprovalPolicyUpdated {
                 yolo_mode,
                 auto_approve_reads,
@@ -89,31 +96,123 @@ impl SettingsView {
                 persistent_allowlist,
                 persistent_denylist,
             } => {
-                self.state.yolo_mode = yolo_mode;
-                self.state.auto_approve_reads = auto_approve_reads;
-                self.state.mcp_approval_mode = mcp_approval_mode;
-                self.state.persistent_allowlist = persistent_allowlist;
-                self.state.persistent_denylist = persistent_denylist;
-                self.state.allowlist_input.clear();
-                self.state.denylist_input.clear();
+                self.handle_tool_approval_policy_updated(
+                    *yolo_mode,
+                    *auto_approve_reads,
+                    *mcp_approval_mode,
+                    persistent_allowlist.clone(),
+                    persistent_denylist.clone(),
+                );
+                true
             }
             ViewCommand::YoloModeChanged { active } => {
-                self.state.yolo_mode = active;
+                self.state.yolo_mode = *active;
+                true
             }
+            _ => false,
+        }
+    }
+
+    fn apply_misc_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) -> bool {
+        match command {
+            ViewCommand::ShowSettingsTheme {
+                options,
+                selected_slug,
+            } => {
+                self.apply_theme_options(options, selected_slug);
+                true
+            }
+            ViewCommand::ShowFontSettings {
+                size,
+                ui_family,
+                mono_family,
+                ligatures,
+            } => self.apply_font_settings(size, ui_family, mono_family, ligatures, cx),
             ViewCommand::ExportDirectoryLoaded { path } => {
                 self.state.export_dir_input = path;
+                true
             }
             ViewCommand::ShowNotification { message } => {
                 self.state.status_message = Some(message);
                 self.state.status_is_error = false;
+                true
             }
             ViewCommand::ShowError { title, message, .. } => {
                 self.state.status_message = Some(format!("{title}: {message}"));
                 self.state.status_is_error = true;
+                true
             }
-            _ => {}
+            _ => false,
         }
+    }
+
+    fn apply_font_settings(
+        &mut self,
+        size: f32,
+        ui_family: Option<String>,
+        mono_family: String,
+        ligatures: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        self.state.font_size = size;
+        self.state.ui_font_family = ui_family;
+        self.state.mono_font_family = mono_family;
+        self.state.mono_ligatures = ligatures;
         cx.notify();
+        false
+    }
+
+    fn handle_profile_created(&mut self, id: uuid::Uuid, name: String) {
+        self.state.selected_profile_id = Some(id);
+        if self.state.profiles.iter().all(|p| p.id != id) {
+            self.state
+                .profiles
+                .push(ProfileItem::new(id, name).with_model("", ""));
+        }
+    }
+
+    fn handle_profile_updated(&mut self, id: uuid::Uuid, name: String) {
+        if let Some(profile) = self.state.profiles.iter_mut().find(|p| p.id == id) {
+            profile.name = name;
+        }
+    }
+
+    fn handle_profile_deleted(&mut self, id: uuid::Uuid) {
+        self.state.profiles.retain(|p| p.id != id);
+        if self.state.selected_profile_id == Some(id) {
+            self.state.selected_profile_id = self.state.profiles.first().map(|p| p.id);
+        }
+    }
+
+    fn handle_default_profile_changed(&mut self, profile_id: Option<uuid::Uuid>) {
+        self.state.selected_profile_id = profile_id;
+        for profile in &mut self.state.profiles {
+            profile.is_default = Some(profile.id) == profile_id;
+        }
+    }
+
+    fn handle_mcp_deleted(&mut self, id: uuid::Uuid) {
+        self.state.mcps.retain(|m| m.id != id);
+        if self.state.selected_mcp_id == Some(id) {
+            self.state.selected_mcp_id = self.state.mcps.first().map(|m| m.id);
+        }
+    }
+
+    fn handle_tool_approval_policy_updated(
+        &mut self,
+        yolo_mode: bool,
+        auto_approve_reads: bool,
+        mcp_approval_mode: crate::agent::McpApprovalMode,
+        persistent_allowlist: Vec<String>,
+        persistent_denylist: Vec<String>,
+    ) {
+        self.state.yolo_mode = yolo_mode;
+        self.state.auto_approve_reads = auto_approve_reads;
+        self.state.mcp_approval_mode = mcp_approval_mode;
+        self.state.persistent_allowlist = persistent_allowlist;
+        self.state.persistent_denylist = persistent_denylist;
+        self.state.allowlist_input.clear();
+        self.state.denylist_input.clear();
     }
 
     fn handle_mcp_status_changed(

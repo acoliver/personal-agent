@@ -5,6 +5,7 @@
 
 mod command;
 mod render;
+mod render_appearance;
 mod render_tool_approval;
 
 use gpui::{Bounds, Pixels};
