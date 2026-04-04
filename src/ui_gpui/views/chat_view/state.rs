@@ -16,7 +16,7 @@ pub struct ChatMessage {
     pub role: MessageRole,
     pub content: String,
     pub thinking: Option<String>,
-    pub model_id: Option<String>,
+    pub model_label: Option<String>,
     pub timestamp: Option<u64>,
 }
 
@@ -33,17 +33,17 @@ impl ChatMessage {
             role: MessageRole::User,
             content: content.into(),
             thinking: None,
-            model_id: None,
+            model_label: None,
             timestamp: None,
         }
     }
 
-    pub fn assistant(content: impl Into<String>, model_id: impl Into<String>) -> Self {
+    pub fn assistant(content: impl Into<String>, model_label: impl Into<String>) -> Self {
         Self {
             role: MessageRole::Assistant,
             content: content.into(),
             thinking: None,
-            model_id: Some(model_id.into()),
+            model_label: Some(model_label.into()),
             timestamp: None,
         }
     }
@@ -264,15 +264,15 @@ mod tests {
         assert_eq!(msg.role, MessageRole::User);
         assert_eq!(msg.content, "hello");
         assert!(msg.thinking.is_none());
-        assert!(msg.model_id.is_none());
+        assert!(msg.model_label.is_none());
     }
 
     #[test]
-    fn chat_message_assistant_sets_model_id() {
+    fn chat_message_assistant_sets_model_label() {
         let msg = ChatMessage::assistant("response", "gpt-4o");
         assert_eq!(msg.role, MessageRole::Assistant);
         assert_eq!(msg.content, "response");
-        assert_eq!(msg.model_id.as_deref(), Some("gpt-4o"));
+        assert_eq!(msg.model_label.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
