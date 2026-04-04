@@ -550,6 +550,26 @@ impl Theme {
         (active_font_size() * 39.0) / 50.0
     }
 
+    // ── Font family / feature tokens ────────────────────────────────────────
+
+    /// Resolved mono font family for code content.
+    #[must_use]
+    pub fn mono_font_family_name() -> String {
+        active_mono_font_family()
+    }
+
+    /// Resolved UI font family, if the user has set one.
+    #[must_use]
+    pub fn ui_font_family_name() -> Option<String> {
+        active_ui_font_family()
+    }
+
+    /// Whether mono ligatures are currently enabled.
+    #[must_use]
+    pub fn mono_ligatures_enabled() -> bool {
+        active_mono_ligatures()
+    }
+
     // ── Public conversion helpers ────────────────────────────────────────────
 
     /// Parse a theme color token and convert it to `Hsla`.

@@ -392,7 +392,7 @@ fn inline_to_text_run(span: &MarkdownInline) -> gpui::TextRun {
     }
     if span.code {
         run.background_color = Some(crate::ui_gpui::theme::Theme::bg_dark());
-        run.font = font("Menlo");
+        run.font = font(crate::ui_gpui::theme::Theme::mono_font_family_name());
     }
     if span.strikethrough {
         run.strikethrough = Some(StrikethroughStyle {
@@ -506,7 +506,7 @@ fn render_code_block(language: Option<&String>, code: &str) -> gpui::AnyElement 
         .rounded(px(crate::ui_gpui::theme::Theme::RADIUS_MD))
         .bg(crate::ui_gpui::theme::Theme::bg_dark())
         .text_color(crate::ui_gpui::theme::Theme::text_primary())
-        .font_family("Menlo")
+        .font_family(crate::ui_gpui::theme::Theme::mono_font_family_name())
         .text_size(px(crate::ui_gpui::theme::Theme::font_size_mono()));
 
     if let Some(lang) = language {

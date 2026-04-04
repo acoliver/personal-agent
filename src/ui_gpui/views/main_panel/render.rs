@@ -223,37 +223,40 @@ impl gpui::Render for MainPanel {
             }))
             .on_action(cx.listener(|_this, _: &ZoomIn, _window, cx| {
                 let new_size = (active_font_size() + 1.0).min(MAX_FONT_SIZE);
-                let _ = set_active_font_size(new_size);
-                if let Some(bridge) = cx
-                    .try_global::<MainPanelAppState>()
-                    .map(|s| s.gpui_bridge.clone())
-                {
-                    let _ = bridge.emit(UserEvent::SetFontSize { size: new_size });
+                if set_active_font_size(new_size) {
+                    if let Some(bridge) = cx
+                        .try_global::<MainPanelAppState>()
+                        .map(|s| s.gpui_bridge.clone())
+                    {
+                        let _ = bridge.emit(UserEvent::SetFontSize { size: new_size });
+                    }
+                    cx.notify();
                 }
-                cx.notify();
             }))
             .on_action(cx.listener(|_this, _: &ZoomOut, _window, cx| {
                 let new_size = (active_font_size() - 1.0).max(MIN_FONT_SIZE);
-                let _ = set_active_font_size(new_size);
-                if let Some(bridge) = cx
-                    .try_global::<MainPanelAppState>()
-                    .map(|s| s.gpui_bridge.clone())
-                {
-                    let _ = bridge.emit(UserEvent::SetFontSize { size: new_size });
+                if set_active_font_size(new_size) {
+                    if let Some(bridge) = cx
+                        .try_global::<MainPanelAppState>()
+                        .map(|s| s.gpui_bridge.clone())
+                    {
+                        let _ = bridge.emit(UserEvent::SetFontSize { size: new_size });
+                    }
+                    cx.notify();
                 }
-                cx.notify();
             }))
             .on_action(cx.listener(|_this, _: &ZoomReset, _window, cx| {
-                let _ = set_active_font_size(DEFAULT_FONT_SIZE);
-                if let Some(bridge) = cx
-                    .try_global::<MainPanelAppState>()
-                    .map(|s| s.gpui_bridge.clone())
-                {
-                    let _ = bridge.emit(UserEvent::SetFontSize {
-                        size: DEFAULT_FONT_SIZE,
-                    });
+                if set_active_font_size(DEFAULT_FONT_SIZE) {
+                    if let Some(bridge) = cx
+                        .try_global::<MainPanelAppState>()
+                        .map(|s| s.gpui_bridge.clone())
+                    {
+                        let _ = bridge.emit(UserEvent::SetFontSize {
+                            size: DEFAULT_FONT_SIZE,
+                        });
+                    }
+                    cx.notify();
                 }
-                cx.notify();
             }))
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
