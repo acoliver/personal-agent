@@ -22,7 +22,12 @@ use crate::events::{
     AppEvent, EventBus,
 };
 use crate::services::{AppSettingsService, ProfileService};
-use crate::ui_gpui::theme::{available_theme_options, is_valid_theme_slug, set_active_theme_slug};
+use crate::ui_gpui::theme::{
+    active_mono_font_family, active_mono_ligatures, available_theme_options, is_valid_theme_slug,
+    set_active_font_size, set_active_mono_font_family, set_active_mono_ligatures,
+    set_active_theme_slug, set_active_ui_font_family, SETTING_KEY_FONT_SIZE,
+    SETTING_KEY_MONO_FONT_FAMILY, SETTING_KEY_MONO_LIGATURES, SETTING_KEY_UI_FONT_FAMILY,
+};
 
 /// `SettingsPresenter` - handles settings and profile management UI
 ///
@@ -129,6 +134,7 @@ impl SettingsPresenter {
         .await;
 
         Self::emit_theme_snapshot(&self.app_settings_service, &self.view_tx, None).await;
+        Self::emit_font_settings_snapshot(&self.app_settings_service, &self.view_tx).await;
         Self::emit_tool_approval_policy_snapshot(&self.app_settings_service, &self.view_tx).await;
 
         let mut rx = self.rx.resubscribe();
@@ -305,6 +311,18 @@ impl SettingsPresenter {
             }
             UserEvent::SelectTheme { slug } => {
                 Self::on_select_theme(app_settings_service, view_tx, slug).await;
+            }
+            UserEvent::SetFontSize { size } => {
+                Self::on_set_font_size(app_settings_service, view_tx, size).await;
+            }
+            UserEvent::SetUiFontFamily { name } => {
+                Self::on_set_ui_font_family(app_settings_service, view_tx, name).await;
+            }
+            UserEvent::SetMonoFontFamily { name } => {
+                Self::on_set_mono_font_family(app_settings_service, view_tx, name).await;
+            }
+            UserEvent::SetMonoLigatures { enabled } => {
+                Self::on_set_mono_ligatures(app_settings_service, view_tx, enabled).await;
             }
             _ => {} // Ignore other user events
         }
@@ -853,6 +871,117 @@ impl SettingsPresenter {
         set_active_theme_slug(&applied_slug);
 
         Self::emit_theme_snapshot(app_settings_service, view_tx, Some(applied_slug)).await;
+    }
+
+    /// Persist and apply a new font size, then emit a font settings snapshot.
+    async fn on_set_font_size(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        size: f32,
+    ) {
+        if let Err(e) = app_settings_service
+            .set_setting(SETTING_KEY_FONT_SIZE, size.to_string())
+            .await
+        {
+            tracing::warn!("Failed to persist font_size: {}", e);
+        }
+        set_active_font_size(size);
+        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+    }
+
+    /// Persist and apply a UI font family override, then emit a font settings snapshot.
+    async fn on_set_ui_font_family(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        name: Option<String>,
+    ) {
+        let value = name.clone().unwrap_or_default();
+        if let Err(e) = app_settings_service
+            .set_setting(SETTING_KEY_UI_FONT_FAMILY, value)
+            .await
+        {
+            tracing::warn!("Failed to persist ui_font_family: {}", e);
+        }
+        set_active_ui_font_family(name);
+        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+    }
+
+    /// Persist and apply a monospace font family, then emit a font settings snapshot.
+    async fn on_set_mono_font_family(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        name: String,
+    ) {
+        if let Err(e) = app_settings_service
+            .set_setting(SETTING_KEY_MONO_FONT_FAMILY, name.clone())
+            .await
+        {
+            tracing::warn!("Failed to persist mono_font_family: {}", e);
+        }
+        set_active_mono_font_family(&name);
+        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+    }
+
+    /// Persist and apply the mono-ligatures toggle, then emit a font settings snapshot.
+    async fn on_set_mono_ligatures(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        enabled: bool,
+    ) {
+        if let Err(e) = app_settings_service
+            .set_setting(SETTING_KEY_MONO_LIGATURES, enabled.to_string())
+            .await
+        {
+            tracing::warn!("Failed to persist mono_ligatures: {}", e);
+        }
+        set_active_mono_ligatures(enabled);
+        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
+    }
+
+    /// Read all four font settings from persistence and emit `ViewCommand::ShowFontSettings`.
+    async fn emit_font_settings_snapshot(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
+        use crate::ui_gpui::theme::DEFAULT_FONT_SIZE;
+
+        let size = app_settings_service
+            .get_setting(SETTING_KEY_FONT_SIZE)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(DEFAULT_FONT_SIZE);
+
+        let ui_family = app_settings_service
+            .get_setting(SETTING_KEY_UI_FONT_FAMILY)
+            .await
+            .ok()
+            .flatten()
+            .filter(|v| !v.is_empty());
+
+        let mono_family = app_settings_service
+            .get_setting(SETTING_KEY_MONO_FONT_FAMILY)
+            .await
+            .ok()
+            .flatten()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(active_mono_font_family);
+
+        let ligatures = app_settings_service
+            .get_setting(SETTING_KEY_MONO_LIGATURES)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<bool>().ok())
+            .unwrap_or_else(active_mono_ligatures);
+
+        let _ = view_tx.send(ViewCommand::ShowFontSettings {
+            size,
+            ui_family,
+            mono_family,
+            ligatures,
+        });
     }
 
     /// Emit the current MCP list from config.json so the settings view

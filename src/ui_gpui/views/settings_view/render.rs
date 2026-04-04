@@ -2,11 +2,57 @@
 
 use super::{McpItem, McpStatus, ProfileItem, SettingsCategory, SettingsView};
 use crate::events::types::UserEvent;
-use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::theme::{Theme, DEFAULT_MONO_FONT_FAMILY};
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FontWeight, MouseButton, Pixels,
     SharedString,
 };
+
+fn all_font_names(cx: &gpui::App) -> Vec<String> {
+    cx.text_system().all_font_names()
+}
+
+fn ui_font_options(cx: &gpui::App) -> Vec<String> {
+    let mut options = all_font_names(cx)
+        .into_iter()
+        .filter(|name| !name.starts_with('.'))
+        .collect::<Vec<_>>();
+    options.insert(0, "System Default".to_string());
+    options
+}
+
+fn mono_font_options(cx: &gpui::App) -> Vec<String> {
+    const MONO_HINTS: &[&str] = &[
+        "mono",
+        "code",
+        "courier",
+        "consol",
+        "inconsol",
+        "jetbrains",
+        "menlo",
+        "monaco",
+        "source code",
+        "fira",
+        "hack",
+        "ubuntu mono",
+    ];
+
+    let mut options = all_font_names(cx)
+        .into_iter()
+        .filter(|name| {
+            let lower = name.to_ascii_lowercase();
+            MONO_HINTS.iter().any(|hint| lower.contains(hint))
+        })
+        .collect::<Vec<_>>();
+
+    if !options.iter().any(|font| font == DEFAULT_MONO_FONT_FAMILY) {
+        options.push(DEFAULT_MONO_FONT_FAMILY.to_string());
+    }
+
+    options.sort();
+    options.dedup();
+    options
+}
 
 impl SettingsView {
     /// Render the top bar with back button and title
@@ -36,7 +82,7 @@ impl SettingsView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_dark()))
-                            .text_size(px(14.0))
+                            .text_size(px(Theme::font_size_body()))
                             .text_color(Theme::text_secondary())
                             .child("<")
                             .on_mouse_down(
@@ -51,7 +97,7 @@ impl SettingsView {
                     )
                     .child(
                         div()
-                            .text_size(px(14.0))
+                            .text_size(px(Theme::font_size_body()))
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::text_primary())
                             .child("Settings"),
@@ -86,7 +132,7 @@ impl SettingsView {
                 d.hover(|s| s.bg(Theme::bg_dark()))
                     .text_color(Theme::text_primary())
             })
-            .text_size(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
             .child(display_text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -124,7 +170,7 @@ impl SettingsView {
                     .when(profiles.is_empty(), |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_muted())
                                 .child("No profiles configured"),
                         )
@@ -135,7 +181,7 @@ impl SettingsView {
                                 .w_full()
                                 .px(px(8.0))
                                 .pb(px(2.0))
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::text_muted())
                                 .child(format!("{total_profiles} profiles")),
                         )
@@ -165,7 +211,7 @@ impl SettingsView {
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::danger())))
                     .when(!has_selection, |d| d.text_color(Theme::text_muted()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -193,7 +239,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_primary())
                     .child("+")
                     .on_mouse_down(
@@ -218,7 +264,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -275,7 +321,7 @@ impl SettingsView {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if is_selected {
                         Theme::selection_fg()
                     } else {
@@ -297,7 +343,7 @@ impl SettingsView {
                     } else {
                         Theme::bg_dark()
                     })
-                    .text_size(px(10.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(if enabled {
                         Theme::selection_fg()
                     } else {
@@ -334,7 +380,7 @@ impl SettingsView {
             .gap(px(6.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("MCP TOOLS"),
             )
@@ -354,7 +400,7 @@ impl SettingsView {
                     .when(mcps.is_empty(), |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_muted())
                                 .child("No MCP tools configured"),
                         )
@@ -365,7 +411,7 @@ impl SettingsView {
                                 .w_full()
                                 .px(px(8.0))
                                 .pb(px(2.0))
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::text_muted())
                                 .child(format!("{total_mcps} MCP tools")),
                         )
@@ -394,7 +440,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::danger())))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -422,7 +468,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_primary())
                     .child("+")
                     .on_mouse_down(
@@ -447,7 +493,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -486,7 +532,7 @@ impl SettingsView {
             .gap(px(6.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("EXPORT DIRECTORY"),
             )
@@ -514,7 +560,7 @@ impl SettingsView {
                             .items_center()
                             .overflow_hidden()
                             .cursor_text()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(text_color)
                             .child(input_text)
                             .on_mouse_down(
@@ -540,7 +586,7 @@ impl SettingsView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::accent()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("Browse…")
                             .on_mouse_down(
@@ -569,7 +615,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("Save")
                     .on_mouse_down(
@@ -588,7 +634,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_secondary())
                     .child("Reset")
                     .on_mouse_down(
@@ -602,7 +648,7 @@ impl SettingsView {
             )
             .child(
                 div()
-                    .text_size(px(10.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_muted())
                     .child("Enter a directory path, or reset for system Downloads"),
             )
@@ -642,7 +688,7 @@ impl SettingsView {
                         d.border_color(gpui::transparent_black())
                             .hover(|s| s.bg(Theme::bg_dark()))
                     })
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child(cat.display_name())
                     .on_mouse_down(
@@ -660,6 +706,7 @@ impl SettingsView {
     fn render_content_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let panel: gpui::AnyElement = match self.state.selected_category {
             SettingsCategory::General => self.render_general_panel(cx).into_any_element(),
+            SettingsCategory::Appearance => self.render_appearance_panel(cx).into_any_element(),
             SettingsCategory::Models => self.render_models_panel(cx).into_any_element(),
             SettingsCategory::Security => self.render_security_panel(cx).into_any_element(),
             SettingsCategory::McpTools => self.render_mcp_tools_panel(cx).into_any_element(),
@@ -676,8 +723,33 @@ impl SettingsView {
             .child(panel)
     }
 
-    /// General panel: theme dropdown trigger + export directory.
+    /// General panel: export directory.
     fn render_general_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
+            .child(self.render_export_dir_section(cx))
+    }
+
+    /// Appearance panel: theme, font size, UI font, mono font, and preview.
+    fn render_appearance_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("appearance-panel-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .gap(px(16.0))
+            .overflow_y_scroll()
+            .child(self.render_theme_section(cx))
+            .child(self.render_font_size_section(cx))
+            .child(self.render_ui_font_section(cx))
+            .child(self.render_mono_font_section(cx))
+            .child(Self::render_font_preview_section())
+    }
+
+    /// Theme section (moved from General panel).
+    fn render_theme_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let themes = &self.state.available_themes;
         let selected_name = themes
             .iter()
@@ -690,61 +762,504 @@ impl SettingsView {
         div()
             .flex()
             .flex_col()
-            .gap(px(16.0))
-            // Theme dropdown trigger
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_primary())
+                    .child("THEME"),
+            )
+            .child(self.render_theme_dropdown_trigger(&selected_name, cx))
+    }
+
+    /// Shared theme dropdown trigger button (used by Appearance panel).
+    fn render_theme_dropdown_trigger(
+        &self,
+        selected_name: &str,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let selected_name = selected_name.to_string();
+        div()
+            .id("theme-dropdown-trigger")
+            .w_full()
+            .h(px(28.0))
+            .px(px(8.0))
+            .bg(Theme::bg_dark())
+            .border_1()
+            .border_color(if self.state.theme_dropdown_open {
+                Theme::accent()
+            } else {
+                Theme::border()
+            })
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_between()
+            .cursor_pointer()
+            .text_size(px(Theme::font_size_mono()))
+            .text_color(Theme::text_primary())
+            .child(selected_name)
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_muted())
+                    .child(if self.state.theme_dropdown_open {
+                        "▲"
+                    } else {
+                        "▼"
+                    }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.toggle_theme_dropdown();
+                    cx.notify();
+                }),
+            )
+    }
+
+    /// Font size stepper section.
+    #[allow(clippy::too_many_lines)]
+    fn render_font_size_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let size = self.state.font_size;
+        let at_min = size <= crate::ui_gpui::theme::MIN_FONT_SIZE;
+        let at_max = size >= crate::ui_gpui::theme::MAX_FONT_SIZE;
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_primary())
+                    .child("FONT SIZE"),
+            )
             .child(
                 div()
                     .flex()
-                    .flex_col()
+                    .items_center()
                     .gap(px(6.0))
+                    // [-] decrease
                     .child(
                         div()
-                            .text_size(px(11.0))
-                            .text_color(Theme::text_primary())
-                            .child("THEME"),
-                    )
-                    .child(
-                        div()
-                            .id("theme-dropdown-trigger")
-                            .w_full()
-                            .h(px(28.0))
-                            .px(px(8.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(if self.state.theme_dropdown_open {
-                                Theme::accent()
-                            } else {
-                                Theme::border()
-                            })
+                            .id("btn-font-size-dec")
+                            .size(px(28.0))
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
-                            .justify_between()
+                            .justify_center()
                             .cursor_pointer()
-                            .text_size(px(12.0))
-                            .text_color(Theme::text_primary())
-                            .child(selected_name)
-                            .child(
-                                div()
-                                    .text_size(px(10.0))
-                                    .text_color(Theme::text_muted())
-                                    .child(if self.state.theme_dropdown_open {
-                                        "▲"
-                                    } else {
-                                        "▼"
-                                    }),
-                            )
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .text_size(px(Theme::font_size_body()))
+                            .text_color(if at_min {
+                                Theme::text_muted()
+                            } else {
+                                Theme::text_primary()
+                            })
+                            .child("-")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _window, cx| {
-                                    this.toggle_theme_dropdown();
-                                    cx.notify();
+                                cx.listener(move |this, _, _window, cx| {
+                                    if !at_min {
+                                        this.set_font_size(size - 1.0, cx);
+                                    }
                                 }),
+                            ),
+                    )
+                    // value display
+                    .child(
+                        div()
+                            .w(px(40.0))
+                            .h(px(28.0))
+                            .bg(Theme::bg_darker())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(Theme::text_primary())
+                            .child(format!("{size}")),
+                    )
+                    // [+] increase
+                    .child(
+                        div()
+                            .id("btn-font-size-inc")
+                            .size(px(28.0))
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .text_size(px(Theme::font_size_body()))
+                            .text_color(if at_max {
+                                Theme::text_muted()
+                            } else {
+                                Theme::text_primary()
+                            })
+                            .child("+")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _window, cx| {
+                                    if !at_max {
+                                        this.set_font_size(size + 1.0, cx);
+                                    }
+                                }),
+                            ),
+                    )
+                    // keyboard hint
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_ui()))
+                            .text_color(Theme::text_muted())
+                            .child("⌘+ / ⌘- to zoom"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_muted())
+                    .child("Base size for all text. Headings and UI scale proportionally."),
+            )
+    }
+
+    /// UI font family dropdown section.
+    #[allow(clippy::too_many_lines)]
+    fn render_ui_font_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let fonts = ui_font_options(cx);
+        let current_label = self
+            .state
+            .ui_font_family
+            .as_deref()
+            .unwrap_or("System Default")
+            .to_string();
+        let is_open = self.state.font_dropdown_open_for == Some(super::FontDropdownTarget::UiFont);
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_primary())
+                    .child("UI FONT"),
+            )
+            .child(
+                div()
+                    .id("ui-font-dropdown-trigger")
+                    .w_full()
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(if is_open {
+                        Theme::accent()
+                    } else {
+                        Theme::border()
+                    })
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .text_size(px(Theme::font_size_mono()))
+                    .text_color(Theme::text_primary())
+                    .child(current_label)
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_ui()))
+                            .text_color(Theme::text_muted())
+                            .child(if is_open { "▲" } else { "▼" }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.toggle_font_dropdown(super::FontDropdownTarget::UiFont);
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .when(is_open, |d| {
+                d.child(
+                    div()
+                        .id("ui-font-list")
+                        .w_full()
+                        .bg(Theme::bg_dark())
+                        .border_1()
+                        .border_color(Theme::accent())
+                        .rounded(px(4.0))
+                        .flex()
+                        .flex_col()
+                        .children(fonts.iter().map(|font| {
+                            let font_str = font.clone();
+                            let is_selected = if font == "System Default" {
+                                self.state.ui_font_family.is_none()
+                            } else {
+                                self.state.ui_font_family.as_deref() == Some(font.as_str())
+                            };
+                            div()
+                                .id(SharedString::from(format!("ui-font-{font_str}")))
+                                .w_full()
+                                .h(px(24.0))
+                                .px(px(8.0))
+                                .flex()
+                                .items_center()
+                                .cursor_pointer()
+                                .when(is_selected, |d| {
+                                    d.bg(Theme::selection_bg())
+                                        .text_color(Theme::selection_fg())
+                                })
+                                .when(!is_selected, |d| {
+                                    d.hover(|s| s.bg(Theme::bg_dark()))
+                                        .text_color(Theme::text_primary())
+                                })
+                                .text_size(px(Theme::font_size_mono()))
+                                .child(font_str.clone())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _window, cx| {
+                                        let value = if font_str == "System Default" {
+                                            None
+                                        } else {
+                                            Some(font_str.clone())
+                                        };
+                                        this.select_ui_font(value, cx);
+                                    }),
+                                )
+                                .into_any_element()
+                        })),
+                )
+            })
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_muted())
+                    .child("Labels, buttons, sidebar, settings chrome"),
+            )
+    }
+
+    /// Mono font family dropdown + ligatures toggle section.
+    #[allow(clippy::too_many_lines)]
+    fn render_mono_font_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let fonts = mono_font_options(cx);
+        let current_mono = self.state.mono_font_family.clone();
+        let is_open =
+            self.state.font_dropdown_open_for == Some(super::FontDropdownTarget::MonoFont);
+        let ligatures = self.state.mono_ligatures;
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_primary())
+                    .child("MONO FONT"),
+            )
+            .child(
+                div()
+                    .id("mono-font-dropdown-trigger")
+                    .w_full()
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(if is_open {
+                        Theme::accent()
+                    } else {
+                        Theme::border()
+                    })
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .text_size(px(Theme::font_size_mono()))
+                    .text_color(Theme::text_primary())
+                    .child(current_mono)
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_ui()))
+                            .text_color(Theme::text_muted())
+                            .child(if is_open { "▲" } else { "▼" }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.toggle_font_dropdown(super::FontDropdownTarget::MonoFont);
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .when(is_open, |d| {
+                d.child(
+                    div()
+                        .id("mono-font-list")
+                        .w_full()
+                        .bg(Theme::bg_dark())
+                        .border_1()
+                        .border_color(Theme::accent())
+                        .rounded(px(4.0))
+                        .flex()
+                        .flex_col()
+                        .children(fonts.iter().map(|font| {
+                            let font_str = font.clone();
+                            let is_selected = self.state.mono_font_family == font_str;
+                            div()
+                                .id(SharedString::from(format!("mono-font-{font_str}")))
+                                .w_full()
+                                .h(px(24.0))
+                                .px(px(8.0))
+                                .flex()
+                                .items_center()
+                                .cursor_pointer()
+                                .when(is_selected, |d| {
+                                    d.bg(Theme::selection_bg())
+                                        .text_color(Theme::selection_fg())
+                                })
+                                .when(!is_selected, |d| {
+                                    d.hover(|s| s.bg(Theme::bg_dark()))
+                                        .text_color(Theme::text_primary())
+                                })
+                                .text_size(px(Theme::font_size_mono()))
+                                .child(font_str.clone())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _window, cx| {
+                                        this.select_mono_font(font_str.clone(), cx);
+                                    }),
+                                )
+                                .into_any_element()
+                        })),
+                )
+            })
+            // Ligatures toggle row
+            .child(
+                div()
+                    .id("ligatures-toggle-row")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.toggle_mono_ligatures(cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .size(px(14.0))
+                            .rounded(px(2.0))
+                            .border_1()
+                            .border_color(Theme::border())
+                            .bg(if ligatures {
+                                Theme::accent()
+                            } else {
+                                Theme::bg_dark()
+                            })
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(Theme::font_size_ui()))
+                            .text_color(Theme::text_primary())
+                            .when(ligatures, |d| d.child("[OK]")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(Theme::text_primary())
+                            .child("Ligatures"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_muted())
+                    .child("Inline code and code blocks in messages"),
+            )
+    }
+
+    /// Live font preview section.
+    fn render_font_preview_section() -> impl IntoElement {
+        let h3_size = Theme::font_size_h3();
+        let body_size = Theme::font_size_body();
+        let mono_size = Theme::font_size_mono();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_primary())
+                    .child("PREVIEW"),
+            )
+            .child(
+                div()
+                    .id("font-preview-box")
+                    .w_full()
+                    .p(px(12.0))
+                    .bg(Theme::bg_darker())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    // Heading line
+                    .child(
+                        div()
+                            .text_size(px(h3_size))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(Theme::text_primary())
+                            .child("Heading Text"),
+                    )
+                    // Body line
+                    .child(
+                        div()
+                            .text_size(px(body_size))
+                            .text_color(Theme::text_primary())
+                            .child("Body text looks like this in messages."),
+                    )
+                    // Mixed line: mono code span + body continuation
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(mono_size))
+                                    .when_some(Theme::ui_font_family(), |div, family| {
+                                        div.font_family(family)
+                                    })
+                                    .font_family(Theme::mono_font_family())
+                                    .font_features(Theme::mono_font_features())
+                                    .text_color(Theme::accent())
+                                    .bg(Theme::bg_dark())
+                                    .px(px(4.0))
+                                    .rounded(px(2.0))
+                                    .child("fn main()"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(body_size))
+                                    .text_color(Theme::text_primary())
+                                    .child(" inline with body"),
                             ),
                     ),
             )
-            // Export directory section
-            .child(self.render_export_dir_section(cx))
     }
 
     /// Models panel: full-height profiles list + Refresh Models button.
@@ -761,7 +1276,7 @@ impl SettingsView {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("PROFILES"),
                     )
@@ -773,7 +1288,7 @@ impl SettingsView {
                             .rounded(px(4.0))
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_dark()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("Refresh Models")
                             .on_mouse_down(
@@ -844,7 +1359,7 @@ impl SettingsView {
             .when(themes.is_empty(), |d| {
                 d.items_center().justify_center().child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(px(Theme::font_size_mono()))
                         .text_color(Theme::text_muted())
                         .child("No themes available"),
                 )
@@ -877,7 +1392,7 @@ impl SettingsView {
                 d.hover(|s| s.bg(Theme::bg_dark()))
                     .text_color(Theme::text_primary())
             })
-            .text_size(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
             .child(name)
             .on_mouse_down(
                 gpui::MouseButton::Left,
@@ -910,6 +1425,9 @@ impl gpui::Render for SettingsView {
             .flex_col()
             .size_full()
             .bg(Theme::bg_darkest())
+            .when_some(Theme::ui_font_family(), |div, family| {
+                div.font_family(family)
+            })
             .track_focus(&self.focus_handle)
             // Invisible canvas for InputHandler registration (IME/diacritics)
             .child(

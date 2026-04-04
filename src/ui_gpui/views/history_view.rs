@@ -224,7 +224,7 @@ impl HistoryView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_secondary())
                     .child("<")
                     .on_mouse_down(
@@ -238,7 +238,7 @@ impl HistoryView {
             )
             .child(
                 div()
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .font_weight(FontWeight::BOLD)
                     .text_color(Theme::text_primary())
                     .child("History"),
@@ -261,7 +261,7 @@ impl HistoryView {
                     .bg(Theme::bg_dark())
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::accent()))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child("Load")
                     .on_mouse_down(
@@ -283,7 +283,7 @@ impl HistoryView {
                     .bg(Theme::bg_dark())
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::danger()))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child("Delete")
                     .on_mouse_down(
@@ -348,7 +348,7 @@ impl HistoryView {
 
         card.child(
             div()
-                .text_size(px(13.0))
+                .text_size(px(Theme::font_size_mono()))
                 .font_weight(FontWeight::BOLD)
                 .text_color(title_color)
                 .overflow_hidden()
@@ -357,7 +357,7 @@ impl HistoryView {
         )
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(px(Theme::font_size_ui()))
                 .text_color(subtitle_color)
                 .child(format!("{date} • {msg_text}")),
         )

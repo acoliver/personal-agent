@@ -39,7 +39,7 @@ impl SettingsView {
                     .when(checked, |d| {
                         d.bg(Theme::accent()).child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(px(Theme::font_size_small()))
                                 .text_color(Theme::selection_fg())
                                 .child("v"),
                         )
@@ -47,7 +47,7 @@ impl SettingsView {
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child(label.to_string()),
             )
@@ -77,7 +77,7 @@ impl SettingsView {
             .when(entries.is_empty(), |d| {
                 d.items_center().justify_center().child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(Theme::font_size_ui()))
                         .text_color(Theme::text_muted())
                         .child("(none)"),
                 )
@@ -97,7 +97,7 @@ impl SettingsView {
                     .child(
                         div()
                             .flex_1()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(Theme::text_primary())
                             .overflow_hidden()
                             .text_ellipsis()
@@ -113,7 +113,7 @@ impl SettingsView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::danger()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_muted())
                             .child("x")
                             .on_mouse_down(
@@ -157,7 +157,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .overflow_hidden()
                     .cursor_text()
                     .on_mouse_down(
@@ -191,7 +191,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::accent()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("Add")
                     .on_mouse_down(
@@ -231,7 +231,7 @@ impl SettingsView {
                             .text_color(Theme::text_primary())
                             .hover(|s| s.bg(Theme::bg_darker()))
                     })
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .child(label.to_string())
                     .on_mouse_down(
                         MouseButton::Left,
@@ -247,7 +247,7 @@ impl SettingsView {
             .gap(px(8.0))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child("MCP approval:"),
             )
@@ -285,7 +285,7 @@ impl SettingsView {
             .gap(px(4.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_muted())
                     .child(label.to_string()),
             )
@@ -317,7 +317,7 @@ impl SettingsView {
             .gap(px(6.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("TOOL APPROVAL"),
             )
@@ -337,7 +337,7 @@ impl SettingsView {
                         d.child(
                             div()
                                 .px(px(22.0))
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::warning())
                                 .child("Auto-approves all tool calls except denylisted commands."),
                         )
@@ -394,7 +394,7 @@ impl SettingsView {
                         } else {
                             Theme::bg_dark()
                         })
-                        .text_size(px(11.0))
+                        .text_size(px(Theme::font_size_ui()))
                         .text_color(if self.state.status_is_error {
                             Theme::selection_fg()
                         } else {

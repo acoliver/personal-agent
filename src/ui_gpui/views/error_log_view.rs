@@ -141,7 +141,7 @@ impl ErrorLogView {
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .text_size(px(Theme::FONT_SIZE_XS))
+                                    .text_size(px(Theme::font_size_ui()))
                                     .text_color(Theme::accent())
                                     .cursor_pointer()
                                     .hover(|s| s.text_color(Theme::accent_hover()))
@@ -154,7 +154,7 @@ impl ErrorLogView {
                                 div()
                                     .id("error-log-export-open-dir")
                                     .flex_shrink_0()
-                                    .text_size(px(Theme::FONT_SIZE_XS))
+                                    .text_size(px(Theme::font_size_ui()))
                                     .text_color(Theme::accent())
                                     .cursor_pointer()
                                     .hover(|s| s.text_color(Theme::accent_hover()))
@@ -178,7 +178,7 @@ impl ErrorLogView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_size(px(Theme::FONT_SIZE_XS))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(text_color)
                             .child(message),
                     )
@@ -205,7 +205,7 @@ impl ErrorLogView {
             .justify_center()
             .cursor_pointer()
             .hover(|s| s.bg(Theme::bg_dark()))
-            .text_size(px(Theme::FONT_SIZE_BASE))
+            .text_size(px(Theme::font_size_body()))
             .text_color(Theme::text_secondary())
             .child("<")
             .on_mouse_down(
@@ -220,7 +220,7 @@ impl ErrorLogView {
     fn render_title() -> impl IntoElement {
         div()
             .flex_1()
-            .text_size(px(Theme::FONT_SIZE_BASE))
+            .text_size(px(Theme::font_size_body()))
             .font_weight(FontWeight::BOLD)
             .text_color(Theme::text_primary())
             .child("Error Log")
@@ -228,7 +228,7 @@ impl ErrorLogView {
 
     fn render_error_count(entries_len: usize) -> impl IntoElement {
         div()
-            .text_size(px(Theme::FONT_SIZE_XS))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_muted())
             .child(Self::error_count_label(entries_len))
     }
@@ -244,7 +244,7 @@ impl ErrorLogView {
             .cursor_pointer()
             .bg(Theme::bg_darker())
             .hover(|s| s.bg(Theme::bg_dark()))
-            .text_size(px(Theme::FONT_SIZE_BASE))
+            .text_size(px(Theme::font_size_body()))
             .text_color(Theme::text_primary())
             .child("\u{2B07}")
             .on_mouse_down(
@@ -268,7 +268,7 @@ impl ErrorLogView {
             .bg(Theme::bg_dark())
             .cursor_pointer()
             .hover(|s| s.bg(Theme::danger()))
-            .text_size(px(Theme::FONT_SIZE_XS))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_primary())
             .child("Clear All")
             .on_mouse_down(
@@ -311,7 +311,7 @@ impl ErrorLogView {
     fn render_empty_state() -> impl IntoElement {
         div().w_full().flex().justify_center().pt(px(48.0)).child(
             div()
-                .text_size(px(Theme::FONT_SIZE_SM))
+                .text_size(px(Theme::font_size_mono()))
                 .text_color(Theme::text_muted())
                 .child("No errors recorded"),
         )
@@ -369,7 +369,7 @@ impl ErrorLogView {
                             .py(px(2.0))
                             .rounded(px(Theme::RADIUS_SM))
                             .bg(severity_bg)
-                            .text_size(px(Theme::FONT_SIZE_XS))
+                            .text_size(px(Theme::font_size_ui()))
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::error())
                             .child(severity_label),
@@ -382,7 +382,7 @@ impl ErrorLogView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_size(px(Theme::FONT_SIZE_XS))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_secondary())
                             .child(source),
                     )
@@ -390,7 +390,7 @@ impl ErrorLogView {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_size(px(Theme::FONT_SIZE_XS))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_muted())
                             .child(timestamp),
                     ),
@@ -398,7 +398,7 @@ impl ErrorLogView {
             // Message row
             .child(
                 div()
-                    .text_size(px(Theme::FONT_SIZE_SM))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child(message),
             )
@@ -406,7 +406,7 @@ impl ErrorLogView {
             .when(conversation_label.is_some(), |d| {
                 d.child(
                     div()
-                        .text_size(px(Theme::FONT_SIZE_XS))
+                        .text_size(px(Theme::font_size_ui()))
                         .text_color(Theme::text_muted())
                         .child(format!(
                             "conv: {}",

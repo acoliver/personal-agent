@@ -8,10 +8,13 @@
 
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewId;
-use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::theme::{active_font_size, set_active_font_size, Theme, DEFAULT_FONT_SIZE};
 use gpui::{div, prelude::*, Focusable, MouseButton};
 
-use super::routing::{NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation};
+use super::routing::{
+    NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation, ZoomIn, ZoomOut,
+    ZoomReset,
+};
 use super::startup::MainPanelAppState;
 use super::MainPanel;
 
@@ -173,6 +176,7 @@ impl MainPanel {
 }
 
 impl gpui::Render for MainPanel {
+    #[allow(clippy::too_many_lines)]
     fn render(
         &mut self,
         window: &mut gpui::Window,
@@ -191,6 +195,9 @@ impl gpui::Render for MainPanel {
             .flex_col()
             .size_full()
             .bg(Theme::bg_darkest())
+            .when_some(Theme::ui_font_family(), |div, family| {
+                div.font_family(family)
+            })
             .track_focus(&self.focus_handle)
             .on_mouse_down(
                 MouseButton::Left,
@@ -212,6 +219,39 @@ impl gpui::Render for MainPanel {
             .on_action(cx.listener(|this, _: &NavigateBack, _window, _cx| {
                 if this.navigation.current() != ViewId::Chat {
                     this.navigation.navigate_back();
+                }
+            }))
+            .on_action(cx.listener(|_this, _: &ZoomIn, _window, cx| {
+                let new_size = active_font_size() + 1.0;
+                if set_active_font_size(new_size) {
+                    if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
+                        let _ = app_state
+                            .gpui_bridge
+                            .emit(UserEvent::SetFontSize { size: new_size });
+                    }
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|_this, _: &ZoomOut, _window, cx| {
+                let new_size = active_font_size() - 1.0;
+                if set_active_font_size(new_size) {
+                    if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
+                        let _ = app_state
+                            .gpui_bridge
+                            .emit(UserEvent::SetFontSize { size: new_size });
+                    }
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|_this, _: &ZoomReset, _window, cx| {
+                let new_size = DEFAULT_FONT_SIZE;
+                if set_active_font_size(new_size) {
+                    if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
+                        let _ = app_state
+                            .gpui_bridge
+                            .emit(UserEvent::SetFontSize { size: new_size });
+                    }
+                    cx.notify();
                 }
             }))
             .on_key_down(

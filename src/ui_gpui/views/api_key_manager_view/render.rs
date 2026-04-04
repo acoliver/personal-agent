@@ -24,7 +24,7 @@ impl ApiKeyManagerView {
                 div()
                     .id("btn-back")
                     .cursor_pointer()
-                    .text_size(px(13.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::accent())
                     .hover(|s| s.text_color(Theme::text_primary()))
                     .child("← Back")
@@ -38,7 +38,7 @@ impl ApiKeyManagerView {
             )
             .child(
                 div()
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(Theme::text_primary())
                     .child("Manage API Keys"),
@@ -47,7 +47,7 @@ impl ApiKeyManagerView {
                 div()
                     .id("btn-add-key")
                     .cursor_pointer()
-                    .text_size(px(13.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::accent())
                     .hover(|s| s.text_color(Theme::text_primary()))
                     .child("+ Add")
@@ -90,7 +90,7 @@ impl ApiKeyManagerView {
             .child(
                 div()
                     .w(px(120.0))
-                    .text_size(px(13.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(Theme::text_primary())
                     .overflow_hidden()
@@ -100,7 +100,7 @@ impl ApiKeyManagerView {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_muted())
                     .overflow_hidden()
                     .child(masked),
@@ -109,7 +109,7 @@ impl ApiKeyManagerView {
             .child(
                 div()
                     .w(px(120.0))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_secondary())
                     .overflow_hidden()
                     .child(used_by),
@@ -122,7 +122,7 @@ impl ApiKeyManagerView {
                     .px(px(6.0))
                     .py(px(2.0))
                     .rounded(px(4.0))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::accent())
                     .hover(|s| s.bg(Theme::bg_dark()))
                     .child("Edit")
@@ -142,7 +142,7 @@ impl ApiKeyManagerView {
                     .px(px(6.0))
                     .py(px(2.0))
                     .rounded(px(4.0))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::error())
                     .hover(|s| s.bg(Theme::bg_dark()))
                     .child("Delete")
@@ -172,7 +172,7 @@ impl ApiKeyManagerView {
                 .child(
                     div()
                         .w(px(120.0))
-                        .text_size(px(11.0))
+                        .text_size(px(Theme::font_size_ui()))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(Theme::text_muted())
                         .child("LABEL"),
@@ -180,7 +180,7 @@ impl ApiKeyManagerView {
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(11.0))
+                        .text_size(px(Theme::font_size_ui()))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(Theme::text_muted())
                         .child("KEY"),
@@ -188,7 +188,7 @@ impl ApiKeyManagerView {
                 .child(
                     div()
                         .w(px(120.0))
-                        .text_size(px(11.0))
+                        .text_size(px(Theme::font_size_ui()))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(Theme::text_muted())
                         .child("USED BY"),
@@ -204,7 +204,7 @@ impl ApiKeyManagerView {
                     .justify_center()
                     .w_full()
                     .py(px(24.0))
-                    .text_size(px(13.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_muted())
                     .child("No API keys stored. Click + Add to create one."),
             );
@@ -228,7 +228,7 @@ impl ApiKeyManagerView {
             .gap(px(4.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_muted())
                     .child("LABEL"),
             )
@@ -251,7 +251,7 @@ impl ApiKeyManagerView {
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if label_editable {
                         Theme::text_primary()
                     } else {
@@ -292,7 +292,7 @@ impl ApiKeyManagerView {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_muted())
                             .child(if is_adding { "API KEY" } else { "NEW API KEY" }),
                     )
@@ -322,7 +322,7 @@ impl ApiKeyManagerView {
                                     .when(self.state.mask_value, |d| {
                                         d.bg(Theme::accent()).child(
                                             div()
-                                                .text_size(px(8.0))
+                                                .text_size(px(Theme::font_size_small()))
                                                 .text_color(Theme::selection_fg())
                                                 .child("v"),
                                         )
@@ -330,7 +330,7 @@ impl ApiKeyManagerView {
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(px(Theme::font_size_ui()))
                                     .text_color(Theme::text_muted())
                                     .child("Mask"),
                             ),
@@ -351,7 +351,7 @@ impl ApiKeyManagerView {
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if self.state.value_input.is_empty() {
                         Theme::text_muted()
                     } else {
@@ -387,7 +387,7 @@ impl ApiKeyManagerView {
                     .bg(Theme::bg_dark())
                     .border_1()
                     .border_color(Theme::border())
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_secondary())
                     .hover(|s| s.bg(Theme::bg_darker()))
                     .child("Cancel")
@@ -407,7 +407,7 @@ impl ApiKeyManagerView {
                     .py(px(4.0))
                     .rounded(px(4.0))
                     .bg(Theme::accent())
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .hover(|s| s.opacity(0.85))
                     .child("Save")
@@ -450,7 +450,7 @@ impl ApiKeyManagerView {
             .border_color(Theme::border())
             .child(
                 div()
-                    .text_size(px(13.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(Theme::text_primary())
                     .child(title),
@@ -460,7 +460,7 @@ impl ApiKeyManagerView {
             .when(self.state.error.is_some(), |d| {
                 d.child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(Theme::font_size_ui()))
                         .text_color(Theme::error())
                         .child(self.state.error.clone().unwrap_or_default()),
                 )

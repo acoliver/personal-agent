@@ -6,6 +6,7 @@ use crate::presentation::view_command::ViewCommand;
 impl SettingsView {
     /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P06
+    #[allow(clippy::too_many_lines)]
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
             ViewCommand::ShowSettings {
@@ -23,6 +24,18 @@ impl SettingsView {
                 selected_slug,
             } => {
                 self.apply_theme_options(options, selected_slug);
+            }
+            ViewCommand::ShowFontSettings {
+                size,
+                ui_family,
+                mono_family,
+                ligatures,
+            } => {
+                self.state.font_size = size;
+                self.state.ui_font_family = ui_family;
+                self.state.mono_font_family = mono_family;
+                self.state.mono_ligatures = ligatures;
+                cx.notify();
             }
             ViewCommand::ProfileCreated { id, name } => {
                 self.state.selected_profile_id = Some(id);

@@ -78,7 +78,7 @@ impl ApprovalBubble {
             .py(px(3.0))
             .rounded(px(Theme::RADIUS_SM))
             .bg(bg)
-            .text_size(px(Theme::FONT_SIZE_XS))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(fg)
             .cursor_pointer()
             .hover(|s| s.opacity(0.8))
@@ -122,7 +122,7 @@ impl IntoElement for ApprovalBubble {
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .text_size(px(Theme::FONT_SIZE_MD))
+                .text_size(px(Theme::font_size_mono()))
                 .text_color(Theme::text_primary())
                 .child(tool_label),
         );
@@ -171,7 +171,7 @@ impl IntoElement for ApprovalBubble {
             ApprovalBubbleState::Approved => {
                 container = container.child(
                     div()
-                        .text_size(px(Theme::FONT_SIZE_XS))
+                        .text_size(px(Theme::font_size_ui()))
                         .text_color(Theme::success())
                         .child("\u{2713} Approved"),
                 );
@@ -179,7 +179,7 @@ impl IntoElement for ApprovalBubble {
             ApprovalBubbleState::Denied => {
                 container = container.child(
                     div()
-                        .text_size(px(Theme::FONT_SIZE_XS))
+                        .text_size(px(Theme::font_size_ui()))
                         .text_color(Theme::error())
                         .child("\u{2717} Denied"),
                 );

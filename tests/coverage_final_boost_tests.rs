@@ -23,7 +23,9 @@ use personal_agent::models::{
 };
 use personal_agent::services::chat_impl::ChatServiceImpl;
 use personal_agent::services::{ChatService, ConversationService, ProfileService, ServiceError};
-use personal_agent::ui_gpui::theme::Theme;
+use personal_agent::ui_gpui::theme::{
+    active_font_size, set_active_font_size, Theme, DEFAULT_FONT_SIZE, DEFAULT_MONO_FONT_FAMILY,
+};
 use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -304,11 +306,31 @@ fn theme_color_helpers_return_valid_hsla_and_rgba_values() {
     assert_eq!(Theme::RADIUS_SM, 4.0);
     assert_eq!(Theme::RADIUS_MD, 6.0);
     assert_eq!(Theme::RADIUS_LG, 8.0);
-    assert_eq!(Theme::FONT_SIZE_XS, 11.0);
-    assert_eq!(Theme::FONT_SIZE_SM, 12.0);
-    assert_eq!(Theme::FONT_SIZE_MD, 13.0);
-    assert_eq!(Theme::FONT_SIZE_BASE, 14.0);
-    assert_eq!(Theme::FONT_SIZE_LG, 16.0);
+
+    set_active_font_size(DEFAULT_FONT_SIZE);
+    let assert_f32_eq = |left: f32, right: f32| {
+        assert!((left - right).abs() < 1e-5, "left={left}, right={right}");
+    };
+    assert_f32_eq(Theme::font_size_small(), DEFAULT_FONT_SIZE * 0.78);
+    assert_f32_eq(Theme::font_size_ui(), DEFAULT_FONT_SIZE * 0.85);
+    assert_f32_eq(Theme::font_size_mono(), DEFAULT_FONT_SIZE * 0.9);
+    assert_f32_eq(Theme::font_size_body(), DEFAULT_FONT_SIZE);
+    assert_f32_eq(Theme::font_size_h3(), DEFAULT_FONT_SIZE * 1.25);
+    assert_f32_eq(Theme::font_size_h2(), DEFAULT_FONT_SIZE * 1.5);
+    assert_f32_eq(Theme::font_size_h1(), DEFAULT_FONT_SIZE * 2.0);
+
+    assert_eq!(Theme::mono_font_family_name(), DEFAULT_MONO_FONT_FAMILY);
+    assert_eq!(Theme::mono_font_family().as_ref(), DEFAULT_MONO_FONT_FAMILY);
+    assert_eq!(Theme::mono_font_features().is_calt_enabled(), None);
+    assert_eq!(Theme::ui_font_family_name(), None);
+    assert_eq!(Theme::ui_font_family(), None);
+
+    assert!(Theme::mono_ligatures_enabled());
+    assert_eq!(Theme::mono_font_features().is_calt_enabled(), None);
+
+    // restore default base size in case other tests rely on it
+    set_active_font_size(DEFAULT_FONT_SIZE);
+    assert_eq!(active_font_size(), DEFAULT_FONT_SIZE);
 }
 
 #[test]

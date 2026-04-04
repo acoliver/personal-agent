@@ -14,7 +14,10 @@ use personal_agent::ui_gpui::app_store::{
     StartupInputs, StartupMode, StartupSelectedConversation, StartupTranscriptResult,
 };
 use personal_agent::ui_gpui::theme::{
-    is_valid_theme_slug, migrate_legacy_theme_slug, set_active_theme_slug,
+    is_valid_theme_slug, migrate_legacy_theme_slug, set_active_font_size,
+    set_active_mono_font_family, set_active_mono_ligatures, set_active_theme_slug,
+    set_active_ui_font_family, DEFAULT_FONT_SIZE, DEFAULT_MONO_FONT_FAMILY, SETTING_KEY_FONT_SIZE,
+    SETTING_KEY_MONO_FONT_FAMILY, SETTING_KEY_MONO_LIGATURES, SETTING_KEY_UI_FONT_FAMILY,
 };
 
 // ============================================================================
@@ -137,6 +140,50 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
         "Startup: applied theme '{}' (persisted: '{}')",
         saved_theme,
         raw_theme
+    );
+
+    // Apply persisted font settings so the first render uses the correct
+    // font size, families, and ligature preference.
+    let font_size = app_settings
+        .get_setting(SETTING_KEY_FONT_SIZE)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(DEFAULT_FONT_SIZE);
+    set_active_font_size(font_size);
+
+    let ui_font_family = app_settings
+        .get_setting(SETTING_KEY_UI_FONT_FAMILY)
+        .await
+        .ok()
+        .flatten()
+        .filter(|v| !v.is_empty());
+    set_active_ui_font_family(ui_font_family);
+
+    let mono_font_family = app_settings
+        .get_setting(SETTING_KEY_MONO_FONT_FAMILY)
+        .await
+        .ok()
+        .flatten()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_MONO_FONT_FAMILY.to_string());
+    set_active_mono_font_family(&mono_font_family);
+
+    let mono_ligatures = app_settings
+        .get_setting(SETTING_KEY_MONO_LIGATURES)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+    set_active_mono_ligatures(mono_ligatures);
+
+    tracing::info!(
+        "Startup: applied font settings — size={}, mono_family={}, ligatures={}",
+        font_size,
+        mono_font_family,
+        mono_ligatures,
     );
 
     let selected_profile_id = match app_settings.get_default_profile_id().await {

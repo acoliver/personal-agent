@@ -124,23 +124,38 @@ pub struct ThemeOption {
     pub slug: String,
 }
 
+/// Which font dropdown is currently open in the Appearance panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontDropdownTarget {
+    UiFont,
+    MonoFont,
+}
+
 /// Categories shown in the settings sidebar.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SettingsCategory {
     #[default]
     General,
+    Appearance,
     Models,
     Security,
     McpTools,
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 4] = [Self::General, Self::Models, Self::Security, Self::McpTools];
+    pub const ALL: [Self; 5] = [
+        Self::General,
+        Self::Appearance,
+        Self::Models,
+        Self::Security,
+        Self::McpTools,
+    ];
 
     #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::Appearance => "Appearance",
             Self::Models => "Models",
             Self::Security => "Security",
             Self::McpTools => "MCP Tools",
@@ -181,6 +196,12 @@ pub struct SettingsState {
     pub(super) active_field: Option<ActiveField>,
     pub status_message: Option<String>,
     pub status_is_error: bool,
+    // Font settings (Appearance panel)
+    pub font_size: f32,
+    pub ui_font_family: Option<String>,
+    pub mono_font_family: String,
+    pub mono_ligatures: bool,
+    pub font_dropdown_open_for: Option<FontDropdownTarget>,
 }
 
 impl SettingsState {
@@ -212,6 +233,11 @@ impl Default for SettingsState {
             active_field: None,
             status_message: None,
             status_is_error: false,
+            font_size: 14.0,
+            ui_font_family: None,
+            mono_font_family: crate::ui_gpui::theme::DEFAULT_MONO_FONT_FAMILY.to_string(),
+            mono_ligatures: true,
+            font_dropdown_open_for: None,
         }
     }
 }
@@ -637,7 +663,7 @@ impl SettingsView {
             match self.state.selected_category {
                 SettingsCategory::Models => self.scroll_profiles(-1),
                 SettingsCategory::McpTools => self.scroll_mcps(-1),
-                SettingsCategory::General if self.state.theme_dropdown_open => {
+                SettingsCategory::Appearance if self.state.theme_dropdown_open => {
                     self.scroll_themes(-1);
                 }
                 _ => {}
@@ -650,7 +676,7 @@ impl SettingsView {
             match self.state.selected_category {
                 SettingsCategory::Models => self.scroll_profiles(1),
                 SettingsCategory::McpTools => self.scroll_mcps(1),
-                SettingsCategory::General if self.state.theme_dropdown_open => {
+                SettingsCategory::Appearance if self.state.theme_dropdown_open => {
                     self.scroll_themes(1);
                 }
                 _ => {}
@@ -660,7 +686,7 @@ impl SettingsView {
         }
 
         if key == "space"
-            && self.state.selected_category == SettingsCategory::General
+            && self.state.selected_category == SettingsCategory::Appearance
             && self.state.theme_dropdown_open
         {
             self.apply_selected_theme(cx);
@@ -686,7 +712,7 @@ impl SettingsView {
             }
             None => {}
         }
-        if self.state.selected_category == SettingsCategory::General
+        if self.state.selected_category == SettingsCategory::Appearance
             && self.state.theme_dropdown_open
         {
             self.apply_selected_theme(cx);
@@ -793,6 +819,46 @@ impl SettingsView {
         if let Some(mcp) = self.state.mcps.get(next) {
             self.state.selected_mcp_id = Some(mcp.id);
         }
+    }
+
+    pub(super) fn toggle_font_dropdown(&mut self, target: FontDropdownTarget) {
+        if self.state.font_dropdown_open_for == Some(target) {
+            self.state.font_dropdown_open_for = None;
+        } else {
+            self.state.font_dropdown_open_for = Some(target);
+        }
+    }
+
+    pub(super) fn select_ui_font(&mut self, name: Option<String>, cx: &mut gpui::Context<Self>) {
+        self.state.ui_font_family.clone_from(&name);
+        self.state.font_dropdown_open_for = None;
+        self.emit(&UserEvent::SetUiFontFamily { name });
+        cx.notify();
+    }
+
+    pub(super) fn select_mono_font(&mut self, name: String, cx: &mut gpui::Context<Self>) {
+        self.state.mono_font_family.clone_from(&name);
+        self.state.font_dropdown_open_for = None;
+        self.emit(&UserEvent::SetMonoFontFamily { name });
+        cx.notify();
+    }
+
+    pub(super) fn set_font_size(&mut self, size: f32, cx: &mut gpui::Context<Self>) {
+        let clamped = size.clamp(
+            crate::ui_gpui::theme::MIN_FONT_SIZE,
+            crate::ui_gpui::theme::MAX_FONT_SIZE,
+        );
+        self.state.font_size = clamped;
+        self.emit(&UserEvent::SetFontSize { size: clamped });
+        cx.notify();
+    }
+
+    pub(super) fn toggle_mono_ligatures(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.mono_ligatures = !self.state.mono_ligatures;
+        self.emit(&UserEvent::SetMonoLigatures {
+            enabled: self.state.mono_ligatures,
+        });
+        cx.notify();
     }
 
     /// Emit a `UserEvent` through the bridge

@@ -197,6 +197,18 @@ pub enum UserEvent {
     /// User selected a theme from the settings dropdown
     SelectTheme { slug: String },
 
+    /// User changed the UI font size.
+    SetFontSize { size: f32 },
+
+    /// User changed the proportional UI font family (`None` = system default).
+    SetUiFontFamily { name: Option<String> },
+
+    /// User changed the monospace font family.
+    SetMonoFontFamily { name: String },
+
+    /// User toggled monospace ligatures.
+    SetMonoLigatures { enabled: bool },
+
     // ===== Tool Approval Actions =====
     /// User requested a fresh tool approval policy snapshot.
     RefreshToolApprovalPolicy,

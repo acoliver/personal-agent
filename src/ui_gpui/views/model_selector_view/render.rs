@@ -34,7 +34,7 @@ impl ModelSelectorView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child("Cancel")
                     .on_mouse_down(
@@ -50,7 +50,7 @@ impl ModelSelectorView {
             .child(
                 div().flex_1().flex().justify_center().child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(px(Theme::font_size_body()))
                         .font_weight(FontWeight::BOLD)
                         .text_color(Theme::text_primary())
                         .child("Select Model"),
@@ -96,12 +96,12 @@ impl ModelSelectorView {
                     .cursor_text()
                     .child(if search_query.is_empty() {
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(Theme::text_muted())
                             .child("Search models...")
                     } else {
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(Theme::text_primary())
                             .child(search_query)
                     }),
@@ -114,7 +114,7 @@ impl ModelSelectorView {
                     .gap(px(4.0))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("Provider:"),
                     )
@@ -137,7 +137,7 @@ impl ModelSelectorView {
                             .items_center()
                             .justify_between()
                             .cursor_pointer()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -196,7 +196,7 @@ impl ModelSelectorView {
                             .when(filter_reasoning, |d| {
                                 d.bg(Theme::accent()).child(
                                     div()
-                                        .text_size(px(10.0))
+                                        .text_size(px(Theme::font_size_ui()))
                                         .text_color(Theme::selection_fg())
                                         .child("[OK]"),
                                 )
@@ -204,7 +204,7 @@ impl ModelSelectorView {
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("Reasoning"),
                     ),
@@ -235,7 +235,7 @@ impl ModelSelectorView {
                             .when(filter_vision, |d| {
                                 d.bg(Theme::accent()).child(
                                     div()
-                                        .text_size(px(10.0))
+                                        .text_size(px(Theme::font_size_ui()))
                                         .text_color(Theme::selection_fg())
                                         .child("[OK]"),
                                 )
@@ -243,7 +243,7 @@ impl ModelSelectorView {
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("Vision"),
                     ),
@@ -263,7 +263,7 @@ impl ModelSelectorView {
             .px(px(12.0))
             .flex()
             .items_center()
-            .text_size(px(10.0))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_primary())
             .child(div().flex_1().child("Model"))
             .child(div().w(px(50.0)).flex().justify_end().child("Context"))
@@ -284,7 +284,7 @@ impl ModelSelectorView {
             .px(px(12.0))
             .flex()
             .items_center()
-            .text_size(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
             .font_weight(FontWeight::BOLD)
             .text_color(Theme::text_primary())
             .child(provider_name.to_string())
@@ -317,7 +317,7 @@ impl ModelSelectorView {
             .items_center()
             .cursor_pointer()
             .hover(|s| s.bg(Theme::bg_dark()))
-            .text_size(px(11.0))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_primary())
             .on_mouse_down(
                 MouseButton::Left,
@@ -378,7 +378,7 @@ impl ModelSelectorView {
                 .justify_center()
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(px(Theme::font_size_mono()))
                         .text_color(Theme::text_muted())
                         .child("No matching models"),
                 )
@@ -437,7 +437,7 @@ impl ModelSelectorView {
             .px(px(12.0))
             .flex()
             .items_center()
-            .text_size(px(11.0))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_primary())
             .child(format!(
                 "{model_count} models from {provider_count} providers"
@@ -500,7 +500,7 @@ impl ModelSelectorView {
                     .py(px(6.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_darker()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .on_mouse_down(
                         MouseButton::Left,
@@ -520,7 +520,7 @@ impl ModelSelectorView {
                     .py(px(6.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_darker()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .on_mouse_down(
                         MouseButton::Left,

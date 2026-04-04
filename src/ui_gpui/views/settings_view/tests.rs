@@ -392,8 +392,8 @@ async fn key_handling_navigates_and_emits_profile_events(cx: &mut TestAppContext
             Some(ViewId::McpAdd)
         );
 
-        // Theme scrolling requires General category with dropdown open
-        view.select_category(SettingsCategory::General);
+        // Theme scrolling requires Appearance category with dropdown open
+        view.select_category(SettingsCategory::Appearance);
         view.state.theme_dropdown_open = true;
         view.state.available_themes = vec![
             ThemeOption {

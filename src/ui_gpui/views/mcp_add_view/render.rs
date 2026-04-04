@@ -32,7 +32,7 @@ impl McpAddView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_secondary())
                     .child("Cancel")
                     .on_mouse_down(
@@ -49,7 +49,7 @@ impl McpAddView {
             .child(
                 div().flex_1().flex().justify_center().child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(px(Theme::font_size_body()))
                         .font_weight(FontWeight::BOLD)
                         .text_color(Theme::text_primary())
                         .child("Add MCP"),
@@ -64,7 +64,7 @@ impl McpAddView {
                     .rounded(px(4.0))
                     .flex()
                     .justify_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .when(can_proceed, |d| {
                         d.cursor_pointer()
                             .bg(Theme::accent())
@@ -104,7 +104,7 @@ impl McpAddView {
     /// @plan PLAN-20250130-GPUIREDUX.P09
     fn render_label(text: &str) -> impl IntoElement {
         div()
-            .text_size(px(11.0))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_secondary())
             .mb(px(4.0))
             .child(text.to_string())
@@ -138,7 +138,7 @@ impl McpAddView {
                     .flex()
                     .items_center()
                     .cursor_text()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
@@ -175,7 +175,7 @@ impl McpAddView {
             .child(div().flex_1().h(px(1.0)).bg(Theme::border()))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_muted())
                     .child("or search registry"),
             )
@@ -210,7 +210,7 @@ impl McpAddView {
                     .items_center()
                     .justify_between()
                     .cursor_pointer()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .on_mouse_down(
                         MouseButton::Left,
@@ -262,7 +262,7 @@ impl McpAddView {
                         .py(px(6.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(Theme::bg_darker()))
-                        .text_size(px(11.0))
+                        .text_size(px(Theme::font_size_ui()))
                         .text_color(Theme::text_primary())
                         .on_mouse_down(
                             MouseButton::Left,
@@ -304,7 +304,7 @@ impl McpAddView {
                     .flex()
                     .items_center()
                     .cursor_text()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
@@ -370,7 +370,7 @@ impl McpAddView {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .font_weight(FontWeight::BOLD)
                             .text_color(if is_selected {
                                 Theme::selection_fg()
@@ -389,7 +389,7 @@ impl McpAddView {
                             } else {
                                 Theme::bg_dark()
                             })
-                            .text_size(px(9.0))
+                            .text_size(px(Theme::font_size_small()))
                             .text_color(Theme::text_secondary())
                             .child(badge),
                     ),
@@ -397,7 +397,7 @@ impl McpAddView {
             .child(
                 div()
                     .w_full()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(if is_selected {
                         Theme::text_primary()
                     } else {
@@ -409,7 +409,7 @@ impl McpAddView {
             .child(
                 div()
                     .w_full()
-                    .text_size(px(9.0))
+                    .text_size(px(Theme::font_size_small()))
                     .text_color(if is_selected {
                         Theme::text_secondary()
                     } else {
@@ -444,7 +444,7 @@ impl McpAddView {
                     .when(self.state.search_state == SearchState::Loading, |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_secondary())
                                 .child("Searching..."),
                         )
@@ -458,7 +458,7 @@ impl McpAddView {
                                 .gap(px(8.0))
                                 .child(
                                     div()
-                                        .text_size(px(13.0))
+                                        .text_size(px(Theme::font_size_mono()))
                                         .text_color(Theme::text_secondary())
                                         .child(format!(
                                             "No MCPs found matching \"{}\".",
@@ -467,7 +467,7 @@ impl McpAddView {
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(11.0))
+                                        .text_size(px(Theme::font_size_ui()))
                                         .text_color(Theme::text_muted())
                                         .child("Try a different search term."),
                                 ),
@@ -476,7 +476,7 @@ impl McpAddView {
                     .when(self.state.search_state == SearchState::Idle, |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_muted())
                                 .child("Enter a search term to find MCPs"),
                         )
@@ -498,7 +498,7 @@ impl McpAddView {
                             };
                             d.items_center().justify_center().p(px(16.0)).child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(px(Theme::font_size_mono()))
                                     .text_color(Theme::danger())
                                     .child(message),
                             )

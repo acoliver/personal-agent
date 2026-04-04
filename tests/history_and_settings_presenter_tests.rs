@@ -760,9 +760,9 @@ mod settings_presenter_tests {
         (dir, path, mcp_id)
     }
 
-    /// Drain all 5 startup commands emitted by the settings presenter.
+    /// Drain all 6 startup commands emitted by the settings presenter.
     async fn drain_startup(rx: &mut broadcast::Receiver<ViewCommand>) {
-        for _ in 0..5 {
+        for _ in 0..6 {
             let _ = recv_broadcast_command(rx).await;
         }
     }
@@ -794,7 +794,8 @@ mod settings_presenter_tests {
                 selected_profile_id: Some(profile.id),
             }
         );
-        // Drain ShowSettingsTheme + ToolApprovalPolicyUpdated + YoloModeChanged
+        // Drain ShowSettingsTheme + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
@@ -1680,7 +1681,8 @@ mod settings_presenter_tests {
         let _ = recv_broadcast_command(&mut view_rx).await;
 
         let cmd = recv_broadcast_command(&mut view_rx).await;
-        // Drain ToolApprovalPolicyUpdated + YoloModeChanged
+        // Drain ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
@@ -1722,7 +1724,8 @@ mod settings_presenter_tests {
 
         presenter.start().await.expect("start should succeed");
 
-        // Drain startup commands (ShowSettings + ChatProfilesUpdated + ShowSettingsTheme)
+        // Drain startup commands (ShowSettings + ChatProfilesUpdated + ShowSettingsTheme +
+        // ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged)
         drain_startup(&mut view_rx).await;
 
         send_settings_event(
@@ -1901,7 +1904,7 @@ mod settings_presenter_tests {
         send_settings_event(&event_tx, AppEvent::User(UserEvent::RefreshProfiles)).await;
 
         // Should receive ShowSettings + ChatProfilesUpdated + ShowSettingsTheme
-        // + ToolApprovalPolicyUpdated + YoloModeChanged
+        // + ToolApprovalPolicyUpdated + YoloModeChanged (ShowFontSettings may interleave)
         let first = recv_broadcast_command(&mut view_rx).await;
         assert!(
             matches!(first, ViewCommand::ShowSettings { .. }),
