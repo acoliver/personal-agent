@@ -357,9 +357,6 @@ async fn resolve_tool_approval_proceed_session_updates_session_policy() {
     );
 }
 
-
-
-
 #[tokio::test]
 async fn resolve_tool_approval_proceed_always_persists_all_identifiers() {
     let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
