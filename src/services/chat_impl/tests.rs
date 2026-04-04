@@ -11,6 +11,8 @@ use crate::services::{AppSettingsService, ServiceError, ServiceResult};
 use std::collections::HashMap;
 use tokio::sync::{Barrier, RwLock};
 
+mod approval_persistence;
+
 struct InMemoryAppSettingsService {
     settings: RwLock<HashMap<String, String>>,
 }
@@ -254,12 +256,15 @@ async fn resolve_tool_approval_denied_resolves_all_pending_approvals() {
 }
 
 #[tokio::test]
-async fn resolve_tool_approval_proceed_session_updates_session_policy() {
+async fn resolve_tool_approval_proceed_session_updates_all_identifiers() {
     let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
     let (service, mut view_rx, approval_gate) =
         make_approval_test_chat_service(app_settings.clone());
     let request_id = Uuid::new_v4().to_string();
-    let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+    let waiter = approval_gate.wait_for_approvals(
+        request_id.clone(),
+        vec!["git status".to_string(), "pwd".to_string()],
+    );
 
     service
         .resolve_tool_approval(
@@ -286,9 +291,14 @@ async fn resolve_tool_approval_proceed_session_updates_session_policy() {
 
     let policy_after = service.policy.lock().await.clone();
     assert_eq!(
-        policy_after.evaluate("WriteFile"),
+        policy_after.evaluate("git status --short"),
         crate::agent::tool_approval_policy::ToolApprovalDecision::Allow,
-        "ProceedSession should add an in-memory session allow rule"
+        "ProceedSession should add every identifier to in-memory session allow rules"
+    );
+    assert_eq!(
+        policy_after.evaluate("pwd"),
+        crate::agent::tool_approval_policy::ToolApprovalDecision::Allow,
+        "ProceedSession should add every identifier to in-memory session allow rules"
     );
 
     let persisted = app_settings
@@ -302,12 +312,15 @@ async fn resolve_tool_approval_proceed_session_updates_session_policy() {
 }
 
 #[tokio::test]
-async fn resolve_tool_approval_proceed_always_persists_policy() {
+async fn resolve_tool_approval_proceed_always_persists_all_identifiers() {
     let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
     let (service, mut view_rx, approval_gate) =
         make_approval_test_chat_service(app_settings.clone());
     let request_id = Uuid::new_v4().to_string();
-    let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+    let waiter = approval_gate.wait_for_approvals(
+        request_id.clone(),
+        vec!["git status".to_string(), "pwd".to_string()],
+    );
 
     service
         .resolve_tool_approval(
@@ -342,7 +355,7 @@ async fn resolve_tool_approval_proceed_always_persists_policy() {
             yolo_mode: false,
             auto_approve_reads: false,
             mcp_approval_mode: McpApprovalMode::PerTool,
-            persistent_allowlist: vec!["WriteFile".to_string()],
+            persistent_allowlist: vec!["git status".to_string(), "pwd".to_string()],
             persistent_denylist: Vec::new(),
         }
     );
@@ -361,7 +374,15 @@ async fn resolve_tool_approval_proceed_always_persists_policy() {
         .await
         .expect("settings read should succeed")
         .expect("ProceedAlways should persist policy payload");
-    assert!(persisted.contains("WriteFile"));
+    assert!(persisted.contains("git status"));
+    assert!(persisted.contains("pwd"));
+
+    let policy_after = service.policy.lock().await.clone();
+    assert_eq!(
+        policy_after.evaluate_compound_command("git status && pwd"),
+        crate::agent::tool_approval_policy::ToolApprovalDecision::Allow,
+        "ProceedAlways should persist every identifier needed for compound command evaluation"
+    );
 }
 
 #[tokio::test]
@@ -496,26 +517,6 @@ async fn resolve_tool_approval_is_atomic_between_competing_decisions() {
             "Denied winner must not persist allowlist entries"
         );
     }
-}
-
-#[tokio::test]
-async fn resolve_tool_approval_returns_error_when_persistence_fails() {
-    let app_settings = Arc::new(FailingAppSettingsService) as Arc<dyn AppSettingsService>;
-    let (service, _view_rx, approval_gate) = make_approval_test_chat_service(app_settings);
-    let request_id = Uuid::new_v4().to_string();
-    let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
-
-    let error = service
-        .resolve_tool_approval(request_id, ToolApprovalResponseAction::ProceedAlways)
-        .await
-        .expect_err("ProceedAlways should fail when persistence fails");
-
-    assert!(
-        matches!(error, ServiceError::Storage(_)),
-        "persistence failure should bubble up as storage error"
-    );
-
-    drop(waiter);
 }
 
 impl MockConversationService {
