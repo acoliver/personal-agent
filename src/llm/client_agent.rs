@@ -484,6 +484,7 @@ impl crate::llm::LlmClient {
         });
     }
 
+    #[allow(clippy::cognitive_complexity)]
     async fn do_run_agent_stream<F>(
         &self,
         agent: &Agent<McpToolContext>,

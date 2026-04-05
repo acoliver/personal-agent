@@ -229,6 +229,7 @@ impl ProfileServiceImpl {
     }
 
     /// Load all profiles from disk, with compatibility support for legacy schemas.
+    #[allow(clippy::cognitive_complexity)]
     fn load_profiles_from_disk(&self) -> Result<Vec<ModelProfile>, super::ServiceError> {
         let mut profiles = Vec::new();
         let mut seen = HashSet::<Uuid>::new();
