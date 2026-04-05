@@ -322,6 +322,21 @@ fn create_linux_system_tray() -> Option<SystemTray> {
     }
 }
 
+fn start_tray_and_apply_popup_flags(tray: &mut SystemTray, cx: &mut App) {
+    tray.start_click_listener(cx);
+
+    if std::env::var("PA_AUTO_OPEN_POPUP").ok().as_deref() == Some("1") {
+        tray.toggle_popup(cx);
+        info!("GPUI initialized in tray mode; popup auto-opened for automation");
+    } else {
+        info!("GPUI initialized in tray mode; click the status icon to open popup");
+    }
+
+    if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
+        info!("PA_TEST_POPUP_ONSCREEN=1 active (automation popup positioning override)");
+    }
+}
+
 #[allow(clippy::cognitive_complexity)]
 fn run_gpui_app(cx: &mut App) {
     cx.set_quit_mode(QuitMode::Explicit);
@@ -396,18 +411,7 @@ fn run_gpui_app(cx: &mut App) {
     };
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let mut tray = SystemTray::new();
-    tray.start_click_listener(cx);
-
-    if std::env::var("PA_AUTO_OPEN_POPUP").ok().as_deref() == Some("1") {
-        tray.toggle_popup(cx);
-        info!("GPUI initialized in tray mode; popup auto-opened for automation");
-    } else {
-        info!("GPUI initialized in tray mode; click the status icon to open popup");
-    }
-
-    if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
-        info!("PA_TEST_POPUP_ONSCREEN=1 active (automation popup positioning override)");
-    }
+    start_tray_and_apply_popup_flags(&mut tray, cx);
 
     cx.set_global(tray);
 
