@@ -70,11 +70,18 @@ On GNOME, install/enable an AppIndicator/SNI extension to make tray icons visibl
 ./target/release/personal_agent_gpui
 ```
 
-Look for "PA" in your menu bar. Click to open the chat panel.
+On macOS, look for "PA" in your menu bar. Click to open the chat panel.
+On Linux, look for the PersonalAgent tray icon in your desktop environment's StatusNotifierItem/AppIndicator area.
 
 ## Configuration
 
+### macOS
+
 Configuration is stored at `~/Library/Application Support/PersonalAgent/config.json`.
+
+### Linux
+
+Configuration is stored at `${XDG_CONFIG_HOME:-~/.config}/personal-agent/config.json`.
 
 ### Setting Up a Profile
 
@@ -192,7 +199,8 @@ Coverage reports still write build artifacts under `target/llvm-cov-target`, whi
 
 ### Debug Logging
 
-Debug logs are written to `~/Library/Application Support/PersonalAgent/debug.log`.
+- macOS: `~/Library/Application Support/PersonalAgent/debug.log`
+- Linux: `${XDG_CONFIG_HOME:-~/.config}/personal-agent/debug.log`
 
 ## License
 

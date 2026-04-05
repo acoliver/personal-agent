@@ -243,27 +243,23 @@ impl SystemTray {
 
 #[cfg(target_os = "linux")]
 impl SystemTray {
-    pub fn new() -> Self {
+    pub fn new() -> anyhow::Result<Self> {
         let (click_tx, click_rx) = unbounded_channel::<LinuxTrayEvent>();
         let tray = LinuxTray { click_tx };
 
-        let tray_handle = match tray.assume_sni_available(true).spawn() {
-            Ok(handle) => {
-                info!("Linux SNI tray started");
-                Some(Arc::new(handle))
-            }
-            Err(error) => {
-                tracing::warn!(?error, "Failed to start Linux SNI tray");
-                None
-            }
-        };
+        let tray_handle = tray
+            .assume_sni_available(true)
+            .spawn()
+            .map(Arc::new)
+            .map_err(|error| anyhow::anyhow!("Failed to start Linux SNI tray: {error:?}"))?;
+        info!("Linux SNI tray started");
 
-        Self {
+        Ok(Self {
             popup_window: None,
             click_events: Mutex::new(Some(click_rx)),
             last_click_position: Arc::new(Mutex::new(None)),
-            _tray_handle: tray_handle,
-        }
+            _tray_handle: Some(tray_handle),
+        })
     }
 
     #[allow(clippy::needless_pass_by_ref_mut)]

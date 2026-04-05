@@ -378,7 +378,15 @@ fn run_gpui_app(cx: &mut App) {
 
     #[cfg(target_os = "macos")]
     let mut tray = SystemTray::new(mtm);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    let mut tray = match SystemTray::new() {
+        Ok(tray) => tray,
+        Err(error) => {
+            tracing::error!(?error, "Failed to initialize Linux system tray");
+            return;
+        }
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let mut tray = SystemTray::new();
     tray.start_click_listener(cx);
 
