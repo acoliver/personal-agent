@@ -311,6 +311,7 @@ fn main() {
         .run(|cx: &mut App| run_gpui_app(cx));
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn run_gpui_app(cx: &mut App) {
     cx.set_quit_mode(QuitMode::Explicit);
 
