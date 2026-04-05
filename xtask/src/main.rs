@@ -1,9 +1,13 @@
 use anyhow::{bail, Context, Result};
+use proc_macro2::TokenStream;
+use quote::ToTokens;
 use serde_json::Value;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
+use syn::spanned::Spanned;
+use syn::visit::Visit;
 
 const LINE_COVERAGE_GATE: f64 = 80.0;
 
@@ -80,11 +84,13 @@ fn run() -> Result<()> {
 }
 
 fn guard() -> Result<()> {
-    enforce_no_runtime_stubs_or_todos()
+    enforce_no_runtime_stubs_or_todos()?;
+    enforce_theme_usage()
 }
 
 fn qa() -> Result<()> {
     enforce_no_runtime_stubs_or_todos()?;
+    enforce_theme_usage()?;
     run_checked(command("cargo", ["fmt", "--all", "--", "--check"]), "cargo fmt")?;
     run_checked(
         command("cargo", ["clippy", "--all-targets", "--", "-D", "warnings"]),
@@ -172,6 +178,24 @@ fn enforce_no_runtime_stubs_or_todos() -> Result<()> {
     Ok(())
 }
 
+fn enforce_theme_usage() -> Result<()> {
+    let ui_gpui_dir = workspace_root().join("src/ui_gpui");
+
+    // Theme infrastructure and builder helpers legitimately construct raw colors internally.
+    let theme_allowlist = [
+        "theme.rs",
+        "mac_native.rs",
+        "theme_catalog.rs",
+        "theme/builders.rs",
+    ];
+
+    for pattern in ["hsla(", "rgb(", "rgba("] {
+        ensure_no_pattern_in_tree(&ui_gpui_dir, pattern, &theme_allowlist)?;
+    }
+
+    Ok(())
+}
+
 fn ensure_no_pattern_in_tree(root: &Path, pattern: &str, allowlist: &[&str]) -> Result<()> {
     let mut violations = Vec::new();
     collect_pattern_violations(root, root, pattern, allowlist, &mut violations)?;
@@ -189,6 +213,34 @@ fn ensure_no_pattern_in_tree(root: &Path, pattern: &str, allowlist: &[&str]) -> 
     bail!(
         "forbidden source pattern `{pattern}` detected in src/:\n{details}\n\nmove temporary markers or test-only wiring behind #[cfg(test)] and out of runtime source"
     )
+}
+
+struct CallPatternCollector<'a> {
+    function_name: &'a str,
+    violations: Vec<(usize, String)>,
+}
+
+impl<'ast> Visit<'ast> for CallPatternCollector<'_> {
+    fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = &*node.func {
+            if path.path.is_ident(self.function_name) {
+                let snippet: TokenStream = node.to_token_stream();
+                self.violations.push((node.span().start().line, snippet.to_string()));
+            }
+        }
+
+        syn::visit::visit_expr_call(self, node);
+    }
+}
+
+fn collect_call_pattern_violations(content: &str, pattern: &str) -> Result<Vec<(usize, String)>> {
+    let file = syn::parse_file(content).context("parse Rust source for pattern scan")?;
+    let mut collector = CallPatternCollector {
+        function_name: pattern.trim_end_matches('('),
+        violations: Vec::new(),
+    };
+    collector.visit_file(&file);
+    Ok(collector.violations)
 }
 
 fn collect_pattern_violations(
@@ -222,10 +274,10 @@ fn collect_pattern_violations(
 
         let content = fs::read_to_string(&path)
             .with_context(|| format!("read source file {}", path.display()))?;
-        for (idx, line) in content.lines().enumerate() {
-            if line.contains(pattern) {
-                violations.push((PathBuf::from(&relative), idx + 1, line.to_string()));
-            }
+        for (line, snippet) in collect_call_pattern_violations(&content, pattern)
+            .with_context(|| format!("scan source file {}", path.display()))?
+        {
+            violations.push((PathBuf::from(&relative), line, snippet));
         }
     }
 
@@ -445,6 +497,8 @@ where
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn aggregate_workspace_coverage_filters_external_files() {
@@ -504,5 +558,64 @@ mod tests {
         assert_eq!(coverage.lines.percent(), 40.0);
         assert_eq!(coverage.regions.percent(), 40.0);
         assert_eq!(coverage.functions.percent(), 40.0);
+    }
+
+    #[test]
+    fn ensure_no_pattern_in_tree_ignores_allowlisted_files() {
+        let top_level_temp = tempdir().expect("create top-level tempdir");
+        let top_level_root = top_level_temp.path();
+        let allowlisted = top_level_root.join("theme.rs");
+        fs::write(&allowlisted, "fn transparent() { let _ = hsla(0.0, 0.0, 0.0, 0.0); }\n")
+            .expect("write allowlisted file");
+        ensure_no_pattern_in_tree(top_level_root, "hsla(", &["theme.rs"])
+            .expect("allowlisted pattern passes");
+
+        let nested_temp = tempdir().expect("create nested tempdir");
+        let nested_root = nested_temp.path();
+        let nested_dir = nested_root.join("theme");
+        fs::create_dir_all(&nested_dir).expect("create nested theme directory");
+        let nested_allowlisted = nested_dir.join("builders.rs");
+        fs::write(
+            &nested_allowlisted,
+            "fn transparent_builder() { let _ = hsla(0.0, 0.0, 0.0, 0.0); }\n",
+        )
+        .expect("write nested allowlisted file");
+        ensure_no_pattern_in_tree(nested_root, "hsla(", &["theme/builders.rs"])
+            .expect("allowlisted pattern passes");
+    }
+
+    #[test]
+    fn ensure_no_pattern_in_tree_reports_non_allowlisted_violations() {
+        let temp = tempdir().expect("create tempdir");
+        let root = temp.path();
+        let violating = root.join("views").join("panel.rs");
+        fs::create_dir_all(violating.parent().expect("panel parent exists"))
+            .expect("create source directory");
+        fs::write(&violating, "fn panel() { let _ = hsla(0.0, 0.0, 0.0, 0.0); }\n")
+            .expect("write violating file");
+
+        let error = ensure_no_pattern_in_tree(root, "hsla(", &["theme.rs"])
+            .expect_err("non-allowlisted pattern should fail");
+        let message = format!("{error:#}");
+
+        assert!(message.contains("views/panel.rs:1"), "unexpected error: {message}");
+        assert!(message.contains("hsla("), "unexpected error: {message}");
+    }
+
+    #[test]
+    fn ensure_no_pattern_in_tree_ignores_comments_and_strings_without_calls() {
+        let temp = tempdir().expect("create tempdir");
+        let root = temp.path();
+        let source = root.join("views").join("notes.rs");
+        fs::create_dir_all(source.parent().expect("notes parent exists"))
+            .expect("create source directory");
+        fs::write(
+            &source,
+            "fn notes() {\n    // hsla(0.0, 0.0, 0.0, 0.0)\n    let _ = \"rgb(0xff0000)\";\n}\n",
+        )
+        .expect("write notes file");
+
+        ensure_no_pattern_in_tree(root, "hsla(", &[]).expect("comment-only pattern passes");
+        ensure_no_pattern_in_tree(root, "rgb(", &[]).expect("string-only pattern passes");
     }
 }
