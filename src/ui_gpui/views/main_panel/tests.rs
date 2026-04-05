@@ -181,6 +181,7 @@ fn conversation_summary(id: Uuid, title: &str, message_count: usize) -> Conversa
         title: title.to_string(),
         updated_at: Utc::now(),
         message_count,
+        preview: None,
     }
 }
 
@@ -262,6 +263,7 @@ fn build_app_state() -> (
             gpui_bridge: bridge,
             popup_window: None,
             app_store: store,
+            app_mode: crate::presentation::view_command::AppMode::Popup,
         },
         user_rx,
         first_conversation_id,

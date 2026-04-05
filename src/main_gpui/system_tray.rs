@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gpui::*;
 use tracing::info;
 
+use personal_agent::presentation::view_command::AppMode;
 use personal_agent::ui_gpui::views::main_panel::{MainPanel, MainPanelAppState};
 
 use super::AppState;
@@ -42,15 +43,20 @@ static TRAY_CLICKED: AtomicBool = AtomicBool::new(false);
 
 /// System tray manager - holds tray state
 pub struct SystemTray {
-    /// Current popup window handle
+    /// Current window handle (popup or popout).
     popup_window: Option<AnyWindowHandle>,
+    /// Current application window mode.
+    app_mode: AppMode,
 }
 
 impl Global for SystemTray {}
 
 impl Default for SystemTray {
     fn default() -> Self {
-        Self { popup_window: None }
+        Self {
+            popup_window: None,
+            app_mode: AppMode::Popup,
+        }
     }
 }
 
@@ -93,7 +99,10 @@ impl SystemTray {
         // Local monitors catch events that are already targeted at our app
         Self::setup_local_event_monitor();
 
-        Self { popup_window: None }
+        Self {
+            popup_window: None,
+            app_mode: AppMode::Popup,
+        }
     }
 
     /// Set up local event monitor - not used currently, relying on polling
@@ -178,14 +187,57 @@ impl SystemTray {
         info!("Click polling started");
     }
 
-    /// Toggle the popup window
+    /// Toggle the popup window (tray click).
+    ///
+    /// In popup mode: opens or closes the popup.
+    /// In popout mode: foregrounds the existing window.
     pub fn toggle_popup(&mut self, cx: &mut App) {
-        if self.popup_window.is_some() {
-            info!("Closing popup...");
-            self.close_popup(cx);
-        } else {
-            info!("Opening popup...");
-            self.open_popup(cx);
+        match self.app_mode {
+            AppMode::Popup => {
+                if self.popup_window.is_some() {
+                    info!("Closing popup...");
+                    self.close_popup(cx);
+                } else {
+                    info!("Opening popup...");
+                    self.open_popup(cx);
+                }
+            }
+            AppMode::Popout => {
+                if let Some(handle) = self.popup_window {
+                    info!("Foregrounding popout...");
+                    cx.activate(true);
+                    let _ = handle.update(cx, |_, window, _cx| {
+                        window.activate_window();
+                    });
+                } else {
+                    info!("Opening popout...");
+                    self.open_popout(cx);
+                }
+            }
+        }
+    }
+
+    /// Toggle between popup and popout window modes.
+    pub fn toggle_window_mode(&mut self, cx: &mut App) {
+        let new_mode = match self.app_mode {
+            AppMode::Popup => AppMode::Popout,
+            AppMode::Popout => AppMode::Popup,
+        };
+        info!(?new_mode, "Toggling window mode");
+        self.app_mode = new_mode;
+        self.close_popup(cx);
+
+        // Update the global so views can query the current mode.
+        if let Some(state) = cx.try_global::<MainPanelAppState>().cloned() {
+            cx.set_global(MainPanelAppState {
+                app_mode: new_mode,
+                ..state
+            });
+        }
+
+        match new_mode {
+            AppMode::Popup => self.open_popup(cx),
+            AppMode::Popout => self.open_popout(cx),
         }
     }
 
@@ -240,6 +292,7 @@ impl SystemTray {
                         gpui_bridge: state.gpui_bridge,
                         popup_window: Some(handle),
                         app_store: state.app_store,
+                        app_mode: self.app_mode,
                     });
                 }
                 let _ = handle.update(cx, |main_panel, window, cx| {
@@ -264,12 +317,80 @@ impl SystemTray {
         }
     }
 
-    /// Close the popup window
+    /// Open a popout window (free-floating, resizable, movable).
+    #[allow(clippy::option_if_let_else)]
+    fn open_popout(&mut self, cx: &mut App) {
+        self.close_popup(cx);
+        cx.activate(true);
+
+        let popout_width = 900.0_f32;
+        let popout_height = 580.0_f32;
+        let bounds = Bounds::centered(None, size(px(popout_width), px(popout_height)), cx);
+
+        let window_options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            kind: WindowKind::Normal,
+            focus: true,
+            show: true,
+            display_id: None,
+            titlebar: None,
+            window_background: WindowBackgroundAppearance::Opaque,
+            app_id: Some("com.personalagent.gpui".to_string()),
+            window_min_size: Some(size(px(480.0), px(340.0))),
+            window_decorations: Some(WindowDecorations::Server),
+            is_movable: true,
+            is_resizable: true,
+            is_minimizable: true,
+            tabbing_identifier: None,
+        };
+
+        match cx.open_window(window_options, |_window, cx| {
+            cx.new(|cx| MainPanel::new(cx))
+        }) {
+            Ok(handle) => {
+                let any_handle: AnyWindowHandle = handle.into();
+                self.popup_window = Some(any_handle);
+                if let Some(state) = cx.try_global::<MainPanelAppState>().cloned() {
+                    cx.set_global(MainPanelAppState {
+                        gpui_bridge: state.gpui_bridge,
+                        popup_window: Some(handle),
+                        app_store: state.app_store,
+                        app_mode: AppMode::Popout,
+                    });
+                }
+                let _ = handle.update(cx, |main_panel, window, cx| {
+                    window.activate_window();
+                    if !main_panel.is_runtime_started() {
+                        tracing::info!("MainPanel: starting runtime from open_popout");
+                        main_panel.start_runtime(cx);
+                    }
+                });
+                if let Some(app_state) = cx.try_global::<AppState>().cloned() {
+                    super::emit_mcp_snapshot_to_flume(&app_state.view_cmd_tx);
+                }
+                info!("Popout window opened");
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, "Failed to open popout window");
+            }
+        }
+    }
+
+    /// Close the popup/popout window and clear the global handle.
     fn close_popup(&mut self, cx: &mut App) {
         if let Some(handle) = self.popup_window.take() {
             let _ = handle.update(cx, |_, window, _cx| {
                 window.remove_window();
             });
+        }
+        // Clear the stale handle from the global state.
+        if let Some(state) = cx.try_global::<MainPanelAppState>().cloned() {
+            if state.popup_window.is_some() {
+                cx.set_global(MainPanelAppState {
+                    popup_window: None,
+                    ..state
+                });
+            }
         }
     }
 

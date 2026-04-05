@@ -21,6 +21,7 @@ fn conversation(id: Uuid, title: &str, message_count: usize) -> ConversationSumm
         title: title.to_string(),
         updated_at: Utc::now(),
         message_count,
+        preview: None,
     }
 }
 

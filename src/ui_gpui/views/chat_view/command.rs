@@ -144,7 +144,21 @@ impl ChatView {
                 self.state.yolo_mode = active;
                 cx.notify();
             }
+            ViewCommand::ConversationSearchResults { results } => {
+                if results.is_empty() && self.state.sidebar_search_query.is_empty() {
+                    self.state.sidebar_search_results = None;
+                } else {
+                    self.state.sidebar_search_results = Some(results);
+                }
+                cx.notify();
+            }
             _ => {}
         }
+    }
+
+    /// Toggle sidebar visibility (popout mode).
+    pub fn toggle_sidebar(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.sidebar_visible = !self.state.sidebar_visible;
+        cx.notify();
     }
 }

@@ -14,6 +14,7 @@ fn summary(
         title: title.to_string(),
         updated_at,
         message_count,
+        preview: None,
     }
 }
 

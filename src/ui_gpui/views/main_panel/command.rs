@@ -60,7 +60,8 @@ impl MainPanel {
             | ShowConversationExportFormat { .. }
             | ExportCompleted { .. }
             | ToolApprovalRequest { .. }
-            | ToolApprovalResolved { .. } => self.forward_to_chat(cmd, cx),
+            | ToolApprovalResolved { .. }
+            | ConversationSearchResults { .. } => self.forward_to_chat(cmd, cx),
 
             ErrorLogExportCompleted { .. } => self.forward_to_error_log(cmd, cx),
 

@@ -1,0 +1,428 @@
+//! Sidebar rendering for popout mode.
+//!
+//! Contains the conversation list with search, inline delete confirmation,
+//! and preview display. Only rendered when `AppMode::Popout` and
+//! `sidebar_visible` is true.
+
+use super::ChatView;
+use crate::events::types::UserEvent;
+use crate::presentation::view_command::ConversationSummary;
+use crate::ui_gpui::theme::Theme;
+use gpui::{div, prelude::*, px, AnyElement, FontWeight, MouseButton, SharedString};
+
+impl ChatView {
+    /// Render the sidebar panel (~260px) with search and conversation list.
+    pub(super) fn render_sidebar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("sidebar")
+            .w(px(260.0))
+            .flex_shrink_0()
+            .h_full()
+            .bg(Theme::bg_darker())
+            .border_r_1()
+            .border_color(Theme::border())
+            .flex()
+            .flex_col()
+            .child(self.render_sidebar_header(cx))
+            .child(self.render_sidebar_list(cx))
+    }
+
+    fn render_sidebar_header(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let query = self.state.sidebar_search_query.clone();
+
+        div()
+            .id("sidebar-header")
+            .flex_shrink_0()
+            .p(px(10.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            // Search input
+            .child(
+                div()
+                    .id("sidebar-search")
+                    .h(px(30.0))
+                    .w_full()
+                    .bg(Theme::bg_darkest())
+                    .border_1()
+                    .border_color(if query.is_empty() {
+                        Theme::border()
+                    } else {
+                        Theme::accent()
+                    })
+                    .rounded(px(Theme::RADIUS_MD))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(if query.is_empty() {
+                        Theme::text_secondary()
+                    } else {
+                        Theme::text_primary()
+                    })
+                    .child(if query.is_empty() {
+                        SharedString::from("Search conversations...")
+                    } else {
+                        SharedString::from(query)
+                    }),
+            )
+            // Conversations header + new button
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(Theme::text_secondary())
+                            .child(self.sidebar_header_label()),
+                    )
+                    .child(
+                        div()
+                            .id("sidebar-new-btn")
+                            .size(px(22.0))
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .text_size(px(Theme::font_size_body()))
+                            .text_color(Theme::accent())
+                            .hover(|s| s.bg(Theme::bg_dark()))
+                            .child("+")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, _cx| {
+                                    this.emit(UserEvent::NewConversation);
+                                }),
+                            ),
+                    ),
+            )
+    }
+
+    fn sidebar_header_label(&self) -> SharedString {
+        self.state.sidebar_search_results.as_ref().map_or_else(
+            || SharedString::from("CONVERSATIONS"),
+            |results| SharedString::from(format!("{} results", results.len())),
+        )
+    }
+
+    fn render_sidebar_list(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let mut list = div()
+            .id("sidebar-conv-list")
+            .flex_1()
+            .overflow_y_scroll()
+            .px(px(8.0))
+            .py(px(4.0))
+            .flex()
+            .flex_col()
+            .gap(px(2.0));
+
+        if let Some(ref results) = self.state.sidebar_search_results {
+            // Show search results grouped by match type.
+            let (title_matches, content_matches): (Vec<_>, Vec<_>) =
+                results.iter().partition(|r| r.is_title_match);
+
+            if !title_matches.is_empty() {
+                list = list.child(Self::render_group_label("TITLE MATCHES"));
+                for r in &title_matches {
+                    list = list.child(self.render_search_result_item(r, cx));
+                }
+            }
+            if !content_matches.is_empty() {
+                list = list.child(Self::render_group_label("CONTENT MATCHES"));
+                for r in &content_matches {
+                    list = list.child(self.render_search_result_item(r, cx));
+                }
+            }
+        } else {
+            // Show full conversation list.
+            for conv in &self.state.conversations {
+                list = list.child(self.render_sidebar_conversation_item(conv, cx));
+            }
+        }
+
+        list
+    }
+
+    fn render_group_label(label: &str) -> impl IntoElement {
+        div()
+            .px(px(10.0))
+            .py(px(4.0))
+            .text_size(px(9.0))
+            .text_color(Theme::text_secondary())
+            .child(SharedString::from(label.to_string()))
+    }
+
+    fn render_sidebar_conversation_item(
+        &self,
+        conv: &ConversationSummary,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let is_selected = self.state.active_conversation_id == Some(conv.id);
+        let conv_id = conv.id;
+        let is_confirming = self.state.delete_confirming_id == Some(conv.id);
+
+        if is_confirming {
+            return self.render_delete_confirmation(conv, cx).into_any_element();
+        }
+
+        let title = conv.title.clone();
+        let updated = format_relative_time(conv.updated_at);
+        let msg_count = conv.message_count;
+        let preview = conv.preview.clone().unwrap_or_default();
+
+        div()
+            .id(SharedString::from(format!("conv-{conv_id}")))
+            .px(px(10.0))
+            .py(px(8.0))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .when(is_selected, |d| d.bg(Theme::selection_bg()))
+            .when(!is_selected, |d| d.hover(|s| s.bg(Theme::bg_dark())))
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            // Title row: delete-x + title
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(self.render_delete_x(conv_id, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(Theme::text_primary())
+                            .child(SharedString::from(title)),
+                    ),
+            )
+            // Meta row: time + message count
+            .child(
+                div()
+                    .pl(px(22.0))
+                    .text_size(px(10.0))
+                    .text_color(Theme::text_secondary())
+                    .child(SharedString::from(format!(
+                        "{updated} · {msg_count} messages"
+                    ))),
+            )
+            // Preview row
+            .when(!preview.is_empty(), |d| {
+                d.child(
+                    div()
+                        .pl(px(22.0))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.0))
+                        .text_color(Theme::text_muted())
+                        .child(SharedString::from(preview)),
+                )
+            })
+            .on_mouse_down(MouseButton::Left, {
+                cx.listener(move |this, _, _window, _cx| {
+                    this.state.delete_confirming_id = None;
+                    crate::ui_gpui::selection_intent_channel().request_select(conv_id);
+                })
+            })
+            .into_any_element()
+    }
+
+    fn render_search_result_item(
+        &self,
+        result: &crate::presentation::view_command::ConversationSearchResult,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let conv_id = result.id;
+        let is_selected = self.state.active_conversation_id == Some(conv_id);
+        let title = result.title.clone();
+        let updated = format_relative_time(result.updated_at);
+        let msg_count = result.message_count;
+        let context = result.match_context.clone();
+
+        div()
+            .id(SharedString::from(format!("search-{conv_id}")))
+            .px(px(10.0))
+            .py(px(8.0))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .when(is_selected, |d| d.bg(Theme::selection_bg()))
+            .when(!is_selected, |d| d.hover(|s| s.bg(Theme::bg_dark())))
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(self.render_delete_x(conv_id, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(Theme::text_primary())
+                            .child(SharedString::from(title)),
+                    ),
+            )
+            .child(
+                div()
+                    .pl(px(22.0))
+                    .text_size(px(10.0))
+                    .text_color(Theme::text_secondary())
+                    .child(SharedString::from(format!(
+                        "{updated} · {msg_count} messages"
+                    ))),
+            )
+            .when(!context.is_empty(), |d| {
+                d.child(
+                    div()
+                        .pl(px(22.0))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.0))
+                        .text_color(Theme::accent())
+                        .child(SharedString::from(context)),
+                )
+            })
+            .on_mouse_down(MouseButton::Left, {
+                cx.listener(move |this, _, _window, _cx| {
+                    this.state.delete_confirming_id = None;
+                    crate::ui_gpui::selection_intent_channel().request_select(conv_id);
+                })
+            })
+    }
+
+    #[allow(clippy::unused_self)]
+    fn render_delete_x(
+        &self,
+        conv_id: uuid::Uuid,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(SharedString::from(format!("del-{conv_id}")))
+            .size(px(16.0))
+            .rounded(px(3.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .text_size(px(11.0))
+            .text_color(Theme::error())
+            .hover(|s| s.bg(Theme::bg_dark()))
+            .child("x")
+            .on_mouse_down(MouseButton::Left, {
+                cx.listener(move |this, _, _window, cx| {
+                    this.state.delete_confirming_id = Some(conv_id);
+                    cx.notify();
+                })
+            })
+    }
+
+    #[allow(clippy::unused_self)]
+    fn render_delete_confirmation(
+        &self,
+        conv: &ConversationSummary,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let conv_id = conv.id;
+        let title = conv.title.clone();
+
+        div()
+            .id(SharedString::from(format!("confirm-del-{conv_id}")))
+            .px(px(10.0))
+            .py(px(8.0))
+            .rounded(px(6.0))
+            .bg(Theme::bg_darker())
+            .border_1()
+            .border_color(Theme::error())
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(Theme::error())
+                    .child(SharedString::from(format!("Delete \"{title}\"?"))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("confirm-yes-{conv_id}")))
+                            .px(px(14.0))
+                            .py(px(3.0))
+                            .rounded(px(4.0))
+                            .bg(Theme::bg_dark())
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(Theme::error())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::bg_darkest()))
+                            .child("Delete")
+                            .on_mouse_down(MouseButton::Left, {
+                                cx.listener(move |this, _, _window, cx| {
+                                    this.state.delete_confirming_id = None;
+                                    this.emit(UserEvent::DeleteConversation { id: conv_id });
+                                    cx.notify();
+                                })
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("confirm-no-{conv_id}")))
+                            .px(px(14.0))
+                            .py(px(3.0))
+                            .rounded(px(4.0))
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .text_size(px(10.0))
+                            .text_color(Theme::text_secondary())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::bg_darkest()))
+                            .child("Cancel")
+                            .on_mouse_down(MouseButton::Left, {
+                                cx.listener(move |this, _, _window, cx| {
+                                    this.state.delete_confirming_id = None;
+                                    cx.notify();
+                                })
+                            }),
+                    ),
+            )
+    }
+}
+
+fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
+    let now = chrono::Utc::now();
+    let diff = now.signed_duration_since(dt);
+
+    if diff.num_minutes() < 1 {
+        "just now".to_string()
+    } else if diff.num_minutes() < 60 {
+        format!("{}m ago", diff.num_minutes())
+    } else if diff.num_hours() < 24 {
+        format!("{}h ago", diff.num_hours())
+    } else if diff.num_days() < 7 {
+        format!("{}d ago", diff.num_days())
+    } else {
+        dt.format("%b %d").to_string()
+    }
+}

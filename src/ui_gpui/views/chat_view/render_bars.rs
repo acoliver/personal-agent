@@ -9,8 +9,9 @@
 use super::state::StreamingState;
 use super::ChatView;
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::{ConversationSummary, ProfileSummary};
+use crate::presentation::view_command::{AppMode, ConversationSummary, ProfileSummary};
 use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
 
 macro_rules! icon_btn {
@@ -82,10 +83,17 @@ impl ChatView {
             .child("YOLO")
     }
 
-    /// Right-side toolbar: [T][R][H][MD/TXT/JSON][Save][Settings][Exit]
+    /// Right-side toolbar: [T][Y][R][H (popup only)][MD/TXT/JSON][Save][Popout/Popin][Settings][Exit]
+    #[allow(clippy::too_many_lines)]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
         let yolo_active = self.state.yolo_mode;
+        let app_mode = cx
+            .try_global::<MainPanelAppState>()
+            .map(|s| s.app_mode)
+            .unwrap_or_default();
+        let is_popout = app_mode == AppMode::Popout;
+        let show_history_btn = !is_popout || !self.state.sidebar_visible;
 
         div()
             .flex()
@@ -118,16 +126,19 @@ impl ChatView {
                     this.start_rename_conversation(cx);
                 })
             ))
-            .child(icon_btn!(
-                "btn-history",
-                "H",
-                false,
-                cx.listener(|_this, _, _window, _cx| {
-                    println!(">>> HISTORY BUTTON CLICKED - using navigation_channel <<<");
-                    crate::ui_gpui::navigation_channel()
-                        .request_navigate(crate::presentation::view_command::ViewId::History);
-                })
-            ))
+            // History button: hidden when popout sidebar is visible
+            .when(show_history_btn, |d| {
+                d.child(icon_btn!(
+                    "btn-history",
+                    "H",
+                    false,
+                    cx.listener(|_this, _, _window, _cx| {
+                        println!(">>> HISTORY BUTTON CLICKED - using navigation_channel <<<");
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::History);
+                    })
+                ))
+            })
             .child(icon_btn!(
                 "btn-export-format",
                 self.state.conversation_export_format.display_label(),
@@ -145,6 +156,30 @@ impl ChatView {
                     this.emit(UserEvent::SaveConversation);
                 })
             ))
+            // Popout / Pop-in toggle button
+            .child(
+                div()
+                    .id("btn-popout")
+                    .size(px(28.0))
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .when(is_popout, |d| d.bg(Theme::bg_dark()))
+                    .when(!is_popout, |d| {
+                        d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+                    })
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_primary())
+                    .child(if is_popout { "\u{2198}" } else { "\u{2197}" })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, _cx| {
+                            this.emit(UserEvent::ToggleWindowMode);
+                        }),
+                    ),
+            )
             .child(icon_btn!(
                 "btn-settings",
                 "\u{2699}",
@@ -266,6 +301,12 @@ impl ChatView {
     /// @plan PLAN-20250130-GPUIREDUX.P03
     pub(super) fn render_title_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let unviewed = crate::ui_gpui::error_log::ErrorLogStore::global().unviewed_count();
+        let app_mode = cx
+            .try_global::<MainPanelAppState>()
+            .map(|s| s.app_mode)
+            .unwrap_or_default();
+        let is_popout = app_mode == AppMode::Popout;
+        let sidebar_visible = self.state.sidebar_visible;
 
         div()
             .id("chat-title-bar")
@@ -276,6 +317,32 @@ impl ChatView {
             .flex()
             .items_center()
             .gap(px(8.0))
+            // Sidebar toggle (popout mode only)
+            .when(is_popout, |d| {
+                d.child(
+                    div()
+                        .id("btn-sidebar-toggle")
+                        .size(px(28.0))
+                        .rounded(px(4.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .when(sidebar_visible, |d| d.bg(Theme::bg_dark()))
+                        .when(!sidebar_visible, |d| {
+                            d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+                        })
+                        .text_size(px(Theme::font_size_ui()))
+                        .text_color(Theme::text_primary())
+                        .child("\u{2630}")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _window, cx| {
+                                this.toggle_sidebar(cx);
+                            }),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex_1()
@@ -283,8 +350,11 @@ impl ChatView {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .child(self.render_conversation_selector(cx))
-                    .child(self.render_new_conversation_btn(cx))
+                    // Conversation selector: always shown in popup; shown in popout when sidebar hidden
+                    .when(!is_popout || !sidebar_visible, |d| {
+                        d.child(self.render_conversation_selector(cx))
+                            .child(self.render_new_conversation_btn(cx))
+                    })
                     .child(self.render_profile_selector(cx)),
             )
             .child(self.render_bug_icon_btn(unviewed, cx))

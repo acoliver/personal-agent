@@ -112,6 +112,7 @@ async fn apply_store_snapshot_streaming_calls_maybe_scroll_when_autoscroll_enabl
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 0,
+                    preview: None,
                 }],
             };
 
@@ -160,6 +161,7 @@ async fn apply_store_snapshot_streaming_skips_maybe_scroll_when_autoscroll_disab
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 0,
+                    preview: None,
                 }],
             };
 
@@ -210,6 +212,7 @@ async fn apply_store_snapshot_stream_finalize_calls_maybe_scroll_when_autoscroll
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 1,
+                    preview: None,
                 }],
             };
 
@@ -262,6 +265,7 @@ async fn apply_store_snapshot_stream_finalize_skips_maybe_scroll_when_autoscroll
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 1,
+                    preview: None,
                 }],
             };
 
@@ -312,6 +316,7 @@ async fn apply_store_snapshot_thinking_only_calls_maybe_scroll_when_autoscroll_e
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 0,
+                    preview: None,
                 }],
             };
 
@@ -363,6 +368,7 @@ async fn apply_store_snapshot_thinking_only_skips_maybe_scroll_when_autoscroll_d
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 0,
+                    preview: None,
                 }],
             };
 

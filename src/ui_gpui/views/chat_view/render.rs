@@ -9,8 +9,10 @@
 use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
+use crate::presentation::view_command::AppMode;
 use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels,
     ScrollWheelEvent, SharedString,
@@ -629,10 +631,53 @@ impl ChatView {
     }
 }
 
+impl ChatView {
+    /// Read the current window mode from the global state.
+    fn current_app_mode(cx: &gpui::Context<Self>) -> AppMode {
+        cx.try_global::<MainPanelAppState>()
+            .map(|s| s.app_mode)
+            .unwrap_or_default()
+    }
+
+    /// Render the main chat content column (title bar + chat area + input bar).
+    fn render_main_content(
+        &self,
+        app_mode: AppMode,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            // Title bar (32px)
+            .child(self.render_title_bar(cx))
+            // Export feedback row
+            .when(self.state.export_feedback_message.is_some(), |d| {
+                d.child(self.render_export_feedback_bar())
+            })
+            // Chat area (flex)
+            .child(self.render_chat_area(cx))
+            // Input bar (50px)
+            .child(self.render_input_bar(cx))
+            // Overlay dropdowns (only in popup mode; popout uses sidebar)
+            .when(
+                app_mode == AppMode::Popup && self.state.conversation_dropdown_open,
+                |d| d.child(self.render_conversation_dropdown(cx)),
+            )
+            .when(self.state.profile_dropdown_open, |d| {
+                d.child(self.render_profile_dropdown(window, cx))
+            })
+    }
+}
+
 impl gpui::Render for ChatView {
     #[allow(clippy::too_many_lines)]
     #[rustfmt::skip]
     fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let app_mode = Self::current_app_mode(cx);
+        let show_sidebar = app_mode == AppMode::Popout && self.state.sidebar_visible;
 
         div()
             .id("chat-view")
@@ -663,22 +708,20 @@ impl gpui::Render for ChatView {
             .relative()
             // Top bar (44px)
             .child(self.render_top_bar(cx))
-            // Title bar (32px)
-            .child(self.render_title_bar(cx))
-            // Export feedback row
-            .when(self.state.export_feedback_message.is_some(), |d| {
-                d.child(self.render_export_feedback_bar())
-            })
-            // Chat area (flex)
-            .child(self.render_chat_area(cx))
-            // Input bar (50px)
-            .child(self.render_input_bar(cx))
-            // Overlay dropdowns (rendered at root level to avoid clipping)
-            .when(self.state.conversation_dropdown_open, |d| {
-                d.child(self.render_conversation_dropdown(cx))
-            })
-            .when(self.state.profile_dropdown_open, |d| {
-                d.child(self.render_profile_dropdown(window, cx))
-            })
+            // Body: sidebar (optional) + main content
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .flex()
+                    .flex_row()
+                    .overflow_hidden()
+                    // Sidebar in popout mode
+                    .when(show_sidebar, |d| {
+                        d.child(self.render_sidebar(cx))
+                    })
+                    // Main content column
+                    .child(self.render_main_content(app_mode, window, cx))
+            )
     }
 }

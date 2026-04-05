@@ -14,6 +14,7 @@ mod command;
 mod ime;
 mod render;
 mod render_bars;
+mod render_sidebar;
 mod state;
 
 // ── Re-exports so downstream consumers (mod.rs, tests, main_panel.rs) ──
