@@ -311,6 +311,17 @@ fn main() {
         .run(|cx: &mut App| run_gpui_app(cx));
 }
 
+#[cfg(target_os = "linux")]
+fn create_linux_system_tray() -> Option<SystemTray> {
+    match SystemTray::new() {
+        Ok(tray) => Some(tray),
+        Err(error) => {
+            tracing::error!(?error, "Failed to initialize Linux system tray");
+            None
+        }
+    }
+}
+
 #[allow(clippy::cognitive_complexity)]
 fn run_gpui_app(cx: &mut App) {
     cx.set_quit_mode(QuitMode::Explicit);
@@ -379,12 +390,9 @@ fn run_gpui_app(cx: &mut App) {
     #[cfg(target_os = "macos")]
     let mut tray = SystemTray::new(mtm);
     #[cfg(target_os = "linux")]
-    let mut tray = match SystemTray::new() {
-        Ok(tray) => tray,
-        Err(error) => {
-            tracing::error!(?error, "Failed to initialize Linux system tray");
-            return;
-        }
+    let mut tray = match create_linux_system_tray() {
+        Some(tray) => tray,
+        None => return,
     };
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let mut tray = SystemTray::new();
