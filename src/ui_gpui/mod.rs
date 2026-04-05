@@ -3,7 +3,6 @@
 //! @plan PLAN-20250128-GPUI.P03
 //! @requirement REQ-GPUI-001
 
-#[cfg(target_os = "macos")]
 pub mod app;
 pub mod app_assets;
 pub mod app_store;
@@ -27,7 +26,6 @@ pub mod views;
 
 pub use app_store::{is_store_managed, GpuiAppSnapshot, GpuiAppStore};
 
-#[cfg(target_os = "macos")]
 pub use app::GpuiApp;
 pub use bridge::{spawn_user_event_forwarder, GpuiBridge, ViewCommandSink};
 pub use navigation::NavigationState;
