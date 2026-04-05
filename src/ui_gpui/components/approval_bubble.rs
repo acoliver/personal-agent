@@ -68,18 +68,15 @@ impl ApprovalBubble {
     fn render_action_button(
         id: &str,
         label: &str,
-        bg: gpui::Hsla,
-        fg: gpui::Hsla,
+        button: gpui::Div,
         handler: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     ) -> gpui::Stateful<gpui::Div> {
-        let btn = div()
+        let btn = button
             .id(SharedString::from(id.to_string()))
             .px(px(Theme::SPACING_SM))
             .py(px(3.0))
             .rounded(px(Theme::RADIUS_SM))
-            .bg(bg)
             .text_size(px(Theme::font_size_ui()))
-            .text_color(fg)
             .cursor_pointer()
             .hover(|s| s.opacity(0.8))
             .child(label.to_string());
@@ -102,18 +99,18 @@ impl IntoElement for ApprovalBubble {
 
         let tool_label = format!("\u{1F527} {}: {}", self.tool_name, self.tool_argument);
 
-        let mut container = div()
-            .id(bubble_id)
-            .w_full()
-            .px(px(Theme::SPACING_MD))
-            .py(px(Theme::SPACING_SM))
-            .rounded(px(Theme::RADIUS_LG))
-            .border_1()
-            .border_color(Theme::border())
-            .bg(Theme::bg_darker())
-            .flex()
-            .flex_col()
-            .gap(px(Theme::SPACING_SM));
+        let mut container = Theme::assistant_bubble(
+            div()
+                .id(bubble_id)
+                .w_full()
+                .px(px(Theme::SPACING_MD))
+                .py(px(Theme::SPACING_SM))
+                .rounded(px(Theme::RADIUS_LG))
+                .border_1()
+                .flex()
+                .flex_col()
+                .gap(px(Theme::SPACING_SM)),
+        );
 
         // Tool label row
         container = container.child(
@@ -123,7 +120,6 @@ impl IntoElement for ApprovalBubble {
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_size(px(Theme::font_size_mono()))
-                .text_color(Theme::text_primary())
                 .child(tool_label),
         );
 
@@ -141,29 +137,25 @@ impl IntoElement for ApprovalBubble {
                         .child(Self::render_action_button(
                             &yes_id,
                             "Yes",
-                            Theme::accent(),
-                            Theme::accent_fg(),
+                            Theme::button_primary(div()),
                             self.on_yes,
                         ))
                         .child(Self::render_action_button(
                             &session_id,
                             "Session",
-                            Theme::bg_dark(),
-                            Theme::text_primary(),
+                            Theme::button_secondary(div()),
                             self.on_session,
                         ))
                         .child(Self::render_action_button(
                             &always_id,
                             "Always",
-                            Theme::bg_dark(),
-                            Theme::text_primary(),
+                            Theme::button_secondary(div()),
                             self.on_always,
                         ))
                         .child(Self::render_action_button(
                             &no_id,
                             "No",
-                            Theme::error(),
-                            Theme::error_fg(),
+                            Theme::button_danger(div()),
                             self.on_no,
                         )),
                 );

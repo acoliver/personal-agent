@@ -47,26 +47,19 @@ impl IntoElement for IconButton {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
-        let mut button = div()
+        let button = div()
             .flex()
             .items_center()
             .justify_center()
             .size(px(28.0))
             .rounded(px(Theme::RADIUS_SM))
             .cursor_pointer()
-            .child(
-                div()
-                    .text_color(Theme::text_primary())
-                    .text_sm()
-                    .child(self.icon),
-            );
+            .child(div().text_sm().child(self.icon));
 
         if self.active {
-            button = button.bg(Theme::accent());
+            Theme::button_primary(button)
         } else {
-            button = button.hover(|style| style.bg(Theme::bg_dark()));
+            Theme::toolbar_button(button)
         }
-
-        button
     }
 }

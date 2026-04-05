@@ -26,16 +26,18 @@ impl IntoElement for UserBubble {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
-        div().flex().justify_end().w_full().child(
-            div()
-                .w(px(400.0))
-                .px(px(Theme::SPACING_MD))
-                .py(px(Theme::SPACING_SM))
-                .rounded(px(Theme::RADIUS_LG))
-                .bg(Theme::bg_dark())
-                .text_color(Theme::text_primary())
-                .child(self.content),
-        )
+        div()
+            .flex()
+            .justify_end()
+            .w_full()
+            .child(Theme::user_bubble(
+                div()
+                    .w(px(400.0))
+                    .px(px(Theme::SPACING_MD))
+                    .py(px(Theme::SPACING_SM))
+                    .rounded(px(Theme::RADIUS_LG))
+                    .child(self.content),
+            ))
     }
 }
 
@@ -139,15 +141,16 @@ impl IntoElement for AssistantBubble {
         if self.show_thinking {
             if let Some(thinking_content) = self.thinking {
                 bubble = bubble.child(
-                    div()
-                        .w_full()
-                        .px(px(Theme::SPACING_MD))
-                        .py(px(Theme::SPACING_SM))
-                        .rounded(px(Theme::RADIUS_MD))
-                        .bg(Theme::bg_darker())
-                        .text_color(Theme::text_secondary())
-                        .text_sm()
-                        .child(format!("Thinking: {thinking_content}")),
+                    Theme::badge(
+                        div()
+                            .w_full()
+                            .px(px(Theme::SPACING_MD))
+                            .py(px(Theme::SPACING_SM))
+                            .rounded(px(Theme::RADIUS_MD))
+                            .text_sm()
+                            .child(format!("Thinking: {thinking_content}")),
+                    )
+                    .text_color(Theme::text_secondary()),
                 );
             }
         }
@@ -159,18 +162,18 @@ impl IntoElement for AssistantBubble {
         let blocks = parse_markdown_blocks(&content_text);
         let rendered = blocks_to_elements(&blocks);
 
-        let mut main_content = div()
-            .w_full()
-            .px(px(Theme::SPACING_MD))
-            .py(px(Theme::SPACING_SM))
-            .rounded(px(Theme::RADIUS_LG))
-            .bg(Theme::bg_darker())
-            .text_color(Theme::text_primary())
-            .children(rendered)
-            .id(gpui::SharedString::from(format!(
-                "abbl-{}",
-                self.content.len()
-            )));
+        let mut main_content = Theme::assistant_bubble(
+            div()
+                .w_full()
+                .px(px(Theme::SPACING_MD))
+                .py(px(Theme::SPACING_SM))
+                .rounded(px(Theme::RADIUS_LG))
+                .children(rendered)
+                .id(gpui::SharedString::from(format!(
+                    "abbl-{}",
+                    self.content.len()
+                ))),
+        );
 
         if should_enable_bubble_copy(&blocks, self.is_streaming) {
             let raw_markdown = self.content.clone();

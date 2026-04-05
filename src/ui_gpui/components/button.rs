@@ -47,27 +47,23 @@ impl IntoElement for Button {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
-        let mut button = div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .px(px(Theme::SPACING_MD))
-            .py(px(Theme::SPACING_SM))
-            .rounded(px(Theme::RADIUS_MD))
-            .text_sm();
+        let mut button = Theme::button_secondary(
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .px(px(Theme::SPACING_MD))
+                .py(px(Theme::SPACING_SM))
+                .rounded(px(Theme::RADIUS_MD))
+                .text_sm(),
+        );
 
-        // Apply background color based on state
         if self.active {
-            button = button.bg(Theme::bg_dark());
-        } else {
-            button = button.bg(Theme::bg_darker());
+            button = Theme::toolbar_button(button);
         }
 
-        // Apply text color based on disabled state
         if self.disabled {
             button = button.text_color(Theme::text_muted());
-        } else {
-            button = button.text_color(Theme::text_primary());
         }
 
         button.child(self.label)

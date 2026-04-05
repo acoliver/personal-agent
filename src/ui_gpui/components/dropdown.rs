@@ -78,66 +78,67 @@ impl IntoElement for Dropdown {
         let mut dropdown = div().relative().w(px(200.0));
 
         // Main button showing current selection
-        let button = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(Theme::SPACING_MD))
-            .py(px(Theme::SPACING_SM))
-            .w(px(200.0))
-            .min_h(px(36.0))
-            .bg(Theme::bg_darker())
-            .border_1()
-            .border_color(Theme::bg_dark())
-            .rounded(px(Theme::RADIUS_MD))
-            .cursor_pointer()
-            .child(
-                div()
-                    .flex_1()
-                    .text_color(Theme::text_primary())
-                    .text_sm()
-                    .child(selected_text),
-            )
-            .child(
-                div()
-                    .text_color(Theme::text_secondary())
-                    .text_sm()
-                    .child(if is_open { "▲" } else { "▼" }),
-            );
+        let button = Theme::dropdown(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .px(px(Theme::SPACING_MD))
+                .py(px(Theme::SPACING_SM))
+                .w(px(200.0))
+                .min_h(px(36.0))
+                .border_1()
+                .rounded(px(Theme::RADIUS_MD))
+                .cursor_pointer()
+                .child(div().flex_1().text_sm().child(selected_text))
+                .child(
+                    div()
+                        .text_color(Theme::text_secondary())
+                        .text_sm()
+                        .child(if is_open { "▲" } else { "▼" }),
+                ),
+        );
 
         dropdown = dropdown.child(button);
 
         // Popup overlay with options
         if is_open {
-            let options_div = div()
-                .absolute()
-                .top(px(40.0))
-                .left(px(0.0))
-                .w(px(200.0))
-                .max_h(px(300.0))
-                .bg(Theme::bg_darker())
-                .border_1()
-                .border_color(Theme::bg_dark())
-                .rounded(px(Theme::RADIUS_MD))
-                .children(options.iter().enumerate().map(|(idx, opt)| {
-                    let is_selected = idx == selected_idx;
-                    div()
-                        .flex()
-                        .items_center()
-                        .px(px(Theme::SPACING_MD))
-                        .py(px(Theme::SPACING_SM))
-                        .w_full()
-                        .cursor_pointer()
-                        .hover(|style| style.bg(Theme::bg_dark()))
-                        .when(is_selected, |d| d.bg(Theme::bg_dark()))
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_color(Theme::text_primary())
-                                .text_sm()
-                                .child(opt.clone()),
-                        )
-                }));
+            let options_div = Theme::dropdown(
+                div()
+                    .absolute()
+                    .top(px(40.0))
+                    .left(px(0.0))
+                    .w(px(200.0))
+                    .max_h(px(300.0))
+                    .border_1()
+                    .rounded(px(Theme::RADIUS_MD))
+                    .children(options.iter().enumerate().map(|(idx, opt)| {
+                        let is_selected = idx == selected_idx;
+                        if is_selected {
+                            Theme::list_row_selected(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .px(px(Theme::SPACING_MD))
+                                    .py(px(Theme::SPACING_SM))
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .child(div().flex_1().text_sm().child(opt.clone())),
+                            )
+                        } else {
+                            Theme::dropdown_item(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .px(px(Theme::SPACING_MD))
+                                    .py(px(Theme::SPACING_SM))
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .child(div().flex_1().text_sm().child(opt.clone())),
+                            )
+                        }
+                    })),
+            );
 
             dropdown = dropdown.child(options_div);
         }
