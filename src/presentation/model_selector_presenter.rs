@@ -196,6 +196,7 @@ impl ModelSelectorPresenter {
     /// Handle open model selector event - load models from registry
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
+    #[allow(clippy::cognitive_complexity)]
     async fn on_open_selector(
         models_registry_service: &Arc<dyn ModelsRegistryService>,
         view_tx: &broadcast::Sender<ViewCommand>,

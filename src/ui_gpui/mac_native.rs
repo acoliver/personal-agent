@@ -218,7 +218,7 @@ mod platform {
 
     /// On non-macOS platforms there are no system colors to read.  Always
     /// returns `None` so callers fall back to the default catalog theme.
-    pub fn resolve_palette() -> Option<MacNativePalette> {
+    pub const fn resolve_palette() -> Option<MacNativePalette> {
         None
     }
 }
