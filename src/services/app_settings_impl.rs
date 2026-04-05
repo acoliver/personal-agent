@@ -106,6 +106,18 @@ impl AppSettingsService for AppSettingsServiceImpl {
         Ok(())
     }
 
+    async fn clear_default_profile_id(&self) -> ServiceResult<()> {
+        let mut storage = self.load()?;
+        storage.default_profile_id = None;
+        self.save(&storage)?;
+
+        *self
+            .settings
+            .lock()
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = storage;
+        Ok(())
+    }
+
     async fn get_current_conversation_id(&self) -> ServiceResult<Option<Uuid>> {
         let storage = self.load()?;
         match storage.current_conversation_id {

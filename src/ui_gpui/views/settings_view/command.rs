@@ -164,7 +164,9 @@ impl SettingsView {
 
     fn handle_profile_created(&mut self, id: uuid::Uuid, name: String) {
         self.state.selected_profile_id = Some(id);
-        if self.state.profiles.iter().all(|p| p.id != id) {
+        if let Some(existing) = self.state.profiles.iter_mut().find(|p| p.id == id) {
+            existing.name = name;
+        } else {
             self.state
                 .profiles
                 .push(ProfileItem::new(id, name).with_model("", ""));
@@ -185,9 +187,10 @@ impl SettingsView {
     }
 
     fn handle_default_profile_changed(&mut self, profile_id: Option<uuid::Uuid>) {
-        self.state.selected_profile_id = profile_id;
+        let resolved = profile_id.filter(|id| self.state.profiles.iter().any(|p| p.id == *id));
+        self.state.selected_profile_id = resolved;
         for profile in &mut self.state.profiles {
-            profile.is_default = Some(profile.id) == profile_id;
+            profile.is_default = Some(profile.id) == resolved;
         }
     }
 

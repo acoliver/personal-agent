@@ -478,12 +478,12 @@ fn render_heading(
     links: &[(Range<usize>, String)],
 ) -> gpui::AnyElement {
     let size = match level {
-        1 => 24.0,
-        2 => 20.0,
-        3 => 18.0,
-        4 => 16.0,
-        5 => 14.0,
-        _ => 13.0,
+        1 => crate::ui_gpui::theme::Theme::font_size_h1(),
+        2 => crate::ui_gpui::theme::Theme::font_size_h2(),
+        3 => crate::ui_gpui::theme::Theme::font_size_h3(),
+        4 => crate::ui_gpui::theme::Theme::font_size_body(),
+        5 => crate::ui_gpui::theme::Theme::font_size_mono(),
+        _ => crate::ui_gpui::theme::Theme::font_size_ui(),
     };
 
     div()

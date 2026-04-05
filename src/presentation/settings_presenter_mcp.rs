@@ -35,11 +35,37 @@ impl SettingsPresenter {
                 Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
             }
             ProfileEvent::DefaultChanged { profile_id } => {
-                if let Some(id) = profile_id {
-                    let _ = app_settings_service.set_default_profile_id(id).await;
+                let persist_result = match profile_id {
+                    Some(id) => app_settings_service.set_default_profile_id(id).await,
+                    None => app_settings_service.clear_default_profile_id().await,
+                };
+
+                if let Err(error) = persist_result {
+                    tracing::warn!(
+                        "Failed to persist default profile update from ProfileEvent::DefaultChanged: {}",
+                        error
+                    );
+                    let live_default = profile_service
+                        .get_default()
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|profile| profile.id);
+                    let _ = view_tx.send(ViewCommand::DefaultProfileChanged {
+                        profile_id: live_default,
+                    });
+                    Self::emit_profiles_snapshot_with_default(
+                        profile_service,
+                        live_default,
+                        view_tx,
+                    )
+                    .await;
+                    return;
                 }
+
                 let _ = view_tx.send(ViewCommand::DefaultProfileChanged { profile_id });
-                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
+                Self::emit_profiles_snapshot_with_default(profile_service, profile_id, view_tx)
+                    .await;
             }
             _ => {} // Ignore other profile events
         }
@@ -182,11 +208,27 @@ impl SettingsPresenter {
             Ok(()) => {
                 if let Err(e) = app_settings_service.set_default_profile_id(id).await {
                     tracing::warn!("Failed to persist default profile in app settings: {}", e);
+                    let live_default = profile_service
+                        .get_default()
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|profile| profile.id);
+                    let _ = view_tx.send(ViewCommand::DefaultProfileChanged {
+                        profile_id: live_default,
+                    });
+                    Self::emit_profiles_snapshot_with_default(
+                        profile_service,
+                        live_default,
+                        view_tx,
+                    )
+                    .await;
+                    return;
                 }
                 let _ = view_tx.send(ViewCommand::DefaultProfileChanged {
                     profile_id: Some(id),
                 });
-                Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
+                Self::emit_profiles_snapshot_with_default(profile_service, Some(id), view_tx).await;
             }
             Err(e) => {
                 tracing::error!("Failed to select profile: {}", e);
@@ -337,6 +379,13 @@ impl SettingsPresenter {
             return;
         }
 
+        let status = if enabled {
+            view_command::McpStatus::Starting
+        } else {
+            view_command::McpStatus::Stopped
+        };
+        let _ = view_tx.send(ViewCommand::McpStatusChanged { id, status });
+
         // Reload global MCP runtime so the change takes effect immediately.
         let global = crate::mcp::McpService::global();
         let reload_view_tx = view_tx.clone();
@@ -349,17 +398,11 @@ impl SettingsPresenter {
                     message: format!("Config updated, but MCP runtime reload failed: {e}"),
                     severity: view_command::ErrorSeverity::Error,
                 });
+                Self::emit_mcp_snapshot(&reload_view_tx);
             } else {
                 tracing::info!("MCP global runtime reloaded after toggle");
             }
         });
-
-        let status = if enabled {
-            view_command::McpStatus::Starting
-        } else {
-            view_command::McpStatus::Stopped
-        };
-        let _ = view_tx.send(ViewCommand::McpStatusChanged { id, status });
     }
 
     /// Delete an MCP from config.json, reload the global MCP runtime, and emit the result.
@@ -427,6 +470,7 @@ impl SettingsPresenter {
                     message: format!("Config updated, but MCP runtime reload failed: {e}"),
                     severity: view_command::ErrorSeverity::Error,
                 });
+                Self::emit_mcp_snapshot(&reload_view_tx);
             } else {
                 tracing::info!("MCP global runtime reloaded after delete");
             }

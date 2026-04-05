@@ -331,6 +331,24 @@ impl SettingsPresenter {
         app_settings_service: &Arc<dyn AppSettingsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
     ) {
+        let selected_profile_id = match profile_service.get_default().await {
+            Ok(Some(profile)) => Some(profile.id),
+            _ => app_settings_service
+                .get_default_profile_id()
+                .await
+                .ok()
+                .flatten(),
+        };
+
+        Self::emit_profiles_snapshot_with_default(profile_service, selected_profile_id, view_tx)
+            .await;
+    }
+
+    pub(super) async fn emit_profiles_snapshot_with_default(
+        profile_service: &Arc<dyn ProfileService>,
+        selected_profile_id: Option<uuid::Uuid>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
         let profiles = match profile_service.list().await {
             Ok(profiles) => profiles,
             Err(e) => {
@@ -339,17 +357,8 @@ impl SettingsPresenter {
             }
         };
 
-        let selected_profile_id =
-            if let Ok(Some(id)) = app_settings_service.get_default_profile_id().await {
-                Some(id)
-            } else {
-                profile_service
-                    .get_default()
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|p| p.id)
-            };
+        let selected_profile_id = selected_profile_id
+            .filter(|selected_id| profiles.iter().any(|profile| profile.id == *selected_id));
 
         let summaries = profiles
             .into_iter()

@@ -25,6 +25,10 @@ impl AppSettingsService for FailingAppSettingsService {
         Ok(())
     }
 
+    async fn clear_default_profile_id(&self) -> ServiceResult<()> {
+        Ok(())
+    }
+
     async fn get_current_conversation_id(&self) -> ServiceResult<Option<uuid::Uuid>> {
         Ok(None)
     }

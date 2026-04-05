@@ -589,7 +589,7 @@ impl SettingsView {
         let h3_size = base_size * 1.25;
         let body_size = base_size;
         let mono_size = (base_size * 9.0) / 10.0;
-        let ui_family = self.state.ui_font_family.clone().map(SharedString::from);
+        let ui_family = self.state.ui_font_family.as_ref().map(SharedString::from);
         let mono_family = SharedString::from(self.state.mono_font_family.clone());
         let mono_features = if self.state.mono_ligatures {
             gpui::FontFeatures::default()
@@ -610,6 +610,7 @@ impl SettingsView {
             .child(
                 div()
                     .id("font-preview-box")
+                    .when_some(ui_family, gpui::Styled::font_family)
                     .w_full()
                     .p(px(12.0))
                     .bg(Theme::bg_darker())
@@ -643,7 +644,6 @@ impl SettingsView {
                             .child(
                                 div()
                                     .text_size(px(mono_size))
-                                    .when_some(ui_family, gpui::Styled::font_family)
                                     .font_family(mono_family)
                                     .font_features(mono_features)
                                     .text_color(Theme::accent())

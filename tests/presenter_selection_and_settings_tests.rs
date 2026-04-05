@@ -722,6 +722,10 @@ impl AppSettingsService for MockAppSettings {
         Ok(())
     }
 
+    async fn clear_default_profile_id(&self) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
     async fn get_current_conversation_id(&self) -> Result<Option<Uuid>, ServiceError> {
         Ok(None)
     }
