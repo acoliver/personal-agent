@@ -40,10 +40,12 @@ sudo apt-get install -y \
   g++ \
   git \
   jq \
+  libdbus-1-dev \
   libasound2-dev \
   libfontconfig-dev \
   libgit2-dev \
   libglib2.0-dev \
+  libgtk-3-dev \
   libssl-dev \
   libva-dev \
   libvulkan1 \
