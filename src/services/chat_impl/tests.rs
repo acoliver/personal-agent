@@ -550,7 +550,6 @@ impl super::super::ConversationService for MockConversationService {
         &self,
         _id: Uuid,
     ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-        // Return a valid conversation so the test can proceed
         let mut conversation = crate::models::Conversation::new(self.profile_id);
         conversation.messages = self.messages.read().await.clone();
         Ok(conversation)
@@ -698,7 +697,6 @@ impl crate::services::ProfileService for MockProfileService {
         _parameters: ModelParameters,
         _system_prompt: Option<String>,
     ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-        // Return a dummy profile for testing
         Ok(crate::models::ModelProfile::new(
             _name,
             _provider,
@@ -845,8 +843,6 @@ async fn test_is_streaming() {
     assert!(!chat_service.is_streaming());
 }
 
-/// Proves that `prepare_message_context` resolves the profile via the
-/// conversation's `profile_id` rather than always using the global default.
 #[tokio::test]
 async fn prepare_message_context_uses_conversation_profile_id() {
     crate::services::secure_store::use_mock_backend();
@@ -856,7 +852,6 @@ async fn prepare_message_context_uses_conversation_profile_id() {
     )
     .expect("store test key");
 
-    // Create a "kimi" profile that we want the conversation to use
     let kimi_profile = crate::models::ModelProfile::new(
         "Kimi Test".to_string(),
         "kimi-for-coding".to_string(),
@@ -868,7 +863,6 @@ async fn prepare_message_context_uses_conversation_profile_id() {
     );
     let kimi_profile_id = kimi_profile.id;
 
-    // Default profile is OpenAI — should NOT be used
     let default_profile = crate::models::ModelProfile::new(
         "Default".to_string(),
         "openai".to_string(),
@@ -879,7 +873,6 @@ async fn prepare_message_context_uses_conversation_profile_id() {
         },
     );
 
-    // Conversation is bound to the kimi profile
     let conversation_service = Arc::new(MockConversationService::new(kimi_profile_id))
         as Arc<dyn super::super::ConversationService>;
     let mock_profile_service = Arc::new(MockProfileService::new());
