@@ -23,6 +23,8 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+const STREAM_ERROR_MESSAGE: &str = "An error interrupted the chat stream.";
+
 /// Minimal implementation of `ChatService`
 pub struct ChatServiceImpl {
     conversation_service: Arc<dyn ConversationService>,
@@ -518,8 +520,17 @@ async fn run_stream_task(
     let agent = match client.create_agent(mcp_tools, &system_prompt).await {
         Ok(agent) => agent,
         Err(e) => {
-            let err_msg = format!("Failed to create agent: {e}");
-            emit_stream_error(conversation_id, err_msg, false, &tx);
+            tracing::error!(
+                conversation_id = %conversation_id,
+                error = %e,
+                "Failed to create agent for chat stream"
+            );
+            emit_stream_error(
+                conversation_id,
+                STREAM_ERROR_MESSAGE.to_string(),
+                false,
+                &tx,
+            );
             clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
             return;
         }
@@ -553,7 +564,12 @@ async fn run_stream_task(
             thinking_chars = thinking_text.len(),
             "LLM stream task failed"
         );
-        emit_stream_error(conversation_id, err_msg, false, &tx);
+        emit_stream_error(
+            conversation_id,
+            STREAM_ERROR_MESSAGE.to_string(),
+            false,
+            &tx,
+        );
     }
 
     persist_assistant_response(
@@ -643,7 +659,7 @@ fn handle_llm_stream_event(
                 thinking_chars = thinking_text.len(),
                 "LLM stream event error"
             );
-            emit_stream_error(conversation_id, err, false, tx);
+            emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
         }
         LlmStreamEvent::ToolUse(_tool_use) => {}
     }
