@@ -19,24 +19,42 @@ impl ChatPresenter {
             } => {
                 Self::handle_stream_started(view_tx, conversation_id).await;
             }
-            ChatEvent::TextDelta { text } => {
-                Self::handle_text_delta(view_tx, text).await;
+            ChatEvent::TextDelta {
+                conversation_id,
+                text,
+            } => {
+                Self::handle_text_delta(view_tx, conversation_id, text).await;
             }
-            ChatEvent::ThinkingDelta { text } => {
-                Self::handle_thinking_delta(view_tx, text).await;
+            ChatEvent::ThinkingDelta {
+                conversation_id,
+                text,
+            } => {
+                Self::handle_thinking_delta(view_tx, conversation_id, text).await;
             }
-            ChatEvent::ToolCallStarted { tool_name, .. } => {
-                Self::handle_tool_call_started(view_tx, tool_name).await;
+            ChatEvent::ToolCallStarted {
+                conversation_id,
+                tool_name,
+                ..
+            } => {
+                Self::handle_tool_call_started(view_tx, conversation_id, tool_name).await;
             }
             ChatEvent::ToolCallCompleted {
+                conversation_id,
                 tool_name,
                 success,
                 result,
                 duration_ms,
                 ..
             } => {
-                Self::handle_tool_call_completed(view_tx, tool_name, success, result, duration_ms)
-                    .await;
+                Self::handle_tool_call_completed(
+                    view_tx,
+                    conversation_id,
+                    tool_name,
+                    success,
+                    result,
+                    duration_ms,
+                )
+                .await;
             }
             ChatEvent::StreamCompleted {
                 conversation_id,
@@ -73,28 +91,40 @@ impl ChatPresenter {
             .await;
     }
 
-    async fn handle_text_delta(view_tx: &mut mpsc::Sender<ViewCommand>, text: String) {
+    async fn handle_text_delta(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        text: String,
+    ) {
         let _ = view_tx
             .send(ViewCommand::AppendStream {
-                conversation_id: Uuid::nil(),
+                conversation_id,
                 chunk: text,
             })
             .await;
     }
 
-    async fn handle_thinking_delta(view_tx: &mut mpsc::Sender<ViewCommand>, text: String) {
+    async fn handle_thinking_delta(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        text: String,
+    ) {
         let _ = view_tx
             .send(ViewCommand::AppendThinking {
-                conversation_id: Uuid::nil(),
+                conversation_id,
                 content: text,
             })
             .await;
     }
 
-    async fn handle_tool_call_started(view_tx: &mut mpsc::Sender<ViewCommand>, tool_name: String) {
+    async fn handle_tool_call_started(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        tool_name: String,
+    ) {
         let _ = view_tx
             .send(ViewCommand::ShowToolCall {
-                conversation_id: Uuid::nil(),
+                conversation_id,
                 tool_name,
                 status: "running".to_string(),
             })
@@ -103,6 +133,7 @@ impl ChatPresenter {
 
     async fn handle_tool_call_completed(
         view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
         tool_name: String,
         success: bool,
         result: String,
@@ -115,7 +146,7 @@ impl ChatPresenter {
         };
         let _ = view_tx
             .send(ViewCommand::UpdateToolCall {
-                conversation_id: Uuid::nil(),
+                conversation_id,
                 tool_name,
                 status,
                 result: Some(result),

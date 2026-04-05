@@ -578,18 +578,23 @@ fn handle_llm_stream_event(
     match event {
         LlmStreamEvent::TextDelta(text) => {
             tracing::info!("ChatService emitting TextDelta: '{}'", text);
-            let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+            let _ = emit(AppEvent::Chat(ChatEvent::TextDelta {
+                conversation_id,
+                text: text.clone(),
+            }));
             let _ = tx.send(ChatStreamEvent::Token(text.clone()));
             response_text.push_str(&text);
         }
         LlmStreamEvent::ThinkingDelta(text) => {
             let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
+                conversation_id,
                 text: text.clone(),
             }));
             thinking_text.push_str(&text);
         }
         LlmStreamEvent::ToolCallStarted { tool_name, call_id } => {
             let _ = emit(AppEvent::Chat(ChatEvent::ToolCallStarted {
+                conversation_id,
                 tool_call_id: call_id,
                 tool_name,
             }));
@@ -603,6 +608,7 @@ fn handle_llm_stream_event(
         } => {
             let payload = result.or(error).unwrap_or_default();
             let _ = emit(AppEvent::Chat(ChatEvent::ToolCallCompleted {
+                conversation_id,
                 tool_call_id: call_id,
                 tool_name,
                 success,

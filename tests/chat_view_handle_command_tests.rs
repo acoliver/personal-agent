@@ -151,7 +151,7 @@ async fn apply_store_and_settings_snapshots_seed_visible_chat_state(cx: &mut Tes
 }
 
 #[gpui::test]
-async fn conversation_selection_requests_authoritative_switch_and_stops_streaming(
+async fn conversation_selection_requests_authoritative_switch_without_force_stopping_stream(
     cx: &mut TestAppContext,
 ) {
     drain_selection_requests();
@@ -177,9 +177,9 @@ async fn conversation_selection_requests_authoritative_switch_and_stops_streamin
         view.confirm_conversation_dropdown_selection(cx);
     });
 
-    assert_eq!(
-        user_rx.recv().expect("stop streaming event"),
-        UserEvent::StopStreaming
+    assert!(
+        user_rx.try_recv().is_err(),
+        "conversation switch should not emit UserEvent::StopStreaming"
     );
     assert_eq!(
         personal_agent::ui_gpui::selection_intent_channel().take_pending(),

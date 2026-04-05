@@ -309,7 +309,9 @@ async fn test_handle_stop_streaming() {
 async fn test_handle_text_delta_produces_view_command() {
     let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
 
+    let conversation_id = Uuid::new_v4();
     let event = ChatEvent::TextDelta {
+        conversation_id,
         text: "Hello".to_string(),
     };
 

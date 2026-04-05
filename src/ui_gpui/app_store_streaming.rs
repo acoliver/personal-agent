@@ -11,11 +11,21 @@ use super::app_store::{
     clear_streaming_ephemera_only, non_empty_or_none, AppStoreInner, FinalizedStreamGuard,
 };
 
+pub(super) fn clear_streaming_visible_state(inner: &mut AppStoreInner) {
+    inner.snapshot.chat.streaming.stream_buffer.clear();
+    inner.snapshot.chat.streaming.thinking_buffer.clear();
+    inner.snapshot.chat.streaming.thinking_visible = false;
+    inner.snapshot.chat.streaming.last_error = None;
+}
+
 pub(super) fn resolve_nil_or_explicit_target(
     inner: &AppStoreInner,
     conversation_id: Uuid,
 ) -> Option<Uuid> {
     if conversation_id == Uuid::nil() {
+        tracing::warn!(
+            "Received nil conversation_id for streaming event; falling back to active/selected target"
+        );
         inner
             .snapshot
             .chat
@@ -120,11 +130,13 @@ pub(super) fn finalize_stream_if_target_matches_selected_or_nil(
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
     };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
-        return false;
-    }
     if inner.snapshot.chat.streaming.active_target != Some(target) {
         return false;
+    }
+
+    if inner.snapshot.chat.selected_conversation_id != Some(target) {
+        inner.snapshot.chat.streaming.active_target = None;
+        return true;
     }
 
     if inner.snapshot.chat.streaming.stream_buffer.is_empty() {
@@ -163,20 +175,27 @@ fn clear_streaming_ephemera_if_selected_target_matches(
     target: Uuid,
     error: Option<String>,
 ) -> bool {
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
+    let previous = inner.snapshot.chat.streaming.clone();
+    let mut next = previous.clone();
+
+    if inner.snapshot.chat.selected_conversation_id == Some(target) {
+        next.active_target = None;
+        next.stream_buffer.clear();
+        next.thinking_buffer.clear();
+        next.thinking_visible = false;
+        next.last_error = error;
+    } else if next.active_target == Some(target) {
+        next.active_target = None;
+    } else {
         return false;
     }
 
-    let previous = inner.snapshot.chat.streaming.clone();
-    let mut next = previous.clone();
-    next.active_target = None;
-    next.stream_buffer.clear();
-    next.thinking_buffer.clear();
-    next.thinking_visible = false;
-    next.last_error = error;
     if previous == next {
         return false;
     }
     inner.snapshot.chat.streaming = next;
     true
 }
+
+#[cfg(test)]
+mod tests;

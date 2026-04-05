@@ -185,18 +185,21 @@ async fn test_chat_presenter_receives_stream_events() {
 
     event_bus
         .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: "Hello".to_string(),
         }))
         .ok();
 
     event_bus
         .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: " from".to_string(),
         }))
         .ok();
 
     event_bus
         .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: " presenter".to_string(),
         }))
         .ok();
@@ -464,18 +467,21 @@ async fn test_chat_presenter_manual_events() {
 
     event_bus
         .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: "Hello".to_string(),
         }))
         .ok();
 
     event_bus
         .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: " from".to_string(),
         }))
         .ok();
 
     event_bus
         .publish(AppEvent::Chat(ChatEvent::TextDelta {
+            conversation_id,
             text: " presenter".to_string(),
         }))
         .ok();
