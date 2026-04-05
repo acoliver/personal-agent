@@ -661,9 +661,10 @@ impl ChatView {
             .child(self.render_chat_area(cx))
             // Input bar (50px)
             .child(self.render_input_bar(cx))
-            // Overlay dropdowns (only in popup mode; popout uses sidebar)
+            // Overlay dropdowns (popup mode, or popout when sidebar hidden)
             .when(
-                app_mode == AppMode::Popup && self.state.conversation_dropdown_open,
+                self.state.conversation_dropdown_open
+                    && (app_mode == AppMode::Popup || !self.state.sidebar_visible),
                 |d| d.child(self.render_conversation_dropdown(cx)),
             )
             .when(self.state.profile_dropdown_open, |d| {

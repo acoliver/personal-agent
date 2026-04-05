@@ -359,6 +359,13 @@ impl SystemTray {
                     });
                 }
                 let _ = handle.update(cx, |main_panel, window, cx| {
+                    window.on_window_should_close(cx, |_this, cx| {
+                        cx.update_global::<SystemTray, _>(|tray, cx| {
+                            tray.app_mode = AppMode::Popup;
+                            tray.close_popup(cx);
+                        });
+                        true
+                    });
                     window.activate_window();
                     if !main_panel.is_runtime_started() {
                         tracing::info!("MainPanel: starting runtime from open_popout");

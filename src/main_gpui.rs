@@ -284,20 +284,20 @@ fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
 
         let commands = app_state.gpui_bridge.drain_commands();
         let mut non_store_commands: Vec<ViewCommand> = Vec::new();
-        let mut has_toggle_window_mode = false;
+        let mut toggle_window_mode_count = 0usize;
         for cmd in commands.iter() {
             if personal_agent::ui_gpui::is_store_managed(cmd) {
                 continue;
             }
             if matches!(cmd, ViewCommand::ToggleWindowMode) {
-                has_toggle_window_mode = true;
+                toggle_window_mode_count += 1;
                 continue;
             }
             non_store_commands.push(cmd.clone());
         }
         let _changed = app_state.app_store.reduce_batch(commands);
         forward_runtime_commands_to_main_panel(non_store_commands, cx);
-        if has_toggle_window_mode {
+        if toggle_window_mode_count % 2 == 1 {
             let _ = cx.update_global::<SystemTray, _>(|tray, cx| {
                 tray.toggle_window_mode(cx);
             });

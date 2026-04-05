@@ -240,8 +240,23 @@ impl ChatView {
         &self,
         result: &crate::presentation::view_command::ConversationSearchResult,
         cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let conv_id = result.id;
+        let is_confirming = self.state.delete_confirming_id == Some(conv_id);
+
+        if is_confirming {
+            let summary = ConversationSummary {
+                id: result.id,
+                title: result.title.clone(),
+                updated_at: result.updated_at,
+                message_count: result.message_count,
+                preview: None,
+            };
+            return self
+                .render_delete_confirmation(&summary, cx)
+                .into_any_element();
+        }
+
         let is_selected = self.state.active_conversation_id == Some(conv_id);
         let title = result.title.clone();
         let updated = format_relative_time(result.updated_at);
@@ -305,6 +320,7 @@ impl ChatView {
                     crate::ui_gpui::selection_intent_channel().request_select(conv_id);
                 })
             })
+            .into_any_element()
     }
 
     #[allow(clippy::unused_self)]
@@ -328,6 +344,7 @@ impl ChatView {
             .child("x")
             .on_mouse_down(MouseButton::Left, {
                 cx.listener(move |this, _, _window, cx| {
+                    cx.stop_propagation();
                     this.state.delete_confirming_id = Some(conv_id);
                     cx.notify();
                 })
