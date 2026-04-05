@@ -114,7 +114,7 @@ fn test_chat_message_with_metadata() {
     assert_eq!(msg.role, MessageRole::Assistant);
     assert_eq!(msg.content, "Response");
     assert_eq!(msg.timestamp, Some(1_234_567_890));
-    assert_eq!(msg.model_id, Some("claude-3".to_string()));
+    assert_eq!(msg.model_label, Some("claude-3".to_string()));
 }
 
 #[test]

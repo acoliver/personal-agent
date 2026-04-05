@@ -71,7 +71,7 @@ fn assert_profile_forwarding_via_store(
     chat_view.read_with(cx, |view, _| {
         assert_eq!(view.state.profiles.len(), 1);
         assert_eq!(view.state.selected_profile_id, Some(profile_id));
-        assert_eq!(view.state.current_model, "gpt-4.1");
+        assert_eq!(view.state.current_model, "Workspace Default");
     });
 }
 
@@ -418,7 +418,7 @@ async fn ensure_store_subscription_only_subscribes_once_and_applies_published_up
             assert_eq!(view.state.conversation_title, "Later Conversation");
             assert_eq!(view.state.messages.len(), 3);
             assert_eq!(view.state.selected_profile_id, Some(selected_profile_id));
-            assert_eq!(view.state.current_model, "claude-3-7-sonnet");
+            assert_eq!(view.state.current_model, "Updated Default");
             assert_eq!(view.state.profiles.len(), 1);
         });
 
