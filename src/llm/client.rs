@@ -48,6 +48,13 @@ pub enum StreamEvent {
         /// Error message (if failed)
         error: Option<String>,
     },
+    /// Finalized tool transcript extracted from the completed turn.
+    ToolTranscript {
+        /// All tool calls emitted by the assistant during the turn.
+        tool_calls: Vec<crate::llm::tools::ToolUse>,
+        /// All tool results returned during the turn.
+        tool_results: Vec<crate::llm::tools::ToolResult>,
+    },
     /// Stream completed
     Complete,
     /// Error occurred

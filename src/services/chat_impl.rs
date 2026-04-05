@@ -289,18 +289,55 @@ impl ChatServiceImpl {
                     let expanded = expand_system_prompt(&msg.content, &template_ctx);
                     LlmMessage::system(expanded)
                 }
-                MessageRole::User => LlmMessage::user(msg.content.clone()),
-                MessageRole::Assistant => {
-                    let llm_message = LlmMessage::assistant(msg.content.clone());
-                    if let Some(thinking) = msg.thinking_content.as_deref() {
-                        if thinking.is_empty() {
-                            llm_message
-                        } else {
-                            llm_message.with_thinking(thinking.to_owned())
+                MessageRole::User => {
+                    let mut llm_message = LlmMessage::user(msg.content.clone());
+                    if let Some(tool_results_raw) = msg.tool_results.as_deref() {
+                        let parsed = serde_json::from_str::<Vec<crate::llm::tools::ToolResult>>(
+                            tool_results_raw,
+                        )
+                        .unwrap_or_else(|error| {
+                            tracing::warn!("Failed to parse persisted tool results: {error}");
+                            Vec::new()
+                        });
+                        if !parsed.is_empty() {
+                            llm_message = llm_message.with_tool_results(parsed);
                         }
-                    } else {
-                        llm_message
                     }
+                    llm_message
+                }
+                MessageRole::Assistant => {
+                    let mut llm_message = LlmMessage::assistant(msg.content.clone());
+                    if let Some(thinking) = msg.thinking_content.as_deref() {
+                        if !thinking.is_empty() {
+                            llm_message = llm_message.with_thinking(thinking.to_owned());
+                        }
+                    }
+                    if let Some(tool_calls_raw) = msg.tool_calls.as_deref() {
+                        let parsed =
+                            serde_json::from_str::<Vec<crate::llm::tools::ToolUse>>(tool_calls_raw)
+                                .unwrap_or_else(|error| {
+                                    tracing::warn!("Failed to parse persisted tool calls: {error}");
+                                    Vec::new()
+                                });
+                        if !parsed.is_empty() {
+                            llm_message = llm_message.with_tool_uses(parsed);
+                        }
+                    }
+                    if let Some(tool_results_raw) = msg.tool_results.as_deref() {
+                        let parsed = serde_json::from_str::<Vec<crate::llm::tools::ToolResult>>(
+                            tool_results_raw,
+                        )
+                        .unwrap_or_else(|error| {
+                            tracing::warn!(
+                                "Failed to parse persisted assistant tool results: {error}"
+                            );
+                            Vec::new()
+                        });
+                        if !parsed.is_empty() {
+                            llm_message = llm_message.with_tool_results(parsed);
+                        }
+                    }
+                    llm_message
                 }
             })
             .collect();
@@ -474,6 +511,8 @@ async fn run_stream_task(
     } = prepared;
     let mut response_text = String::new();
     let mut thinking_text = String::new();
+    let mut tool_calls: Vec<crate::llm::tools::ToolUse> = Vec::new();
+    let mut tool_results: Vec<crate::llm::tools::ToolResult> = Vec::new();
 
     let agent = match client.create_agent(mcp_tools, &system_prompt).await {
         Ok(agent) => agent,
@@ -492,26 +531,16 @@ async fn run_stream_task(
     };
 
     if let Err(e) = client
-        .run_agent_stream(&agent, &messages, context, |event| match event {
-            LlmStreamEvent::TextDelta(text) => {
-                tracing::info!("ChatService emitting TextDelta: '{}'", text);
-                let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
-                let _ = tx.send(ChatStreamEvent::Token(text.clone()));
-                response_text.push_str(&text);
-            }
-            LlmStreamEvent::ThinkingDelta(text) => {
-                let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
-                    text: text.clone(),
-                }));
-                thinking_text.push_str(&text);
-            }
-            LlmStreamEvent::Complete => {
-                let _ = tx.send(ChatStreamEvent::Complete);
-            }
-            LlmStreamEvent::Error(err) => {
-                emit_stream_error(conversation_id, err, false, &tx);
-            }
-            _ => {}
+        .run_agent_stream(&agent, &messages, context, |event| {
+            handle_llm_stream_event(
+                event,
+                conversation_id,
+                &tx,
+                &mut response_text,
+                &mut thinking_text,
+                &mut tool_calls,
+                &mut tool_results,
+            );
         })
         .await
     {
@@ -523,6 +552,8 @@ async fn run_stream_task(
         conversation_id,
         &response_text,
         &thinking_text,
+        &tool_calls,
+        &tool_results,
     )
     .await;
 
@@ -532,6 +563,68 @@ async fn run_stream_task(
         total_tokens: None,
     }));
     clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_llm_stream_event(
+    event: LlmStreamEvent,
+    conversation_id: Uuid,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    response_text: &mut String,
+    thinking_text: &mut String,
+    tool_calls: &mut Vec<crate::llm::tools::ToolUse>,
+    tool_results: &mut Vec<crate::llm::tools::ToolResult>,
+) {
+    match event {
+        LlmStreamEvent::TextDelta(text) => {
+            tracing::info!("ChatService emitting TextDelta: '{}'", text);
+            let _ = emit(AppEvent::Chat(ChatEvent::TextDelta { text: text.clone() }));
+            let _ = tx.send(ChatStreamEvent::Token(text.clone()));
+            response_text.push_str(&text);
+        }
+        LlmStreamEvent::ThinkingDelta(text) => {
+            let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
+                text: text.clone(),
+            }));
+            thinking_text.push_str(&text);
+        }
+        LlmStreamEvent::ToolCallStarted { tool_name, call_id } => {
+            let _ = emit(AppEvent::Chat(ChatEvent::ToolCallStarted {
+                tool_call_id: call_id,
+                tool_name,
+            }));
+        }
+        LlmStreamEvent::ToolCallCompleted {
+            tool_name,
+            call_id,
+            success,
+            result,
+            error,
+        } => {
+            let payload = result.or(error).unwrap_or_default();
+            let _ = emit(AppEvent::Chat(ChatEvent::ToolCallCompleted {
+                tool_call_id: call_id,
+                tool_name,
+                success,
+                result: payload,
+                duration_ms: 0,
+            }));
+        }
+        LlmStreamEvent::ToolTranscript {
+            tool_calls: completed_tool_calls,
+            tool_results: completed_tool_results,
+        } => {
+            *tool_calls = completed_tool_calls;
+            *tool_results = completed_tool_results;
+        }
+        LlmStreamEvent::Complete => {
+            let _ = tx.send(ChatStreamEvent::Complete);
+        }
+        LlmStreamEvent::Error(err) => {
+            emit_stream_error(conversation_id, err, false, tx);
+        }
+        LlmStreamEvent::ToolUse(_tool_use) => {}
+    }
 }
 
 fn emit_stream_error(
@@ -553,16 +646,37 @@ async fn persist_assistant_response(
     conversation_id: Uuid,
     response_text: &str,
     thinking_text: &str,
+    tool_calls: &[crate::llm::tools::ToolUse],
+    tool_results: &[crate::llm::tools::ToolResult],
 ) {
-    if response_text.is_empty() && thinking_text.is_empty() {
+    if response_text.is_empty()
+        && thinking_text.is_empty()
+        && tool_calls.is_empty()
+        && tool_results.is_empty()
+    {
         return;
     }
 
-    let msg = if thinking_text.is_empty() {
+    let mut msg = if thinking_text.is_empty() {
         Message::assistant(response_text.to_string())
     } else {
         Message::assistant_with_thinking(response_text.to_string(), thinking_text.to_string())
     };
+
+    if !tool_calls.is_empty() {
+        msg.tool_calls = Some(serde_json::to_string(tool_calls).unwrap_or_else(|error| {
+            tracing::warn!("Failed to serialize tool calls: {error}");
+            "[]".to_string()
+        }));
+    }
+
+    if !tool_results.is_empty() {
+        msg.tool_results = Some(serde_json::to_string(tool_results).unwrap_or_else(|error| {
+            tracing::warn!("Failed to serialize tool results: {error}");
+            "[]".to_string()
+        }));
+    }
+
     let _ = conversation_service.add_message(conversation_id, msg).await;
 }
 
