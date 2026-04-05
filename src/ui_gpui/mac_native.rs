@@ -230,6 +230,7 @@ mod platform {
 /// On non-macOS targets or if `AppKit` color resolution fails, returns `None`.
 /// Callers **must** treat `None` as a signal to fall back to the default
 /// catalog theme; there is no partial fallback within this module.
+#[allow(clippy::missing_const_for_fn)]
 #[must_use]
 pub fn resolve_palette() -> Option<MacNativePalette> {
     platform::resolve_palette()
