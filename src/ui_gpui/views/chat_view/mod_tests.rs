@@ -397,6 +397,9 @@ async fn send_message_and_start_streaming_reenables_autoscroll_and_starts_stream
             view.state.chat_autoscroll_enabled = false;
             view.state.input_text = "queued".to_string();
             view.state.cursor_position = view.state.input_text.len();
+            view.state.conversation_dropdown_open = true;
+            view.state.profile_dropdown_open = true;
+            view.state.conversation_title_editing = true;
             view.maybe_scroll_chat_to_bottom_invocations.set(0);
 
             view.send_message_and_start_streaming("hello".to_string(), cx);
@@ -404,6 +407,9 @@ async fn send_message_and_start_streaming_reenables_autoscroll_and_starts_stream
             assert!(view.state.chat_autoscroll_enabled);
             assert!(view.state.input_text.is_empty());
             assert_eq!(view.state.cursor_position, 0);
+            assert!(!view.state.conversation_dropdown_open);
+            assert!(!view.state.profile_dropdown_open);
+            assert!(!view.state.conversation_title_editing);
             assert_eq!(
                 view.state.streaming,
                 StreamingState::Streaming {
