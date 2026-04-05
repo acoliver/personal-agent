@@ -3,7 +3,7 @@
 //! This module bridges `PersonalAgent`'s profile system with `SerdesAI`,
 //! using models.dev registry data for provider configuration.
 
-use super::error::LlmError;
+use super::error::{debug_error_message, LlmError};
 use super::provider_quirks::{effective_serdes_provider, resolve_provider_quirks, ProviderQuirks};
 use crate::models::{AuthConfig, ModelProfile};
 use crate::registry::RegistryCache;
@@ -468,8 +468,9 @@ impl LlmClient {
                     Self::handle_stream_event(event, &mut pending_tool_calls, &mut on_event);
                 }
                 Err(e) => {
-                    on_event(StreamEvent::Error(e.to_string()));
-                    return Err(LlmError::SerdesAi(e.to_string()));
+                    let err_msg = debug_error_message(&e);
+                    on_event(StreamEvent::Error(err_msg.clone()));
+                    return Err(LlmError::Stream(err_msg));
                 }
             }
         }

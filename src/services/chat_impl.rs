@@ -7,6 +7,7 @@ use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::events::types::{ChatEvent, ToolApprovalResponseAction};
 use crate::events::{emit, AppEvent};
 use crate::llm::client_agent::ApprovalGate;
+use crate::llm::error::debug_error_message;
 use crate::llm::AgentClientExt;
 use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::mcp::McpService;
@@ -544,7 +545,15 @@ async fn run_stream_task(
         })
         .await
     {
-        emit_stream_error(conversation_id, e.to_string(), false, &tx);
+        let err_msg = debug_error_message(&e);
+        tracing::error!(
+            conversation_id = %conversation_id,
+            error = %err_msg,
+            response_chars = response_text.len(),
+            thinking_chars = thinking_text.len(),
+            "LLM stream task failed"
+        );
+        emit_stream_error(conversation_id, err_msg, false, &tx);
     }
 
     persist_assistant_response(
@@ -627,6 +636,13 @@ fn handle_llm_stream_event(
             let _ = tx.send(ChatStreamEvent::Complete);
         }
         LlmStreamEvent::Error(err) => {
+            tracing::error!(
+                conversation_id = %conversation_id,
+                error = %err,
+                response_chars = response_text.len(),
+                thinking_chars = thinking_text.len(),
+                "LLM stream event error"
+            );
             emit_stream_error(conversation_id, err, false, tx);
         }
         LlmStreamEvent::ToolUse(_tool_use) => {}

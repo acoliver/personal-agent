@@ -1,5 +1,6 @@
 //! Error types for LLM integration
 
+use std::fmt::Debug;
 use thiserror::Error;
 
 /// Errors that can occur during LLM operations
@@ -53,6 +54,12 @@ pub enum LlmError {
 /// Result type for LLM operations
 pub type LlmResult<T> = Result<T, LlmError>;
 
+/// Format streaming and transport errors with their full debug context.
+#[must_use]
+pub(crate) fn debug_error_message<E: Debug>(error: &E) -> String {
+    format!("{error:?}")
+}
+
 impl LlmError {
     /// Check if the error is recoverable
     #[must_use]
@@ -67,5 +74,18 @@ impl LlmError {
             self,
             Self::InvalidConfig(_) | Self::Auth(_) | Self::UnsupportedModel(_)
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::debug_error_message;
+
+    #[test]
+    fn debug_error_message_preserves_debug_context() {
+        let message = debug_error_message(&std::io::Error::other("network down"));
+
+        assert!(message.contains("network down"));
+        assert!(message.contains("Custom"));
     }
 }
