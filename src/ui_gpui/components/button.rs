@@ -50,28 +50,29 @@ impl IntoElement for Button {
         let on_click = self.on_click;
         let disabled = self.disabled;
 
-        let mut button = Theme::button_secondary(
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .px(px(Theme::SPACING_MD))
-                .py(px(Theme::SPACING_SM))
-                .rounded(px(Theme::RADIUS_MD))
-                .on_mouse_down(MouseButton::Left, move |_, _, _| {
-                    if disabled {
-                        return;
-                    }
-                    if let Some(ref callback) = on_click {
-                        (callback)();
-                    }
-                })
-                .text_sm(),
-        );
+        let base_button = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .px(px(Theme::SPACING_MD))
+            .py(px(Theme::SPACING_SM))
+            .rounded(px(Theme::RADIUS_MD))
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                if disabled {
+                    return;
+                }
+                if let Some(ref callback) = on_click {
+                    (callback)();
+                }
+            })
+            .text_sm();
 
-        if self.active {
-            button = Theme::toolbar_button(button);
-        }
+        let mut button = if self.active {
+            Theme::toolbar_button(base_button)
+        } else {
+            Theme::button_secondary(base_button)
+        };
 
         if self.disabled {
             button = button.text_color(Theme::text_muted());

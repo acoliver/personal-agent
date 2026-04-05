@@ -3,7 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P02
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, IntoElement, MouseButton, Styled};
+use gpui::{div, prelude::*, px, IntoElement, MouseButton, ParentElement, Styled};
 use std::cell::RefCell;
 use std::rc::Rc;
 
