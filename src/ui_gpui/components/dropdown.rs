@@ -3,7 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P02
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, IntoElement, Styled};
+use gpui::{div, prelude::*, px, IntoElement, MouseButton, Styled};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -74,6 +74,9 @@ impl IntoElement for Dropdown {
         let is_open = *self.is_open.borrow();
         let options = self.options;
         let selected_text = options.get(selected_idx).cloned().unwrap_or_default();
+        let is_open_state = Rc::clone(&self.is_open);
+        let selected_state = Rc::clone(&self.selected_index);
+        let on_select = self.on_select.clone();
 
         let mut dropdown = div().relative().w(px(200.0));
 
@@ -90,6 +93,13 @@ impl IntoElement for Dropdown {
                 .border_1()
                 .rounded(px(Theme::RADIUS_MD))
                 .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, {
+                    let is_open_state = Rc::clone(&is_open_state);
+                    move |_, _, _| {
+                        let current = *is_open_state.borrow();
+                        *is_open_state.borrow_mut() = !current;
+                    }
+                })
                 .child(div().flex_1().text_sm().child(selected_text))
                 .child(
                     div()
@@ -114,28 +124,31 @@ impl IntoElement for Dropdown {
                     .rounded(px(Theme::RADIUS_MD))
                     .children(options.iter().enumerate().map(|(idx, opt)| {
                         let is_selected = idx == selected_idx;
+                        let option_label = opt.clone();
+                        let option_on_select = on_select.clone();
+                        let option_selected_state = Rc::clone(&selected_state);
+                        let option_open_state = Rc::clone(&is_open_state);
+
+                        let option_row = div()
+                            .flex()
+                            .items_center()
+                            .px(px(Theme::SPACING_MD))
+                            .py(px(Theme::SPACING_SM))
+                            .w_full()
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                                *option_selected_state.borrow_mut() = idx;
+                                *option_open_state.borrow_mut() = false;
+                                if let Some(callback) = &option_on_select {
+                                    (callback.borrow())(idx);
+                                }
+                            })
+                            .child(div().flex_1().text_sm().child(option_label));
+
                         if is_selected {
-                            Theme::list_row_selected(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .px(px(Theme::SPACING_MD))
-                                    .py(px(Theme::SPACING_SM))
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .child(div().flex_1().text_sm().child(opt.clone())),
-                            )
+                            Theme::list_row_selected(option_row)
                         } else {
-                            Theme::dropdown_item(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .px(px(Theme::SPACING_MD))
-                                    .py(px(Theme::SPACING_SM))
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .child(div().flex_1().text_sm().child(opt.clone())),
-                            )
+                            Theme::dropdown_item(option_row)
                         }
                     })),
             );

@@ -292,14 +292,13 @@ impl ChatView {
                 let text = content_owned.clone();
                 Theme::user_bubble(
                     div()
-                        .id(SharedString::from(format!("ubbl-{}", content.len())))
                         .max_w(px(300.0))
                         .px(px(10.0))
                         .py(px(10.0))
                         .rounded(px(12.0))
                         .text_size(px(Theme::font_size_mono()))
                         .cursor_pointer()
-                        .on_click(move |_event, _window, cx| {
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
                         })
                         .child(content_owned),

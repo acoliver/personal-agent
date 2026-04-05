@@ -3,7 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P02
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, IntoElement, Styled};
+use gpui::{div, prelude::*, px, IntoElement, MouseButton, Styled};
 
 pub struct IconButton {
     icon: String,
@@ -47,6 +47,8 @@ impl IntoElement for IconButton {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
+        let on_click = self.on_click;
+
         let button = div()
             .flex()
             .items_center()
@@ -54,6 +56,11 @@ impl IntoElement for IconButton {
             .size(px(28.0))
             .rounded(px(Theme::RADIUS_SM))
             .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                if let Some(ref callback) = on_click {
+                    (callback)();
+                }
+            })
             .child(div().text_sm().child(self.icon));
 
         if self.active {

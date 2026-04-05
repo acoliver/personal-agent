@@ -158,10 +158,7 @@ impl Theme {
     where
         E: Styled + InteractiveElement,
     {
-        element
-            .bg(hsla(0.0, 0.0, 0.0, 0.0))
-            .text_color(Self::text_primary())
-            .hover(|s| s.bg(Self::bg_dark()))
+        Self::list_row(element)
     }
 
     /// Badge label colors.

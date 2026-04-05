@@ -6,7 +6,7 @@
 use crate::ui_gpui::components::markdown_content::{
     blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
 };
-use gpui::{div, prelude::*, px, InteractiveElement, IntoElement};
+use gpui::{div, prelude::*, px, IntoElement, MouseButton};
 
 pub struct UserBubble {
     content: String,
@@ -140,18 +140,15 @@ impl IntoElement for AssistantBubble {
 
         if self.show_thinking {
             if let Some(thinking_content) = self.thinking {
-                bubble = bubble.child(
-                    Theme::badge(
-                        div()
-                            .w_full()
-                            .px(px(Theme::SPACING_MD))
-                            .py(px(Theme::SPACING_SM))
-                            .rounded(px(Theme::RADIUS_MD))
-                            .text_sm()
-                            .child(format!("Thinking: {thinking_content}")),
-                    )
-                    .text_color(Theme::text_secondary()),
-                );
+                bubble = bubble.child(Theme::badge(
+                    div()
+                        .w_full()
+                        .px(px(Theme::SPACING_MD))
+                        .py(px(Theme::SPACING_SM))
+                        .rounded(px(Theme::RADIUS_MD))
+                        .text_sm()
+                        .child(format!("Thinking: {thinking_content}")),
+                ));
             }
         }
 
@@ -168,20 +165,19 @@ impl IntoElement for AssistantBubble {
                 .px(px(Theme::SPACING_MD))
                 .py(px(Theme::SPACING_SM))
                 .rounded(px(Theme::RADIUS_LG))
-                .children(rendered)
-                .id(gpui::SharedString::from(format!(
-                    "abbl-{}",
-                    self.content.len()
-                ))),
+                .children(rendered),
         );
 
         if should_enable_bubble_copy(&blocks, self.is_streaming) {
             let raw_markdown = self.content.clone();
-            main_content = main_content
-                .cursor_pointer()
-                .on_click(move |_event, _window, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(raw_markdown.clone()));
-                });
+            main_content =
+                main_content
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                            raw_markdown.clone(),
+                        ));
+                    });
         }
 
         bubble = bubble.child(main_content);

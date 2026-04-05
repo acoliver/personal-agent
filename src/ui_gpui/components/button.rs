@@ -3,7 +3,7 @@
 //! @plan PLAN-20250128-GPUI.P06
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, IntoElement};
+use gpui::{div, prelude::*, px, IntoElement, MouseButton};
 
 pub struct Button {
     label: String,
@@ -47,6 +47,9 @@ impl IntoElement for Button {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
+        let on_click = self.on_click;
+        let disabled = self.disabled;
+
         let mut button = Theme::button_secondary(
             div()
                 .flex()
@@ -55,6 +58,14 @@ impl IntoElement for Button {
                 .px(px(Theme::SPACING_MD))
                 .py(px(Theme::SPACING_SM))
                 .rounded(px(Theme::RADIUS_MD))
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    if disabled {
+                        return;
+                    }
+                    if let Some(ref callback) = on_click {
+                        (callback)();
+                    }
+                })
                 .text_sm(),
         );
 
