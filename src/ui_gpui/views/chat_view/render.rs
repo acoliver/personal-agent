@@ -317,8 +317,8 @@ impl ChatView {
     ) -> gpui::AnyElement {
         let mut bubble = AssistantBubble::new(msg.content.clone());
 
-        if let Some(ref model_id) = msg.model_id {
-            bubble = bubble.model_id(model_id.clone());
+        if let Some(ref model_label) = msg.model_label {
+            bubble = bubble.model_id(model_label.clone());
         } else {
             bubble = bubble.model_id("Assistant");
         }

@@ -132,8 +132,8 @@ async fn apply_store_and_settings_snapshots_seed_visible_chat_state(cx: &mut Tes
         assert_eq!(view.state.messages[1].thinking.as_deref(), Some("reasoned"));
         assert_eq!(view.state.messages[1].timestamp, Some(200));
         assert_eq!(
-            view.state.messages[1].model_id.as_deref(),
-            Some("claude-3-7-sonnet")
+            view.state.messages[1].model_label.as_deref(),
+            Some("Default")
         );
         assert_eq!(
             view.state.streaming,
@@ -144,7 +144,7 @@ async fn apply_store_and_settings_snapshots_seed_visible_chat_state(cx: &mut Tes
         );
         assert_eq!(view.state.thinking_content.as_deref(), Some("working"));
         assert_eq!(view.state.selected_profile_id, Some(default_profile_id));
-        assert_eq!(view.state.current_model, "claude-3-7-sonnet");
+        assert_eq!(view.state.current_model, "Default");
         assert_eq!(view.state.profile_dropdown_index, 0);
         assert_eq!(view.state.conversation_dropdown_index, 0);
     });
@@ -232,7 +232,7 @@ async fn profile_dropdown_selection_emits_user_event_and_updates_model(cx: &mut 
     view.read_with(cx, |view, _| {
         assert_eq!(view.state.selected_profile_id, Some(second_id));
         assert_eq!(view.state.profile_dropdown_index, 1);
-        assert_eq!(view.state.current_model, "gpt-4.1");
+        assert_eq!(view.state.current_model, "GPT");
         assert!(!view.state.profile_dropdown_open);
     });
 }
@@ -490,8 +490,8 @@ async fn apply_store_snapshot_renders_active_transcript_ignoring_inactive_conver
         assert_eq!(view.state.messages[1].timestamp, Some(20));
         assert_eq!(view.state.messages[2].content, "follow-up");
         assert_eq!(
-            view.state.messages[2].model_id.as_deref(),
-            Some("claude-3-7-sonnet")
+            view.state.messages[2].model_label.as_deref(),
+            Some("Default")
         );
         assert_eq!(view.state.streaming, StreamingState::Idle);
         assert_eq!(view.state.thinking_content, None);
@@ -721,7 +721,7 @@ async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestA
         assert_eq!(view.state.thinking_content, None);
         assert!(view.state.show_thinking);
         assert_eq!(view.state.selected_profile_id, Some(second_profile_id));
-        assert_eq!(view.state.current_model, "gpt-4.1");
+        assert_eq!(view.state.current_model, "GPT");
         assert!(!view.state.profiles[0].is_default);
         assert!(view.state.profiles[1].is_default);
     });

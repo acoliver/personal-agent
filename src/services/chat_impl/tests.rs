@@ -1,11 +1,13 @@
 use super::*;
 use crate::models::{AuthConfig, Message, ModelParameters};
+use futures::StreamExt;
 use std::sync::Arc;
 
 struct MockConversationService {
     profile_id: Uuid,
     messages: Arc<RwLock<Vec<Message>>>,
 }
+
 use crate::agent::McpApprovalMode;
 use crate::services::{AppSettingsService, ServiceError, ServiceResult};
 use std::collections::HashMap;
@@ -739,13 +741,11 @@ impl crate::services::ProfileService for MockProfileService {
     }
 }
 
-#[tokio::test]
-async fn test_send_message() {
+async fn setup_send_message_test() -> (Arc<MockConversationService>, bool) {
     crate::services::secure_store::use_mock_backend();
     crate::services::secure_store::api_keys::store("_test_send_msg", "fake-key-for-test")
         .expect("store test key");
 
-    // Set default profile
     let profile = crate::models::ModelProfile::new(
         "Test Profile".to_string(),
         "openai".to_string(),
@@ -757,89 +757,106 @@ async fn test_send_message() {
     );
     let profile_id = profile.id;
 
-    let conversation_service = Arc::new(MockConversationService::new(profile_id))
-        as Arc<dyn super::super::ConversationService>;
+    let conversation_service_impl = Arc::new(MockConversationService::new(profile_id));
+    let conversation_service =
+        conversation_service_impl.clone() as Arc<dyn super::super::ConversationService>;
     let mock_profile_service = Arc::new(MockProfileService::new());
-
-    // Set the default profile directly on the mock
     mock_profile_service.set_default_profile(profile).await;
-
     let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
 
     let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
-
     let conversation_id = Uuid::new_v4();
-    let result = chat_service
+    let mut stream = chat_service
         .send_message(conversation_id, "Hello, world!".to_string())
-        .await;
+        .await
+        .expect("send_message should return Ok with a stream");
 
-    // The send_message call should succeed in creating the stream
-    // The actual LLM call happens asynchronously and will fail with invalid API key
-    // but the important thing is we got a stream back (not a placeholder)
-    assert!(
-        result.is_ok(),
-        "send_message should return Ok with a stream, got: {:?}",
-        result.err()
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while let Some(event) = stream.next().await {
+            match event {
+                ChatStreamEvent::Complete => return true,
+                ChatStreamEvent::Error(_) => return false,
+                ChatStreamEvent::Token(_) => {}
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+
+    (conversation_service_impl, completed)
+}
+
+fn assert_non_empty_tool_json<T: serde::de::DeserializeOwned>(
+    maybe_json: Option<&str>,
+    deserialize_err: &str,
+    empty_err: &str,
+) {
+    if let Some(json) = maybe_json {
+        let parsed: Vec<T> = serde_json::from_str(json).expect(deserialize_err);
+        assert!(!parsed.is_empty(), "{empty_err}");
+    }
+}
+
+#[tokio::test]
+async fn test_send_message() {
+    let (conversation_service_impl, completed) = setup_send_message_test().await;
+
+    if completed {
+        let maybe_assistant = {
+            let messages = conversation_service_impl.messages.read().await;
+            messages
+                .iter()
+                .rfind(|message| matches!(message.role, crate::models::MessageRole::Assistant))
+                .cloned()
+        };
+
+        let assistant_message = maybe_assistant
+            .expect("assistant message should be persisted after successful stream completion");
+
+        assert!(
+            assistant_message.tool_calls.is_some() || assistant_message.tool_results.is_some(),
+            "expected at least one persisted tool transcript field"
+        );
+        assert_non_empty_tool_json::<crate::llm::tools::ToolUse>(
+            assistant_message.tool_calls.as_deref(),
+            "persisted tool calls JSON should deserialize",
+            "persisted tool calls should not be empty",
+        );
+        assert_non_empty_tool_json::<crate::llm::tools::ToolResult>(
+            assistant_message.tool_results.as_deref(),
+            "persisted tool results JSON should deserialize",
+            "persisted tool results should not be empty",
+        );
+    }
+
+    let _ = crate::services::secure_store::api_keys::delete("_test_send_msg");
+}
+
+async fn make_basic_chat_service() -> ChatServiceImpl {
+    let profile = crate::models::ModelProfile::new(
+        "Test Profile".to_string(),
+        "openai".to_string(),
+        "gpt-4".to_string(),
+        "https://api.openai.com/v1".to_string(),
+        AuthConfig::Keychain {
+            label: "test-key".to_string(),
+        },
     );
 
-    // Clean up test key
-    let _ = crate::services::secure_store::api_keys::delete("_test_send_msg");
+    let conversation_service = Arc::new(MockConversationService::new(profile.id))
+        as Arc<dyn super::super::ConversationService>;
+    let mock_profile_service = Arc::new(MockProfileService::new());
+    mock_profile_service.set_default_profile(profile).await;
+
+    let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
+    ChatServiceImpl::new_for_tests(conversation_service, profile_service)
 }
 
 #[tokio::test]
 async fn test_cancel() {
-    let profile = crate::models::ModelProfile::new(
-        "Test Profile".to_string(),
-        "openai".to_string(),
-        "gpt-4".to_string(),
-        "https://api.openai.com/v1".to_string(),
-        AuthConfig::Keychain {
-            label: "test-key".to_string(),
-        },
-    );
-    let profile_id = profile.id;
-
-    let conversation_service = Arc::new(MockConversationService::new(profile_id))
-        as Arc<dyn super::super::ConversationService>;
-    let mock_profile_service = Arc::new(MockProfileService::new());
-
-    // Set the default profile directly on the mock
-    mock_profile_service.set_default_profile(profile).await;
-
-    let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
-
-    let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
-
-    // Cancel should work even without streaming
+    let chat_service = make_basic_chat_service().await;
     chat_service.cancel();
-    assert!(!chat_service.is_streaming());
-}
-
-#[tokio::test]
-async fn test_is_streaming() {
-    let profile = crate::models::ModelProfile::new(
-        "Test Profile".to_string(),
-        "openai".to_string(),
-        "gpt-4".to_string(),
-        "https://api.openai.com/v1".to_string(),
-        AuthConfig::Keychain {
-            label: "test-key".to_string(),
-        },
-    );
-    let profile_id = profile.id;
-
-    let conversation_service = Arc::new(MockConversationService::new(profile_id))
-        as Arc<dyn super::super::ConversationService>;
-    let mock_profile_service = Arc::new(MockProfileService::new());
-
-    // Set the default profile directly on the mock
-    mock_profile_service.set_default_profile(profile).await;
-
-    let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
-
-    let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
-
-    // Initially not streaming
     assert!(!chat_service.is_streaming());
 }
 
@@ -945,32 +962,38 @@ async fn cancel_clears_current_conversation_and_pending_approvals() {
 }
 
 #[test]
-fn build_llm_messages_preserves_assistant_thinking_content() {
-    let profile = crate::models::ModelProfile::new(
-        "Test Profile".to_string(),
-        "openai".to_string(),
-        "gpt-4".to_string(),
-        "https://api.openai.com/v1".to_string(),
-        AuthConfig::Keychain {
-            label: "test-key".to_string(),
-        },
-    );
-
+fn build_llm_messages_preserves_assistant_tool_transcript() {
+    let profile = crate::models::ModelProfile::default();
     let mut conversation = crate::models::Conversation::new(profile.id);
     conversation.add_message(Message::user("hello".to_string()));
-    conversation.add_message(Message::assistant_with_thinking(
-        "answer".to_string(),
-        "chain-of-thought".to_string(),
-    ));
 
-    let messages = ChatServiceImpl::build_llm_messages(&conversation, &profile);
-    let assistant = messages
-        .iter()
+    let mut assistant = Message::assistant("answer with tool context".to_string());
+    assistant.tool_calls = Some(
+        serde_json::to_string(&[crate::llm::tools::ToolUse::new(
+            "tool-call-1",
+            "read_file",
+            serde_json::json!({"path":"/tmp/text.txt"}),
+        )])
+        .expect("tool calls should serialize"),
+    );
+    assistant.tool_results = Some(
+        serde_json::to_string(&[crate::llm::tools::ToolResult::success(
+            "tool-call-1",
+            "contents",
+        )])
+        .expect("tool results should serialize"),
+    );
+    conversation.add_message(assistant);
+
+    let assistant = ChatServiceImpl::build_llm_messages(&conversation, &profile)
+        .into_iter()
         .find(|message| matches!(message.role, crate::llm::Role::Assistant))
         .expect("assistant message should be present");
 
-    assert_eq!(
-        assistant.thinking_content.as_deref(),
-        Some("chain-of-thought")
-    );
+    assert_eq!(assistant.tool_uses.len(), 1);
+    assert_eq!(assistant.tool_results.len(), 1);
+    assert_eq!(assistant.tool_uses[0].id, "tool-call-1");
+    assert_eq!(assistant.tool_results[0].tool_use_id, "tool-call-1");
+    assert_eq!(assistant.tool_results[0].content, "contents");
+    assert!(!assistant.tool_results[0].is_error);
 }
