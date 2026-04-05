@@ -3,7 +3,7 @@
 //! @plan PLAN-20250128-GPUI.P06
 //! @requirement REQ-GPUI-003
 
-use gpui::{div, prelude::*, px, IntoElement};
+use gpui::{div, prelude::*, px, IntoElement, MouseButton};
 
 pub struct Button {
     label: String,
@@ -47,27 +47,35 @@ impl IntoElement for Button {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
-        let mut button = div()
+        let on_click = self.on_click;
+        let disabled = self.disabled;
+
+        let base_button = div()
             .flex()
             .items_center()
             .justify_center()
             .px(px(Theme::SPACING_MD))
             .py(px(Theme::SPACING_SM))
             .rounded(px(Theme::RADIUS_MD))
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                if disabled {
+                    return;
+                }
+                if let Some(ref callback) = on_click {
+                    (callback)();
+                }
+            })
             .text_sm();
 
-        // Apply background color based on state
-        if self.active {
-            button = button.bg(Theme::bg_dark());
+        let mut button = if self.active {
+            Theme::toolbar_button(base_button)
         } else {
-            button = button.bg(Theme::bg_darker());
-        }
+            Theme::button_secondary(base_button)
+        };
 
-        // Apply text color based on disabled state
         if self.disabled {
             button = button.text_color(Theme::text_muted());
-        } else {
-            button = button.text_color(Theme::text_primary());
         }
 
         button.child(self.label)

@@ -15,6 +15,8 @@ use gpui::{hsla, rgb, FontFeatures, Hsla, Rgba, SharedString};
 use crate::ui_gpui::mac_native::{self, MacNativePalette, MAC_NATIVE_SLUG};
 use crate::ui_gpui::theme_catalog::{ThemeCatalog, ThemeColors, ThemeDefinition, ThemeKind};
 
+mod builders;
+
 // ── Default slug constant ────────────────────────────────────────────────────
 
 const DEFAULT_SLUG: &str = "green-screen";
@@ -863,7 +865,7 @@ impl Theme {
 
     /// User message bubble (Rgba) – packed from `colors.message.userBorder`.
     #[must_use]
-    pub fn user_bubble() -> Rgba {
+    pub fn user_bubble_rgba() -> Rgba {
         let color = Self::resolve_with_mac_native(
             |p| p.user_bubble,
             |c| c.message.user_border.as_str(),
@@ -873,10 +875,10 @@ impl Theme {
         rgb((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b))
     }
 
-    /// Assistant message bubble – same as `bg_darker`.
+    /// Assistant message bubble color.
     #[must_use]
-    pub fn assistant_bubble() -> Hsla {
-        Self::bg_darker()
+    pub fn assistant_bubble_color() -> Hsla {
+        Self::assistant_bubble_bg()
     }
 
     /// Thinking block background – darkened `colors.text.thinking`.
