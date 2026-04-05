@@ -1,6 +1,7 @@
 //! MCP Service - singleton managing MCP connections for the app
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -41,8 +42,20 @@ impl McpService {
     ///
     /// Returns an error if the config cannot be loaded.
     pub async fn initialize(&mut self) -> Result<(), String> {
+        self.initialize_with_path(None).await
+    }
+
+    /// Initialize MCPs from config, optionally using an explicit config path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config cannot be loaded.
+    pub async fn initialize_with_path(&mut self, config_path: Option<&Path>) -> Result<(), String> {
         eprintln!("McpService::initialize() starting");
-        let config_path = Config::default_path().map_err(|e| e.to_string())?;
+        let config_path = match config_path {
+            Some(path) => path.to_path_buf(),
+            None => Config::default_path().map_err(|e| e.to_string())?,
+        };
         eprintln!("Config path: {}", config_path.display());
         let config = Config::load(config_path).map_err(|e| e.to_string())?;
         eprintln!("Config loaded, {} MCPs", config.mcps.len());
@@ -155,8 +168,16 @@ impl McpService {
     ///
     /// Returns an error if MCPs fail to initialize.
     pub async fn reload(&mut self) -> Result<(), String> {
-        // For now, just re-initialize
-        self.initialize().await
+        self.reload_with_path(None).await
+    }
+
+    /// Reload MCPs from config, optionally using an explicit config path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if MCPs fail to initialize.
+    pub async fn reload_with_path(&mut self, config_path: Option<&Path>) -> Result<(), String> {
+        self.initialize_with_path(config_path).await
     }
 }
 
