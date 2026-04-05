@@ -213,7 +213,7 @@ impl ChatView {
                 |d| {
                     d.items_center().justify_center().child(
                         div()
-                            .text_size(px(14.0))
+                            .text_size(px(Theme::font_size_body()))
                             .text_color(Theme::text_secondary())
                             .child("No messages yet"),
                     )
@@ -297,7 +297,7 @@ impl ChatView {
                     .py(px(10.0))
                     .rounded(px(12.0))
                     .bg(Theme::user_bubble())
-                    .text_size(px(13.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::user_bubble_text())
                     .cursor_pointer()
                     .on_click(move |_event, _window, cx| {
@@ -439,13 +439,13 @@ impl ChatView {
                     .gap(px(4.0))
                     .child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(px(Theme::font_size_small()))
                             .text_color(Theme::text_muted())
                             .child("Thinking"),
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_muted())
                             .italic()
                             .child(content.to_string()),
@@ -481,7 +481,7 @@ impl ChatView {
 
         let max_composer_height = 150.0;
         let min_composer_height = 44.0;
-        let line_height = 18.0;
+        let line_height = Theme::font_size_mono().mul_add(0.4, Theme::font_size_mono());
         #[allow(clippy::cast_precision_loss)]
         let computed_height = (wrapped_line_count as f32).mul_add(line_height, 14.0);
         let input_box_height = computed_height.clamp(min_composer_height, max_composer_height);
@@ -547,7 +547,7 @@ impl ChatView {
             .child(
                 div()
                     .w_full()
-                    .text_size(px(13.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .line_height(px(line_height))
                     .text_color(if input_text.is_empty() {
                         Theme::text_secondary()

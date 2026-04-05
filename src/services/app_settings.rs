@@ -18,6 +18,9 @@ pub trait AppSettingsService: Send + Sync {
     /// Set the default profile ID
     async fn set_default_profile_id(&self, id: Uuid) -> ServiceResult<()>;
 
+    /// Clear the default profile ID
+    async fn clear_default_profile_id(&self) -> ServiceResult<()>;
+
     /// Get the current conversation ID
     async fn get_current_conversation_id(&self) -> ServiceResult<Option<Uuid>>;
 

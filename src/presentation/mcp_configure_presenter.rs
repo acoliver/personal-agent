@@ -321,9 +321,10 @@ impl McpConfigurePresenter {
                 // Use lock().await (not try_lock) so the reload waits for any
                 // in-progress initialisation to finish before reloading config.
                 let global = crate::mcp::McpService::global();
+                let reload_config_path = config_path_override.map(std::path::Path::to_path_buf);
                 tokio::spawn(async move {
                     let mut svc = global.lock().await;
-                    if let Err(e) = svc.reload().await {
+                    if let Err(e) = svc.reload_with_path(reload_config_path.as_deref()).await {
                         tracing::error!("MCP global reload after save failed: {e}");
                     } else {
                         tracing::info!("MCP global runtime reloaded after save");

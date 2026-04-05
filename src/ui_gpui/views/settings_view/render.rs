@@ -36,7 +36,7 @@ impl SettingsView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_dark()))
-                            .text_size(px(14.0))
+                            .text_size(px(Theme::font_size_body()))
                             .text_color(Theme::text_secondary())
                             .child("<")
                             .on_mouse_down(
@@ -51,7 +51,7 @@ impl SettingsView {
                     )
                     .child(
                         div()
-                            .text_size(px(14.0))
+                            .text_size(px(Theme::font_size_body()))
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::text_primary())
                             .child("Settings"),
@@ -86,7 +86,7 @@ impl SettingsView {
                 d.hover(|s| s.bg(Theme::bg_dark()))
                     .text_color(Theme::text_primary())
             })
-            .text_size(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
             .child(display_text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -124,7 +124,7 @@ impl SettingsView {
                     .when(profiles.is_empty(), |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_muted())
                                 .child("No profiles configured"),
                         )
@@ -135,7 +135,7 @@ impl SettingsView {
                                 .w_full()
                                 .px(px(8.0))
                                 .pb(px(2.0))
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::text_muted())
                                 .child(format!("{total_profiles} profiles")),
                         )
@@ -165,7 +165,7 @@ impl SettingsView {
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::danger())))
                     .when(!has_selection, |d| d.text_color(Theme::text_muted()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -193,7 +193,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_primary())
                     .child("+")
                     .on_mouse_down(
@@ -218,7 +218,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -275,7 +275,7 @@ impl SettingsView {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if is_selected {
                         Theme::selection_fg()
                     } else {
@@ -297,7 +297,7 @@ impl SettingsView {
                     } else {
                         Theme::bg_dark()
                     })
-                    .text_size(px(10.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(if enabled {
                         Theme::selection_fg()
                     } else {
@@ -334,7 +334,7 @@ impl SettingsView {
             .gap(px(6.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("MCP TOOLS"),
             )
@@ -354,7 +354,7 @@ impl SettingsView {
                     .when(mcps.is_empty(), |d| {
                         d.items_center().justify_center().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(Theme::font_size_mono()))
                                 .text_color(Theme::text_muted())
                                 .child("No MCP tools configured"),
                         )
@@ -365,7 +365,7 @@ impl SettingsView {
                                 .w_full()
                                 .px(px(8.0))
                                 .pb(px(2.0))
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::text_muted())
                                 .child(format!("{total_mcps} MCP tools")),
                         )
@@ -394,7 +394,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::danger())))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -422,7 +422,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(14.0))
+                    .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_primary())
                     .child("+")
                     .on_mouse_down(
@@ -447,7 +447,7 @@ impl SettingsView {
                     .justify_center()
                     .cursor_pointer()
                     .when(has_selection, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(if has_selection {
                         Theme::text_primary()
                     } else {
@@ -486,7 +486,7 @@ impl SettingsView {
             .gap(px(6.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("EXPORT DIRECTORY"),
             )
@@ -514,7 +514,7 @@ impl SettingsView {
                             .items_center()
                             .overflow_hidden()
                             .cursor_text()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(text_color)
                             .child(input_text)
                             .on_mouse_down(
@@ -540,7 +540,7 @@ impl SettingsView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::accent()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("Browse…")
                             .on_mouse_down(
@@ -569,7 +569,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("Save")
                     .on_mouse_down(
@@ -588,7 +588,7 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_secondary())
                     .child("Reset")
                     .on_mouse_down(
@@ -602,7 +602,7 @@ impl SettingsView {
             )
             .child(
                 div()
-                    .text_size(px(10.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_muted())
                     .child("Enter a directory path, or reset for system Downloads"),
             )
@@ -642,7 +642,7 @@ impl SettingsView {
                         d.border_color(gpui::transparent_black())
                             .hover(|s| s.bg(Theme::bg_dark()))
                     })
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child(cat.display_name())
                     .on_mouse_down(
@@ -660,6 +660,7 @@ impl SettingsView {
     fn render_content_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let panel: gpui::AnyElement = match self.state.selected_category {
             SettingsCategory::General => self.render_general_panel(cx).into_any_element(),
+            SettingsCategory::Appearance => self.render_appearance_panel(cx).into_any_element(),
             SettingsCategory::Models => self.render_models_panel(cx).into_any_element(),
             SettingsCategory::Security => self.render_security_panel(cx).into_any_element(),
             SettingsCategory::McpTools => self.render_mcp_tools_panel(cx).into_any_element(),
@@ -676,74 +677,12 @@ impl SettingsView {
             .child(panel)
     }
 
-    /// General panel: theme dropdown trigger + export directory.
+    /// General panel: export directory.
     fn render_general_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let themes = &self.state.available_themes;
-        let selected_name = themes
-            .iter()
-            .find(|t| t.slug == self.state.selected_theme_slug)
-            .map_or_else(
-                || self.state.selected_theme_slug.clone(),
-                |t| t.name.clone(),
-            );
-
         div()
             .flex()
             .flex_col()
             .gap(px(16.0))
-            // Theme dropdown trigger
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.0))
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(Theme::text_primary())
-                            .child("THEME"),
-                    )
-                    .child(
-                        div()
-                            .id("theme-dropdown-trigger")
-                            .w_full()
-                            .h(px(28.0))
-                            .px(px(8.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(if self.state.theme_dropdown_open {
-                                Theme::accent()
-                            } else {
-                                Theme::border()
-                            })
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .cursor_pointer()
-                            .text_size(px(12.0))
-                            .text_color(Theme::text_primary())
-                            .child(selected_name)
-                            .child(
-                                div()
-                                    .text_size(px(10.0))
-                                    .text_color(Theme::text_muted())
-                                    .child(if self.state.theme_dropdown_open {
-                                        "▲"
-                                    } else {
-                                        "▼"
-                                    }),
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, cx| {
-                                    this.toggle_theme_dropdown();
-                                    cx.notify();
-                                }),
-                            ),
-                    ),
-            )
-            // Export directory section
             .child(self.render_export_dir_section(cx))
     }
 
@@ -761,7 +700,7 @@ impl SettingsView {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("PROFILES"),
                     )
@@ -773,7 +712,7 @@ impl SettingsView {
                             .rounded(px(4.0))
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_dark()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_primary())
                             .child("Refresh Models")
                             .on_mouse_down(
@@ -844,7 +783,7 @@ impl SettingsView {
             .when(themes.is_empty(), |d| {
                 d.items_center().justify_center().child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(px(Theme::font_size_mono()))
                         .text_color(Theme::text_muted())
                         .child("No themes available"),
                 )
@@ -877,7 +816,7 @@ impl SettingsView {
                 d.hover(|s| s.bg(Theme::bg_dark()))
                     .text_color(Theme::text_primary())
             })
-            .text_size(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
             .child(name)
             .on_mouse_down(
                 gpui::MouseButton::Left,
@@ -910,6 +849,9 @@ impl gpui::Render for SettingsView {
             .flex_col()
             .size_full()
             .bg(Theme::bg_darkest())
+            .when_some(Theme::ui_font_family(), |div, family| {
+                div.font_family(family)
+            })
             .track_focus(&self.focus_handle)
             // Invisible canvas for InputHandler registration (IME/diacritics)
             .child(

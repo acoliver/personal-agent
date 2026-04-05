@@ -33,7 +33,7 @@ impl McpConfigureView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_secondary())
                     .child("Cancel")
                     .on_mouse_down(
@@ -47,7 +47,7 @@ impl McpConfigureView {
             .child(
                 div().flex_1().flex().justify_center().child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(px(Theme::font_size_body()))
                         .font_weight(FontWeight::BOLD)
                         .text_color(Theme::text_primary())
                         .child(title),
@@ -62,7 +62,7 @@ impl McpConfigureView {
                     .rounded(px(4.0))
                     .flex()
                     .justify_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .when(can_save, |d| {
                         d.cursor_pointer()
                             .bg(Theme::accent())
@@ -87,7 +87,7 @@ impl McpConfigureView {
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn render_label(text: &str) -> impl IntoElement {
         div()
-            .text_size(px(11.0))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_secondary())
             .mb(px(4.0))
             .child(text.to_string())
@@ -112,7 +112,7 @@ impl McpConfigureView {
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .child(if self.state.data.name.is_empty() {
                         div().text_color(Theme::text_muted()).child("MCP name")
                     } else {
@@ -142,7 +142,7 @@ impl McpConfigureView {
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_secondary())
                     .overflow_hidden()
                     .child(if self.state.data.package.is_empty() {
@@ -165,7 +165,7 @@ impl McpConfigureView {
             .child(
                 div()
                     .mt(px(8.0))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .font_weight(FontWeight::BOLD)
                     .text_color(Theme::text_secondary())
                     .child(title.to_string()),
@@ -195,7 +195,7 @@ impl McpConfigureView {
                     .items_center()
                     .justify_between()
                     .cursor_pointer()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child(auth_method)
                     .child(div().text_color(Theme::text_muted()).child("v")),
@@ -224,7 +224,7 @@ impl McpConfigureView {
                     .w(px(360.0))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_secondary())
                             .child(env_var_name),
                     )
@@ -253,7 +253,7 @@ impl McpConfigureView {
                                     .when(masked, |d| {
                                         d.bg(Theme::accent()).child(
                                             div()
-                                                .text_size(px(8.0))
+                                                .text_size(px(Theme::font_size_small()))
                                                 .text_color(Theme::selection_fg())
                                                 .child("v"),
                                         )
@@ -261,7 +261,7 @@ impl McpConfigureView {
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(px(Theme::font_size_ui()))
                                     .text_color(Theme::text_muted())
                                     .child("Mask"),
                             ),
@@ -279,7 +279,7 @@ impl McpConfigureView {
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .child(if display.is_empty() {
                         div()
                             .text_color(Theme::text_muted())
@@ -316,7 +316,7 @@ impl McpConfigureView {
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .overflow_hidden()
                             .child(if self.state.data.keyfile_path.is_empty() {
                                 div().text_color(Theme::text_muted()).child("/path/to/key")
@@ -341,7 +341,7 @@ impl McpConfigureView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_darker()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_secondary())
                             .child("Browse")
                             .on_mouse_down(
@@ -389,7 +389,7 @@ impl McpConfigureView {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::accent_hover()))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::selection_fg())
                     .child(format!("Authorize with {provider}"))
                     .on_mouse_down(
@@ -403,7 +403,7 @@ impl McpConfigureView {
             // Status
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .text_color(status_text.1)
                     .child(format!("Status: {}", status_text.0)),
             )
@@ -413,7 +413,7 @@ impl McpConfigureView {
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn render_no_auth_section() -> impl IntoElement {
         div()
-            .text_size(px(11.0))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_secondary())
             .child("No authentication required for this MCP.")
     }
@@ -437,7 +437,7 @@ impl McpConfigureView {
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .child(if value.is_empty() {
                         div()
                             .text_color(Theme::text_muted())
@@ -484,7 +484,7 @@ impl McpConfigureView {
                     .when(value, |d| {
                         d.bg(Theme::accent()).child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::selection_fg())
                                 .child("v"),
                         )
@@ -492,7 +492,7 @@ impl McpConfigureView {
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child(key.to_string()),
             )
@@ -527,14 +527,14 @@ impl McpConfigureView {
                             .justify_between()
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(px(Theme::font_size_mono()))
                                     .text_color(Theme::text_primary())
                                     .child(v.clone()),
                             )
                             .child(
                                 div()
                                     .cursor_pointer()
-                                    .text_size(px(12.0))
+                                    .text_size(px(Theme::font_size_mono()))
                                     .text_color(Theme::text_muted())
                                     .hover(|s| s.text_color(Theme::danger()))
                                     .child("[-]"),
@@ -546,7 +546,7 @@ impl McpConfigureView {
                             .h(px(24.0))
                             .px(px(8.0))
                             .cursor_pointer()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(Theme::text_secondary())
                             .hover(|s| s.text_color(Theme::text_primary()))
                             .child("[+ Add]"),

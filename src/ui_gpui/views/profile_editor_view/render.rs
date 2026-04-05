@@ -37,7 +37,7 @@ impl ProfileEditorView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::bg_dark()))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_secondary())
                     .child("Cancel")
                     .on_mouse_down(
@@ -54,7 +54,7 @@ impl ProfileEditorView {
             .child(
                 div().flex_1().flex().justify_center().child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(px(Theme::font_size_body()))
                         .font_weight(FontWeight::BOLD)
                         .text_color(Theme::text_primary())
                         .child(title),
@@ -69,7 +69,7 @@ impl ProfileEditorView {
                     .rounded(px(4.0))
                     .flex()
                     .justify_center()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .when(can_save, |d| {
                         d.cursor_pointer()
                             .bg(Theme::accent())
@@ -94,7 +94,7 @@ impl ProfileEditorView {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_label(text: &str) -> impl IntoElement {
         div()
-            .text_size(px(11.0))
+            .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_secondary())
             .mb(px(4.0))
             .child(text.to_string())
@@ -123,7 +123,7 @@ impl ProfileEditorView {
             .rounded(px(4.0))
             .flex()
             .items_center()
-            .text_size(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
             .child(if value.is_empty() {
                 div()
                     .text_color(Theme::text_muted())
@@ -214,7 +214,7 @@ impl ProfileEditorView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_darker()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_secondary())
                             .child("Browse")
                             .on_mouse_down(
@@ -259,7 +259,7 @@ impl ProfileEditorView {
                     .items_center()
                     .justify_between()
                     .cursor_pointer()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .on_mouse_down(
                         MouseButton::Left,
@@ -344,7 +344,7 @@ impl ProfileEditorView {
                             .items_center()
                             .justify_between()
                             .cursor_pointer()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(if self.state.data.key_label.is_empty() {
                                 Theme::text_muted()
                             } else {
@@ -391,7 +391,7 @@ impl ProfileEditorView {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::bg_darker()))
-                            .text_size(px(11.0))
+                            .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_secondary())
                             .child("Manage Keys")
                             .on_mouse_down(
@@ -418,7 +418,7 @@ impl ProfileEditorView {
             .child(
                 div()
                     .mt(px(8.0))
-                    .text_size(px(11.0))
+                    .text_size(px(Theme::font_size_ui()))
                     .font_weight(FontWeight::BOLD)
                     .text_color(Theme::text_secondary())
                     .child(title.to_string()),
@@ -451,7 +451,7 @@ impl ProfileEditorView {
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(Theme::text_primary())
                             .child(temp),
                     )
@@ -474,7 +474,7 @@ impl ProfileEditorView {
                                     .justify_center()
                                     .cursor_pointer()
                                     .hover(|s| s.bg(Theme::bg_darker()))
-                                    .text_size(px(8.0))
+                                    .text_size(px(Theme::font_size_small()))
                                     .text_color(Theme::text_secondary())
                                     .child("▲")
                                     .on_mouse_down(
@@ -500,7 +500,7 @@ impl ProfileEditorView {
                                     .justify_center()
                                     .cursor_pointer()
                                     .hover(|s| s.bg(Theme::bg_darker()))
-                                    .text_size(px(8.0))
+                                    .text_size(px(Theme::font_size_small()))
                                     .text_color(Theme::text_secondary())
                                     .child("▼")
                                     .on_mouse_down(
@@ -598,7 +598,7 @@ impl ProfileEditorView {
                     .when(checked, |d| {
                         d.bg(Theme::accent()).child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(px(Theme::font_size_ui()))
                                 .text_color(Theme::selection_fg())
                                 .child("v"),
                         )
@@ -606,7 +606,7 @@ impl ProfileEditorView {
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child("Show Thinking"),
             )
@@ -649,7 +649,7 @@ impl ProfileEditorView {
                             .when(checked, |d| {
                                 d.bg(Theme::accent()).child(
                                     div()
-                                        .text_size(px(10.0))
+                                        .text_size(px(Theme::font_size_ui()))
                                         .text_color(Theme::selection_fg())
                                         .child("v"),
                                 )
@@ -657,7 +657,7 @@ impl ProfileEditorView {
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(Theme::font_size_mono()))
                             .text_color(Theme::text_primary())
                             .child("Enable Extended Thinking"),
                     ),
@@ -712,7 +712,7 @@ impl ProfileEditorView {
                         Theme::border()
                     })
                     .rounded(px(4.0))
-                    .text_size(px(12.0))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .overflow_hidden()
                     .on_mouse_down(

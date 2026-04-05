@@ -392,7 +392,8 @@ fn inline_to_text_run(span: &MarkdownInline) -> gpui::TextRun {
     }
     if span.code {
         run.background_color = Some(crate::ui_gpui::theme::Theme::bg_dark());
-        run.font = font("Menlo");
+        run.font = font(crate::ui_gpui::theme::Theme::mono_font_family_name());
+        run.font.features = crate::ui_gpui::theme::Theme::mono_font_features();
     }
     if span.strikethrough {
         run.strikethrough = Some(StrikethroughStyle {
@@ -463,7 +464,7 @@ fn render_paragraph(
     links: &[(Range<usize>, String)],
 ) -> gpui::AnyElement {
     div()
-        .text_size(px(crate::ui_gpui::theme::Theme::FONT_SIZE_MD))
+        .text_size(px(crate::ui_gpui::theme::Theme::font_size_body()))
         .text_color(crate::ui_gpui::theme::Theme::text_primary())
         .child(spans_to_styled_text(spans, links))
         .into_any_element()
@@ -477,12 +478,12 @@ fn render_heading(
     links: &[(Range<usize>, String)],
 ) -> gpui::AnyElement {
     let size = match level {
-        1 => 24.0,
-        2 => 20.0,
-        3 => 18.0,
-        4 => 16.0,
-        5 => 14.0,
-        _ => 13.0,
+        1 => crate::ui_gpui::theme::Theme::font_size_h1(),
+        2 => crate::ui_gpui::theme::Theme::font_size_h2(),
+        3 => crate::ui_gpui::theme::Theme::font_size_h3(),
+        4 => crate::ui_gpui::theme::Theme::font_size_body(),
+        5 => crate::ui_gpui::theme::Theme::font_size_mono(),
+        _ => crate::ui_gpui::theme::Theme::font_size_ui(),
     };
 
     div()
@@ -506,13 +507,14 @@ fn render_code_block(language: Option<&String>, code: &str) -> gpui::AnyElement 
         .rounded(px(crate::ui_gpui::theme::Theme::RADIUS_MD))
         .bg(crate::ui_gpui::theme::Theme::bg_dark())
         .text_color(crate::ui_gpui::theme::Theme::text_primary())
-        .font_family("Menlo")
-        .text_size(px(crate::ui_gpui::theme::Theme::FONT_SIZE_SM));
+        .font_family(crate::ui_gpui::theme::Theme::mono_font_family_name())
+        .font_features(crate::ui_gpui::theme::Theme::mono_font_features())
+        .text_size(px(crate::ui_gpui::theme::Theme::font_size_mono()));
 
     if let Some(lang) = language {
         block = block.child(
             div()
-                .text_size(px(crate::ui_gpui::theme::Theme::FONT_SIZE_XS))
+                .text_size(px(crate::ui_gpui::theme::Theme::font_size_ui()))
                 .text_color(crate::ui_gpui::theme::Theme::text_muted())
                 .child(lang.clone()),
         );
@@ -667,7 +669,7 @@ fn render_thematic_break() -> gpui::AnyElement {
 fn render_image_fallback(alt: &str) -> gpui::AnyElement {
     div()
         .text_color(crate::ui_gpui::theme::Theme::text_muted())
-        .text_size(px(crate::ui_gpui::theme::Theme::FONT_SIZE_SM))
+        .text_size(px(crate::ui_gpui::theme::Theme::font_size_mono()))
         .child(format!("[image: {alt}]"))
         .into_any_element()
 }

@@ -14,7 +14,11 @@ use personal_agent::ui_gpui::app_store::{
     StartupInputs, StartupMode, StartupSelectedConversation, StartupTranscriptResult,
 };
 use personal_agent::ui_gpui::theme::{
-    is_valid_theme_slug, migrate_legacy_theme_slug, set_active_theme_slug,
+    is_valid_theme_slug, migrate_legacy_theme_slug, set_active_font_size,
+    set_active_mono_font_family, set_active_mono_ligatures, set_active_theme_slug,
+    set_active_ui_font_family, DEFAULT_FONT_SIZE, DEFAULT_MONO_FONT_FAMILY, MAX_FONT_SIZE,
+    MIN_FONT_SIZE, SETTING_KEY_FONT_SIZE, SETTING_KEY_MONO_FONT_FAMILY, SETTING_KEY_MONO_LIGATURES,
+    SETTING_KEY_UI_FONT_FAMILY,
 };
 
 // ============================================================================
@@ -73,21 +77,58 @@ pub fn build_startup_inputs(runtime_paths: &RuntimePaths) -> Result<StartupInput
 }
 
 async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<StartupInputs, String> {
-    let app_settings = AppSettingsServiceImpl::new(runtime_paths.app_settings_path.clone())
-        .map_err(|e| format!("Failed to create AppSettingsService for startup bootstrap: {e}"))?;
+    let app_settings = build_startup_app_settings(runtime_paths)?;
+    let conversation_service = build_startup_conversation_service(runtime_paths).await?;
+    let profile_service_impl = build_startup_profile_service(runtime_paths).await?;
+
+    apply_startup_theme_settings(&app_settings).await;
+    apply_startup_font_settings(&app_settings).await;
+
+    let selected_profile_id =
+        resolve_selected_profile_id(&app_settings, &profile_service_impl).await;
+    let profiles = build_profile_summaries(&profile_service_impl, selected_profile_id).await?;
+    let (conversation_summaries, selected_conversation) =
+        build_conversation_data(&conversation_service).await?;
+
+    Ok(StartupInputs {
+        profiles,
+        selected_profile_id,
+        conversations: conversation_summaries,
+        selected_conversation,
+    })
+}
+
+fn build_startup_app_settings(
+    runtime_paths: &RuntimePaths,
+) -> Result<AppSettingsServiceImpl, String> {
+    AppSettingsServiceImpl::new(runtime_paths.app_settings_path.clone())
+        .map_err(|e| format!("Failed to create AppSettingsService for startup bootstrap: {e}"))
+}
+
+async fn build_startup_conversation_service(
+    runtime_paths: &RuntimePaths,
+) -> Result<SqliteConversationService, String> {
     let db_path = runtime_paths.base_dir.join("personalagent.db");
     let db = tokio::task::spawn_blocking(move || spawn_db_thread(&db_path))
         .await
         .map_err(|e| format!("Failed to join DB spawn task for startup bootstrap: {e}"))?
         .map_err(|e| format!("Failed to spawn DB thread for startup bootstrap: {e}"))?;
-    let conversation_service = SqliteConversationService::new(db);
+    Ok(SqliteConversationService::new(db))
+}
+
+async fn build_startup_profile_service(
+    runtime_paths: &RuntimePaths,
+) -> Result<ProfileServiceImpl, String> {
     let profile_service_impl = ProfileServiceImpl::new(runtime_paths.profiles_dir.clone())
         .map_err(|e| format!("Failed to create ProfileService for startup bootstrap: {e}"))?;
     profile_service_impl
         .initialize()
         .await
         .map_err(|e| format!("Failed to initialize ProfileService for startup bootstrap: {e}"))?;
+    Ok(profile_service_impl)
+}
 
+async fn apply_startup_theme_settings(app_settings: &AppSettingsServiceImpl) {
     // Apply persisted theme before first render so the UI uses the correct
     // palette immediately. Legacy slug values written by older versions of the
     // app are mapped to their canonical equivalents before being applied:
@@ -100,26 +141,7 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
     // `PA_FORCE_THEME` overrides the persisted slug — used by UI automation
     // tests (scn_004/scn_005) to capture screenshots of each theme without
     // modifying real user settings.
-    let get_persisted_theme = || async {
-        app_settings
-            .get_theme()
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "green-screen".to_string())
-    };
-
-    let raw_theme = if let Ok(forced) = std::env::var("PA_FORCE_THEME") {
-        if !forced.is_empty() {
-            tracing::info!("Startup: PA_FORCE_THEME override active: '{}'", forced);
-            forced
-        } else {
-            get_persisted_theme().await
-        }
-    } else {
-        get_persisted_theme().await
-    };
-
+    let raw_theme = read_startup_theme_slug(app_settings).await;
     let migrated_theme = migrate_legacy_theme_slug(&raw_theme).to_string();
     let saved_theme = if is_valid_theme_slug(&migrated_theme) {
         migrated_theme
@@ -138,8 +160,76 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
         saved_theme,
         raw_theme
     );
+}
 
-    let selected_profile_id = match app_settings.get_default_profile_id().await {
+async fn read_startup_theme_slug(app_settings: &AppSettingsServiceImpl) -> String {
+    if let Ok(forced) = std::env::var("PA_FORCE_THEME") {
+        if !forced.is_empty() {
+            tracing::info!("Startup: PA_FORCE_THEME override active: '{}'", forced);
+            return forced;
+        }
+    }
+
+    app_settings
+        .get_theme()
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "green-screen".to_string())
+}
+
+async fn apply_startup_font_settings(app_settings: &AppSettingsServiceImpl) {
+    // Apply persisted font settings so the first render uses the correct
+    // font size, families, and ligature preference.
+    let font_size = app_settings
+        .get_setting(SETTING_KEY_FONT_SIZE)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(DEFAULT_FONT_SIZE)
+        .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+    set_active_font_size(font_size);
+
+    let ui_font_family = app_settings
+        .get_setting(SETTING_KEY_UI_FONT_FAMILY)
+        .await
+        .ok()
+        .flatten()
+        .filter(|v| !v.is_empty());
+    set_active_ui_font_family(ui_font_family);
+
+    let mono_font_family = app_settings
+        .get_setting(SETTING_KEY_MONO_FONT_FAMILY)
+        .await
+        .ok()
+        .flatten()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_MONO_FONT_FAMILY.to_string());
+    set_active_mono_font_family(&mono_font_family);
+
+    let mono_ligatures = app_settings
+        .get_setting(SETTING_KEY_MONO_LIGATURES)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+    set_active_mono_ligatures(mono_ligatures);
+
+    tracing::info!(
+        "Startup: applied font settings — size={}, mono_family={}, ligatures={}",
+        font_size,
+        mono_font_family,
+        mono_ligatures,
+    );
+}
+
+async fn resolve_selected_profile_id(
+    app_settings: &AppSettingsServiceImpl,
+    profile_service_impl: &ProfileServiceImpl,
+) -> Option<uuid::Uuid> {
+    match app_settings.get_default_profile_id().await {
         Ok(Some(id)) => Some(id),
         _ => profile_service_impl
             .get_default()
@@ -147,18 +237,7 @@ async fn build_startup_inputs_async(runtime_paths: &RuntimePaths) -> Result<Star
             .ok()
             .flatten()
             .map(|profile| profile.id),
-    };
-
-    let profiles = build_profile_summaries(&profile_service_impl, selected_profile_id).await?;
-    let (conversation_summaries, selected_conversation) =
-        build_conversation_data(&conversation_service).await?;
-
-    Ok(StartupInputs {
-        profiles,
-        selected_profile_id,
-        conversations: conversation_summaries,
-        selected_conversation,
-    })
+    }
 }
 
 async fn build_profile_summaries(

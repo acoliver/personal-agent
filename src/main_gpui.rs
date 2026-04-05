@@ -358,13 +358,18 @@ fn run_gpui_app(cx: &mut App) {
     });
 
     use personal_agent::ui_gpui::views::main_panel::{
-        NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation,
+        NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation, ZoomIn, ZoomOut,
+        ZoomReset,
     };
     cx.bind_keys([
         KeyBinding::new("ctrl-h", NavigateToHistory, None),
         KeyBinding::new("ctrl-s", NavigateToSettings, None),
         KeyBinding::new("ctrl-n", NewConversation, None),
         KeyBinding::new("cmd-w", NavigateBack, None),
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-0", ZoomReset, None),
     ]);
 
     spawn_runtime_bridge_pump(app_state, cx);

@@ -22,7 +22,10 @@ mod _actions {
             NavigateToHistory,
             NavigateToSettings,
             NewConversation,
-            NavigateBack
+            NavigateBack,
+            ZoomIn,
+            ZoomOut,
+            ZoomReset
         ]
     );
 }

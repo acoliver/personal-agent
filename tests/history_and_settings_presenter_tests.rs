@@ -286,6 +286,7 @@ struct MockAppSettingsService {
 struct MockAppSettingsState {
     default_profile_id: Option<Uuid>,
     set_default_profile_id_calls: Vec<Uuid>,
+    clear_default_profile_id_calls: usize,
     set_default_profile_id_results: VecDeque<Result<(), ServiceError>>,
     theme: Option<String>,
     set_theme_calls: Vec<String>,
@@ -299,6 +300,7 @@ impl MockAppSettingsService {
             state: Arc::new(Mutex::new(MockAppSettingsState {
                 default_profile_id,
                 set_default_profile_id_calls: Vec::new(),
+                clear_default_profile_id_calls: 0,
                 set_default_profile_id_results: VecDeque::new(),
                 theme: None,
                 set_theme_calls: Vec::new(),
@@ -335,6 +337,10 @@ impl MockAppSettingsService {
             .clone()
     }
 
+    fn clear_default_profile_id_calls(&self) -> usize {
+        self.state.lock().unwrap().clear_default_profile_id_calls
+    }
+
     fn set_theme_calls(&self) -> Vec<String> {
         self.state.lock().unwrap().set_theme_calls.clone()
     }
@@ -361,6 +367,15 @@ impl AppSettingsService for MockAppSettingsService {
             state.default_profile_id = Some(id);
         }
         result
+    }
+
+    async fn clear_default_profile_id(&self) -> Result<(), ServiceError> {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.clear_default_profile_id_calls += 1;
+            state.default_profile_id = None;
+        }
+        Ok(())
     }
 
     async fn get_current_conversation_id(&self) -> Result<Option<Uuid>, ServiceError> {
@@ -760,9 +775,9 @@ mod settings_presenter_tests {
         (dir, path, mcp_id)
     }
 
-    /// Drain all 5 startup commands emitted by the settings presenter.
+    /// Drain all 6 startup commands emitted by the settings presenter.
     async fn drain_startup(rx: &mut broadcast::Receiver<ViewCommand>) {
-        for _ in 0..5 {
+        for _ in 0..6 {
             let _ = recv_broadcast_command(rx).await;
         }
     }
@@ -794,7 +809,8 @@ mod settings_presenter_tests {
                 selected_profile_id: Some(profile.id),
             }
         );
-        // Drain ShowSettingsTheme + ToolApprovalPolicyUpdated + YoloModeChanged
+        // Drain ShowSettingsTheme + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
@@ -814,10 +830,10 @@ mod settings_presenter_tests {
     async fn start_emits_initial_show_settings_and_chat_profiles_snapshot() {
         let first = make_profile(Uuid::new_v4(), "work", "anthropic", "claude");
         let second = make_profile(Uuid::new_v4(), "home", "openai", "gpt-4.1");
-        let selected_profile_id = Some(second.id);
+        let selected_profile_id = Some(first.id);
         let profile_service =
             MockProfileService::new(vec![first.clone(), second.clone()], Some(first.id));
-        let app_settings_service = MockAppSettingsService::new(selected_profile_id);
+        let app_settings_service = MockAppSettingsService::new(Some(second.id));
         let (mut presenter, _event_tx, mut view_rx, _profile_service, _app_settings_service) =
             setup_settings_presenter(profile_service, app_settings_service);
 
@@ -893,6 +909,61 @@ mod settings_presenter_tests {
             app_settings_service.set_default_profile_id_calls(),
             vec![second.id]
         );
+    }
+
+    #[tokio::test]
+    async fn select_profile_persist_failure_falls_back_to_live_default_snapshot() {
+        let first = make_profile(Uuid::new_v4(), "work", "anthropic", "claude");
+        let second = make_profile(Uuid::new_v4(), "home", "openai", "gpt-4.1");
+        let profile_service =
+            MockProfileService::new(vec![first.clone(), second.clone()], Some(first.id))
+                .with_set_default_results(vec![Ok(())]);
+        let app_settings_service = MockAppSettingsService::new(Some(first.id))
+            .with_set_default_results(vec![Err(ServiceError::Internal(
+                "persist failed".to_string(),
+            ))]);
+        let (mut presenter, event_tx, mut view_rx, profile_service, app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+        drain_startup(&mut view_rx).await;
+
+        send_settings_event(
+            &event_tx,
+            AppEvent::User(UserEvent::SelectProfile { id: second.id }),
+        )
+        .await;
+
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::DefaultProfileChanged {
+                profile_id: Some(second.id),
+            }
+        );
+        let expected_profiles = vec![
+            profile_summary(&first, Some(second.id)),
+            profile_summary(&second, Some(second.id)),
+        ];
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::ShowSettings {
+                profiles: expected_profiles.clone(),
+                selected_profile_id: Some(second.id),
+            }
+        );
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::ChatProfilesUpdated {
+                profiles: expected_profiles,
+                selected_profile_id: Some(second.id),
+            }
+        );
+        assert_eq!(profile_service.set_default_calls(), vec![second.id]);
+        assert_eq!(
+            app_settings_service.set_default_profile_id_calls(),
+            vec![second.id]
+        );
+        assert_eq!(app_settings_service.clear_default_profile_id_calls(), 0);
     }
 
     #[tokio::test]
@@ -1193,6 +1264,70 @@ mod settings_presenter_tests {
         );
     }
 
+    #[tokio::test]
+    async fn toggle_mcp_invalid_config_emits_load_error() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let config_path = temp_dir.path().join("config.json");
+
+        let mcp_id = Uuid::new_v4();
+        let mut config = personal_agent::config::Config::default();
+        config.mcps.push(personal_agent::mcp::McpConfig {
+            id: mcp_id,
+            name: "test-mcp".to_string(),
+            enabled: true,
+            source: personal_agent::mcp::McpSource::Manual { url: String::new() },
+            package: personal_agent::mcp::McpPackage {
+                package_type: personal_agent::mcp::McpPackageType::Npm,
+                identifier: String::new(),
+                runtime_hint: None,
+            },
+            transport: personal_agent::mcp::McpTransport::Stdio,
+            auth_type: personal_agent::mcp::McpAuthType::None,
+            env_vars: vec![],
+            package_args: vec![],
+            keyfile_path: None,
+            config: serde_json::Value::Null,
+            oauth_token: None,
+        });
+        config.save(&config_path).expect("write config");
+
+        let profile_service = MockProfileService::new(vec![], None);
+        let app_settings_service = MockAppSettingsService::new(None);
+        let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =
+            setup_settings_presenter_with_config(
+                profile_service,
+                app_settings_service,
+                config_path.clone(),
+            );
+
+        presenter.start().await.expect("start should succeed");
+        drain_startup(&mut view_rx).await;
+
+        let invalid_json = "{\n  \"mcps\": [\n";
+        std::fs::write(&config_path, invalid_json).expect("write invalid config contents");
+
+        send_settings_event(
+            &event_tx,
+            AppEvent::User(UserEvent::ToggleMcp {
+                id: mcp_id,
+                enabled: true,
+            }),
+        )
+        .await;
+
+        let command = recv_broadcast_command(&mut view_rx).await;
+        match command {
+            ViewCommand::ShowError { title, message, .. } => {
+                assert_eq!(title, "MCP Toggle Failed");
+                assert!(
+                    message.contains("Failed to load config:"),
+                    "expected config load failure message, got: {message}"
+                );
+            }
+            other => panic!("expected ShowError for invalid config load, got: {other:?}"),
+        }
+    }
+
     /// Regression test for issue #72: `DeleteMcp` must emit `McpDeleted` when the MCP
     /// exists in config.
     #[tokio::test]
@@ -1441,6 +1576,35 @@ mod settings_presenter_tests {
             app_settings_service.set_default_profile_id_calls(),
             vec![second.id]
         );
+
+        send_settings_event(
+            &event_tx,
+            AppEvent::Profile(ProfileEvent::DefaultChanged { profile_id: None }),
+        )
+        .await;
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::DefaultProfileChanged { profile_id: None }
+        );
+        let expected_none_default_profiles = vec![
+            profile_summary(&first, None),
+            profile_summary(&second, None),
+        ];
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::ShowSettings {
+                profiles: expected_none_default_profiles.clone(),
+                selected_profile_id: None,
+            }
+        );
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::ChatProfilesUpdated {
+                profiles: expected_none_default_profiles,
+                selected_profile_id: None,
+            }
+        );
+        assert_eq!(app_settings_service.clear_default_profile_id_calls(), 1);
     }
 
     #[tokio::test]
@@ -1680,7 +1844,8 @@ mod settings_presenter_tests {
         let _ = recv_broadcast_command(&mut view_rx).await;
 
         let cmd = recv_broadcast_command(&mut view_rx).await;
-        // Drain ToolApprovalPolicyUpdated + YoloModeChanged
+        // Drain ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
 
@@ -1722,7 +1887,8 @@ mod settings_presenter_tests {
 
         presenter.start().await.expect("start should succeed");
 
-        // Drain startup commands (ShowSettings + ChatProfilesUpdated + ShowSettingsTheme)
+        // Drain startup commands (ShowSettings + ChatProfilesUpdated + ShowSettingsTheme +
+        // ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged)
         drain_startup(&mut view_rx).await;
 
         send_settings_event(
@@ -1901,7 +2067,7 @@ mod settings_presenter_tests {
         send_settings_event(&event_tx, AppEvent::User(UserEvent::RefreshProfiles)).await;
 
         // Should receive ShowSettings + ChatProfilesUpdated + ShowSettingsTheme
-        // + ToolApprovalPolicyUpdated + YoloModeChanged
+        // + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged.
         let first = recv_broadcast_command(&mut view_rx).await;
         assert!(
             matches!(first, ViewCommand::ShowSettings { .. }),
@@ -1919,13 +2085,18 @@ mod settings_presenter_tests {
         );
         let fourth = recv_broadcast_command(&mut view_rx).await;
         assert!(
-            matches!(fourth, ViewCommand::ToolApprovalPolicyUpdated { .. }),
-            "expected ToolApprovalPolicyUpdated, got {fourth:?}"
+            matches!(fourth, ViewCommand::ShowFontSettings { .. }),
+            "expected ShowFontSettings, got {fourth:?}"
         );
         let fifth = recv_broadcast_command(&mut view_rx).await;
         assert!(
-            matches!(fifth, ViewCommand::YoloModeChanged { .. }),
-            "expected YoloModeChanged, got {fifth:?}"
+            matches!(fifth, ViewCommand::ToolApprovalPolicyUpdated { .. }),
+            "expected ToolApprovalPolicyUpdated, got {fifth:?}"
+        );
+        let sixth = recv_broadcast_command(&mut view_rx).await;
+        assert!(
+            matches!(sixth, ViewCommand::YoloModeChanged { .. }),
+            "expected YoloModeChanged, got {sixth:?}"
         );
     }
 

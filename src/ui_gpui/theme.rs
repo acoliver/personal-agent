@@ -10,7 +10,7 @@
 
 use std::sync::{OnceLock, RwLock};
 
-use gpui::{hsla, rgb, Hsla, Rgba};
+use gpui::{hsla, rgb, FontFeatures, Hsla, Rgba, SharedString};
 
 use crate::ui_gpui::mac_native::{self, MacNativePalette, MAC_NATIVE_SLUG};
 use crate::ui_gpui::theme_catalog::{ThemeCatalog, ThemeColors, ThemeDefinition, ThemeKind};
@@ -20,9 +20,42 @@ use crate::ui_gpui::theme_catalog::{ThemeCatalog, ThemeColors, ThemeDefinition, 
 const DEFAULT_SLUG: &str = "green-screen";
 const DEFAULT_THEME_NAME: &str = "Green Screen";
 
+// ── Font size and family constants ───────────────────────────────────────────
+
+/// Default font size in points used when no persisted value is found.
+pub const DEFAULT_FONT_SIZE: f32 = 14.0;
+
+/// Minimum allowed font size in points.
+pub const MIN_FONT_SIZE: f32 = 10.0;
+
+/// Maximum allowed font size in points.
+pub const MAX_FONT_SIZE: f32 = 24.0;
+
+/// Default monospace font family name.
+pub const DEFAULT_MONO_FONT_FAMILY: &str = "Menlo";
+
+/// Setting key for persisting font size.
+pub const SETTING_KEY_FONT_SIZE: &str = "font_size";
+
+/// Setting key for persisting the UI (proportional) font family.
+pub const SETTING_KEY_UI_FONT_FAMILY: &str = "ui_font_family";
+
+/// Setting key for persisting the monospace font family.
+pub const SETTING_KEY_MONO_FONT_FAMILY: &str = "mono_font_family";
+
+/// Setting key for persisting the mono-ligatures toggle.
+pub const SETTING_KEY_MONO_LIGATURES: &str = "mono_ligatures";
+
 // ── Global active theme slug ─────────────────────────────────────────────────
 
 static ACTIVE_THEME_SLUG: RwLock<String> = RwLock::new(String::new());
+
+// ── Global active font settings ───────────────────────────────────────────────
+
+static ACTIVE_FONT_SIZE: RwLock<f32> = RwLock::new(DEFAULT_FONT_SIZE);
+static ACTIVE_UI_FONT_FAMILY: RwLock<String> = RwLock::new(String::new());
+static ACTIVE_MONO_FONT_FAMILY: RwLock<String> = RwLock::new(String::new());
+static ACTIVE_MONO_LIGATURES: RwLock<bool> = RwLock::new(true);
 
 fn get_active_slug() -> String {
     let guard = ACTIVE_THEME_SLUG
@@ -100,6 +133,143 @@ pub fn set_active_theme_slug(slug: &str) -> bool {
 #[must_use]
 pub fn active_theme_slug() -> String {
     get_active_slug()
+}
+
+// ── Public font runtime API ───────────────────────────────────────────────────
+
+/// Set the active font size, clamping to `[MIN_FONT_SIZE, MAX_FONT_SIZE]`.
+///
+/// Returns `true` if the value changed, `false` if it was already set to the
+/// clamped value.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+pub fn set_active_font_size(size: f32) -> bool {
+    let clamped = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+    let mut guard = ACTIVE_FONT_SIZE.write().expect("font size rwlock poisoned");
+    if (*guard - clamped).abs() < f32::EPSILON {
+        return false;
+    }
+    *guard = clamped;
+    true
+}
+
+/// Returns the currently active font size, defaulting to `DEFAULT_FONT_SIZE`.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn active_font_size() -> f32 {
+    let guard = ACTIVE_FONT_SIZE.read().expect("font size rwlock poisoned");
+    *guard
+}
+
+/// Set the active UI (proportional) font family override.
+///
+/// Passing `None` or `Some(String::new())` clears the override, falling back
+/// to the GPUI default.  Returns `true` if the stored value changed.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+pub fn set_active_ui_font_family(family: Option<String>) -> bool {
+    let value = family.unwrap_or_default();
+    let mut guard = ACTIVE_UI_FONT_FAMILY
+        .write()
+        .expect("ui font family rwlock poisoned");
+    if *guard == value {
+        return false;
+    }
+    *guard = value;
+    true
+}
+
+/// Returns the active UI font family override, or `None` if none is set.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn active_ui_font_family() -> Option<String> {
+    let guard = ACTIVE_UI_FONT_FAMILY
+        .read()
+        .expect("ui font family rwlock poisoned");
+    if guard.is_empty() {
+        None
+    } else {
+        Some(guard.clone())
+    }
+}
+
+/// Set the active monospace font family.
+///
+/// An empty string is stored as-is; [`active_mono_font_family`] will fall back
+/// to `DEFAULT_MONO_FONT_FAMILY` when the stored value is empty.  Returns
+/// `true` if the stored value changed.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+pub fn set_active_mono_font_family(family: impl AsRef<str>) -> bool {
+    let value = family.as_ref().to_string();
+    let mut guard = ACTIVE_MONO_FONT_FAMILY
+        .write()
+        .expect("mono font family rwlock poisoned");
+    if *guard == value {
+        return false;
+    }
+    *guard = value;
+    true
+}
+
+/// Returns the active monospace font family, falling back to
+/// `DEFAULT_MONO_FONT_FAMILY` when no override is set.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn active_mono_font_family() -> String {
+    let guard = ACTIVE_MONO_FONT_FAMILY
+        .read()
+        .expect("mono font family rwlock poisoned");
+    if guard.is_empty() {
+        DEFAULT_MONO_FONT_FAMILY.to_string()
+    } else {
+        guard.clone()
+    }
+}
+
+/// Set whether monospace ligatures are enabled.
+///
+/// Returns `true` if the stored value changed.
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+pub fn set_active_mono_ligatures(enabled: bool) -> bool {
+    let mut guard = ACTIVE_MONO_LIGATURES
+        .write()
+        .expect("mono ligatures rwlock poisoned");
+    if *guard == enabled {
+        return false;
+    }
+    *guard = enabled;
+    true
+}
+
+/// Returns whether monospace ligatures are currently enabled (default: `true`).
+///
+/// # Panics
+///
+/// Panics if the internal `RwLock` is poisoned.
+#[must_use]
+pub fn active_mono_ligatures() -> bool {
+    *ACTIVE_MONO_LIGATURES
+        .read()
+        .expect("mono ligatures rwlock poisoned")
 }
 
 /// Returns `true` when `slug` maps to a known selectable theme option.
@@ -408,11 +578,96 @@ impl Theme {
     pub const RADIUS_MD: f32 = 6.0;
     pub const RADIUS_LG: f32 = 8.0;
 
-    pub const FONT_SIZE_XS: f32 = 11.0;
-    pub const FONT_SIZE_SM: f32 = 12.0;
-    pub const FONT_SIZE_MD: f32 = 13.0;
-    pub const FONT_SIZE_BASE: f32 = 14.0;
-    pub const FONT_SIZE_LG: f32 = 16.0;
+    // ── Scaled font size accessors (dynamic, respects active font size) ──────
+
+    /// Heading 1 font size (2× base).
+    #[must_use]
+    pub fn font_size_h1() -> f32 {
+        active_font_size() * 2.0
+    }
+
+    /// Heading 2 font size (1.5× base).
+    #[must_use]
+    pub fn font_size_h2() -> f32 {
+        active_font_size() * 1.5
+    }
+
+    /// Heading 3 font size (1.25× base).
+    #[must_use]
+    pub fn font_size_h3() -> f32 {
+        active_font_size() * 1.25
+    }
+
+    /// Body font size (equals base).
+    #[must_use]
+    pub fn font_size_body() -> f32 {
+        active_font_size()
+    }
+
+    /// Monospace font size (9/10 of base, truncated to nearest 0.5pt).
+    #[must_use]
+    pub fn font_size_mono() -> f32 {
+        (active_font_size() * 9.0) / 10.0
+    }
+
+    /// UI label font size (17/20 of base).
+    #[must_use]
+    pub fn font_size_ui() -> f32 {
+        (active_font_size() * 17.0) / 20.0
+    }
+
+    /// Small label font size (39/50 of base).
+    #[must_use]
+    pub fn font_size_small() -> f32 {
+        (active_font_size() * 39.0) / 50.0
+    }
+
+    /// Returns the active monospace font family as a GPUI shared string.
+    #[must_use]
+    pub fn mono_font_family() -> SharedString {
+        SharedString::from(active_mono_font_family())
+    }
+
+    /// Returns the active UI font family override as a GPUI shared string.
+    ///
+    /// When no override is set, returns `None` so GPUI falls back to
+    /// `.SystemUIFont`.
+    #[must_use]
+    pub fn ui_font_family() -> Option<SharedString> {
+        active_ui_font_family().map(SharedString::from)
+    }
+
+    /// Returns the active mono font OpenType features.
+    ///
+    /// Ligatures are enabled by default; when disabled, this sets `calt=0`.
+    #[must_use]
+    pub fn mono_font_features() -> FontFeatures {
+        if active_mono_ligatures() {
+            FontFeatures::default()
+        } else {
+            FontFeatures::disable_ligatures()
+        }
+    }
+
+    // ── Font family / features convenience methods ───────────────────────────
+
+    /// Returns the active monospace font family name.
+    #[must_use]
+    pub fn mono_font_family_name() -> String {
+        active_mono_font_family()
+    }
+
+    /// Returns the active UI (proportional) font family override, or `None`.
+    #[must_use]
+    pub fn ui_font_family_name() -> Option<String> {
+        active_ui_font_family()
+    }
+
+    /// Returns whether monospace ligatures are currently enabled.
+    #[must_use]
+    pub fn mono_ligatures_enabled() -> bool {
+        active_mono_ligatures()
+    }
 
     // ── Background tokens ────────────────────────────────────────────────────
 
