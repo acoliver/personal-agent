@@ -24,6 +24,44 @@ cargo build --release
 
 The binary will be at `target/release/personal_agent_gpui`.
 
+### Linux prerequisites
+
+PersonalAgent supports Linux builds (Wayland-first) with an SNI tray integration.
+Before building on Debian/Ubuntu-based distributions, install the required packages:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential \
+  clang \
+  cmake \
+  curl \
+  gcc \
+  g++ \
+  git \
+  jq \
+  libasound2-dev \
+  libfontconfig-dev \
+  libgit2-dev \
+  libglib2.0-dev \
+  libssl-dev \
+  libva-dev \
+  libvulkan1 \
+  libwayland-dev \
+  libx11-xcb-dev \
+  libxkbcommon-x11-dev \
+  libzstd-dev \
+  llvm \
+  lld \
+  make \
+  pkg-config \
+  pipewire \
+  xdg-desktop-portal
+```
+
+The Linux tray uses the StatusNotifierItem protocol. KDE Plasma supports this out-of-the-box.
+On GNOME, install/enable an AppIndicator/SNI extension to make tray icons visible.
+
 ### Running
 
 ```bash

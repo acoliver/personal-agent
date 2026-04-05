@@ -314,6 +314,7 @@ fn main() {
 fn run_gpui_app(cx: &mut App) {
     cx.set_quit_mode(QuitMode::Explicit);
 
+    #[cfg(target_os = "macos")]
     let Some(mtm) = MainThreadMarker::new() else {
         tracing::error!("Not on main thread!");
         return;
@@ -374,7 +375,10 @@ fn run_gpui_app(cx: &mut App) {
 
     spawn_runtime_bridge_pump(app_state, cx);
 
+    #[cfg(target_os = "macos")]
     let mut tray = SystemTray::new(mtm);
+    #[cfg(not(target_os = "macos"))]
+    let mut tray = SystemTray::new();
     tray.start_click_listener(cx);
 
     if std::env::var("PA_AUTO_OPEN_POPUP").ok().as_deref() == Some("1") {
