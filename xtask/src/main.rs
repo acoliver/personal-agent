@@ -80,11 +80,13 @@ fn run() -> Result<()> {
 }
 
 fn guard() -> Result<()> {
-    enforce_no_runtime_stubs_or_todos()
+    enforce_no_runtime_stubs_or_todos()?;
+    enforce_theme_usage()
 }
 
 fn qa() -> Result<()> {
     enforce_no_runtime_stubs_or_todos()?;
+    enforce_theme_usage()?;
     run_checked(command("cargo", ["fmt", "--all", "--", "--check"]), "cargo fmt")?;
     run_checked(
         command("cargo", ["clippy", "--all-targets", "--", "-D", "warnings"]),
@@ -167,6 +169,24 @@ fn enforce_no_runtime_stubs_or_todos() -> Result<()> {
     // Prevent TODO/FIXME/todo!/unimplemented! from landing in production code.
     for pattern in ["TODO", "FIXME", "todo!(", "unimplemented!("] {
         ensure_no_pattern_in_tree(&src_dir, pattern, &[])?;
+    }
+
+    Ok(())
+}
+
+fn enforce_theme_usage() -> Result<()> {
+    let ui_gpui_dir = workspace_root().join("src/ui_gpui");
+
+    // Theme infrastructure and builder helpers legitimately construct raw colors internally.
+    let theme_allowlist = [
+        "theme.rs",
+        "mac_native.rs",
+        "theme_catalog.rs",
+        "theme/builders.rs",
+    ];
+
+    for pattern in ["hsla(", "rgb(", "rgba("] {
+        ensure_no_pattern_in_tree(&ui_gpui_dir, pattern, &theme_allowlist)?;
     }
 
     Ok(())
@@ -445,6 +465,8 @@ where
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn aggregate_workspace_coverage_filters_external_files() {
@@ -504,5 +526,34 @@ mod tests {
         assert_eq!(coverage.lines.percent(), 40.0);
         assert_eq!(coverage.regions.percent(), 40.0);
         assert_eq!(coverage.functions.percent(), 40.0);
+    }
+
+    #[test]
+    fn ensure_no_pattern_in_tree_ignores_allowlisted_files() {
+        let temp = tempdir().expect("create tempdir");
+        let root = temp.path();
+        let allowlisted = root.join("theme.rs");
+        fs::write(&allowlisted, "fn transparent() { let _ = hsla(0.0, 0.0, 0.0, 0.0); }\n")
+            .expect("write allowlisted file");
+
+        ensure_no_pattern_in_tree(root, "hsla(", &["theme.rs"]).expect("allowlisted pattern passes");
+    }
+
+    #[test]
+    fn ensure_no_pattern_in_tree_reports_non_allowlisted_violations() {
+        let temp = tempdir().expect("create tempdir");
+        let root = temp.path();
+        let violating = root.join("views").join("panel.rs");
+        fs::create_dir_all(violating.parent().expect("panel parent exists"))
+            .expect("create source directory");
+        fs::write(&violating, "fn panel() { let _ = hsla(0.0, 0.0, 0.0, 0.0); }\n")
+            .expect("write violating file");
+
+        let error = ensure_no_pattern_in_tree(root, "hsla(", &["theme.rs"])
+            .expect_err("non-allowlisted pattern should fail");
+        let message = format!("{error:#}");
+
+        assert!(message.contains("views/panel.rs:1"), "unexpected error: {message}");
+        assert!(message.contains("hsla("), "unexpected error: {message}");
     }
 }

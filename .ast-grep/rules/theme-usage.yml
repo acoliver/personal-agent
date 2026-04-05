@@ -1,0 +1,24 @@
+id: theme-bg-missing-text-color
+language: Rust
+severity: warning
+files:
+  - src/ui_gpui/**/*.rs
+ignores:
+  - src/ui_gpui/theme.rs
+  - src/ui_gpui/mac_native.rs
+  - src/ui_gpui/theme_catalog.rs
+message: Element sets a background and renders child content without setting text_color; text may inherit the GPUI default instead of a Theme color.
+note: If text color intentionally cascades from a parent container, add a brief theme-cascaded comment near the element so reviewers can confirm the inheritance is intentional.
+rule:
+  kind: call_expression
+  all:
+    - has:
+        pattern: .bg($BG)
+        stopBy: end
+    - has:
+        pattern: .child($CHILD)
+        stopBy: end
+    - not:
+        has:
+          pattern: .text_color($COLOR)
+          stopBy: end
