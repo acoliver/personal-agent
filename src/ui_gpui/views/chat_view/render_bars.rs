@@ -170,9 +170,12 @@ impl ChatView {
                     .when(!is_popout, |d| {
                         d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
                     })
-                    .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
-                    .child(if is_popout { "\u{2198}" } else { "\u{2197}" })
+                    .child(if is_popout {
+                        crate::ui_gpui::components::window_icons::popin_icon(16.0)
+                    } else {
+                        crate::ui_gpui::components::window_icons::popout_icon(16.0)
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, _cx| {
@@ -332,9 +335,8 @@ impl ChatView {
                         .when(!sidebar_visible, |d| {
                             d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
                         })
-                        .text_size(px(Theme::font_size_ui()))
                         .text_color(Theme::text_primary())
-                        .child("\u{2630}")
+                        .child(crate::ui_gpui::components::window_icons::sidebar_icon(16.0))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, _, _window, cx| {

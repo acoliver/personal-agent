@@ -36,6 +36,25 @@ impl ChatView {
             return;
         }
 
+        if self.state.sidebar_search_focused {
+            match key.as_str() {
+                "escape" => {
+                    self.state.sidebar_search_focused = false;
+                    if self.state.sidebar_search_query.is_empty() {
+                        self.state.sidebar_search_results = None;
+                    }
+                    cx.notify();
+                }
+                "backspace" => {
+                    self.state.sidebar_search_query.pop();
+                    self.trigger_sidebar_search(cx);
+                    cx.notify();
+                }
+                _ => {}
+            }
+            return;
+        }
+
         if self.state.conversation_title_editing {
             match key.as_str() {
                 "escape" => self.cancel_rename_conversation(cx),
@@ -141,9 +160,17 @@ impl ChatView {
                     }
                 }
             }
-            "a" => self.handle_select_all(cx),
+            "a" => {
+                if self.state.sidebar_search_focused {
+                    // select-all is a no-op for sidebar search (single-line)
+                } else {
+                    self.handle_select_all(cx);
+                }
+            }
             "c" => {
-                let text = if self.state.conversation_title_editing {
+                let text = if self.state.sidebar_search_focused {
+                    self.state.sidebar_search_query.clone()
+                } else if self.state.conversation_title_editing {
                     self.state.conversation_title_input.clone()
                 } else {
                     self.state.input_text.clone()
@@ -153,22 +180,29 @@ impl ChatView {
                 }
             }
             "x" => {
-                self.handle_select_all(cx);
-                let text = if self.state.conversation_title_editing {
-                    self.state.conversation_title_input.clone()
+                if self.state.sidebar_search_focused {
+                    let text = self.state.sidebar_search_query.clone();
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    self.state.sidebar_search_query.clear();
+                    self.state.sidebar_search_results = None;
                 } else {
-                    self.state.input_text.clone()
-                };
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                if self.state.conversation_title_editing {
-                    self.state.conversation_title_input.clear();
-                    self.state.rename_replace_on_next_char = false;
-                } else if !self.state.conversation_dropdown_open
-                    && !self.state.profile_dropdown_open
-                {
-                    self.state.input_text.clear();
-                    self.state.cursor_position = 0;
-                    self.state.marked_range = None;
+                    self.handle_select_all(cx);
+                    let text = if self.state.conversation_title_editing {
+                        self.state.conversation_title_input.clone()
+                    } else {
+                        self.state.input_text.clone()
+                    };
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    if self.state.conversation_title_editing {
+                        self.state.conversation_title_input.clear();
+                        self.state.rename_replace_on_next_char = false;
+                    } else if !self.state.conversation_dropdown_open
+                        && !self.state.profile_dropdown_open
+                    {
+                        self.state.input_text.clear();
+                        self.state.cursor_position = 0;
+                        self.state.marked_range = None;
+                    }
                 }
                 cx.notify();
             }
@@ -496,6 +530,7 @@ impl ChatView {
         };
 
         div()
+            .id("input-bar-container")
             .w_full()
             .flex()
             .debug_selector(|| "chat-input-bar".to_string())
@@ -508,6 +543,15 @@ impl ChatView {
             .border_t_1()
             .border_color(Theme::bg_dark())
             .overflow_hidden()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    if this.state.sidebar_search_focused {
+                        this.state.sidebar_search_focused = false;
+                        cx.notify();
+                    }
+                }),
+            )
             .child(Self::render_composer_field(
                 focus_handle,
                 input_box_height,

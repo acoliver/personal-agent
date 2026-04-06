@@ -548,15 +548,19 @@ impl ChatView {
     }
 
     pub(super) fn active_input_text(&self) -> &str {
-        if self.state.conversation_title_editing {
+        if self.state.sidebar_search_focused {
+            &self.state.sidebar_search_query
+        } else if self.state.conversation_title_editing {
             &self.state.conversation_title_input
         } else {
             &self.state.input_text
         }
     }
 
-    pub(super) const fn active_cursor_position(&self) -> usize {
-        if self.state.conversation_title_editing {
+    pub(super) fn active_cursor_position(&self) -> usize {
+        if self.state.sidebar_search_focused {
+            self.state.sidebar_search_query.len()
+        } else if self.state.conversation_title_editing {
             self.state.conversation_title_input.len()
         } else {
             self.state.cursor_position
@@ -596,6 +600,12 @@ impl ChatView {
     }
 
     pub fn handle_paste(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
+        if self.state.sidebar_search_focused {
+            self.state.sidebar_search_query.push_str(text);
+            self.trigger_sidebar_search(cx);
+            cx.notify();
+            return;
+        }
         if self.state.conversation_title_editing {
             if self.state.rename_replace_on_next_char {
                 self.state.conversation_title_input.clear();

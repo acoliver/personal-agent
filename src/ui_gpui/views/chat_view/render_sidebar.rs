@@ -29,6 +29,7 @@ impl ChatView {
 
     fn render_sidebar_header(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let query = self.state.sidebar_search_query.clone();
+        let is_focused = self.state.sidebar_search_focused;
 
         div()
             .id("sidebar-header")
@@ -45,26 +46,38 @@ impl ChatView {
                     .w_full()
                     .bg(Theme::bg_darkest())
                     .border_1()
-                    .border_color(if query.is_empty() {
-                        Theme::border()
-                    } else {
+                    .border_color(if is_focused || !query.is_empty() {
                         Theme::accent()
+                    } else {
+                        Theme::border()
                     })
                     .rounded(px(Theme::RADIUS_MD))
                     .px(px(10.0))
                     .flex()
                     .items_center()
+                    .cursor_text()
                     .text_size(px(Theme::font_size_ui()))
                     .text_color(if query.is_empty() {
                         Theme::text_secondary()
                     } else {
                         Theme::text_primary()
                     })
-                    .child(if query.is_empty() {
+                    .child(if query.is_empty() && !is_focused {
                         SharedString::from("Search conversations...")
+                    } else if query.is_empty() {
+                        SharedString::from("|")
+                    } else if is_focused {
+                        SharedString::from(format!("{query}|"))
                     } else {
                         SharedString::from(query)
-                    }),
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.state.sidebar_search_focused = true;
+                            cx.notify();
+                        }),
+                    ),
             )
             // Conversations header + new button
             .child(
@@ -168,7 +181,27 @@ impl ChatView {
             return self.render_delete_confirmation(conv, cx).into_any_element();
         }
 
-        let title = conv.title.clone();
+        let is_renaming = is_selected && self.state.conversation_title_editing;
+        let title = if is_renaming {
+            let input = &self.state.conversation_title_input;
+            if input.is_empty() {
+                conv.title.clone()
+            } else {
+                input.clone()
+            }
+        } else {
+            conv.title.clone()
+        };
+        let title_color = if is_selected {
+            Theme::selection_fg()
+        } else {
+            Theme::text_primary()
+        };
+        let meta_color = if is_selected {
+            Theme::selection_fg()
+        } else {
+            Theme::text_secondary()
+        };
         let updated = format_relative_time(conv.updated_at);
         let msg_count = conv.message_count;
         let preview = conv.preview.clone().unwrap_or_default();
@@ -200,8 +233,11 @@ impl ChatView {
                             .text_ellipsis()
                             .text_size(px(12.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(Theme::text_primary())
-                            .child(SharedString::from(title)),
+                            .text_color(title_color)
+                            .child(SharedString::from(title))
+                            .when(is_renaming, |d| {
+                                d.border_b_1().border_color(Theme::accent())
+                            }),
                     ),
             )
             // Meta row: time + message count
@@ -209,7 +245,7 @@ impl ChatView {
                 div()
                     .pl(px(22.0))
                     .text_size(px(10.0))
-                    .text_color(Theme::text_secondary())
+                    .text_color(meta_color)
                     .child(SharedString::from(format!(
                         "{updated} · {msg_count} messages"
                     ))),
@@ -223,14 +259,16 @@ impl ChatView {
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .text_size(px(10.0))
-                        .text_color(Theme::text_muted())
+                        .text_color(meta_color)
                         .child(SharedString::from(preview)),
                 )
             })
             .on_mouse_down(MouseButton::Left, {
-                cx.listener(move |this, _, _window, _cx| {
+                cx.listener(move |this, _, _window, cx| {
                     this.state.delete_confirming_id = None;
+                    this.state.sidebar_search_focused = false;
                     crate::ui_gpui::selection_intent_channel().request_select(conv_id);
+                    cx.notify();
                 })
             })
             .into_any_element()
@@ -315,9 +353,11 @@ impl ChatView {
                 )
             })
             .on_mouse_down(MouseButton::Left, {
-                cx.listener(move |this, _, _window, _cx| {
+                cx.listener(move |this, _, _window, cx| {
                     this.state.delete_confirming_id = None;
+                    this.state.sidebar_search_focused = false;
                     crate::ui_gpui::selection_intent_channel().request_select(conv_id);
+                    cx.notify();
                 })
             })
             .into_any_element()

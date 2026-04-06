@@ -161,4 +161,15 @@ impl ChatView {
         self.state.sidebar_visible = !self.state.sidebar_visible;
         cx.notify();
     }
+
+    /// Emit a search event for the current sidebar search query.
+    pub fn trigger_sidebar_search(&mut self, cx: &mut gpui::Context<Self>) {
+        let query = self.state.sidebar_search_query.clone();
+        if query.trim().is_empty() {
+            self.state.sidebar_search_results = None;
+        } else {
+            self.emit(crate::events::types::UserEvent::SearchConversations { query });
+        }
+        cx.notify();
+    }
 }

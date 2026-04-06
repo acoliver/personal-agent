@@ -83,6 +83,14 @@ impl gpui::EntityInputHandler for ChatView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.state.sidebar_search_focused {
+            self.state.marked_range = None;
+            self.state.sidebar_search_query.push_str(text);
+            self.trigger_sidebar_search(cx);
+            cx.notify();
+            return;
+        }
+
         if self.state.conversation_title_editing {
             self.state.marked_range = None;
             if self.state.rename_replace_on_next_char {
@@ -125,6 +133,12 @@ impl gpui::EntityInputHandler for ChatView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.state.sidebar_search_focused {
+            self.state.sidebar_search_query.push_str(new_text);
+            self.trigger_sidebar_search(cx);
+            cx.notify();
+            return;
+        }
         if self.state.conversation_dropdown_open || self.state.profile_dropdown_open {
             return;
         }

@@ -129,6 +129,8 @@ pub struct ChatState {
     pub sidebar_visible: bool,
     /// Current search query typed in the sidebar search box.
     pub sidebar_search_query: String,
+    /// Whether the sidebar search box currently has input focus.
+    pub sidebar_search_focused: bool,
     /// Search results from the backend, if a search is active.
     pub sidebar_search_results: Option<Vec<ConversationSearchResult>>,
     /// Conversation ID pending delete confirmation in the sidebar.
@@ -158,6 +160,7 @@ impl Default for ChatState {
             yolo_mode: false,
             sidebar_visible: true,
             sidebar_search_query: String::new(),
+            sidebar_search_focused: false,
             sidebar_search_results: None,
             delete_confirming_id: None,
             current_model: "No profile selected".to_string(),
