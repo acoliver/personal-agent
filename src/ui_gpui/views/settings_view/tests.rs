@@ -3,6 +3,9 @@
 #[path = "tests_category.rs"]
 mod tests_category;
 
+#[path = "tests_skills.rs"]
+mod tests_skills;
+
 use super::*;
 use crate::presentation::view_command::{ViewCommand, ViewId};
 use gpui::{AppContext, Bounds, EntityInputHandler, Pixels, TestAppContext};

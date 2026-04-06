@@ -812,4 +812,60 @@ mod tests {
             "https://raw.githubusercontent.com/anthropics/skills/main/skills/docx/SKILL.md";
         assert_eq!(SkillsServiceImpl::normalize_github_url(input), expected);
     }
+
+    #[test]
+    fn sanitize_skill_slug_lowercases_and_replaces_non_alnum() {
+        assert_eq!(
+            SkillsServiceImpl::sanitize_skill_slug("My Cool Skill!"),
+            "my-cool-skill"
+        );
+    }
+
+    #[test]
+    fn sanitize_skill_slug_collapses_consecutive_separators() {
+        assert_eq!(SkillsServiceImpl::sanitize_skill_slug("a---b___c"), "a-b-c");
+    }
+
+    #[test]
+    fn sanitize_skill_slug_trims_leading_trailing_dashes() {
+        assert_eq!(SkillsServiceImpl::sanitize_skill_slug("--hello--"), "hello");
+    }
+
+    #[test]
+    fn sanitize_skill_slug_empty_input_returns_empty() {
+        assert_eq!(SkillsServiceImpl::sanitize_skill_slug(""), "");
+    }
+
+    #[test]
+    fn install_dir_name_prefers_metadata_name() {
+        let url = "https://example.com/skills/SKILL.md";
+        assert_eq!(
+            SkillsServiceImpl::install_dir_name_for_url(url, "My Skill"),
+            "my-skill"
+        );
+    }
+
+    #[test]
+    fn install_dir_name_falls_back_to_url_path_segment() {
+        let url = "https://example.com/skills/docx/SKILL.md";
+        assert_eq!(
+            SkillsServiceImpl::install_dir_name_for_url(url, ""),
+            "skill-md"
+        );
+    }
+
+    #[test]
+    fn install_dir_name_uses_fallback_for_unparseable_url() {
+        assert_eq!(
+            SkillsServiceImpl::install_dir_name_for_url("not a url", ""),
+            "imported-skill"
+        );
+    }
+
+    #[test]
+    fn serialize_disabled_skill_names_produces_json_array() {
+        let names = vec!["alpha".to_string(), "beta".to_string()];
+        let json = SkillsServiceImpl::serialize_disabled_skill_names(&names).unwrap();
+        assert_eq!(json, r#"["alpha","beta"]"#);
+    }
 }

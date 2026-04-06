@@ -631,6 +631,20 @@ async fn route_yolo_mode_changed_increments_counter(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn route_skills_loaded_increments_counter(cx: &mut TestAppContext) {
+    let _ = cx;
+    assert_route_count(
+        ViewCommand::SkillsLoaded {
+            skills: vec![],
+            watched_directories: vec![],
+            default_directory: String::new(),
+        },
+        1,
+        |targets| targets.skills_loaded_count,
+    );
+}
+
+#[gpui::test]
 async fn handle_command_forwards_tool_approval_policy_to_settings_view(cx: &mut TestAppContext) {
     let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
     cx.set_global(app_state);
