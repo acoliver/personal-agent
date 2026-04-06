@@ -1,7 +1,3 @@
-//! Chat service implementation
-
-/// @plan PLAN-20250127-REMEDIATE.P02, PLAN-20250127-REMEDIATE.P03
-/// @requirement REM-001, REM-002, REM-003, REM-004, REM-005, REM-006, REM-007
 use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
 use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::compression::pipeline::{CompressionPipeline, CompressionResult};
@@ -28,8 +24,6 @@ use uuid::Uuid;
 
 const STREAM_ERROR_MESSAGE: &str = "An error interrupted the chat stream.";
 const COMPRESSION_SETTINGS_KEY: &str = "compression";
-
-/// Minimal implementation of `ChatService`
 pub struct ChatServiceImpl {
     conversation_service: Arc<dyn ConversationService>,
     profile_service: Arc<dyn super::ProfileService>,
