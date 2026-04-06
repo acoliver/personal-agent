@@ -188,6 +188,8 @@ impl ChatView {
             } else {
                 input.clone()
             }
+        } else if conv.title.trim().is_empty() {
+            "Untitled Conversation".to_string()
         } else {
             conv.title.clone()
         };
@@ -239,7 +241,11 @@ impl ChatView {
         }
 
         let is_selected = self.state.active_conversation_id == Some(conv_id);
-        let title = result.title.clone();
+        let title = if result.title.trim().is_empty() {
+            "Untitled Conversation".to_string()
+        } else {
+            result.title.clone()
+        };
         let updated = format_relative_time(result.updated_at);
         let msg_count = result.message_count;
         let context = result.match_context.clone();
@@ -321,7 +327,11 @@ impl ChatView {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let conv_id = conv.id;
-        let title = conv.title.clone();
+        let title = if conv.title.trim().is_empty() {
+            "Untitled Conversation".to_string()
+        } else {
+            conv.title.clone()
+        };
 
         div()
             .id(SharedString::from(format!("confirm-del-{conv_id}")))

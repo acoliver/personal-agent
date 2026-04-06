@@ -100,12 +100,20 @@ impl gpui::EntityInputHandler for ChatView {
         }
 
         if self.state.conversation_title_editing {
-            self.state.marked_range = None;
             if self.state.rename_replace_on_next_char {
                 self.state.conversation_title_input.clear();
                 self.state.rename_replace_on_next_char = false;
             }
-            self.state.conversation_title_input.push_str(text);
+            let title = &mut self.state.conversation_title_input;
+            let effective_range = range.or_else(|| self.state.marked_range.take());
+            if let Some(r) = effective_range {
+                let start = utf16_offset_to_utf8(title, r.start);
+                let end = utf16_offset_to_utf8(title, r.end);
+                title.replace_range(start..end, text);
+            } else {
+                title.push_str(text);
+            }
+            self.state.marked_range = None;
             cx.notify();
             return;
         }

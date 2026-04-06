@@ -573,7 +573,7 @@ impl SystemTray {
             window_background: WindowBackgroundAppearance::Opaque,
             app_id: Some("com.personalagent.gpui".to_string()),
             window_min_size: Some(size(px(480.0), px(340.0))),
-            window_decorations: Some(WindowDecorations::Client),
+            window_decorations: Some(WindowDecorations::Server),
             is_movable: true,
             is_resizable: true,
             is_minimizable: true,
@@ -632,6 +632,7 @@ impl SystemTray {
             if state.popup_window.is_some() {
                 cx.set_global(MainPanelAppState {
                     popup_window: None,
+                    app_mode: AppMode::Popup,
                     ..state
                 });
             }

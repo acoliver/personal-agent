@@ -588,13 +588,19 @@ impl ChatView {
         self.select_profile_at_index(self.state.profile_dropdown_index, cx);
     }
 
-    /// Handle paste (Cmd+V) - insert clipboard text at cursor
-    pub(super) fn compute_profile_dropdown_left(window_width: Pixels) -> Pixels {
+    /// Compute absolute left position for the profile dropdown menu.
+    ///
+    /// `sidebar_toggle_offset` is 36px in popout+sidebar-hidden mode (28px
+    /// toggle button + 8px gap), 0 otherwise.
+    pub(super) fn compute_profile_dropdown_left(
+        window_width: Pixels,
+        sidebar_toggle_offset: f32,
+    ) -> Pixels {
         let min_left = px(12.0);
         let dropdown_width = px(260.0);
         // chat-title-bar left padding (12) + conversation selector width (220)
-        // + gap (8) + new button width (28) + gap (8)
-        let preferred = px(276.0);
+        // + gap (8) + new button width (28) + gap (8) + sidebar toggle offset
+        let preferred = px(276.0 + sidebar_toggle_offset);
         let max_left = (window_width - dropdown_width - min_left).max(min_left);
         preferred.max(min_left).min(max_left)
     }

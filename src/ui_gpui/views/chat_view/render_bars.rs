@@ -614,6 +614,7 @@ impl ChatView {
     ) -> impl IntoElement {
         let active_id = self.state.active_conversation_id;
         let highlighted = self.state.conversation_dropdown_index;
+        let sidebar_toggle_offset = Self::sidebar_toggle_offset(cx);
 
         div()
             .id("chat-conversation-dropdown-overlay")
@@ -636,7 +637,7 @@ impl ChatView {
                     .id("chat-conversation-dropdown-menu")
                     .absolute()
                     .top(px(74.0))
-                    .left(px(12.0))
+                    .left(px(12.0 + sidebar_toggle_offset))
                     .min_w(px(320.0))
                     .max_w(px(520.0))
                     .max_h(px(220.0))
@@ -757,6 +758,7 @@ impl ChatView {
                     .top(px(74.0))
                     .left(Self::compute_profile_dropdown_left(
                         window.bounds().size.width,
+                        Self::sidebar_toggle_offset(cx),
                     ))
                     .w(px(260.0))
                     .max_w(px(300.0))
@@ -843,6 +845,19 @@ impl ChatView {
                 }),
             )
     }
+
+    /// Extra left offset when the sidebar toggle button is present in the
+    /// title bar (popout mode with sidebar hidden): 28px button + 8px gap.
+    fn sidebar_toggle_offset(cx: &gpui::Context<Self>) -> f32 {
+        let is_popout = cx
+            .try_global::<MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == AppMode::Popout);
+        if is_popout {
+            36.0
+        } else {
+            0.0
+        }
+    }
 }
 
 #[cfg(test)]
@@ -851,20 +866,26 @@ mod tests {
     use gpui::px;
 
     #[test]
-    fn profile_dropdown_left_aligns_under_trigger_left_edge() {
-        let left = ChatView::compute_profile_dropdown_left(px(760.0));
+    fn profile_dropdown_left_aligns_under_trigger_in_popup() {
+        let left = ChatView::compute_profile_dropdown_left(px(760.0), 0.0);
         assert_eq!(left, px(276.0));
     }
 
     #[test]
+    fn profile_dropdown_left_shifts_for_sidebar_toggle_in_popout() {
+        let left = ChatView::compute_profile_dropdown_left(px(760.0), 36.0);
+        assert_eq!(left, px(312.0));
+    }
+
+    #[test]
     fn profile_dropdown_left_clamps_to_right_bound_on_narrow_windows() {
-        let clamped_right = ChatView::compute_profile_dropdown_left(px(520.0));
+        let clamped_right = ChatView::compute_profile_dropdown_left(px(520.0), 0.0);
         assert_eq!(clamped_right, px(248.0));
     }
 
     #[test]
     fn profile_dropdown_left_uses_minimum_margin_for_narrow_windows() {
-        let left = ChatView::compute_profile_dropdown_left(px(200.0));
+        let left = ChatView::compute_profile_dropdown_left(px(200.0), 0.0);
         assert_eq!(left, px(12.0));
     }
 }
