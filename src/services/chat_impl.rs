@@ -505,6 +505,43 @@ struct PreparedMessageContext {
     compression_result: CompressionResult,
 }
 
+#[allow(clippy::missing_const_for_fn)]
+fn build_stream_context(
+    view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
+    approval_gate: Arc<ApprovalGate>,
+    policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
+) -> crate::llm::client_agent::McpToolContext {
+    crate::llm::client_agent::McpToolContext {
+        view_tx,
+        approval_gate,
+        policy,
+    }
+}
+#[allow(clippy::too_many_arguments)]
+async fn create_stream_agent(
+    client: &LlmClient,
+    mcp_tools: Vec<crate::llm::tools::Tool>,
+    system_prompt: &str,
+    conversation_id: Uuid,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    is_streaming: &Arc<AtomicBool>,
+    current_conversation_id: &Arc<StdMutex<Option<Uuid>>>,
+) -> Option<serdes_ai_agent::Agent<crate::llm::client_agent::McpToolContext>> {
+    match client.create_agent(mcp_tools, system_prompt).await {
+        Ok(agent) => Some(agent),
+        Err(e) => {
+            tracing::error!(
+                conversation_id = %conversation_id,
+                error = %e,
+                "Failed to create agent for chat stream"
+            );
+            emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
+            clear_streaming_state(is_streaming, current_conversation_id, conversation_id);
+            None
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_stream_task(
     prepared: PreparedMessageContext,
@@ -532,30 +569,21 @@ async fn run_stream_task(
     let mut input_tokens = None;
     let mut output_tokens = None;
 
-    let agent = match client.create_agent(mcp_tools, &system_prompt).await {
-        Ok(agent) => agent,
-        Err(e) => {
-            tracing::error!(
-                conversation_id = %conversation_id,
-                error = %e,
-                "Failed to create agent for chat stream"
-            );
-            emit_stream_error(
-                conversation_id,
-                STREAM_ERROR_MESSAGE.to_string(),
-                false,
-                &tx,
-            );
-            clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
-            return;
-        }
+    let Some(agent) = create_stream_agent(
+        &client,
+        mcp_tools,
+        &system_prompt,
+        conversation_id,
+        &tx,
+        &is_streaming,
+        &current_conversation_id,
+    )
+    .await
+    else {
+        return;
     };
 
-    let context = crate::llm::client_agent::McpToolContext {
-        view_tx: view_tx.clone(),
-        approval_gate: approval_gate.clone(),
-        policy: policy.clone(),
-    };
+    let context = build_stream_context(view_tx.clone(), approval_gate.clone(), policy.clone());
 
     if let Err(e) = client
         .run_agent_stream(&agent, &messages, context, |event| {

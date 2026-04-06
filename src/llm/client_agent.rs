@@ -1,7 +1,4 @@
-//! Agent-based LLM client with MCP tool integration
-//!
-//! This module provides Agent integration for `PersonalAgent` using `SerdesAI` Agent.
-
+//! Agent-based LLM client with MCP tool integration for `PersonalAgent`.
 use crate::agent::tool_approval_policy::{ToolApprovalDecision, ToolApprovalPolicy};
 use crate::llm::error::debug_error_message;
 use crate::llm::{LlmError, Message, Role, StreamEvent};
@@ -18,7 +15,6 @@ use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
-
 // Use std Result to avoid conflict with serdes_ai::prelude::Result
 type StdResult<T, E> = std::result::Result<T, E>;
 
@@ -36,7 +32,6 @@ struct PendingApproval {
     tx: oneshot::Sender<bool>,
     tool_identifiers: Vec<String>,
 }
-
 #[derive(Debug)]
 pub struct ApprovalWaiter {
     request_id: String,
@@ -485,6 +480,63 @@ impl crate::llm::LlmClient {
         });
     }
 
+    fn handle_agent_stream_event<F>(event: AgentStreamEvent, on_event: &mut F)
+    where
+        F: FnMut(StreamEvent) + Send,
+    {
+        match event {
+            AgentStreamEvent::TextDelta { text } => {
+                tracing::info!("run_agent_stream: TextDelta: '{}'", text);
+                on_event(StreamEvent::TextDelta(text));
+            }
+            AgentStreamEvent::ThinkingDelta { text } => on_event(StreamEvent::ThinkingDelta(text)),
+            AgentStreamEvent::ToolCallStart {
+                tool_name,
+                tool_call_id,
+                ..
+            } => {
+                on_event(StreamEvent::ToolCallStarted {
+                    tool_name,
+                    call_id: tool_call_id.unwrap_or_default(),
+                });
+            }
+            AgentStreamEvent::ToolExecuted {
+                tool_name,
+                tool_call_id,
+                success,
+                error,
+                ..
+            } => {
+                let call_id = tool_call_id.unwrap_or_default();
+                on_event(StreamEvent::ToolCallCompleted {
+                    tool_name,
+                    call_id: call_id.clone(),
+                    success,
+                    result: None,
+                    error,
+                });
+                Self::emit_tool_executed_transcript(on_event, call_id, success);
+            }
+            AgentStreamEvent::RunComplete { messages, .. } => {
+                tracing::info!("run_agent_stream: RunComplete");
+                let (tool_calls, tool_results) = Self::collect_tool_transcript(&messages);
+                on_event(StreamEvent::ToolTranscript {
+                    tool_calls,
+                    tool_results,
+                });
+                on_event(StreamEvent::Complete {
+                    input_tokens: None,
+                    output_tokens: None,
+                });
+            }
+            AgentStreamEvent::Error { message } => {
+                tracing::error!("run_agent_stream: Error: {}", message);
+                on_event(StreamEvent::Error(message));
+            }
+            other => tracing::debug!("run_agent_stream: other event: {:?}", other),
+        }
+    }
+
     #[allow(clippy::cognitive_complexity)]
     async fn do_run_agent_stream<F>(
         &self,
@@ -523,61 +575,8 @@ impl crate::llm::LlmClient {
 
         while let Some(event_result) = stream.next().await {
             match event_result {
-                Ok(event) => match event {
-                    AgentStreamEvent::TextDelta { text } => {
-                        tracing::info!("run_agent_stream: TextDelta: '{}'", text);
-                        on_event(StreamEvent::TextDelta(text));
-                    }
-                    AgentStreamEvent::ThinkingDelta { text } => {
-                        on_event(StreamEvent::ThinkingDelta(text));
-                    }
-                    AgentStreamEvent::ToolCallStart {
-                        tool_name,
-                        tool_call_id,
-                        ..
-                    } => {
-                        on_event(StreamEvent::ToolCallStarted {
-                            tool_name: tool_name.clone(),
-                            call_id: tool_call_id.clone().unwrap_or_default(),
-                        });
-                    }
-                    AgentStreamEvent::ToolExecuted {
-                        tool_name,
-                        tool_call_id,
-                        success,
-                        error,
-                        ..
-                    } => {
-                        let call_id = tool_call_id.unwrap_or_default();
-                        on_event(StreamEvent::ToolCallCompleted {
-                            tool_name,
-                            call_id: call_id.clone(),
-                            success,
-                            result: None,
-                            error,
-                        });
-                        Self::emit_tool_executed_transcript(on_event, call_id, success);
-                    }
-                    AgentStreamEvent::RunComplete { messages, .. } => {
-                        tracing::info!("run_agent_stream: RunComplete");
-                        let (tool_calls, tool_results) = Self::collect_tool_transcript(&messages);
-                        on_event(StreamEvent::ToolTranscript {
-                            tool_calls,
-                            tool_results,
-                        });
-                        on_event(StreamEvent::Complete {
-                            input_tokens: None,
-                            output_tokens: None,
-                        });
-                    }
-                    AgentStreamEvent::Error { message } => {
-                        tracing::error!("run_agent_stream: Error: {}", message);
-                        on_event(StreamEvent::Error(message));
-                    }
-                    other => {
-                        tracing::debug!("run_agent_stream: other event: {:?}", other);
-                    }
-                },
+                Ok(event) => Self::handle_agent_stream_event(event, on_event),
+
                 Err(e) => {
                     let err_msg = debug_error_message(&e);
                     on_event(StreamEvent::Error(err_msg.clone()));
