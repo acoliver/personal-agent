@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent::McpApprovalMode;
-use crate::models::{AuthConfig, Message};
-use crate::services::AppSettingsService;
+use crate::models::{AuthConfig, ContextState, Message};
+use crate::services::{AppSettingsService, ProfileService};
 use std::sync::Arc;
 use tokio::sync::Barrier;
 use uuid::Uuid;
@@ -413,6 +413,200 @@ async fn test_send_message() {
     }
 
     let _ = crate::services::secure_store::api_keys::delete("_test_send_msg");
+}
+
+#[tokio::test]
+async fn support_app_settings_services_cover_success_and_failure_paths() {
+    let in_memory = InMemoryAppSettingsService::new();
+    let profile_id = Uuid::new_v4();
+    let conversation_id = Uuid::new_v4();
+
+    assert_eq!(in_memory.get_default_profile_id().await.unwrap(), None);
+    in_memory.set_default_profile_id(profile_id).await.unwrap();
+    in_memory.clear_default_profile_id().await.unwrap();
+    assert_eq!(in_memory.get_current_conversation_id().await.unwrap(), None);
+    in_memory
+        .set_current_conversation_id(conversation_id)
+        .await
+        .unwrap();
+    assert_eq!(in_memory.get_hotkey().await.unwrap(), None);
+    in_memory
+        .set_hotkey("Cmd+Shift+K".to_string())
+        .await
+        .unwrap();
+    assert_eq!(in_memory.get_theme().await.unwrap(), None);
+    in_memory.set_theme("dark".to_string()).await.unwrap();
+    assert_eq!(in_memory.get_setting("missing").await.unwrap(), None);
+    in_memory
+        .set_setting("skills.disabled", "[\"drafting\"]".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        in_memory.get_setting("skills.disabled").await.unwrap(),
+        Some("[\"drafting\"]".to_string())
+    );
+    in_memory.reset_to_defaults().await.unwrap();
+    assert_eq!(
+        in_memory.get_setting("skills.disabled").await.unwrap(),
+        None
+    );
+
+    let failing = FailingAppSettingsService;
+    assert_eq!(failing.get_default_profile_id().await.unwrap(), None);
+    failing.set_default_profile_id(profile_id).await.unwrap();
+    failing.clear_default_profile_id().await.unwrap();
+    assert_eq!(failing.get_current_conversation_id().await.unwrap(), None);
+    failing
+        .set_current_conversation_id(conversation_id)
+        .await
+        .unwrap();
+    assert_eq!(failing.get_hotkey().await.unwrap(), None);
+    failing.set_hotkey("Cmd+Shift+K".to_string()).await.unwrap();
+    assert_eq!(failing.get_theme().await.unwrap(), None);
+    failing.set_theme("dark".to_string()).await.unwrap();
+    assert_eq!(failing.get_setting("missing").await.unwrap(), None);
+    let error = failing
+        .set_setting("tool_approval.policy", "{}".to_string())
+        .await
+        .expect_err("failing settings should surface storage errors");
+    assert!(error
+        .to_string()
+        .contains("simulated settings persistence failure"));
+    failing.reset_to_defaults().await.unwrap();
+}
+
+#[tokio::test]
+async fn support_mock_conversation_service_covers_crud_and_lookup_paths() {
+    let profile_id = Uuid::new_v4();
+    let conversation_service = MockConversationService::new(profile_id);
+
+    let created = conversation_service
+        .create(Some("Hello".to_string()), profile_id)
+        .await
+        .expect("conversation create should succeed");
+    assert_eq!(created.profile_id, profile_id);
+    assert!(conversation_service
+        .list_metadata(None, None)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let stored = conversation_service
+        .add_message(Uuid::new_v4(), Message::user("hello".to_string()))
+        .await
+        .expect("add_message should succeed");
+    assert_eq!(stored.content, "hello");
+
+    let loaded = conversation_service
+        .load(Uuid::new_v4())
+        .await
+        .expect("conversation load should succeed");
+    assert_eq!(loaded.messages.len(), 1);
+    assert_eq!(
+        conversation_service
+            .search("hello", None, None)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        conversation_service
+            .message_count(Uuid::new_v4())
+            .await
+            .unwrap(),
+        0
+    );
+    conversation_service
+        .update_context_state(
+            Uuid::new_v4(),
+            &ContextState {
+                strategy: Some("summary".to_string()),
+                summary: Some("condensed".to_string()),
+                visible_range: Some((0, 1)),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(conversation_service
+        .get_context_state(Uuid::new_v4())
+        .await
+        .unwrap()
+        .is_none());
+    conversation_service
+        .rename(Uuid::new_v4(), "Renamed".to_string())
+        .await
+        .unwrap();
+    conversation_service.delete(Uuid::new_v4()).await.unwrap();
+    conversation_service
+        .set_active(Uuid::new_v4())
+        .await
+        .unwrap();
+    assert_eq!(conversation_service.get_active().await.unwrap(), None);
+    assert!(conversation_service
+        .get_messages(Uuid::new_v4())
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(conversation_service
+        .update(Uuid::new_v4(), Some("title".to_string()), Some(profile_id))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn support_mock_profile_service_covers_crud_and_lookup_paths() {
+    let profile = crate::models::ModelProfile::new(
+        "Support Profile".to_string(),
+        "openai".to_string(),
+        "gpt-4o".to_string(),
+        "https://api.openai.com/v1".to_string(),
+        AuthConfig::Keychain {
+            label: "support-key".to_string(),
+        },
+    );
+    let profile_id = profile.id;
+    let profile_service = MockProfileService::new();
+
+    profile_service.set_default_profile(profile.clone()).await;
+    profile_service.add_profile(profile.clone()).await;
+    assert!(profile_service.list().await.unwrap().is_empty());
+    assert_eq!(
+        profile_service.get(profile_id).await.unwrap().id,
+        profile_id
+    );
+    assert_eq!(
+        profile_service
+            .get_default()
+            .await
+            .unwrap()
+            .expect("default profile")
+            .id,
+        profile_id
+    );
+    profile_service.set_default(profile_id).await.unwrap();
+    profile_service.test_connection(profile_id).await.unwrap();
+
+    let created_profile = profile_service
+        .create(
+            "Created".to_string(),
+            "openai".to_string(),
+            "gpt-4.1".to_string(),
+            Some("https://api.example.com/v1".to_string()),
+            AuthConfig::Keychain {
+                label: "created-key".to_string(),
+            },
+            crate::models::ModelParameters::default(),
+            None,
+        )
+        .await
+        .expect("profile create should succeed");
+    assert_eq!(created_profile.name, "Created");
+    assert!(profile_service
+        .update(profile_id, None, None, None, None, None, None, None)
+        .await
+        .is_err());
+    assert!(profile_service.delete(profile_id).await.is_err());
 }
 
 async fn make_basic_chat_service() -> ChatServiceImpl {

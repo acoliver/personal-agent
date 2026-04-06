@@ -5,8 +5,7 @@ mod tests_category;
 
 use super::*;
 use crate::presentation::view_command::{ViewCommand, ViewId};
-use gpui::AppContext;
-use gpui::TestAppContext;
+use gpui::{AppContext, Bounds, EntityInputHandler, Pixels, TestAppContext};
 
 fn clear_navigation_requests() {
     while crate::ui_gpui::navigation_channel()
@@ -925,5 +924,48 @@ async fn cycle_active_field_includes_export_dir(cx: &mut TestAppContext) {
 
         view.cycle_active_field();
         assert_eq!(view.state.active_field, Some(ActiveField::ExportDirInput));
+    });
+}
+
+#[gpui::test]
+async fn input_handler_tracks_marked_text_and_cursor_for_export_directory(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|window, app| {
+        view.update(app, |view: &mut SettingsView, cx| {
+            view.set_active_field(Some(ActiveField::ExportDirInput));
+            view.replace_text_in_range(None, "/tmp", window, cx);
+            assert_eq!(view.state.export_dir_input, "/tmp");
+            assert_eq!(
+                view.text_for_range(0..2, &mut None, window, cx),
+                Some("/t".to_string())
+            );
+
+            view.replace_and_mark_text_in_range(None, "/ex", None, window, cx);
+            assert_eq!(view.state.export_dir_input, "/tmp/ex");
+            assert_eq!(view.marked_text_range(window, cx), Some(4..7));
+
+            view.replace_text_in_range(None, "ports", window, cx);
+            assert_eq!(view.state.export_dir_input, "/tmpports");
+            assert_eq!(view.marked_text_range(window, cx), None);
+
+            let selection = view
+                .selected_text_range(false, window, cx)
+                .expect("selection range");
+            let len = "/tmpports".encode_utf16().count();
+            assert_eq!(selection.range, len..len);
+
+            view.replace_and_mark_text_in_range(None, "/exports", None, window, cx);
+            assert!(view.marked_text_range(window, cx).is_some());
+            view.unmark_text(window, cx);
+            assert_eq!(view.marked_text_range(window, cx), None);
+            assert!(view
+                .bounds_for_range(0..1, Bounds::default(), window, cx)
+                .is_none());
+            assert!(view
+                .character_index_for_point(gpui::point(Pixels::ZERO, Pixels::ZERO), window, cx)
+                .is_none());
+        });
     });
 }
