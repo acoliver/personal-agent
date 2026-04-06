@@ -406,6 +406,142 @@ async fn test_handle_new_conversation() {
     assert!(found_activated, "Should activate conversation");
 }
 
+/// Mock that returns two conversations with populated metadata.
+struct PopulatedMetadataService;
+
+#[async_trait::async_trait]
+impl ConversationService for PopulatedMetadataService {
+    async fn create(
+        &self,
+        _title: Option<String>,
+        _profile_id: Uuid,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+    async fn load(
+        &self,
+        _id: Uuid,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+    async fn list_metadata(
+        &self,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<crate::models::ConversationMetadata>, crate::services::ServiceError> {
+        Ok(vec![
+            crate::models::ConversationMetadata {
+                id: Uuid::nil(),
+                title: Some("Rust patterns".to_string()),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                profile_id: Some(Uuid::new_v4()),
+                message_count: 10,
+                last_message_preview: Some("How to use tokio select".to_string()),
+            },
+            crate::models::ConversationMetadata {
+                id: Uuid::new_v4(),
+                title: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                profile_id: None,
+                message_count: 0,
+                last_message_preview: None,
+            },
+        ])
+    }
+    async fn add_message(
+        &self,
+        _cid: Uuid,
+        msg: crate::models::Message,
+    ) -> Result<crate::models::Message, crate::services::ServiceError> {
+        Ok(msg)
+    }
+    async fn search(
+        &self,
+        _q: &str,
+        _l: Option<usize>,
+        _o: Option<usize>,
+    ) -> Result<Vec<crate::models::SearchResult>, crate::services::ServiceError> {
+        Ok(vec![])
+    }
+    async fn message_count(&self, _cid: Uuid) -> Result<usize, crate::services::ServiceError> {
+        Ok(0)
+    }
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &crate::models::ContextState,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn get_context_state(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<crate::models::ContextState>, crate::services::ServiceError> {
+        Ok(None)
+    }
+    async fn rename(
+        &self,
+        _id: Uuid,
+        _new_title: String,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn set_active(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn get_active(&self) -> Result<Option<Uuid>, crate::services::ServiceError> {
+        Ok(None)
+    }
+    async fn get_messages(
+        &self,
+        _cid: Uuid,
+    ) -> Result<Vec<crate::models::Message>, crate::services::ServiceError> {
+        Ok(vec![])
+    }
+    async fn update(
+        &self,
+        _id: Uuid,
+        _title: Option<String>,
+        _mpid: Option<Uuid>,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+}
+
+/// Test `emit_conversation_list` maps metadata (including preview) to summaries
+#[tokio::test]
+async fn test_emit_conversation_list_with_populated_metadata() {
+    let service = Arc::new(PopulatedMetadataService) as Arc<dyn ConversationService>;
+    let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let mut tx = view_tx.clone();
+
+    ChatPresenter::emit_conversation_list(&service, &mut tx)
+        .await
+        .expect("Should succeed");
+
+    let cmd = view_rx.try_recv().expect("Should emit conversation list");
+    match cmd {
+        ViewCommand::ConversationListRefreshed { conversations } => {
+            assert_eq!(conversations.len(), 2);
+            assert_eq!(conversations[0].title, "Rust patterns");
+            assert_eq!(conversations[0].message_count, 10);
+            assert_eq!(
+                conversations[0].preview,
+                Some("How to use tokio select".to_string())
+            );
+            // Second conversation has None title → fallback
+            assert_eq!(conversations[1].title, "Untitled Conversation");
+            assert!(conversations[1].preview.is_none());
+        }
+        other => panic!("Expected ConversationListRefreshed, got {other:?}"),
+    }
+}
+
 /// Test `handle_search_conversations` with empty query returns empty results
 #[tokio::test]
 async fn test_search_conversations_empty_query() {
@@ -463,4 +599,279 @@ async fn test_search_conversations_non_empty_query() {
         }
         other => panic!("Expected ConversationSearchResults, got {other:?}"),
     }
+}
+
+/// Mock that returns populated search results to exercise mapping code.
+struct SearchableConversationService;
+
+#[async_trait::async_trait]
+impl ConversationService for SearchableConversationService {
+    async fn create(
+        &self,
+        _title: Option<String>,
+        _model_profile_id: Uuid,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+    async fn load(
+        &self,
+        _id: Uuid,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+    async fn list_metadata(
+        &self,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<crate::models::ConversationMetadata>, crate::services::ServiceError> {
+        Ok(vec![])
+    }
+    async fn add_message(
+        &self,
+        _conversation_id: Uuid,
+        message: crate::models::Message,
+    ) -> Result<crate::models::Message, crate::services::ServiceError> {
+        Ok(message)
+    }
+    async fn search(
+        &self,
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<crate::models::SearchResult>, crate::services::ServiceError> {
+        Ok(vec![
+            crate::models::SearchResult {
+                conversation_id: Uuid::new_v4(),
+                title: "Rust async patterns".to_string(),
+                match_type: crate::models::SearchMatchType::Title,
+                match_context: "...tokio async patterns...".to_string(),
+                score: 1.5,
+                updated_at: chrono::Utc::now(),
+                message_count: 12,
+            },
+            crate::models::SearchResult {
+                conversation_id: Uuid::new_v4(),
+                title: "EventBus refactoring".to_string(),
+                match_type: crate::models::SearchMatchType::Content,
+                match_context: "switching from tokio broadcast to flume".to_string(),
+                score: 0.8,
+                updated_at: chrono::Utc::now(),
+                message_count: 8,
+            },
+        ])
+    }
+    async fn message_count(
+        &self,
+        _conversation_id: Uuid,
+    ) -> Result<usize, crate::services::ServiceError> {
+        Ok(0)
+    }
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &crate::models::ContextState,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn get_context_state(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<crate::models::ContextState>, crate::services::ServiceError> {
+        Ok(None)
+    }
+    async fn rename(
+        &self,
+        _id: Uuid,
+        _new_title: String,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn set_active(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn get_active(&self) -> Result<Option<Uuid>, crate::services::ServiceError> {
+        Ok(None)
+    }
+    async fn get_messages(
+        &self,
+        _conversation_id: Uuid,
+    ) -> Result<Vec<crate::models::Message>, crate::services::ServiceError> {
+        Ok(vec![])
+    }
+    async fn update(
+        &self,
+        _id: Uuid,
+        _title: Option<String>,
+        _model_profile_id: Option<Uuid>,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+}
+
+/// Mock that fails search to exercise the error path.
+struct FailingSearchService;
+
+#[async_trait::async_trait]
+impl ConversationService for FailingSearchService {
+    async fn create(
+        &self,
+        _title: Option<String>,
+        _model_profile_id: Uuid,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+    async fn load(
+        &self,
+        _id: Uuid,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+    async fn list_metadata(
+        &self,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<crate::models::ConversationMetadata>, crate::services::ServiceError> {
+        Ok(vec![])
+    }
+    async fn add_message(
+        &self,
+        _conversation_id: Uuid,
+        message: crate::models::Message,
+    ) -> Result<crate::models::Message, crate::services::ServiceError> {
+        Ok(message)
+    }
+    async fn search(
+        &self,
+        _query: &str,
+        _limit: Option<usize>,
+        _offset: Option<usize>,
+    ) -> Result<Vec<crate::models::SearchResult>, crate::services::ServiceError> {
+        Err(crate::services::ServiceError::Storage(
+            "Search unavailable".to_string(),
+        ))
+    }
+    async fn message_count(
+        &self,
+        _conversation_id: Uuid,
+    ) -> Result<usize, crate::services::ServiceError> {
+        Ok(0)
+    }
+    async fn update_context_state(
+        &self,
+        _id: Uuid,
+        _state: &crate::models::ContextState,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn get_context_state(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<crate::models::ContextState>, crate::services::ServiceError> {
+        Ok(None)
+    }
+    async fn rename(
+        &self,
+        _id: Uuid,
+        _new_title: String,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn set_active(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+    async fn get_active(&self) -> Result<Option<Uuid>, crate::services::ServiceError> {
+        Ok(None)
+    }
+    async fn get_messages(
+        &self,
+        _conversation_id: Uuid,
+    ) -> Result<Vec<crate::models::Message>, crate::services::ServiceError> {
+        Ok(vec![])
+    }
+    async fn update(
+        &self,
+        _id: Uuid,
+        _title: Option<String>,
+        _model_profile_id: Option<Uuid>,
+    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        unimplemented!()
+    }
+}
+
+/// Test search with actual results exercises the mapping code
+#[tokio::test]
+async fn test_search_conversations_with_results() {
+    let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let service = Arc::new(SearchableConversationService) as Arc<dyn ConversationService>;
+
+    ChatPresenter::handle_search_conversations(&service, &view_tx, "tokio".to_string()).await;
+
+    let cmd = view_rx.try_recv().expect("Should emit search results");
+    match cmd {
+        ViewCommand::ConversationSearchResults { results } => {
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].title, "Rust async patterns");
+            assert!(results[0].is_title_match);
+            assert_eq!(results[0].message_count, 12);
+            assert_eq!(results[1].title, "EventBus refactoring");
+            assert!(!results[1].is_title_match);
+            assert_eq!(
+                results[1].match_context,
+                "switching from tokio broadcast to flume"
+            );
+        }
+        other => panic!("Expected ConversationSearchResults, got {other:?}"),
+    }
+}
+
+/// Test search error path returns empty results gracefully
+#[tokio::test]
+async fn test_search_conversations_service_error() {
+    let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let service = Arc::new(FailingSearchService) as Arc<dyn ConversationService>;
+
+    ChatPresenter::handle_search_conversations(&service, &view_tx, "query".to_string()).await;
+
+    let cmd = view_rx
+        .try_recv()
+        .expect("Should emit search results on error");
+    match cmd {
+        ViewCommand::ConversationSearchResults { results } => {
+            assert!(results.is_empty(), "Error should return empty results");
+        }
+        other => panic!("Expected ConversationSearchResults, got {other:?}"),
+    }
+}
+
+/// Test `AppMode` default is `Popup`
+#[test]
+fn test_app_mode_default_is_popup() {
+    let mode = super::super::view_command::AppMode::default();
+    assert_eq!(mode, super::super::view_command::AppMode::Popup);
+}
+
+/// Test `ConversationSearchResult` equality and fields
+#[test]
+fn test_conversation_search_result_fields() {
+    let id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    let result = super::super::view_command::ConversationSearchResult {
+        id,
+        title: "Test".to_string(),
+        is_title_match: true,
+        match_context: "context".to_string(),
+        message_count: 5,
+        updated_at: now,
+    };
+    assert_eq!(result.id, id);
+    assert!(result.is_title_match);
+    assert_eq!(result.message_count, 5);
+    let clone = result.clone();
+    assert_eq!(result, clone);
 }
