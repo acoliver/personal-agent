@@ -134,6 +134,7 @@ impl gpui::EntityInputHandler for ChatView {
         cx: &mut gpui::Context<Self>,
     ) {
         if self.state.sidebar_search_focused {
+            self.state.marked_range = None;
             self.state.sidebar_search_query.push_str(new_text);
             self.trigger_sidebar_search(cx);
             cx.notify();
