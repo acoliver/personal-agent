@@ -557,7 +557,7 @@ impl ChatView {
         }
     }
 
-    pub(super) fn active_cursor_position(&self) -> usize {
+    pub(super) const fn active_cursor_position(&self) -> usize {
         if self.state.sidebar_search_focused {
             self.state.sidebar_search_query.len()
         } else if self.state.conversation_title_editing {
