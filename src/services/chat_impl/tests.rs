@@ -1,7 +1,8 @@
 use super::*;
 use crate::agent::McpApprovalMode;
-use crate::models::{AuthConfig, ContextState, Message};
-use crate::services::{AppSettingsService, ProfileService};
+use crate::models::{AuthConfig, ContextState, Message, Skill};
+use crate::services::{AppSettingsService, ProfileService, SkillsService};
+use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Barrier;
 use uuid::Uuid;
@@ -11,6 +12,41 @@ mod approval_persistence;
 mod chat_test_support;
 
 use chat_test_support::*;
+
+struct FailingSkillsService;
+
+#[async_trait]
+impl SkillsService for FailingSkillsService {
+    async fn list_skills(&self) -> ServiceResult<Vec<Skill>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn get_skill(&self, _name: &str) -> ServiceResult<Option<Skill>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn get_skill_body(&self, _name: &str) -> ServiceResult<Option<String>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn set_skill_enabled(&self, _name: &str, _enabled: bool) -> ServiceResult<()> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn get_enabled_skills(&self) -> ServiceResult<Vec<Skill>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+}
 
 #[tokio::test]
 async fn resolve_tool_approval_denied_does_not_update_policy() {
@@ -690,6 +726,60 @@ async fn prepare_message_context_uses_conversation_profile_id() {
     assert_eq!(prepared.profile.provider_id, "kimi-for-coding");
 
     let _ = crate::services::secure_store::api_keys::delete("_test_conv_prof");
+}
+
+#[tokio::test]
+async fn prepare_message_context_ignores_skill_lookup_failures() {
+    crate::services::secure_store::use_mock_backend();
+    crate::services::secure_store::api_keys::store(
+        "_test_skills_failure",
+        "fake-key-for-skills-failure-test",
+    )
+    .expect("store test key");
+
+    let profile = crate::models::ModelProfile::new(
+        "Default".to_string(),
+        "openai".to_string(),
+        "gpt-4o".to_string(),
+        "https://api.openai.com/v1".to_string(),
+        AuthConfig::Keychain {
+            label: "_test_skills_failure".to_string(),
+        },
+    );
+    let profile_id = profile.id;
+
+    let conversation_service = Arc::new(MockConversationService::new(profile_id))
+        as Arc<dyn super::super::ConversationService>;
+    let mock_profile_service = Arc::new(MockProfileService::new());
+    mock_profile_service
+        .set_default_profile(profile.clone())
+        .await;
+    mock_profile_service.add_profile(profile).await;
+    let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
+
+    let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+    let (view_tx, _view_rx) = tokio::sync::mpsc::channel(8);
+    let chat_service = ChatServiceImpl::new(
+        conversation_service,
+        profile_service,
+        app_settings,
+        Arc::new(FailingSkillsService),
+        view_tx,
+        Arc::new(ApprovalGate::new()),
+        Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default())),
+    );
+
+    let prepared = chat_service
+        .prepare_message_context(Uuid::new_v4(), "hello".to_string())
+        .await
+        .expect("prepare_message_context should succeed even when skills lookup fails");
+
+    assert!(
+        !prepared.system_prompt.contains("available_skills"),
+        "skills prompt block should be omitted when skill lookup fails"
+    );
+
+    let _ = crate::services::secure_store::api_keys::delete("_test_skills_failure");
 }
 
 #[tokio::test]

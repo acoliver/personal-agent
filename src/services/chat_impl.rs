@@ -263,7 +263,16 @@ impl ChatServiceImpl {
         let template_ctx =
             TemplateContext::new(conversation.created_at, &profile.name, &profile.model_id);
         let mut system_prompt = expand_system_prompt(&raw_system_prompt, &template_ctx);
-        let enabled_skills = self.skills_service.get_enabled_skills().await?;
+        let enabled_skills = match self.skills_service.get_enabled_skills().await {
+            Ok(skills) => skills,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to fetch enabled skills; continuing without skills prompt block"
+                );
+                Vec::new()
+            }
+        };
         let skills_prompt_block = build_skills_prompt_block(&enabled_skills);
         if !skills_prompt_block.is_empty() {
             if !system_prompt.trim().is_empty() {

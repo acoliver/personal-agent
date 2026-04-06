@@ -929,6 +929,8 @@ async fn cycle_active_field_includes_export_dir(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn input_handler_tracks_marked_text_and_cursor_for_export_directory(cx: &mut TestAppContext) {
+    clear_navigation_requests();
+
     let view = cx.new(SettingsView::new);
     let mut visual_cx = cx.add_empty_window().clone();
 
@@ -968,4 +970,6 @@ async fn input_handler_tracks_marked_text_and_cursor_for_export_directory(cx: &m
                 .is_none());
         });
     });
+
+    clear_navigation_requests();
 }

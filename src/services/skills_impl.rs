@@ -190,12 +190,9 @@ impl SkillsServiceImpl {
             })
     }
 
-    async fn save_disabled_skill_names(&self, disabled_names: &[String]) -> ServiceResult<()> {
-        let serialized = serde_json::to_string(disabled_names)
-            .map_err(|error| ServiceError::Serialization(error.to_string()))?;
-        self.app_settings_service
-            .set_setting(DISABLED_SKILLS_SETTING_KEY, serialized)
-            .await
+    fn serialize_disabled_skill_names(disabled_names: &[String]) -> ServiceResult<String> {
+        serde_json::to_string(disabled_names)
+            .map_err(|error| ServiceError::Serialization(error.to_string()))
     }
 }
 
@@ -226,28 +223,31 @@ impl SkillsService for SkillsServiceImpl {
     }
 
     async fn set_skill_enabled(&self, name: &str, enabled: bool) -> ServiceResult<()> {
-        let mut skills = self.skills.write().await;
-        let mut disabled_names = skills
-            .iter()
-            .filter(|skill| !skill.enabled)
-            .map(|skill| skill.name.clone())
-            .collect::<Vec<_>>();
+        let serialized = {
+            let mut skills = self.skills.write().await;
 
-        let Some(skill) = skills.iter_mut().find(|skill| skill.name == name) else {
-            return Err(ServiceError::NotFound(format!("Skill not found: {name}")));
+            let Some(skill) = skills.iter_mut().find(|skill| skill.name == name) else {
+                return Err(ServiceError::NotFound(format!("Skill not found: {name}")));
+            };
+
+            skill.enabled = enabled;
+
+            let mut disabled_names = skills
+                .iter()
+                .filter(|skill| !skill.enabled)
+                .map(|skill| skill.name.clone())
+                .collect::<Vec<_>>();
+            disabled_names.sort();
+            disabled_names.dedup();
+
+            let serialized = Self::serialize_disabled_skill_names(&disabled_names)?;
+            drop(skills);
+            serialized
         };
 
-        skill.enabled = enabled;
-        if enabled {
-            disabled_names.retain(|entry| entry != name);
-        } else if !disabled_names.iter().any(|entry| entry == name) {
-            disabled_names.push(name.to_string());
-        }
-        disabled_names.sort();
-        disabled_names.dedup();
-        drop(skills);
-
-        self.save_disabled_skill_names(&disabled_names).await
+        self.app_settings_service
+            .set_setting(DISABLED_SKILLS_SETTING_KEY, serialized)
+            .await
     }
 
     async fn get_enabled_skills(&self) -> ServiceResult<Vec<Skill>> {
