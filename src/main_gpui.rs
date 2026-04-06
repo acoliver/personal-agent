@@ -283,13 +283,25 @@ fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
         drain_selection_intents(&app_state);
 
         let commands = app_state.gpui_bridge.drain_commands();
-        let non_store_commands: Vec<ViewCommand> = commands
-            .iter()
-            .filter(|cmd| !personal_agent::ui_gpui::is_store_managed(cmd))
-            .cloned()
-            .collect();
+        let mut non_store_commands: Vec<ViewCommand> = Vec::new();
+        let mut toggle_window_mode_count = 0usize;
+        for cmd in commands.iter() {
+            if personal_agent::ui_gpui::is_store_managed(cmd) {
+                continue;
+            }
+            if matches!(cmd, ViewCommand::ToggleWindowMode) {
+                toggle_window_mode_count += 1;
+                continue;
+            }
+            non_store_commands.push(cmd.clone());
+        }
         let _changed = app_state.app_store.reduce_batch(commands);
         forward_runtime_commands_to_main_panel(non_store_commands, cx);
+        if toggle_window_mode_count % 2 == 1 {
+            let _ = cx.update_global::<SystemTray, _>(|tray, cx| {
+                tray.toggle_window_mode(cx);
+            });
+        }
     })
     .detach();
 }
@@ -383,11 +395,12 @@ fn run_gpui_app(cx: &mut App) {
         gpui_bridge,
         popup_window: None,
         app_store,
+        app_mode: personal_agent::presentation::view_command::AppMode::Popup,
     });
 
     use personal_agent::ui_gpui::views::main_panel::{
-        NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation, ZoomIn, ZoomOut,
-        ZoomReset,
+        NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation, ToggleSidebar,
+        ToggleWindowMode, ZoomIn, ZoomOut, ZoomReset,
     };
     cx.bind_keys([
         KeyBinding::new("ctrl-h", NavigateToHistory, None),
@@ -398,6 +411,8 @@ fn run_gpui_app(cx: &mut App) {
         KeyBinding::new("cmd-+", ZoomIn, None),
         KeyBinding::new("cmd--", ZoomOut, None),
         KeyBinding::new("cmd-0", ZoomReset, None),
+        KeyBinding::new("cmd-shift-p", ToggleWindowMode, None),
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
     ]);
 
     spawn_runtime_bridge_pump(app_state, cx);

@@ -9,8 +9,9 @@
 use super::state::StreamingState;
 use super::ChatView;
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::{ConversationSummary, ProfileSummary};
+use crate::presentation::view_command::{AppMode, ConversationSummary, ProfileSummary};
 use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
 
 macro_rules! icon_btn {
@@ -39,20 +40,27 @@ impl ChatView {
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub(super) fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let yolo_active = self.state.yolo_mode;
+        let is_popout = cx
+            .try_global::<MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == AppMode::Popout);
 
         div()
             .id("chat-top-bar")
+            .flex_shrink_0()
             .h(px(44.0))
             .w_full()
             .bg(Theme::bg_darker())
             .border_b_1()
             .border_color(Theme::border())
-            .px(px(12.0))
+            .overflow_hidden()
+            .pr(px(12.0))
+            .pl(px(if is_popout { 72.0 } else { 12.0 }))
             .flex()
             .items_center()
-            .justify_between()
             .child(
                 div()
+                    .flex_1()
+                    .min_w(px(0.0))
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -82,12 +90,19 @@ impl ChatView {
             .child("YOLO")
     }
 
-    /// Right-side toolbar: [T][R][H][MD/TXT/JSON][Save][Settings][Exit]
+    /// Right-side toolbar: [T][Y][R][H (popup only)][MD/TXT/JSON][Save][Popout/Popin][Settings][Exit]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
         let yolo_active = self.state.yolo_mode;
+        let app_mode = cx
+            .try_global::<MainPanelAppState>()
+            .map(|s| s.app_mode)
+            .unwrap_or_default();
+        let is_popout = app_mode == AppMode::Popout;
+        let show_history_btn = !is_popout || !self.state.sidebar_visible;
 
         div()
+            .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(8.0))
@@ -118,16 +133,18 @@ impl ChatView {
                     this.start_rename_conversation(cx);
                 })
             ))
-            .child(icon_btn!(
-                "btn-history",
-                "H",
-                false,
-                cx.listener(|_this, _, _window, _cx| {
-                    println!(">>> HISTORY BUTTON CLICKED - using navigation_channel <<<");
-                    crate::ui_gpui::navigation_channel()
-                        .request_navigate(crate::presentation::view_command::ViewId::History);
-                })
-            ))
+            .when(show_history_btn, |d| {
+                d.child(icon_btn!(
+                    "btn-history",
+                    "H",
+                    false,
+                    cx.listener(|_this, _, _window, _cx| {
+                        tracing::info!("History button clicked - using navigation_channel");
+                        crate::ui_gpui::navigation_channel()
+                            .request_navigate(crate::presentation::view_command::ViewId::History);
+                    })
+                ))
+            })
             .child(icon_btn!(
                 "btn-export-format",
                 self.state.conversation_export_format.display_label(),
@@ -145,37 +162,71 @@ impl ChatView {
                     this.emit(UserEvent::SaveConversation);
                 })
             ))
+            .child(Self::render_popout_toggle_button(is_popout, cx))
             .child(icon_btn!(
                 "btn-settings",
                 "\u{2699}",
                 false,
                 cx.listener(|_this, _, _window, _cx| {
-                    println!(">>> SETTINGS BUTTON CLICKED - using navigation_channel <<<");
+                    tracing::info!("Settings button clicked - using navigation_channel");
                     crate::ui_gpui::navigation_channel()
                         .request_navigate(crate::presentation::view_command::ViewId::Settings);
                 })
             ))
-            .child(
-                div()
-                    .id("btn-exit")
-                    .size(px(28.0))
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .bg(Theme::bg_darker())
-                    .hover(|s| s.bg(Theme::danger()))
-                    .active(|s| s.bg(Theme::danger()))
-                    .text_size(px(Theme::font_size_body()))
+            .child(Self::render_exit_button(cx))
+    }
+
+    fn render_popout_toggle_button(
+        is_popout: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("btn-popout")
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when(is_popout, |d| d.bg(Theme::bg_dark()))
+            .when(!is_popout, |d| {
+                d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+            })
+            .child(if is_popout {
+                crate::ui_gpui::components::window_icons::popin_icon(16.0)
                     .text_color(Theme::text_primary())
-                    .child("\u{23FB}")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
-                            std::process::exit(0);
-                        }),
-                    ),
+            } else {
+                crate::ui_gpui::components::window_icons::popout_icon(16.0)
+                    .text_color(Theme::text_primary())
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, _cx| {
+                    this.emit(UserEvent::ToggleWindowMode);
+                }),
+            )
+    }
+
+    fn render_exit_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("btn-exit")
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .bg(Theme::bg_darker())
+            .hover(|s| s.bg(Theme::danger()))
+            .active(|s| s.bg(Theme::danger()))
+            .text_size(px(Theme::font_size_body()))
+            .text_color(Theme::text_primary())
+            .child("\u{23FB}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _, _window, _cx| {
+                    std::process::exit(0);
+                }),
             )
     }
 
@@ -266,9 +317,16 @@ impl ChatView {
     /// @plan PLAN-20250130-GPUIREDUX.P03
     pub(super) fn render_title_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let unviewed = crate::ui_gpui::error_log::ErrorLogStore::global().unviewed_count();
+        let app_mode = cx
+            .try_global::<MainPanelAppState>()
+            .map(|s| s.app_mode)
+            .unwrap_or_default();
+        let is_popout = app_mode == AppMode::Popout;
+        let sidebar_visible = self.state.sidebar_visible;
 
         div()
             .id("chat-title-bar")
+            .flex_shrink_0()
             .h(px(32.0))
             .w_full()
             .bg(Theme::bg_darker())
@@ -276,6 +334,33 @@ impl ChatView {
             .flex()
             .items_center()
             .gap(px(8.0))
+            // Sidebar toggle (popout mode only)
+            .when(is_popout, |d| {
+                d.child(
+                    div()
+                        .id("btn-sidebar-toggle")
+                        .size(px(28.0))
+                        .rounded(px(4.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .when(sidebar_visible, |d| d.bg(Theme::bg_dark()))
+                        .when(!sidebar_visible, |d| {
+                            d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+                        })
+                        .child(
+                            crate::ui_gpui::components::window_icons::sidebar_icon(16.0)
+                                .text_color(Theme::text_primary()),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _window, cx| {
+                                this.toggle_sidebar(cx);
+                            }),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex_1()
@@ -283,8 +368,11 @@ impl ChatView {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .child(self.render_conversation_selector(cx))
-                    .child(self.render_new_conversation_btn(cx))
+                    // Conversation selector: always shown in popup; shown in popout when sidebar hidden
+                    .when(!is_popout || !sidebar_visible, |d| {
+                        d.child(self.render_conversation_selector(cx))
+                            .child(self.render_new_conversation_btn(cx))
+                    })
                     .child(self.render_profile_selector(cx)),
             )
             .child(self.render_bug_icon_btn(unviewed, cx))
@@ -526,6 +614,7 @@ impl ChatView {
     ) -> impl IntoElement {
         let active_id = self.state.active_conversation_id;
         let highlighted = self.state.conversation_dropdown_index;
+        let sidebar_toggle_offset = Self::sidebar_toggle_offset(cx);
 
         div()
             .id("chat-conversation-dropdown-overlay")
@@ -548,7 +637,7 @@ impl ChatView {
                     .id("chat-conversation-dropdown-menu")
                     .absolute()
                     .top(px(74.0))
-                    .left(px(12.0))
+                    .left(px(12.0 + sidebar_toggle_offset))
                     .min_w(px(320.0))
                     .max_w(px(520.0))
                     .max_h(px(220.0))
@@ -669,6 +758,7 @@ impl ChatView {
                     .top(px(74.0))
                     .left(Self::compute_profile_dropdown_left(
                         window.bounds().size.width,
+                        Self::sidebar_toggle_offset(cx),
                     ))
                     .w(px(260.0))
                     .max_w(px(300.0))
@@ -755,6 +845,19 @@ impl ChatView {
                 }),
             )
     }
+
+    /// Extra left offset when the sidebar toggle button is present in the
+    /// title bar (popout mode with sidebar hidden): 28px button + 8px gap.
+    fn sidebar_toggle_offset(cx: &gpui::Context<Self>) -> f32 {
+        let is_popout = cx
+            .try_global::<MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == AppMode::Popout);
+        if is_popout {
+            36.0
+        } else {
+            0.0
+        }
+    }
 }
 
 #[cfg(test)]
@@ -763,20 +866,26 @@ mod tests {
     use gpui::px;
 
     #[test]
-    fn profile_dropdown_left_aligns_under_trigger_left_edge() {
-        let left = ChatView::compute_profile_dropdown_left(px(760.0));
+    fn profile_dropdown_left_aligns_under_trigger_in_popup() {
+        let left = ChatView::compute_profile_dropdown_left(px(760.0), 0.0);
         assert_eq!(left, px(276.0));
     }
 
     #[test]
+    fn profile_dropdown_left_shifts_for_sidebar_toggle_in_popout() {
+        let left = ChatView::compute_profile_dropdown_left(px(760.0), 36.0);
+        assert_eq!(left, px(312.0));
+    }
+
+    #[test]
     fn profile_dropdown_left_clamps_to_right_bound_on_narrow_windows() {
-        let clamped_right = ChatView::compute_profile_dropdown_left(px(520.0));
+        let clamped_right = ChatView::compute_profile_dropdown_left(px(520.0), 0.0);
         assert_eq!(clamped_right, px(248.0));
     }
 
     #[test]
     fn profile_dropdown_left_uses_minimum_margin_for_narrow_windows() {
-        let left = ChatView::compute_profile_dropdown_left(px(200.0));
+        let left = ChatView::compute_profile_dropdown_left(px(200.0), 0.0);
         assert_eq!(left, px(12.0));
     }
 }

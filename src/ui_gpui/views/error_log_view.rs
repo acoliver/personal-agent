@@ -198,7 +198,8 @@ impl ErrorLogView {
     fn render_back_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("btn-back")
-            .size(px(28.0))
+            .h(px(28.0))
+            .px(px(8.0))
             .rounded(px(Theme::RADIUS_SM))
             .flex()
             .items_center()
@@ -207,7 +208,7 @@ impl ErrorLogView {
             .hover(|s| s.bg(Theme::bg_dark()))
             .text_size(px(Theme::font_size_body()))
             .text_color(Theme::text_secondary())
-            .child("<")
+            .child("\u{2039} Back")
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _, _window, _cx| {
@@ -281,6 +282,10 @@ impl ErrorLogView {
     }
 
     fn render_top_bar(entries_len: usize, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let is_popout = cx
+            .try_global::<crate::ui_gpui::views::main_panel::MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == crate::presentation::view_command::AppMode::Popout);
+
         div()
             .id("error-log-top-bar")
             .h(px(44.0))
@@ -288,15 +293,30 @@ impl ErrorLogView {
             .bg(Theme::bg_darker())
             .border_b_1()
             .border_color(Theme::border())
-            .px(px(Theme::SPACING_MD))
+            .pr(px(Theme::SPACING_MD))
+            .pl(px(if is_popout { 72.0 } else { Theme::SPACING_MD }))
             .flex()
             .items_center()
             .gap(px(Theme::SPACING_SM))
-            .child(Self::render_back_button(cx))
             .child(Self::render_title())
             .child(Self::render_error_count(entries_len))
             .child(Self::render_save_error_log_button(cx))
             .child(Self::render_clear_all_button(cx))
+    }
+
+    fn render_bottom_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("error-log-bottom-bar")
+            .h(px(36.0))
+            .w_full()
+            .flex_shrink_0()
+            .bg(Theme::bg_darker())
+            .border_t_1()
+            .border_color(Theme::border())
+            .px(px(Theme::SPACING_MD))
+            .flex()
+            .items_center()
+            .child(Self::render_back_button(cx))
     }
 
     #[cfg(test)]
@@ -468,6 +488,7 @@ impl gpui::Render for ErrorLogView {
                         .into_any_element()
                 }),
         )
+        .child(Self::render_bottom_bar(cx))
     }
 }
 

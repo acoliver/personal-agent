@@ -299,6 +299,7 @@ fn coverage_ignore_regex() -> String {
         // GPUI declarative render + IME impls (require live GPUI window context)
         r"/render\.rs$",
         r"/render_bars\.rs$",
+        r"/render_sidebar\.rs$",
         r"/render_tool_approval\.rs$",
         r"/render_appearance\.rs$",
         r"/ime\.rs$",

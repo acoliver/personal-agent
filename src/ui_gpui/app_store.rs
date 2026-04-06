@@ -713,6 +713,7 @@ fn reduce_conversation_created(inner: &mut AppStoreInner, id: Uuid) -> bool {
             title: "New Conversation".to_string(),
             updated_at: chrono::Utc::now(),
             message_count: 0,
+            preview: None,
         };
         inner
             .snapshot

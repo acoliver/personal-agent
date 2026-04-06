@@ -203,6 +203,10 @@ impl HistoryView {
     /// Render the top bar with back button and title
     /// @plan PLAN-20250130-GPUIREDUX.P05
     fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let is_popout = cx
+            .try_global::<crate::ui_gpui::views::main_panel::MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == crate::presentation::view_command::AppMode::Popout);
+
         div()
             .id("history-top-bar")
             .h(px(44.0))
@@ -210,14 +214,36 @@ impl HistoryView {
             .bg(Theme::bg_darker())
             .border_b_1()
             .border_color(Theme::border())
+            .pr(px(12.0))
+            .pl(px(if is_popout { 72.0 } else { 12.0 }))
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_body()))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(Theme::text_primary())
+                    .child("History"),
+            )
+    }
+
+    fn render_bottom_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("history-bottom-bar")
+            .h(px(36.0))
+            .w_full()
+            .flex_shrink_0()
+            .bg(Theme::bg_darker())
+            .border_t_1()
+            .border_color(Theme::border())
             .px(px(12.0))
             .flex()
             .items_center()
-            .gap(px(8.0))
             .child(
                 div()
                     .id("btn-back")
-                    .size(px(28.0))
+                    .h(px(28.0))
+                    .px(px(8.0))
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
@@ -226,7 +252,7 @@ impl HistoryView {
                     .hover(|s| s.bg(Theme::bg_dark()))
                     .text_size(px(Theme::font_size_body()))
                     .text_color(Theme::text_secondary())
-                    .child("<")
+                    .child("\u{2039} Back")
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|_this, _, _window, _cx| {
@@ -235,13 +261,6 @@ impl HistoryView {
                                 .request_navigate(crate::presentation::view_command::ViewId::Chat);
                         }),
                     ),
-            )
-            .child(
-                div()
-                    .text_size(px(Theme::font_size_body()))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(Theme::text_primary())
-                    .child("History"),
             )
     }
 
@@ -400,6 +419,7 @@ impl gpui::Render for HistoryView {
                         ),
                     ),
             )
+            .child(Self::render_bottom_bar(cx))
     }
 }
 
@@ -433,6 +453,7 @@ mod tests {
             title: title.to_string(),
             updated_at,
             message_count,
+            preview: None,
         }
     }
 

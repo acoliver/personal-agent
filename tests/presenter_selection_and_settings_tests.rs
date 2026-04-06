@@ -484,6 +484,7 @@ async fn startup_and_manual_selection_converge_on_one_authoritative_delivery_pat
             title: "Test Conversation".to_string(),
             updated_at: Utc::now(),
             message_count: 2,
+            preview: None,
         }],
         selected_conversation: Some(StartupSelectedConversation {
             conversation_id: conv_id,

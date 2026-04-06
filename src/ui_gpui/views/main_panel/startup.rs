@@ -11,6 +11,7 @@
 //! @requirement REQ-ARCH-004.1
 
 use crate::events::types::UserEvent;
+use crate::presentation::view_command::AppMode;
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::GpuiAppStore;
 use gpui::Global;
@@ -32,6 +33,7 @@ pub struct MainPanelAppState {
     pub gpui_bridge: Arc<GpuiBridge>,
     pub popup_window: Option<gpui::WindowHandle<MainPanel>>,
     pub app_store: Arc<GpuiAppStore>,
+    pub app_mode: AppMode,
 }
 
 impl Global for MainPanelAppState {}

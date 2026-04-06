@@ -12,8 +12,8 @@ use crate::ui_gpui::theme::{active_font_size, set_active_font_size, Theme, DEFAU
 use gpui::{div, prelude::*, Focusable, MouseButton};
 
 use super::routing::{
-    NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation, ZoomIn, ZoomOut,
-    ZoomReset,
+    NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation, ToggleSidebar,
+    ToggleWindowMode, ZoomIn, ZoomOut, ZoomReset,
 };
 use super::startup::MainPanelAppState;
 use super::MainPanel;
@@ -271,6 +271,18 @@ impl gpui::Render for MainPanel {
             }))
             .on_action(cx.listener(|_this, _: &ZoomReset, _window, cx| {
                 Self::handle_zoom(0.0, true, cx);
+            }))
+            .on_action(cx.listener(|_this, _: &ToggleWindowMode, _window, cx| {
+                if let Some(app_state) = cx.try_global::<MainPanelAppState>() {
+                    let _ = app_state.gpui_bridge.emit(UserEvent::ToggleWindowMode);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSidebar, _window, cx| {
+                if let Some(ref chat_view) = this.chat_view {
+                    chat_view.update(cx, |view, cx| {
+                        view.toggle_sidebar(cx);
+                    });
+                }
             }))
             .on_key_down(
                 cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {

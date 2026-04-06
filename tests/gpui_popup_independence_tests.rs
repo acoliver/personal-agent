@@ -17,6 +17,7 @@ fn conversation_summary(id: Uuid, title: &str, message_count: usize) -> Conversa
         title: title.to_string(),
         updated_at: Utc::now(),
         message_count,
+        preview: None,
     }
 }
 

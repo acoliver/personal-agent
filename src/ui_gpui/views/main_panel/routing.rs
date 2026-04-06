@@ -25,11 +25,16 @@ mod _actions {
             NavigateBack,
             ZoomIn,
             ZoomOut,
-            ZoomReset
+            ZoomReset,
+            ToggleWindowMode,
+            ToggleSidebar
         ]
     );
 }
-pub use _actions::*;
+pub use _actions::{
+    NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation, ToggleSidebar,
+    ToggleWindowMode, ZoomIn, ZoomOut, ZoomReset,
+};
 
 // ============================================================
 // REQ-WIRE-002: ViewCommand routing infrastructure

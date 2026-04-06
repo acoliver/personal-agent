@@ -202,6 +202,7 @@ fn bug1_rename_enters_edit_mode_on_active_conversation() {
         title: "My Chat".to_string(),
         updated_at: chrono::Utc::now(),
         message_count: 3,
+        preview: None,
     }];
 
     // Simulate start_rename_conversation logic
@@ -233,6 +234,7 @@ fn bug1_rename_submit_updates_title_everywhere() {
         title: "Old Title".to_string(),
         updated_at: chrono::Utc::now(),
         message_count: 2,
+        preview: None,
     }];
 
     let new_title = state.conversation_title_input.trim().to_string();

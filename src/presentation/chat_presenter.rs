@@ -12,7 +12,8 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
 use super::view_command::{
-    ConversationMessagePayload, ConversationSummary, ErrorSeverity, MessageRole,
+    ConversationMessagePayload, ConversationSearchResult, ConversationSummary, ErrorSeverity,
+    MessageRole,
 };
 use super::{Presenter, PresenterError, ViewCommand};
 use crate::events::bus::EventBus;
@@ -272,7 +273,55 @@ impl ChatPresenter {
                         .await;
                 }
             }
+            UserEvent::ToggleWindowMode => {
+                let _ = view_tx.send(ViewCommand::ToggleWindowMode).await;
+            }
+            UserEvent::SearchConversations { query } => {
+                Self::handle_search_conversations(conversation_service, view_tx, query).await;
+            }
             _ => {} // Ignore other user events
+        }
+    }
+
+    async fn handle_search_conversations(
+        conversation_service: &Arc<dyn ConversationService>,
+        view_tx: &mpsc::Sender<ViewCommand>,
+        query: String,
+    ) {
+        if query.trim().is_empty() {
+            let _ = view_tx
+                .send(ViewCommand::ConversationSearchResults { results: vec![] })
+                .await;
+            return;
+        }
+        match conversation_service.search(&query, Some(50), None).await {
+            Ok(results) => {
+                let view_results: Vec<ConversationSearchResult> = results
+                    .into_iter()
+                    .map(|r| ConversationSearchResult {
+                        id: r.conversation_id,
+                        title: r.title,
+                        is_title_match: matches!(
+                            r.match_type,
+                            crate::models::SearchMatchType::Title
+                        ),
+                        match_context: r.match_context,
+                        message_count: r.message_count,
+                        updated_at: r.updated_at,
+                    })
+                    .collect();
+                let _ = view_tx
+                    .send(ViewCommand::ConversationSearchResults {
+                        results: view_results,
+                    })
+                    .await;
+            }
+            Err(e) => {
+                tracing::warn!("Conversation search failed: {e}");
+                let _ = view_tx
+                    .send(ViewCommand::ConversationSearchResults { results: vec![] })
+                    .await;
+            }
         }
     }
 
@@ -409,6 +458,7 @@ impl ChatPresenter {
                     .unwrap_or_else(|| "Untitled Conversation".to_string()),
                 updated_at: metadata.updated_at,
                 message_count: metadata.message_count,
+                preview: metadata.last_message_preview,
             })
             .collect();
 

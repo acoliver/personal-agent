@@ -83,13 +83,37 @@ impl gpui::EntityInputHandler for ChatView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.state.conversation_title_editing {
+        if self.state.sidebar_search_focused {
+            let query = &mut self.state.sidebar_search_query;
+            let effective_range = range.or_else(|| self.state.marked_range.take());
+            if let Some(r) = effective_range {
+                let start = utf16_offset_to_utf8(query, r.start);
+                let end = utf16_offset_to_utf8(query, r.end);
+                query.replace_range(start..end, text);
+            } else {
+                query.push_str(text);
+            }
             self.state.marked_range = None;
+            self.trigger_sidebar_search(cx);
+            cx.notify();
+            return;
+        }
+
+        if self.state.conversation_title_editing {
             if self.state.rename_replace_on_next_char {
                 self.state.conversation_title_input.clear();
                 self.state.rename_replace_on_next_char = false;
             }
-            self.state.conversation_title_input.push_str(text);
+            let title = &mut self.state.conversation_title_input;
+            let effective_range = range.or_else(|| self.state.marked_range.take());
+            if let Some(r) = effective_range {
+                let start = utf16_offset_to_utf8(title, r.start);
+                let end = utf16_offset_to_utf8(title, r.end);
+                title.replace_range(start..end, text);
+            } else {
+                title.push_str(text);
+            }
+            self.state.marked_range = None;
             cx.notify();
             return;
         }
@@ -125,11 +149,53 @@ impl gpui::EntityInputHandler for ChatView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.state.sidebar_search_focused {
+            let query = &mut self.state.sidebar_search_query;
+            let (start_utf8, end_utf8) = if let Some(r) = range {
+                (
+                    utf16_offset_to_utf8(query, r.start),
+                    utf16_offset_to_utf8(query, r.end),
+                )
+            } else if let Some(ref mr) = self.state.marked_range {
+                (
+                    utf16_offset_to_utf8(query, mr.start),
+                    utf16_offset_to_utf8(query, mr.end),
+                )
+            } else {
+                let pos = query.len();
+                (pos, pos)
+            };
+            query.replace_range(start_utf8..end_utf8, new_text);
+            let mark_start = utf8_offset_to_utf16(query, start_utf8);
+            let mark_end = mark_start + new_text.encode_utf16().count();
+            self.state.marked_range = Some(mark_start..mark_end);
+            self.trigger_sidebar_search(cx);
+            cx.notify();
+            return;
+        }
         if self.state.conversation_dropdown_open || self.state.profile_dropdown_open {
             return;
         }
         if self.state.conversation_title_editing {
-            self.state.conversation_title_input.push_str(new_text);
+            let title = &mut self.state.conversation_title_input;
+            let (start_utf8, end_utf8) = if let Some(r) = range {
+                (
+                    utf16_offset_to_utf8(title, r.start),
+                    utf16_offset_to_utf8(title, r.end),
+                )
+            } else if let Some(ref mr) = self.state.marked_range {
+                (
+                    utf16_offset_to_utf8(title, mr.start),
+                    utf16_offset_to_utf8(title, mr.end),
+                )
+            } else {
+                let pos = title.len();
+                (pos, pos)
+            };
+            title.replace_range(start_utf8..end_utf8, new_text);
+            let mark_start = utf8_offset_to_utf16(title, start_utf8);
+            let mark_end = mark_start + new_text.encode_utf16().count();
+            self.state.marked_range = Some(mark_start..mark_end);
             cx.notify();
             return;
         }

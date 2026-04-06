@@ -9,8 +9,10 @@
 use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
+use crate::presentation::view_command::AppMode;
 use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels,
     ScrollWheelEvent, SharedString,
@@ -31,6 +33,25 @@ impl ChatView {
 
         if modifiers.platform {
             self.handle_platform_key(key, cx);
+            return;
+        }
+
+        if self.state.sidebar_search_focused {
+            match key.as_str() {
+                "escape" => {
+                    self.state.sidebar_search_focused = false;
+                    if self.state.sidebar_search_query.is_empty() {
+                        self.state.sidebar_search_results = None;
+                    }
+                    cx.notify();
+                }
+                "backspace" => {
+                    self.state.sidebar_search_query.pop();
+                    self.trigger_sidebar_search(cx);
+                    cx.notify();
+                }
+                _ => {}
+            }
             return;
         }
 
@@ -139,9 +160,17 @@ impl ChatView {
                     }
                 }
             }
-            "a" => self.handle_select_all(cx),
+            "a" => {
+                if self.state.sidebar_search_focused {
+                    // select-all is a no-op for sidebar search (single-line)
+                } else {
+                    self.handle_select_all(cx);
+                }
+            }
             "c" => {
-                let text = if self.state.conversation_title_editing {
+                let text = if self.state.sidebar_search_focused {
+                    self.state.sidebar_search_query.clone()
+                } else if self.state.conversation_title_editing {
                     self.state.conversation_title_input.clone()
                 } else {
                     self.state.input_text.clone()
@@ -151,22 +180,29 @@ impl ChatView {
                 }
             }
             "x" => {
-                self.handle_select_all(cx);
-                let text = if self.state.conversation_title_editing {
-                    self.state.conversation_title_input.clone()
+                if self.state.sidebar_search_focused {
+                    let text = self.state.sidebar_search_query.clone();
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    self.state.sidebar_search_query.clear();
+                    self.state.sidebar_search_results = None;
                 } else {
-                    self.state.input_text.clone()
-                };
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                if self.state.conversation_title_editing {
-                    self.state.conversation_title_input.clear();
-                    self.state.rename_replace_on_next_char = false;
-                } else if !self.state.conversation_dropdown_open
-                    && !self.state.profile_dropdown_open
-                {
-                    self.state.input_text.clear();
-                    self.state.cursor_position = 0;
-                    self.state.marked_range = None;
+                    self.handle_select_all(cx);
+                    let text = if self.state.conversation_title_editing {
+                        self.state.conversation_title_input.clone()
+                    } else {
+                        self.state.input_text.clone()
+                    };
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    if self.state.conversation_title_editing {
+                        self.state.conversation_title_input.clear();
+                        self.state.rename_replace_on_next_char = false;
+                    } else if !self.state.conversation_dropdown_open
+                        && !self.state.profile_dropdown_open
+                    {
+                        self.state.input_text.clear();
+                        self.state.cursor_position = 0;
+                        self.state.marked_range = None;
+                    }
                 }
                 cx.notify();
             }
@@ -493,6 +529,7 @@ impl ChatView {
         };
 
         div()
+            .id("input-bar-container")
             .w_full()
             .flex()
             .debug_selector(|| "chat-input-bar".to_string())
@@ -505,6 +542,15 @@ impl ChatView {
             .border_t_1()
             .border_color(Theme::bg_dark())
             .overflow_hidden()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    if this.state.sidebar_search_focused {
+                        this.state.sidebar_search_focused = false;
+                        cx.notify();
+                    }
+                }),
+            )
             .child(Self::render_composer_field(
                 focus_handle,
                 input_box_height,
@@ -628,10 +674,54 @@ impl ChatView {
     }
 }
 
+impl ChatView {
+    /// Read the current window mode from the global state.
+    fn current_app_mode(cx: &gpui::Context<Self>) -> AppMode {
+        cx.try_global::<MainPanelAppState>()
+            .map(|s| s.app_mode)
+            .unwrap_or_default()
+    }
+
+    /// Render the main chat content column (title bar + chat area + input bar).
+    fn render_main_content(
+        &self,
+        app_mode: AppMode,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            // Title bar (32px)
+            .child(self.render_title_bar(cx))
+            // Export feedback row
+            .when(self.state.export_feedback_message.is_some(), |d| {
+                d.child(self.render_export_feedback_bar())
+            })
+            // Chat area (flex)
+            .child(self.render_chat_area(cx))
+            // Input bar (50px)
+            .child(self.render_input_bar(cx))
+            // Overlay dropdowns (popup mode, or popout when sidebar hidden)
+            .when(
+                self.state.conversation_dropdown_open
+                    && (app_mode == AppMode::Popup || !self.state.sidebar_visible),
+                |d| d.child(self.render_conversation_dropdown(cx)),
+            )
+            .when(self.state.profile_dropdown_open, |d| {
+                d.child(self.render_profile_dropdown(window, cx))
+            })
+    }
+}
+
 impl gpui::Render for ChatView {
     #[allow(clippy::too_many_lines)]
     #[rustfmt::skip]
     fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let app_mode = Self::current_app_mode(cx);
+        let show_sidebar = app_mode == AppMode::Popout && self.state.sidebar_visible;
 
         div()
             .id("chat-view")
@@ -639,6 +729,7 @@ impl gpui::Render for ChatView {
             .flex()
             .flex_col()
             .size_full()
+            .overflow_hidden()
             .track_focus(&self.focus_handle)
             .child(
                 canvas(
@@ -662,22 +753,20 @@ impl gpui::Render for ChatView {
             .relative()
             // Top bar (44px)
             .child(self.render_top_bar(cx))
-            // Title bar (32px)
-            .child(self.render_title_bar(cx))
-            // Export feedback row
-            .when(self.state.export_feedback_message.is_some(), |d| {
-                d.child(self.render_export_feedback_bar())
-            })
-            // Chat area (flex)
-            .child(self.render_chat_area(cx))
-            // Input bar (50px)
-            .child(self.render_input_bar(cx))
-            // Overlay dropdowns (rendered at root level to avoid clipping)
-            .when(self.state.conversation_dropdown_open, |d| {
-                d.child(self.render_conversation_dropdown(cx))
-            })
-            .when(self.state.profile_dropdown_open, |d| {
-                d.child(self.render_profile_dropdown(window, cx))
-            })
+            // Body: sidebar (optional) + main content
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .flex()
+                    .flex_row()
+                    .overflow_hidden()
+                    // Sidebar in popout mode
+                    .when(show_sidebar, |d| {
+                        d.child(self.render_sidebar(cx))
+                    })
+                    // Main content column
+                    .child(self.render_main_content(app_mode, window, cx))
+            )
     }
 }
