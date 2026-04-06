@@ -145,11 +145,17 @@ impl SkillsServiceImpl {
                     base_dir.display()
                 ))
             })?;
-            let path = entry.path();
-            if !path.is_dir() {
+            let file_type = entry.file_type().map_err(|error| {
+                ServiceError::Io(format!(
+                    "Failed to read skill entry type in {}: {error}",
+                    base_dir.display()
+                ))
+            })?;
+            if file_type.is_symlink() || !file_type.is_dir() {
                 continue;
             }
 
+            let path = entry.path();
             let skill_file = path.join("SKILL.md");
             if skill_file.is_file() {
                 let (metadata, _body) = parse_skill_file(&skill_file)?;
@@ -223,13 +229,14 @@ impl SkillsService for SkillsServiceImpl {
     }
 
     async fn set_skill_enabled(&self, name: &str, enabled: bool) -> ServiceResult<()> {
-        let serialized = {
+        let previous_enabled = {
             let mut skills = self.skills.write().await;
 
             let Some(skill) = skills.iter_mut().find(|skill| skill.name == name) else {
                 return Err(ServiceError::NotFound(format!("Skill not found: {name}")));
             };
 
+            let previous_enabled = skill.enabled;
             skill.enabled = enabled;
 
             let mut disabled_names = skills
@@ -242,12 +249,29 @@ impl SkillsService for SkillsServiceImpl {
 
             let serialized = Self::serialize_disabled_skill_names(&disabled_names)?;
             drop(skills);
-            serialized
+
+            (previous_enabled, serialized)
         };
 
-        self.app_settings_service
+        let (previous_enabled, serialized) = previous_enabled;
+        if let Err(error) = self
+            .app_settings_service
             .set_setting(DISABLED_SKILLS_SETTING_KEY, serialized)
             .await
+        {
+            if let Some(skill) = self
+                .skills
+                .write()
+                .await
+                .iter_mut()
+                .find(|skill| skill.name == name)
+            {
+                skill.enabled = previous_enabled;
+            }
+            return Err(error);
+        }
+
+        Ok(())
     }
 
     async fn get_enabled_skills(&self) -> ServiceResult<Vec<Skill>> {
@@ -265,8 +289,76 @@ impl SkillsService for SkillsServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::{SkillsServiceImpl, DISABLED_SKILLS_SETTING_KEY};
-    use crate::services::{app_settings_impl::AppSettingsServiceImpl, SkillsService};
+    use crate::services::{
+        app_settings_impl::AppSettingsServiceImpl, AppSettingsService, ServiceError, SkillsService,
+    };
+    use async_trait::async_trait;
     use tempfile::TempDir;
+    use uuid::Uuid;
+
+    struct FailingSetSettingAppSettingsService;
+
+    #[async_trait]
+    impl AppSettingsService for FailingSetSettingAppSettingsService {
+        async fn get_default_profile_id(&self) -> crate::services::ServiceResult<Option<Uuid>> {
+            Ok(None)
+        }
+
+        async fn set_default_profile_id(&self, _id: Uuid) -> crate::services::ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn clear_default_profile_id(&self) -> crate::services::ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_current_conversation_id(
+            &self,
+        ) -> crate::services::ServiceResult<Option<Uuid>> {
+            Ok(None)
+        }
+
+        async fn set_current_conversation_id(
+            &self,
+            _id: Uuid,
+        ) -> crate::services::ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_hotkey(&self) -> crate::services::ServiceResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set_hotkey(&self, _hotkey: String) -> crate::services::ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_theme(&self) -> crate::services::ServiceResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set_theme(&self, _theme: String) -> crate::services::ServiceResult<()> {
+            Ok(())
+        }
+
+        async fn get_setting(&self, _key: &str) -> crate::services::ServiceResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set_setting(
+            &self,
+            _key: &str,
+            _value: String,
+        ) -> crate::services::ServiceResult<()> {
+            Err(ServiceError::Io(
+                "simulated persistence failure".to_string(),
+            ))
+        }
+
+        async fn reset_to_defaults(&self) -> crate::services::ServiceResult<()> {
+            Ok(())
+        }
+    }
 
     fn write_skill(
         root: &std::path::Path,
@@ -358,5 +450,117 @@ mod tests {
             .expect("settings read should succeed")
             .expect("disabled list should exist");
         assert!(disabled.contains("docs-writer"));
+    }
+
+    #[tokio::test]
+    async fn set_skill_enabled_rolls_back_in_memory_state_on_persistence_error() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        write_skill(
+            &temp_dir.path().join("bundled"),
+            "writer",
+            "docs-writer",
+            "Write docs",
+            "Body\n",
+        );
+        let service = SkillsServiceImpl::new_for_tests(
+            std::sync::Arc::new(FailingSetSettingAppSettingsService),
+            temp_dir.path().join("bundled"),
+            temp_dir.path().join("user"),
+        )
+        .expect("skills service should initialize");
+        service
+            .discover_skills()
+            .await
+            .expect("discovery should succeed");
+
+        let error = service
+            .set_skill_enabled("docs-writer", false)
+            .await
+            .expect_err("disable should surface persistence failure");
+        assert!(error.to_string().contains("simulated persistence failure"));
+
+        let skill = service
+            .get_skill("docs-writer")
+            .await
+            .expect("lookup should succeed")
+            .expect("skill should exist");
+        assert!(
+            skill.enabled,
+            "failed persistence should restore in-memory state"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn discover_skills_skips_symlinked_directories() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let bundled_dir = temp_dir.path().join("bundled");
+        write_skill(
+            &bundled_dir,
+            "writer",
+            "docs-writer",
+            "Write docs",
+            "Body\n",
+        );
+        symlink(&bundled_dir, bundled_dir.join("loop"))
+            .expect("symlinked directory should be created");
+
+        let service = create_service(&temp_dir);
+        service
+            .discover_skills()
+            .await
+            .expect("discovery should skip symlink loops");
+
+        let skills = service
+            .list_skills()
+            .await
+            .expect("listing skills should succeed");
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "docs-writer");
+    }
+
+    #[tokio::test]
+    async fn get_skill_body_returns_markdown_body_for_discovered_skill() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        write_skill(
+            &temp_dir.path().join("bundled"),
+            "writer",
+            "docs-writer",
+            "Write docs",
+            "Body line one\nBody line two\n",
+        );
+        let service = create_service(&temp_dir);
+        service
+            .discover_skills()
+            .await
+            .expect("discovery should succeed");
+
+        let body = service
+            .get_skill_body("docs-writer")
+            .await
+            .expect("body lookup should succeed")
+            .expect("skill body should exist");
+        assert_eq!(body, "Body line one\nBody line two\n");
+    }
+
+    #[tokio::test]
+    async fn discover_skills_rejects_invalid_disabled_skills_setting() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let service = create_service(&temp_dir);
+        service
+            .app_settings_service
+            .set_setting(DISABLED_SKILLS_SETTING_KEY, "not-json".to_string())
+            .await
+            .expect("settings write should succeed");
+
+        let error = service
+            .discover_skills()
+            .await
+            .expect_err("invalid disabled skills setting should fail discovery");
+        assert!(error
+            .to_string()
+            .contains("Failed to parse disabled skills setting"));
     }
 }
