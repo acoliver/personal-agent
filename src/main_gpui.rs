@@ -323,9 +323,37 @@ fn main() {
         .run(|cx: &mut App| run_gpui_app(cx));
 }
 
+#[cfg(target_os = "linux")]
+fn create_linux_system_tray() -> Option<SystemTray> {
+    match SystemTray::new() {
+        Ok(tray) => Some(tray),
+        Err(error) => {
+            tracing::error!(?error, "Failed to initialize Linux system tray");
+            None
+        }
+    }
+}
+
+fn start_tray_and_apply_popup_flags(tray: &mut SystemTray, cx: &mut App) {
+    tray.start_click_listener(cx);
+
+    if std::env::var("PA_AUTO_OPEN_POPUP").ok().as_deref() == Some("1") {
+        tray.toggle_popup(cx);
+        info!("GPUI initialized in tray mode; popup auto-opened for automation");
+    } else {
+        info!("GPUI initialized in tray mode; click the status icon to open popup");
+    }
+
+    if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
+        info!("PA_TEST_POPUP_ONSCREEN=1 active (automation popup positioning override)");
+    }
+}
+
+#[allow(clippy::cognitive_complexity)]
 fn run_gpui_app(cx: &mut App) {
     cx.set_quit_mode(QuitMode::Explicit);
 
+    #[cfg(target_os = "macos")]
     let Some(mtm) = MainThreadMarker::new() else {
         tracing::error!("Not on main thread!");
         return;
@@ -389,19 +417,16 @@ fn run_gpui_app(cx: &mut App) {
 
     spawn_runtime_bridge_pump(app_state, cx);
 
+    #[cfg(target_os = "macos")]
     let mut tray = SystemTray::new(mtm);
-    tray.start_click_listener(cx);
-
-    if std::env::var("PA_AUTO_OPEN_POPUP").ok().as_deref() == Some("1") {
-        tray.toggle_popup(cx);
-        info!("GPUI initialized in tray mode; popup auto-opened for automation");
-    } else {
-        info!("GPUI initialized in tray mode; click the status icon to open popup");
-    }
-
-    if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
-        info!("PA_TEST_POPUP_ONSCREEN=1 active (automation popup positioning override)");
-    }
+    #[cfg(target_os = "linux")]
+    let mut tray = match create_linux_system_tray() {
+        Some(tray) => tray,
+        None => return,
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let mut tray = SystemTray::new();
+    start_tray_and_apply_popup_flags(&mut tray, cx);
 
     cx.set_global(tray);
 

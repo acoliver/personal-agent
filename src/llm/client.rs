@@ -3,7 +3,7 @@
 //! This module bridges `PersonalAgent`'s profile system with `SerdesAI`,
 //! using models.dev registry data for provider configuration.
 
-use super::error::LlmError;
+use super::error::{debug_error_message, LlmError};
 use super::provider_quirks::{effective_serdes_provider, resolve_provider_quirks, ProviderQuirks};
 use crate::models::{AuthConfig, ModelProfile};
 use crate::registry::RegistryCache;
@@ -455,10 +455,17 @@ impl LlmClient {
         let (model, params) = self.build_model_and_params(tools)?;
 
         // Use the model directly for streaming
-        let mut stream = model
+        let mut stream = match model
             .request_stream(&model_requests, &self.model_settings(), &params)
             .await
-            .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+        {
+            Ok(stream) => stream,
+            Err(e) => {
+                let err_msg = debug_error_message(&e);
+                on_event(StreamEvent::Error(err_msg.clone()));
+                return Err(LlmError::Stream(err_msg));
+            }
+        };
 
         let mut pending_tool_calls: HashMap<usize, (String, String, String)> = HashMap::new();
 
@@ -468,8 +475,9 @@ impl LlmClient {
                     Self::handle_stream_event(event, &mut pending_tool_calls, &mut on_event);
                 }
                 Err(e) => {
-                    on_event(StreamEvent::Error(e.to_string()));
-                    return Err(LlmError::SerdesAi(e.to_string()));
+                    let err_msg = debug_error_message(&e);
+                    on_event(StreamEvent::Error(err_msg.clone()));
+                    return Err(LlmError::Stream(err_msg));
                 }
             }
         }

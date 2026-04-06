@@ -775,6 +775,9 @@ impl ChatView {
         self.state.input_text.clear();
         self.state.cursor_position = 0;
         self.state.chat_autoscroll_enabled = true;
+        self.state.conversation_dropdown_open = false;
+        self.state.profile_dropdown_open = false;
+        self.state.conversation_title_editing = false;
         self.state.streaming = StreamingState::Streaming {
             content: String::new(),
             done: false,

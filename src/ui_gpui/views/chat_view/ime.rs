@@ -99,7 +99,6 @@ impl gpui::EntityInputHandler for ChatView {
             return;
         }
 
-
         if self.state.conversation_title_editing {
             self.state.marked_range = None;
             if self.state.rename_replace_on_next_char {
@@ -145,9 +144,15 @@ impl gpui::EntityInputHandler for ChatView {
         if self.state.sidebar_search_focused {
             let query = &mut self.state.sidebar_search_query;
             let (start_utf8, end_utf8) = if let Some(r) = range {
-                (utf16_offset_to_utf8(query, r.start), utf16_offset_to_utf8(query, r.end))
+                (
+                    utf16_offset_to_utf8(query, r.start),
+                    utf16_offset_to_utf8(query, r.end),
+                )
             } else if let Some(ref mr) = self.state.marked_range {
-                (utf16_offset_to_utf8(query, mr.start), utf16_offset_to_utf8(query, mr.end))
+                (
+                    utf16_offset_to_utf8(query, mr.start),
+                    utf16_offset_to_utf8(query, mr.end),
+                )
             } else {
                 let pos = query.len();
                 (pos, pos)
@@ -166,9 +171,15 @@ impl gpui::EntityInputHandler for ChatView {
         if self.state.conversation_title_editing {
             let title = &mut self.state.conversation_title_input;
             let (start_utf8, end_utf8) = if let Some(r) = range {
-                (utf16_offset_to_utf8(title, r.start), utf16_offset_to_utf8(title, r.end))
+                (
+                    utf16_offset_to_utf8(title, r.start),
+                    utf16_offset_to_utf8(title, r.end),
+                )
             } else if let Some(ref mr) = self.state.marked_range {
-                (utf16_offset_to_utf8(title, mr.start), utf16_offset_to_utf8(title, mr.end))
+                (
+                    utf16_offset_to_utf8(title, mr.start),
+                    utf16_offset_to_utf8(title, mr.end),
+                )
             } else {
                 let pos = title.len();
                 (pos, pos)
@@ -180,7 +191,6 @@ impl gpui::EntityInputHandler for ChatView {
             cx.notify();
             return;
         }
-
 
         let input = &mut self.state.input_text;
         let (start_utf8, end_utf8) = if let Some(r) = range {

@@ -326,20 +326,19 @@ impl ChatView {
             .justify_end()
             .child({
                 let text = content_owned.clone();
-                div()
-                    .id(SharedString::from(format!("ubbl-{}", content.len())))
-                    .max_w(px(300.0))
-                    .px(px(10.0))
-                    .py(px(10.0))
-                    .rounded(px(12.0))
-                    .bg(Theme::user_bubble())
-                    .text_size(px(Theme::font_size_mono()))
-                    .text_color(Theme::user_bubble_text())
-                    .cursor_pointer()
-                    .on_click(move |_event, _window, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
-                    })
-                    .child(content_owned)
+                Theme::user_bubble(
+                    div()
+                        .max_w(px(300.0))
+                        .px(px(10.0))
+                        .py(px(10.0))
+                        .rounded(px(12.0))
+                        .text_size(px(Theme::font_size_mono()))
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+                        })
+                        .child(content_owned),
+                )
             })
             .into_any_element()
     }

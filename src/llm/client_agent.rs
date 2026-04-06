@@ -3,6 +3,7 @@
 //! This module provides Agent integration for `PersonalAgent` using `SerdesAI` Agent.
 
 use crate::agent::tool_approval_policy::{ToolApprovalDecision, ToolApprovalPolicy};
+use crate::llm::error::debug_error_message;
 use crate::llm::{LlmError, Message, Role, StreamEvent};
 use crate::presentation::view_command::ViewCommand;
 use futures::StreamExt;
@@ -484,6 +485,7 @@ impl crate::llm::LlmClient {
         });
     }
 
+    #[allow(clippy::cognitive_complexity)]
     async fn do_run_agent_stream<F>(
         &self,
         agent: &Agent<McpToolContext>,
@@ -515,7 +517,7 @@ impl crate::llm::LlmClient {
             .await
             .map_err(|e| {
                 tracing::error!("run_agent_stream: AgentStream creation failed: {}", e);
-                LlmError::SerdesAi(e.to_string())
+                LlmError::Stream(debug_error_message(&e))
             })?;
         tracing::info!("run_agent_stream: AgentStream created, processing events...");
 
@@ -574,8 +576,9 @@ impl crate::llm::LlmClient {
                     }
                 },
                 Err(e) => {
-                    on_event(StreamEvent::Error(e.to_string()));
-                    return Err(LlmError::SerdesAi(e.to_string()));
+                    let err_msg = debug_error_message(&e);
+                    on_event(StreamEvent::Error(err_msg.clone()));
+                    return Err(LlmError::Stream(err_msg));
                 }
             }
         }

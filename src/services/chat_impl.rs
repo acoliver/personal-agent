@@ -7,6 +7,7 @@ use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::events::types::{ChatEvent, ToolApprovalResponseAction};
 use crate::events::{emit, AppEvent};
 use crate::llm::client_agent::ApprovalGate;
+use crate::llm::error::debug_error_message;
 use crate::llm::AgentClientExt;
 use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::mcp::McpService;
@@ -21,6 +22,8 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+
+const STREAM_ERROR_MESSAGE: &str = "An error interrupted the chat stream.";
 
 /// Minimal implementation of `ChatService`
 pub struct ChatServiceImpl {
@@ -517,8 +520,17 @@ async fn run_stream_task(
     let agent = match client.create_agent(mcp_tools, &system_prompt).await {
         Ok(agent) => agent,
         Err(e) => {
-            let err_msg = format!("Failed to create agent: {e}");
-            emit_stream_error(conversation_id, err_msg, false, &tx);
+            tracing::error!(
+                conversation_id = %conversation_id,
+                error = %e,
+                "Failed to create agent for chat stream"
+            );
+            emit_stream_error(
+                conversation_id,
+                STREAM_ERROR_MESSAGE.to_string(),
+                false,
+                &tx,
+            );
             clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
             return;
         }
@@ -544,7 +556,20 @@ async fn run_stream_task(
         })
         .await
     {
-        emit_stream_error(conversation_id, e.to_string(), false, &tx);
+        let err_msg = debug_error_message(&e);
+        tracing::error!(
+            conversation_id = %conversation_id,
+            error = %err_msg,
+            response_chars = response_text.len(),
+            thinking_chars = thinking_text.len(),
+            "LLM stream task failed"
+        );
+        emit_stream_error(
+            conversation_id,
+            STREAM_ERROR_MESSAGE.to_string(),
+            false,
+            &tx,
+        );
     }
 
     persist_assistant_response(
@@ -627,7 +652,14 @@ fn handle_llm_stream_event(
             let _ = tx.send(ChatStreamEvent::Complete);
         }
         LlmStreamEvent::Error(err) => {
-            emit_stream_error(conversation_id, err, false, tx);
+            tracing::error!(
+                conversation_id = %conversation_id,
+                error = %err,
+                response_chars = response_text.len(),
+                thinking_chars = thinking_text.len(),
+                "LLM stream event error"
+            );
+            emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
         }
         LlmStreamEvent::ToolUse(_tool_use) => {}
     }

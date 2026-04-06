@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use crate::events::EventBus;
 use crate::ui_gpui::bridge::GpuiBridge;
+#[cfg(target_os = "macos")]
 use crate::ui_gpui::popup_window::PopupWindow;
+#[cfg(target_os = "macos")]
 use crate::ui_gpui::tray_bridge::TrayBridge;
 
 /// Main GPUI application struct
@@ -18,8 +20,10 @@ pub struct GpuiApp {
     /// GPUI bridge for UI event handling
     gpui_bridge: Arc<GpuiBridge>,
     /// Tray bridge for menu bar integration
+    #[cfg(target_os = "macos")]
     tray_bridge: Option<TrayBridge>,
     /// Popup window manager
+    #[cfg(target_os = "macos")]
     popup_window: Option<PopupWindow>,
 }
 
@@ -42,7 +46,9 @@ impl GpuiApp {
         Ok(Self {
             _event_bus: event_bus,
             gpui_bridge,
+            #[cfg(target_os = "macos")]
             tray_bridge: None,
+            #[cfg(target_os = "macos")]
             popup_window: None,
         })
     }
@@ -53,22 +59,30 @@ impl GpuiApp {
     ///
     /// Returns an error if the popup window or tray bridge cannot be created.
     pub fn initialize(&mut self) -> anyhow::Result<()> {
-        // Create the popup window
-        let popup_window = PopupWindow::new(Arc::clone(&self.gpui_bridge))?;
+        #[cfg(target_os = "macos")]
+        {
+            // Create the popup window
+            let popup_window = PopupWindow::new(Arc::clone(&self.gpui_bridge))?;
 
-        // Create the tray bridge
-        let tray_bridge = TrayBridge::new(Arc::clone(&self.gpui_bridge))?;
+            // Create the tray bridge
+            let tray_bridge = TrayBridge::new(Arc::clone(&self.gpui_bridge))?;
 
-        // Set the popup window on the tray bridge
-        // Note: We move the popup_window into the tray_bridge
-        // This is handled by set_popup_window which takes ownership
+            // Set the popup window on the tray bridge
+            // Note: We move the popup_window into the tray_bridge
+            // This is handled by set_popup_window which takes ownership
 
-        self.tray_bridge = Some(tray_bridge);
-        self.popup_window = Some(popup_window);
+            self.tray_bridge = Some(tray_bridge);
+            self.popup_window = Some(popup_window);
 
-        tracing::info!("GPUI application initialized successfully");
+            tracing::info!("GPUI application initialized successfully");
 
-        Ok(())
+            Ok(())
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            anyhow::bail!("GpuiApp::initialize is only supported on macOS")
+        }
     }
 
     /// Get the GPUI bridge
@@ -78,33 +92,56 @@ impl GpuiApp {
     }
 
     /// Check if the popup is currently visible
+    #[cfg(target_os = "macos")]
     #[must_use]
     pub fn is_popup_visible(&self) -> bool {
         self.tray_bridge
             .as_ref()
-            .is_some_and(super::tray_bridge::TrayBridge::is_popup_visible)
+            .is_some_and(TrayBridge::is_popup_visible)
+    }
+
+    /// Check if the popup is currently visible
+    #[cfg(not(target_os = "macos"))]
+    #[must_use]
+    pub const fn is_popup_visible(&self) -> bool {
+        false
     }
 
     /// Toggle the popup window visibility
+    #[cfg(target_os = "macos")]
     pub fn toggle_popup(&self) {
-        if let Some(ref tray) = self.tray_bridge {
+        if let Some(tray) = &self.tray_bridge {
             tray.toggle_popup();
         }
     }
 
+    /// Toggle the popup window visibility
+    #[cfg(not(target_os = "macos"))]
+    pub const fn toggle_popup(&self) {}
+
     /// Show the popup window
+    #[cfg(target_os = "macos")]
     pub fn show_popup(&self) {
-        if let Some(ref tray) = self.tray_bridge {
+        if let Some(tray) = &self.tray_bridge {
             tray.show_popup();
         }
     }
 
+    /// Show the popup window
+    #[cfg(not(target_os = "macos"))]
+    pub const fn show_popup(&self) {}
+
     /// Hide the popup window
+    #[cfg(target_os = "macos")]
     pub fn hide_popup(&self) {
-        if let Some(ref tray) = self.tray_bridge {
+        if let Some(tray) = &self.tray_bridge {
             tray.hide_popup();
         }
     }
+
+    /// Hide the popup window
+    #[cfg(not(target_os = "macos"))]
+    pub const fn hide_popup(&self) {}
 
     /// Start the event forwarding task.
     ///
@@ -155,7 +192,8 @@ impl GpuiApp {
         tracing::info!("Shutting down GPUI application");
 
         // Hide the popup if visible
-        if let Some(ref tray) = self.tray_bridge {
+        #[cfg(target_os = "macos")]
+        if let Some(tray) = &self.tray_bridge {
             tray.hide_popup();
         }
     }

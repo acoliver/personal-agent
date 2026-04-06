@@ -292,11 +292,34 @@ fn theme_color_helpers_return_valid_hsla_and_rgba_values() {
     check_hsla(Theme::warning(), "warning");
     check_hsla(Theme::success(), "success");
 
-    assert_eq!(Theme::assistant_bubble(), Theme::bg_darker());
+    assert_eq!(
+        Theme::assistant_bubble_color(),
+        Theme::assistant_bubble_bg()
+    );
     // Rgba accessors must compile and return a value (exact bits are theme-dependent)
-    let _ = Theme::user_bubble();
+    let _ = Theme::user_bubble_rgba();
     let _ = Theme::thinking_bg();
     let _ = Theme::danger();
+
+    let _ = Theme::panel(gpui::div());
+    let _ = Theme::panel_header(gpui::div());
+    let _ = Theme::input(gpui::div());
+    let _ = Theme::button_primary(gpui::div());
+    let _ = Theme::button_primary_disabled(gpui::div());
+    let _ = Theme::button_secondary(gpui::div());
+    let _ = Theme::button_danger(gpui::div());
+    let _ = Theme::button_ghost(gpui::div());
+    let _ = Theme::toolbar_button(gpui::div());
+    let _ = Theme::toolbar_button_disabled(gpui::div());
+    let _ = Theme::list_row(gpui::div());
+    let _ = Theme::list_row_selected(gpui::div());
+    let _ = Theme::dropdown(gpui::div());
+    let _ = Theme::dropdown_item(gpui::div());
+    let _ = Theme::badge(gpui::div());
+    let _ = Theme::section_header(gpui::div());
+    let _ = Theme::user_bubble(gpui::div());
+    let _ = Theme::assistant_bubble(gpui::div());
+    let _ = Theme::divider();
 
     assert_eq!(Theme::SPACING_XS, 4.0);
     assert_eq!(Theme::SPACING_SM, 8.0);

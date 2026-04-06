@@ -344,6 +344,7 @@ impl SettingsPresenter {
             .await;
     }
 
+    #[allow(clippy::cognitive_complexity)]
     pub(super) async fn emit_profiles_snapshot_with_default(
         profile_service: &Arc<dyn ProfileService>,
         selected_profile_id: Option<uuid::Uuid>,
