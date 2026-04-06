@@ -415,7 +415,8 @@ async fn input_editing_and_ime_composition_follow_real_cursor_and_dropdown_rules
 
             view.replace_and_mark_text_in_range(None, "🙂", Some(1..1), window, cx);
             assert_eq!(view.state.conversation_title_input, "Draft🙂");
-            assert_eq!(view.marked_text_range(window, cx), None);
+            // IME composition correctly marks the inserted emoji (2 UTF-16 units at offset 5)
+            assert_eq!(view.marked_text_range(window, cx), Some(5..7));
 
             view.handle_rename_backspace(cx);
             assert_eq!(view.state.conversation_title_input, "Draft");
