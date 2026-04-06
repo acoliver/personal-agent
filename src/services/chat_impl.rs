@@ -821,9 +821,16 @@ async fn persist_context_state(
         "Persisting compression context state"
     );
 
-    let _ = conversation_service
+    if let Err(error) = conversation_service
         .update_context_state(conversation_id, &state)
-        .await;
+        .await
+    {
+        tracing::warn!(
+            conversation_id = %conversation_id,
+            error = %error,
+            "Failed to persist compression context state"
+        );
+    }
 }
 
 #[allow(clippy::too_many_lines)]
