@@ -300,6 +300,21 @@ impl ChatView {
         let updated = format_relative_time(result.updated_at);
         let msg_count = result.message_count;
         let context = result.match_context.clone();
+        let title_color = if is_selected {
+            Theme::selection_fg()
+        } else {
+            Theme::text_primary()
+        };
+        let meta_color = if is_selected {
+            Theme::selection_fg()
+        } else {
+            Theme::text_secondary()
+        };
+        let context_color = if is_selected {
+            Theme::selection_fg()
+        } else {
+            Theme::accent()
+        };
 
         div()
             .id(SharedString::from(format!("search-{conv_id}")))
@@ -327,7 +342,7 @@ impl ChatView {
                             .text_ellipsis()
                             .text_size(px(12.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(Theme::text_primary())
+                            .text_color(title_color)
                             .child(SharedString::from(title)),
                     ),
             )
@@ -335,7 +350,7 @@ impl ChatView {
                 div()
                     .pl(px(22.0))
                     .text_size(px(10.0))
-                    .text_color(Theme::text_secondary())
+                    .text_color(meta_color)
                     .child(SharedString::from(format!(
                         "{updated} · {msg_count} messages"
                     ))),
@@ -348,7 +363,7 @@ impl ChatView {
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .text_size(px(10.0))
-                        .text_color(Theme::accent())
+                        .text_color(context_color)
                         .child(SharedString::from(context)),
                 )
             })

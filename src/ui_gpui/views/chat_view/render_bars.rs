@@ -46,18 +46,21 @@ impl ChatView {
 
         div()
             .id("chat-top-bar")
+            .flex_shrink_0()
             .h(px(44.0))
             .w_full()
             .bg(Theme::bg_darker())
             .border_b_1()
             .border_color(Theme::border())
+            .overflow_hidden()
             .pr(px(12.0))
             .pl(px(if is_popout { 72.0 } else { 12.0 }))
             .flex()
             .items_center()
-            .justify_between()
             .child(
                 div()
+                    .flex_1()
+                    .min_w(px(0.0))
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -100,6 +103,7 @@ impl ChatView {
         let show_history_btn = !is_popout || !self.state.sidebar_visible;
 
         div()
+            .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(8.0))
@@ -174,11 +178,12 @@ impl ChatView {
                     .when(!is_popout, |d| {
                         d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
                     })
-                    .text_color(Theme::text_primary())
                     .child(if is_popout {
                         crate::ui_gpui::components::window_icons::popin_icon(16.0)
+                            .text_color(Theme::text_primary())
                     } else {
                         crate::ui_gpui::components::window_icons::popout_icon(16.0)
+                            .text_color(Theme::text_primary())
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -317,6 +322,7 @@ impl ChatView {
 
         div()
             .id("chat-title-bar")
+            .flex_shrink_0()
             .h(px(32.0))
             .w_full()
             .bg(Theme::bg_darker())
@@ -339,8 +345,10 @@ impl ChatView {
                         .when(!sidebar_visible, |d| {
                             d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
                         })
-                        .text_color(Theme::text_primary())
-                        .child(crate::ui_gpui::components::window_icons::sidebar_icon(16.0))
+                        .child(
+                            crate::ui_gpui::components::window_icons::sidebar_icon(16.0)
+                                .text_color(Theme::text_primary()),
+                        )
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, _, _window, cx| {

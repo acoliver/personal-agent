@@ -730,6 +730,7 @@ impl gpui::Render for ChatView {
             .flex()
             .flex_col()
             .size_full()
+            .overflow_hidden()
             .track_focus(&self.focus_handle)
             .child(
                 canvas(
