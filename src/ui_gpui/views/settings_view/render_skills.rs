@@ -406,13 +406,51 @@ impl SettingsView {
             )
     }
 
-    pub(super) fn render_skills_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let install_hint = if self.state.install_skill_url_input.is_empty() {
-            "Paste a SKILL.md URL in the source field and click Install URL.".to_string()
+    fn render_skill_url_input(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let is_active = self.state.active_field == Some(super::ActiveField::InstallSkillUrlInput);
+        let display_text = if self.state.install_skill_url_input.is_empty() {
+            "Paste a SKILL.md URL here\u{2026}".to_string()
         } else {
             self.state.install_skill_url_input.clone()
         };
+        let text_color = if self.state.install_skill_url_input.is_empty() {
+            Theme::text_muted()
+        } else {
+            Theme::text_primary()
+        };
 
+        div()
+            .id("skill-url-input")
+            .w_full()
+            .h(px(28.0))
+            .px(px(8.0))
+            .bg(Theme::bg_darker())
+            .border_1()
+            .border_color(if is_active {
+                Theme::accent()
+            } else {
+                Theme::border()
+            })
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .overflow_hidden()
+            .cursor_text()
+            .text_size(px(Theme::font_size_mono()))
+            .text_color(text_color)
+            .child(display_text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    window.focus(&this.focus_handle, cx);
+                    this.set_active_field(Some(super::ActiveField::InstallSkillUrlInput));
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
+    pub(super) fn render_skills_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("skills-panel-scroll")
             .flex()
@@ -439,22 +477,9 @@ impl SettingsView {
                     ),
             )
             .child(self.render_skills_toolbar(cx))
-            .child(
-                div()
-                    .w_full()
-                    .px(px(10.0))
-                    .py(px(8.0))
-                    .rounded(px(4.0))
-                    .bg(Theme::bg_darker())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .child(
-                        div()
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_primary())
-                            .child(install_hint),
-                    ),
-            )
+            .child(self.render_skill_url_input(cx))
+
+
 
             .child(
                 div()

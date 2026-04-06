@@ -745,3 +745,41 @@ async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestApp
         });
     });
 }
+
+#[gpui::test]
+async fn handle_command_forwards_skills_loaded_to_settings_view(cx: &mut TestAppContext) {
+    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+    cx.set_global(app_state);
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+
+        panel.handle_command(
+            ViewCommand::SkillsLoaded {
+                skills: vec![crate::presentation::view_command::SkillSummary {
+                    name: "test-skill".to_string(),
+                    description: "A test skill".to_string(),
+                    source: crate::models::SkillSource::User,
+                    enabled: true,
+                    path: "/tmp/test-skill".to_string(),
+                }],
+                watched_directories: vec!["/tmp/skills".to_string()],
+                default_directory: "/tmp/default-skills".to_string(),
+            },
+            cx,
+        );
+
+        let settings_view = panel
+            .settings_view
+            .as_ref()
+            .expect("settings view initialized");
+        settings_view.read_with(cx, |view, _| {
+            let state = view.get_state();
+            assert_eq!(state.skills.len(), 1);
+            assert_eq!(state.skills[0].name, "test-skill");
+            assert_eq!(state.watched_skill_directories, vec!["/tmp/skills"]);
+            assert_eq!(state.default_skill_directory, "/tmp/default-skills");
+        });
+    });
+}

@@ -79,6 +79,9 @@ pub struct CommandTargets {
     // Tool approval routing counters
     pub tool_approval_policy_count: usize,
     pub yolo_mode_changed_count: usize,
+
+    // Skills routing counter
+    pub skills_loaded_count: usize,
 }
 
 /// Route a single `ViewCommand` to the correct target view state.
@@ -160,6 +163,11 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         }
         ViewCommand::YoloModeChanged { .. } => {
             targets.yolo_mode_changed_count += 1;
+        }
+
+        // ── Skills ───────────────────────────────────────────────────────
+        ViewCommand::SkillsLoaded { .. } => {
+            targets.skills_loaded_count += 1;
         }
 
         // All other commands are store-managed, navigation, or ancillary

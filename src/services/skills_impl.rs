@@ -312,6 +312,26 @@ impl SkillsServiceImpl {
             .filter(|slug| !slug.is_empty())
             .unwrap_or_else(|| "imported-skill".to_string())
     }
+
+    /// Convert GitHub blob/tree URLs to raw.githubusercontent.com URLs so we
+    /// fetch the actual markdown content rather than the HTML page wrapper.
+    fn normalize_github_url(url: &str) -> String {
+        let trimmed = url.trim();
+        if let Some(rest) = trimmed.strip_prefix("https://github.com/") {
+            // github.com/<owner>/<repo>/blob/<branch>/path → raw.githubusercontent.com/<owner>/<repo>/<branch>/path
+            if let Some(after_blob) = rest.strip_prefix(
+                rest.splitn(3, '/').collect::<Vec<_>>()[..2]
+                    .join("/")
+                    .as_str(),
+            ) {
+                if let Some(raw_path) = after_blob.strip_prefix("/blob/") {
+                    let owner_repo = &rest[..rest.len() - after_blob.len()];
+                    return format!("https://raw.githubusercontent.com/{owner_repo}/{raw_path}");
+                }
+            }
+        }
+        trimmed.to_string()
+    }
 }
 
 #[async_trait]
@@ -442,9 +462,11 @@ impl SkillsService for SkillsServiceImpl {
     }
 
     async fn install_skill_from_url(&self, url: &str) -> ServiceResult<Skill> {
-        let response = reqwest::get(url)
+        let fetch_url = Self::normalize_github_url(url);
+        let response = reqwest::get(&fetch_url)
             .await
             .map_err(|error| ServiceError::Network(format!("Failed to download skill: {error}")))?;
+
         let status = response.status();
         if !status.is_success() {
             return Err(ServiceError::Network(format!(
@@ -761,5 +783,33 @@ mod tests {
         assert!(error
             .to_string()
             .contains("Failed to parse disabled skills setting"));
+    }
+
+    #[test]
+    fn normalize_github_url_converts_blob_to_raw() {
+        let input = "https://github.com/anthropics/skills/blob/main/skills/docx/SKILL.md";
+        let expected =
+            "https://raw.githubusercontent.com/anthropics/skills/main/skills/docx/SKILL.md";
+        assert_eq!(SkillsServiceImpl::normalize_github_url(input), expected);
+    }
+
+    #[test]
+    fn normalize_github_url_passes_through_raw_url() {
+        let input = "https://raw.githubusercontent.com/anthropics/skills/main/skills/docx/SKILL.md";
+        assert_eq!(SkillsServiceImpl::normalize_github_url(input), input);
+    }
+
+    #[test]
+    fn normalize_github_url_passes_through_non_github() {
+        let input = "https://example.com/skills/SKILL.md";
+        assert_eq!(SkillsServiceImpl::normalize_github_url(input), input);
+    }
+
+    #[test]
+    fn normalize_github_url_trims_whitespace() {
+        let input = "  https://github.com/anthropics/skills/blob/main/skills/docx/SKILL.md  ";
+        let expected =
+            "https://raw.githubusercontent.com/anthropics/skills/main/skills/docx/SKILL.md";
+        assert_eq!(SkillsServiceImpl::normalize_github_url(input), expected);
     }
 }
