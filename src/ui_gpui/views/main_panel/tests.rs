@@ -184,7 +184,6 @@ fn conversation_summary(id: Uuid, title: &str, message_count: usize) -> Conversa
         preview: None,
     }
 }
-
 fn profile_summary(
     id: Uuid,
     name: &str,
@@ -200,14 +199,12 @@ fn profile_summary(
         is_default,
     }
 }
-
 fn theme_summary(name: &str, slug: &str) -> ThemeSummary {
     ThemeSummary {
         name: name.to_string(),
         slug: slug.to_string(),
     }
 }
-
 fn transcript_message(role: MessageRole, content: &str) -> ConversationMessagePayload {
     ConversationMessagePayload {
         role,
