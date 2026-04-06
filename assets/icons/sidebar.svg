@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor">
+  <path fill-rule="evenodd" d="M1.5 3c0-.6.4-1 1-1h11c.6 0 1 .4 1 1v10c0 .6-.4 1-1 1h-11c-.6 0-1-.4-1-1V3zm1.5.5v9h3.5v-9H3zm5 0v9h5v-9H8z"/>
+  <rect x="3.5" y="5.5" width="2.5" height="1" rx="0.3" opacity="0.7"/>
+  <rect x="3.5" y="8" width="2.5" height="1" rx="0.3" opacity="0.5"/>
+  <rect x="3.5" y="10.5" width="2.5" height="1" rx="0.3" opacity="0.3"/>
+</svg>

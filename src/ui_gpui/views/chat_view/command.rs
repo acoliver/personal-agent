@@ -144,7 +144,32 @@ impl ChatView {
                 self.state.yolo_mode = active;
                 cx.notify();
             }
+            ViewCommand::ConversationSearchResults { results } => {
+                if results.is_empty() && self.state.sidebar_search_query.is_empty() {
+                    self.state.sidebar_search_results = None;
+                } else {
+                    self.state.sidebar_search_results = Some(results);
+                }
+                cx.notify();
+            }
             _ => {}
         }
+    }
+
+    /// Toggle sidebar visibility (popout mode).
+    pub fn toggle_sidebar(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.sidebar_visible = !self.state.sidebar_visible;
+        cx.notify();
+    }
+
+    /// Emit a search event for the current sidebar search query.
+    pub fn trigger_sidebar_search(&mut self, cx: &mut gpui::Context<Self>) {
+        let query = self.state.sidebar_search_query.clone();
+        if query.trim().is_empty() {
+            self.state.sidebar_search_results = None;
+        } else {
+            self.emit(crate::events::types::UserEvent::SearchConversations { query });
+        }
+        cx.notify();
     }
 }

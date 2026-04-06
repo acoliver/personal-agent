@@ -13,6 +13,16 @@ use uuid::Uuid;
 use crate::agent::McpApprovalMode;
 use crate::models::ConversationExportFormat;
 
+/// Application window mode — popup (tray-anchored) or popout (free-floating).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AppMode {
+    /// Tray-anchored popup (default at startup).
+    #[default]
+    Popup,
+    /// Free-floating resizable window.
+    Popout,
+}
+
 /// Command from presenter to UI layer
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
@@ -100,6 +110,14 @@ pub enum ViewCommand {
 
     /// Toggle thinking visibility
     ToggleThinkingVisibility,
+
+    /// Toggle between popup and popout window modes.
+    ToggleWindowMode,
+
+    /// Conversation search results returned from backend.
+    ConversationSearchResults {
+        results: Vec<ConversationSearchResult>,
+    },
 
     /// Conversation was renamed
     ConversationRenamed { id: Uuid, new_title: String },
@@ -354,6 +372,18 @@ pub struct ConversationSummary {
     pub title: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub message_count: usize,
+    pub preview: Option<String>,
+}
+
+/// A single search result for the sidebar conversation search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationSearchResult {
+    pub id: Uuid,
+    pub title: String,
+    pub is_title_match: bool,
+    pub match_context: String,
+    pub message_count: usize,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Summary of a stored API key for the key manager UI.

@@ -12,6 +12,10 @@ impl McpAddView {
     fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let can_proceed = self.state.can_proceed();
 
+        let is_popout = cx
+            .try_global::<crate::ui_gpui::views::main_panel::MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == crate::presentation::view_command::AppMode::Popout);
+
         div()
             .id("mcp-add-top-bar")
             .h(px(44.0))
@@ -19,7 +23,8 @@ impl McpAddView {
             .bg(Theme::bg_darker())
             .border_b_1()
             .border_color(Theme::border())
-            .px(px(12.0))
+            .pr(px(12.0))
+            .pl(px(if is_popout { 72.0 } else { 12.0 }))
             .flex()
             .items_center()
             .justify_between()

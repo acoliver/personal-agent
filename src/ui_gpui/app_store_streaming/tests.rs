@@ -23,6 +23,7 @@ fn conversation_summary(id: Uuid, title: &str) -> ConversationSummary {
         title: title.to_string(),
         updated_at: chrono::Utc::now(),
         message_count: 0,
+        preview: None,
     }
 }
 

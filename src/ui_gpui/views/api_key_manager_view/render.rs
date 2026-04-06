@@ -10,13 +10,18 @@ use gpui::{
 
 impl ApiKeyManagerView {
     fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let is_popout = cx
+            .try_global::<crate::ui_gpui::views::main_panel::MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == crate::presentation::view_command::AppMode::Popout);
+
         div()
             .flex()
             .items_center()
             .justify_between()
             .w_full()
             .h(px(44.0))
-            .px(px(12.0))
+            .pr(px(12.0))
+            .pl(px(if is_popout { 72.0 } else { 12.0 }))
             .bg(Theme::bg_base())
             .border_b_1()
             .border_color(Theme::border())

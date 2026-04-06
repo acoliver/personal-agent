@@ -149,6 +149,15 @@ pub enum UserEvent {
     /// @plan PLAN-20250130-GPUIREDUX.P05
     RefreshHistory,
 
+    /// User toggled between popup and popout window mode.
+    ToggleWindowMode,
+
+    /// User toggled the sidebar visibility in popout mode.
+    ToggleSidebar,
+
+    /// User typed a search query in the sidebar search box.
+    SearchConversations { query: String },
+
     /// User requested a fresh profile snapshot for chat/settings dropdowns.
     RefreshProfiles,
 

@@ -187,6 +187,7 @@ pub(super) fn conversation_summary(
         title: title.to_string(),
         updated_at: Utc::now(),
         message_count,
+        preview: None,
     }
 }
 
@@ -268,6 +269,7 @@ pub(super) fn build_app_state() -> (
             gpui_bridge: bridge,
             popup_window: None,
             app_store: store,
+            app_mode: crate::presentation::view_command::AppMode::Popup,
         },
         user_rx,
         first_conversation_id,

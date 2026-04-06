@@ -1,15 +1,18 @@
 #![allow(clippy::future_not_send)]
 
 use super::*;
+use crate::events::types::UserEvent;
 use crate::presentation::view_command::{
-    ConversationMessagePayload, ConversationSummary, MessageRole,
+    ConversationMessagePayload, ConversationSummary, MessageRole, ViewCommand,
 };
 use crate::ui_gpui::app_store::StreamingStoreSnapshot;
+use crate::ui_gpui::bridge::GpuiBridge;
 use chrono::Utc;
 use gpui::{
     point, AppContext, KeyDownEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
     TestAppContext, TouchPhase,
 };
+use std::sync::Arc;
 
 fn chat_key_event(key: &str) -> KeyDownEvent {
     KeyDownEvent {
@@ -17,6 +20,73 @@ fn chat_key_event(key: &str) -> KeyDownEvent {
         is_held: false,
         prefer_character_input: false,
     }
+}
+
+fn make_chat_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
+    let (user_tx, user_rx) = flume::bounded(8);
+    let (_view_tx, view_rx) = flume::bounded(8);
+    (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
+}
+
+#[gpui::test]
+async fn sidebar_helpers_toggle_visibility_and_emit_search_events(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+    let (bridge, user_rx) = make_chat_bridge();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.set_bridge(bridge.clone());
+            assert!(view.state.sidebar_visible);
+            view.toggle_sidebar(cx);
+            assert!(!view.state.sidebar_visible);
+
+            view.state.sidebar_search_query = "  skills  ".to_string();
+            view.trigger_sidebar_search(cx);
+            assert_eq!(
+                user_rx.try_recv().ok(),
+                Some(UserEvent::SearchConversations {
+                    query: "  skills  ".to_string(),
+                })
+            );
+
+            view.state.sidebar_search_query = "   ".to_string();
+            view.state.sidebar_search_results = Some(Vec::new());
+            view.trigger_sidebar_search(cx);
+            assert!(view.state.sidebar_search_results.is_none());
+            assert!(user_rx.try_recv().is_err());
+        });
+    });
+}
+
+#[gpui::test]
+async fn conversation_search_results_command_respects_empty_query_behavior(
+    cx: &mut TestAppContext,
+) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.state.sidebar_search_query.clear();
+            view.handle_command(
+                ViewCommand::ConversationSearchResults {
+                    results: Vec::new(),
+                },
+                cx,
+            );
+            assert!(view.state.sidebar_search_results.is_none());
+
+            view.state.sidebar_search_query = "skills".to_string();
+            view.handle_command(
+                ViewCommand::ConversationSearchResults {
+                    results: Vec::new(),
+                },
+                cx,
+            );
+            assert_eq!(view.state.sidebar_search_results, Some(Vec::new()));
+        });
+    });
 }
 
 #[gpui::test]
@@ -112,6 +182,7 @@ async fn apply_store_snapshot_streaming_calls_maybe_scroll_when_autoscroll_enabl
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 0,
+                    preview: None,
                 }],
             };
 
@@ -160,6 +231,7 @@ async fn apply_store_snapshot_streaming_skips_maybe_scroll_when_autoscroll_disab
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 0,
+                    preview: None,
                 }],
             };
 
@@ -210,6 +282,7 @@ async fn apply_store_snapshot_stream_finalize_calls_maybe_scroll_when_autoscroll
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 1,
+                    preview: None,
                 }],
             };
 
@@ -262,6 +335,7 @@ async fn apply_store_snapshot_stream_finalize_skips_maybe_scroll_when_autoscroll
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 1,
+                    preview: None,
                 }],
             };
 
@@ -312,6 +386,7 @@ async fn apply_store_snapshot_thinking_only_calls_maybe_scroll_when_autoscroll_e
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 0,
+                    preview: None,
                 }],
             };
 
@@ -363,6 +438,7 @@ async fn apply_store_snapshot_thinking_only_skips_maybe_scroll_when_autoscroll_d
                     title: "Conv".to_string(),
                     updated_at: Utc::now(),
                     message_count: 0,
+                    preview: None,
                 }],
             };
 

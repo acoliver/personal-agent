@@ -15,6 +15,15 @@ impl AssetSource for AppAssets {
             "icons/bug.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../../assets/icons/bug.svg"
             )))),
+            "icons/popout.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../../assets/icons/popout.svg"
+            )))),
+            "icons/popin.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../../assets/icons/popin.svg"
+            )))),
+            "icons/sidebar.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../../assets/icons/sidebar.svg"
+            )))),
             _ => Ok(None),
         }
     }

@@ -18,6 +18,9 @@ pub use tab_bar::{Tab, TabBar};
 // Issue 51: Error Log Viewer
 pub mod bug_icon;
 
+// Issue 57: Window mode icons (popout/popin/sidebar)
+pub mod window_icons;
+
 // Issue 62: Markdown Rendering (TDD Phase)
 pub(crate) mod markdown_content;
 

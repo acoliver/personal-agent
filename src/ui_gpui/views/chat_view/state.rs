@@ -6,7 +6,9 @@
 //! @plan PLAN-20260325-ISSUE11B.P02
 
 use crate::models::ConversationExportFormat;
-use crate::presentation::view_command::{ConversationSummary, ProfileSummary};
+use crate::presentation::view_command::{
+    ConversationSearchResult, ConversationSummary, ProfileSummary,
+};
 use std::ops::Range;
 use uuid::Uuid;
 
@@ -123,6 +125,16 @@ pub struct ChatState {
     pub approval_bubbles: Vec<ToolApprovalBubble>,
     /// Whether YOLO mode (auto-approve all) is currently active.
     pub yolo_mode: bool,
+    /// Whether the sidebar is visible (popout mode only).
+    pub sidebar_visible: bool,
+    /// Current search query typed in the sidebar search box.
+    pub sidebar_search_query: String,
+    /// Whether the sidebar search box currently has input focus.
+    pub sidebar_search_focused: bool,
+    /// Search results from the backend, if a search is active.
+    pub sidebar_search_results: Option<Vec<ConversationSearchResult>>,
+    /// Conversation ID pending delete confirmation in the sidebar.
+    pub delete_confirming_id: Option<Uuid>,
 }
 
 impl Default for ChatState {
@@ -146,6 +158,11 @@ impl Default for ChatState {
             marked_range: None,
             approval_bubbles: Vec::new(),
             yolo_mode: false,
+            sidebar_visible: true,
+            sidebar_search_query: String::new(),
+            sidebar_search_focused: false,
+            sidebar_search_results: None,
+            delete_confirming_id: None,
             current_model: "No profile selected".to_string(),
             profiles: Vec::new(),
             selected_profile_id: None,

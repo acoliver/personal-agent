@@ -2,15 +2,21 @@
 
 use super::{McpItem, McpStatus, ProfileItem, SettingsCategory, SettingsView};
 use crate::events::types::UserEvent;
+use crate::presentation::view_command::AppMode;
 use crate::ui_gpui::theme::Theme;
+use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FontWeight, MouseButton, Pixels,
     SharedString,
 };
 
 impl SettingsView {
-    /// Render the top bar with back button and title
+    /// Render the top bar with title
     fn render_top_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let is_popout = cx
+            .try_global::<MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == AppMode::Popout);
+
         div()
             .id("settings-top-bar")
             .h(px(44.0))
@@ -18,43 +24,53 @@ impl SettingsView {
             .bg(Theme::bg_darker())
             .border_b_1()
             .border_color(Theme::border())
+            .pr(px(12.0))
+            .pl(px(if is_popout { 72.0 } else { 12.0 }))
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_body()))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(Theme::text_primary())
+                    .child("Settings"),
+            )
+    }
+
+    /// Render the bottom bar with back button in the lower-left corner
+    fn render_bottom_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("settings-bottom-bar")
+            .h(px(36.0))
+            .w_full()
+            .flex_shrink_0()
+            .bg(Theme::bg_darker())
+            .border_t_1()
+            .border_color(Theme::border())
             .px(px(12.0))
             .flex()
             .items_center()
             .child(
                 div()
+                    .id("btn-back")
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .id("btn-back")
-                            .size(px(28.0))
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::bg_dark()))
-                            .text_size(px(Theme::font_size_body()))
-                            .text_color(Theme::text_secondary())
-                            .child("<")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_this, _, _window, _cx| {
-                                    tracing::info!("Back clicked - navigating to Chat");
-                                    crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::Chat,
-                                    );
-                                }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(Theme::font_size_body()))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::text_primary())
-                            .child("Settings"),
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::bg_dark()))
+                    .text_size(px(Theme::font_size_body()))
+                    .text_color(Theme::text_secondary())
+                    .child("\u{2039} Back")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            tracing::info!("Back clicked - navigating to Chat");
+                            crate::ui_gpui::navigation_channel()
+                                .request_navigate(crate::presentation::view_command::ViewId::Chat);
+                        }),
                     ),
             )
     }
@@ -895,6 +911,8 @@ impl gpui::Render for SettingsView {
                     .child(self.render_category_sidebar(cx))
                     .child(self.render_content_panel(cx)),
             )
+            // Bottom bar with back button
+            .child(Self::render_bottom_bar(cx))
             // Theme dropdown overlay (rendered at root level for z-ordering)
             .when(dropdown_open, |d| {
                 d.child(self.render_theme_dropdown_backdrop(cx))

@@ -289,6 +289,7 @@ async fn build_conversation_data(
                     .unwrap_or_else(|| "Untitled Conversation".to_string()),
                 updated_at: metadata.updated_at,
                 message_count: metadata.message_count,
+                preview: metadata.last_message_preview.clone(),
             },
         )
         .collect::<Vec<_>>();
