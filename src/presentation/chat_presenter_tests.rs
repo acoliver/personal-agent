@@ -406,7 +406,7 @@ async fn test_handle_new_conversation() {
     assert!(found_activated, "Should activate conversation");
 }
 
-/// Test handle_search_conversations with empty query returns empty results
+/// Test `handle_search_conversations` with empty query returns empty results
 #[tokio::test]
 async fn test_search_conversations_empty_query() {
     let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
@@ -424,7 +424,7 @@ async fn test_search_conversations_empty_query() {
     }
 }
 
-/// Test handle_search_conversations with whitespace-only query returns empty results
+/// Test `handle_search_conversations` with whitespace-only query returns empty results
 #[tokio::test]
 async fn test_search_conversations_whitespace_query() {
     let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
@@ -442,7 +442,7 @@ async fn test_search_conversations_whitespace_query() {
     }
 }
 
-/// Test handle_search_conversations with non-empty query calls service
+/// Test `handle_search_conversations` with non-empty query calls service
 #[tokio::test]
 async fn test_search_conversations_non_empty_query() {
     let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
