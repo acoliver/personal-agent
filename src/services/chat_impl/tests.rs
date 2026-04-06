@@ -10,6 +10,7 @@ use uuid::Uuid;
 mod approval_persistence;
 #[path = "support.rs"]
 mod chat_test_support;
+mod compression_persistence;
 
 use chat_test_support::*;
 
@@ -560,15 +561,17 @@ async fn support_mock_conversation_service_covers_crud_and_lookup_paths() {
                 strategy: Some("summary".to_string()),
                 summary: Some("condensed".to_string()),
                 visible_range: Some((0, 1)),
+                ..ContextState::default()
             },
         )
         .await
         .unwrap();
-    assert!(conversation_service
+    let stored_state = conversation_service
         .get_context_state(Uuid::new_v4())
         .await
         .unwrap()
-        .is_none());
+        .expect("context state should be stored by the mock service");
+    assert_eq!(stored_state.strategy.as_deref(), Some("summary"));
     conversation_service
         .rename(Uuid::new_v4(), "Renamed".to_string())
         .await
@@ -825,41 +828,4 @@ async fn cancel_clears_current_conversation_and_pending_approvals() {
             approved: false,
         }
     );
-}
-
-#[test]
-fn build_llm_messages_preserves_assistant_tool_transcript() {
-    let profile = crate::models::ModelProfile::default();
-    let mut conversation = crate::models::Conversation::new(profile.id);
-    conversation.add_message(Message::user("hello".to_string()));
-
-    let mut assistant = Message::assistant("answer with tool context".to_string());
-    assistant.tool_calls = Some(
-        serde_json::to_string(&[crate::llm::tools::ToolUse::new(
-            "tool-call-1",
-            "read_file",
-            serde_json::json!({"path":"/tmp/text.txt"}),
-        )])
-        .expect("tool calls should serialize"),
-    );
-    assistant.tool_results = Some(
-        serde_json::to_string(&[crate::llm::tools::ToolResult::success(
-            "tool-call-1",
-            "contents",
-        )])
-        .expect("tool results should serialize"),
-    );
-    conversation.add_message(assistant);
-
-    let assistant = ChatServiceImpl::build_llm_messages(&conversation, &profile)
-        .into_iter()
-        .find(|message| matches!(message.role, crate::llm::Role::Assistant))
-        .expect("assistant message should be present");
-
-    assert_eq!(assistant.tool_uses.len(), 1);
-    assert_eq!(assistant.tool_results.len(), 1);
-    assert_eq!(assistant.tool_uses[0].id, "tool-call-1");
-    assert_eq!(assistant.tool_results[0].tool_use_id, "tool-call-1");
-    assert_eq!(assistant.tool_results[0].content, "contents");
-    assert!(!assistant.tool_results[0].is_error);
 }

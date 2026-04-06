@@ -213,7 +213,7 @@ async fn llm_client_kimi_streaming_e2e() {
                 StreamEvent::ThinkingDelta(text) => {
                     print!("[think: {text}]");
                 }
-                StreamEvent::Complete => {
+                StreamEvent::Complete { .. } => {
                     println!("\n[COMPLETE]");
                     saw_complete = true;
                 }

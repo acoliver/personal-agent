@@ -180,7 +180,7 @@ async fn test_real_exa_search() {
                     }
                     saw_tool_complete = true;
                 }
-                StreamEvent::Complete => {
+                StreamEvent::Complete { .. } => {
                     println!("\n[STREAM COMPLETE]");
                 }
                 _ => {}

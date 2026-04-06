@@ -14,7 +14,10 @@ pub enum ChatStreamEvent {
     /// Token received from model
     Token(String),
     /// Message completed
-    Complete,
+    Complete {
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+    },
     /// Error occurred
     Error(ServiceError),
 }
@@ -59,8 +62,11 @@ mod tests {
     #[tokio::test]
     async fn test_stream_event_complete() {
         assert!(matches!(
-            ChatStreamEvent::Complete,
-            ChatStreamEvent::Complete
+            ChatStreamEvent::Complete {
+                input_tokens: None,
+                output_tokens: None,
+            },
+            ChatStreamEvent::Complete { .. }
         ));
     }
 
@@ -99,7 +105,10 @@ mod tests {
         let mut stream: Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin> =
             Box::new(futures::stream::iter(vec![
                 ChatStreamEvent::Token("test".to_string()),
-                ChatStreamEvent::Complete,
+                ChatStreamEvent::Complete {
+                    input_tokens: None,
+                    output_tokens: None,
+                },
             ]));
         assert!(matches!(
             stream.next().await,

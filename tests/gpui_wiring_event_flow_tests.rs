@@ -227,6 +227,7 @@ impl personal_agent::services::ProfileService for RecordingProfileService {
             },
             parameters: ModelParameters::default(),
             system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
+            context_window_size: 128_000,
         })
     }
 

@@ -11,6 +11,7 @@
 #![allow(clippy::unused_async)]
 
 pub mod agent;
+pub mod compression;
 pub mod config;
 pub mod db;
 pub mod error;
@@ -24,7 +25,7 @@ pub mod services;
 pub mod ui_gpui;
 
 // Re-export commonly used types
-pub use config::{Config, ContextManagement};
+pub use config::{CompressionConfig, Config, ContextManagement};
 pub use error::{AppError, Result};
 pub use events::{emit, subscribe, AppEvent, EventBus, EventBusError};
 pub use llm::{LlmClient, LlmError, Message as LlmMessage, Role as LlmRole, StreamEvent};

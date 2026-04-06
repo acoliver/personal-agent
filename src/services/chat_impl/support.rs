@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 pub(super) struct MockConversationService {
     pub(super) profile_id: Uuid,
     pub(super) messages: Arc<RwLock<Vec<Message>>>,
+    pub(super) context_state: Arc<RwLock<Option<crate::models::ContextState>>>,
 }
 
 pub(super) struct InMemoryAppSettingsService {
@@ -177,6 +178,7 @@ impl MockConversationService {
         Self {
             profile_id,
             messages: Arc::new(RwLock::new(Vec::new())),
+            context_state: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -236,8 +238,9 @@ impl super::super::ConversationService for MockConversationService {
     async fn update_context_state(
         &self,
         _id: Uuid,
-        _state: &crate::models::ContextState,
+        state: &crate::models::ContextState,
     ) -> Result<(), crate::services::ServiceError> {
+        *self.context_state.write().await = Some(state.clone());
         Ok(())
     }
 
@@ -245,7 +248,7 @@ impl super::super::ConversationService for MockConversationService {
         &self,
         _id: Uuid,
     ) -> Result<Option<crate::models::ContextState>, crate::services::ServiceError> {
-        Ok(None)
+        Ok(self.context_state.read().await.clone())
     }
 
     async fn rename(
@@ -417,7 +420,7 @@ pub(super) async fn setup_send_message_test() -> (Arc<MockConversationService>, 
     let completed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
         while let Some(event) = stream.next().await {
             match event {
-                ChatStreamEvent::Complete => return true,
+                ChatStreamEvent::Complete { .. } => return true,
                 ChatStreamEvent::Error(_) => return false,
                 ChatStreamEvent::Token(_) => {}
             }

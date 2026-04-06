@@ -18,6 +18,8 @@ pub struct Config {
     #[serde(default)]
     pub active_conversation_id: Option<Uuid>,
     pub context_management: ContextManagement,
+    #[serde(default)]
+    pub compression: CompressionConfig,
     pub profiles: Vec<ModelProfile>,
     #[serde(default)]
     pub mcps: Vec<crate::mcp::McpConfig>,
@@ -34,6 +36,20 @@ pub struct ContextManagement {
     pub summary_target_ratio: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompressionConfig {
+    pub observation_mask_threshold: f64,
+    pub sandwich_summary_threshold: f64,
+    pub truncation_threshold: f64,
+    pub mask_recent_count: usize,
+    pub mask_size_threshold: usize,
+    pub preserve_top_fraction: f64,
+    pub preserve_bottom_fraction: f64,
+    pub min_middle_messages: usize,
+    pub truncation_target: f64,
+    pub min_keep_messages: usize,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -43,6 +59,7 @@ impl Default for Config {
             default_profile: None,
             active_conversation_id: None,
             context_management: ContextManagement::default(),
+            compression: CompressionConfig::default(),
             profiles: Vec::new(),
             mcps: Vec::new(),
             smithery_auth: None,
@@ -57,6 +74,23 @@ impl Default for ContextManagement {
             preserve_top: 0.20,
             preserve_bottom: 0.20,
             summary_target_ratio: 0.50,
+        }
+    }
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            observation_mask_threshold: 0.60,
+            sandwich_summary_threshold: 0.70,
+            truncation_threshold: 0.85,
+            mask_recent_count: 10,
+            mask_size_threshold: 500,
+            preserve_top_fraction: 0.10,
+            preserve_bottom_fraction: 0.25,
+            min_middle_messages: 4,
+            truncation_target: 0.60,
+            min_keep_messages: 4,
         }
     }
 }

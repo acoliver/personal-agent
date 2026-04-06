@@ -8,7 +8,7 @@ mod skill;
 pub mod profile;
 mod search;
 
-pub use context_state::ContextState;
+pub use context_state::{CompressionPhase, ContextState};
 pub use conversation::{Conversation, ConversationMetadata, Message, MessageRole};
 pub use skill::{Skill, SkillMetadata, SkillSource};
 

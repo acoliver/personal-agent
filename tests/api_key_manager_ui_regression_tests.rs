@@ -93,6 +93,7 @@ async fn api_key_manager_presenter_start_emits_initial_key_list() {
             },
             parameters: ModelParameters::default(),
             system_prompt: "test prompt".to_string(),
+            context_window_size: 128_000,
         }],
     }) as Arc<dyn ProfileService>;
 

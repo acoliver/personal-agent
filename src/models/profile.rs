@@ -15,12 +15,18 @@ pub struct ModelProfile {
     /// System prompt to prepend to conversations
     #[serde(default = "default_system_prompt")]
     pub system_prompt: String,
+    #[serde(default = "default_context_window_size")]
+    pub context_window_size: usize,
 }
 
 pub const DEFAULT_SYSTEM_PROMPT: &str = "Unless instructed otherwise, respond solely in English.";
 
 fn default_system_prompt() -> String {
     DEFAULT_SYSTEM_PROMPT.to_string()
+}
+
+const fn default_context_window_size() -> usize {
+    128_000
 }
 
 #[derive(Clone, Serialize, PartialEq, Eq)]
@@ -87,6 +93,7 @@ impl Default for ModelProfile {
             },
             parameters: ModelParameters::default(),
             system_prompt: default_system_prompt(),
+            context_window_size: default_context_window_size(),
         }
     }
 }
@@ -123,6 +130,7 @@ impl ModelProfile {
             auth,
             parameters: ModelParameters::default(),
             system_prompt: default_system_prompt(),
+            context_window_size: default_context_window_size(),
         }
     }
 

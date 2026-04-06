@@ -8,4 +8,4 @@ pub use provider_defaults::{
     default_api_base_url_for_provider, provider_api_url, provider_api_url_map,
 };
 pub use quirks_manifest::quirks_manifest;
-pub use settings::{Config, ContextManagement};
+pub use settings::{CompressionConfig, Config, ContextManagement};

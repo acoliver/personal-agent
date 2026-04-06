@@ -445,6 +445,7 @@ fn make_profile(id: Uuid, name: &str, provider_id: &str, model_id: &str) -> Mode
             show_thinking: true,
         },
         system_prompt: format!("prompt for {name}"),
+        context_window_size: 128_000,
     }
 }
 
