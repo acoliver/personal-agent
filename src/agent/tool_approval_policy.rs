@@ -37,6 +37,7 @@ pub enum ToolApprovalDecision {
 pub struct ToolApprovalPolicy {
     pub yolo_mode: bool,
     pub auto_approve_reads: bool,
+    pub skills_auto_approve: bool,
     pub mcp_approval_mode: McpApprovalMode,
     pub persistent_allowlist: Vec<String>,
     pub persistent_denylist: Vec<String>,
@@ -48,6 +49,7 @@ pub struct ToolApprovalPolicy {
 struct PersistedToolApprovalPolicy {
     yolo_mode: bool,
     auto_approve_reads: bool,
+    skills_auto_approve: bool,
     mcp_approval_mode: McpApprovalMode,
     persistent_allowlist: Vec<String>,
     persistent_denylist: Vec<String>,
@@ -58,6 +60,7 @@ impl Default for ToolApprovalPolicy {
         Self {
             yolo_mode: false,
             auto_approve_reads: false,
+            skills_auto_approve: false,
             mcp_approval_mode: McpApprovalMode::PerTool,
             persistent_allowlist: Vec::new(),
             persistent_denylist: Vec::new(),
@@ -71,6 +74,7 @@ impl From<PersistedToolApprovalPolicy> for ToolApprovalPolicy {
         Self {
             yolo_mode: value.yolo_mode,
             auto_approve_reads: value.auto_approve_reads,
+            skills_auto_approve: value.skills_auto_approve,
             mcp_approval_mode: value.mcp_approval_mode,
             persistent_allowlist: value.persistent_allowlist,
             persistent_denylist: value.persistent_denylist,
@@ -84,6 +88,7 @@ impl From<&ToolApprovalPolicy> for PersistedToolApprovalPolicy {
         Self {
             yolo_mode: value.yolo_mode,
             auto_approve_reads: value.auto_approve_reads,
+            skills_auto_approve: value.skills_auto_approve,
             mcp_approval_mode: value.mcp_approval_mode,
             persistent_allowlist: value.persistent_allowlist.clone(),
             persistent_denylist: value.persistent_denylist.clone(),
@@ -108,6 +113,10 @@ impl ToolApprovalPolicy {
         }
 
         if self.auto_approve_reads && Self::is_read_tool_identifier(tool_identifier) {
+            return ToolApprovalDecision::Allow;
+        }
+
+        if self.skills_auto_approve && tool_identifier == "activate_skill" {
             return ToolApprovalDecision::Allow;
         }
 

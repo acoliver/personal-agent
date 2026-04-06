@@ -151,16 +151,22 @@ fn make_approval_test_chat_service(
     let policy = Arc::new(AsyncMutex::new(ToolApprovalPolicy {
         yolo_mode: false,
         auto_approve_reads: false,
+        skills_auto_approve: false,
         mcp_approval_mode: McpApprovalMode::PerTool,
         persistent_allowlist: Vec::new(),
         persistent_denylist: Vec::new(),
         session_allowlist: std::collections::HashSet::new(),
     }));
 
+    let skills_service = Arc::new(
+        crate::services::SkillsServiceImpl::new(app_settings_service.clone())
+            .expect("skills service should initialize"),
+    ) as Arc<dyn crate::services::SkillsService>;
     let service = ChatServiceImpl::new(
         conversation_service,
         profile_service,
         app_settings_service,
+        skills_service,
         view_tx,
         approval_gate.clone(),
         policy,
@@ -364,6 +370,7 @@ async fn resolve_tool_approval_proceed_always_persists_all_identifiers() {
         ViewCommand::ToolApprovalPolicyUpdated {
             yolo_mode: false,
             auto_approve_reads: false,
+            skills_auto_approve: false,
             mcp_approval_mode: McpApprovalMode::PerTool,
             persistent_allowlist: vec!["git status".to_string(), "pwd".to_string()],
             persistent_denylist: Vec::new(),
@@ -425,6 +432,7 @@ async fn send_message_clears_session_allowlist_when_yolo_turns_off_in_settings()
     let persisted_policy = crate::agent::ToolApprovalPolicy {
         yolo_mode: false,
         auto_approve_reads: false,
+        skills_auto_approve: false,
         mcp_approval_mode: McpApprovalMode::PerTool,
         persistent_allowlist: Vec::new(),
         persistent_denylist: Vec::new(),
@@ -442,16 +450,22 @@ async fn send_message_clears_session_allowlist_when_yolo_turns_off_in_settings()
     let in_memory_policy = crate::agent::ToolApprovalPolicy {
         yolo_mode: true,
         auto_approve_reads: false,
+        skills_auto_approve: false,
         mcp_approval_mode: McpApprovalMode::PerTool,
         persistent_allowlist: Vec::new(),
         persistent_denylist: Vec::new(),
         session_allowlist,
     };
 
+    let skills_service = Arc::new(
+        crate::services::SkillsServiceImpl::new(app_settings.clone())
+            .expect("skills service should initialize"),
+    ) as Arc<dyn crate::services::SkillsService>;
     let chat_service = ChatServiceImpl::new(
         conversation_service,
         profile_service,
         app_settings,
+        skills_service,
         view_tx,
         approval_gate,
         Arc::new(AsyncMutex::new(in_memory_policy)),

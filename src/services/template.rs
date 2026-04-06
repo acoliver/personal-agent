@@ -14,6 +14,8 @@
 use chrono::DateTime;
 use chrono::Utc;
 
+use crate::models::Skill;
+
 /// Context for template expansion, sourced from immutable conversation data
 /// to ensure determinism for KV cache compatibility.
 pub struct TemplateContext<'a> {
@@ -79,6 +81,39 @@ pub fn expand_system_prompt(template: &str, ctx: &TemplateContext<'_>) -> String
     result = result.replace("{{os}}", std::env::consts::OS);
 
     result
+}
+
+#[must_use]
+pub fn build_skills_prompt_block(skills: &[Skill]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = vec![
+        "You can activate any of these skills using the activate_skill tool when relevant:"
+            .to_string(),
+        "<available_skills>".to_string(),
+    ];
+
+    for skill in skills {
+        lines.push(format!(
+            "  <skill name=\"{}\" description=\"{}\" />",
+            xml_escape(&skill.name),
+            xml_escape(&skill.description)
+        ));
+    }
+
+    lines.push("</available_skills>".to_string());
+    lines.join("\n")
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 #[cfg(test)]

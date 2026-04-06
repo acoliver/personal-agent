@@ -92,17 +92,27 @@ impl SettingsView {
             ViewCommand::ToolApprovalPolicyUpdated {
                 yolo_mode,
                 auto_approve_reads,
+                skills_auto_approve,
                 mcp_approval_mode,
                 persistent_allowlist,
                 persistent_denylist,
             } => {
-                self.handle_tool_approval_policy_updated(
-                    *yolo_mode,
-                    *auto_approve_reads,
-                    *mcp_approval_mode,
-                    persistent_allowlist.clone(),
-                    persistent_denylist.clone(),
-                );
+                self.state.yolo_mode = *yolo_mode;
+                self.state.auto_approve_reads = *auto_approve_reads;
+                self.state.skills_auto_approve = *skills_auto_approve;
+                self.state.mcp_approval_mode = *mcp_approval_mode;
+                self.state
+                    .persistent_allowlist
+                    .clone_from(persistent_allowlist);
+                self.state
+                    .persistent_denylist
+                    .clone_from(persistent_denylist);
+                self.state.allowlist_input.clear();
+                self.state.denylist_input.clear();
+                true
+            }
+            ViewCommand::SkillsLoaded { skills } => {
+                self.state.skills = skills.iter().cloned().map(Into::into).collect();
                 true
             }
             ViewCommand::YoloModeChanged { active } => {
@@ -199,23 +209,6 @@ impl SettingsView {
         if self.state.selected_mcp_id == Some(id) {
             self.state.selected_mcp_id = self.state.mcps.first().map(|m| m.id);
         }
-    }
-
-    fn handle_tool_approval_policy_updated(
-        &mut self,
-        yolo_mode: bool,
-        auto_approve_reads: bool,
-        mcp_approval_mode: crate::agent::McpApprovalMode,
-        persistent_allowlist: Vec<String>,
-        persistent_denylist: Vec<String>,
-    ) {
-        self.state.yolo_mode = yolo_mode;
-        self.state.auto_approve_reads = auto_approve_reads;
-        self.state.mcp_approval_mode = mcp_approval_mode;
-        self.state.persistent_allowlist = persistent_allowlist;
-        self.state.persistent_denylist = persistent_denylist;
-        self.state.allowlist_input.clear();
-        self.state.denylist_input.clear();
     }
 
     fn handle_mcp_status_changed(

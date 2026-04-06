@@ -218,15 +218,30 @@ pub struct McpToolContext {
     pub approval_gate: Arc<ApprovalGate>,
     /// Policy for evaluating tool approval requirements
     pub policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
+    /// Service for discovering and activating skills.
+    pub skills_service: Arc<dyn crate::services::SkillsService>,
 }
 
 impl Default for McpToolContext {
     fn default() -> Self {
         let (view_tx, _) = tokio::sync::mpsc::channel(1);
+        let settings_path = std::env::temp_dir().join(format!(
+            "mcp-tool-context-default-settings-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let app_settings = Arc::new(
+            crate::services::AppSettingsServiceImpl::new(settings_path)
+                .expect("default McpToolContext app settings should initialize"),
+        ) as Arc<dyn crate::services::AppSettingsService>;
+        let skills_service = Arc::new(
+            crate::services::SkillsServiceImpl::new(app_settings)
+                .expect("default McpToolContext skills service should initialize"),
+        ) as Arc<dyn crate::services::SkillsService>;
         Self {
             view_tx,
             approval_gate: Arc::new(ApprovalGate::new()),
             policy: Arc::new(AsyncMutex::new(ToolApprovalPolicy::default())),
+            skills_service,
         }
     }
 }
@@ -250,6 +265,13 @@ fn register_native_tools(
     // Register WriteFile tool
     let write_file_def = crate::agent::tools::get_write_file_tool_definition();
     builder = builder.tool_with_executor(write_file_def, crate::agent::tools::WriteFileExecutor);
+
+    // Register activate_skill tool
+    let activate_skill_def = crate::agent::tools::get_activate_skill_tool_definition();
+    builder = builder.tool_with_executor(
+        activate_skill_def,
+        crate::agent::tools::ActivateSkillExecutor,
+    );
 
     // Register EditFile tool
     let edit_file_def = crate::agent::tools::get_edit_file_tool_definition();

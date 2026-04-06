@@ -13,11 +13,11 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use super::view_command::{ProfileSummary, ThemeSummary};
+use super::view_command::{ProfileSummary, SkillSummary, ThemeSummary};
 use super::{Presenter, PresenterError, ViewCommand};
 
 use crate::events::{types::UserEvent, AppEvent, EventBus};
-use crate::services::{AppSettingsService, ProfileService};
+use crate::services::{AppSettingsService, ProfileService, SkillsService};
 use crate::ui_gpui::theme::{
     active_mono_font_family, active_mono_ligatures, available_theme_options, is_valid_theme_slug,
     set_active_font_size, set_active_mono_font_family, set_active_mono_ligatures,
@@ -41,6 +41,9 @@ pub struct SettingsPresenter {
     /// Reference to app settings service
     app_settings_service: Arc<dyn AppSettingsService>,
 
+    /// Reference to skills service
+    skills_service: Arc<dyn SkillsService>,
+
     /// View command sender
     view_tx: broadcast::Sender<ViewCommand>,
 
@@ -59,6 +62,7 @@ impl SettingsPresenter {
     pub fn new(
         profile_service: Arc<dyn ProfileService>,
         app_settings_service: Arc<dyn AppSettingsService>,
+        skills_service: Arc<dyn SkillsService>,
         event_bus: &broadcast::Sender<AppEvent>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
@@ -67,6 +71,7 @@ impl SettingsPresenter {
             rx,
             profile_service,
             app_settings_service,
+            skills_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
@@ -93,6 +98,7 @@ impl SettingsPresenter {
     pub fn new_with_event_bus(
         profile_service: Arc<dyn ProfileService>,
         app_settings_service: Arc<dyn AppSettingsService>,
+        skills_service: Arc<dyn SkillsService>,
         event_bus: &Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
     ) -> Self {
@@ -101,6 +107,7 @@ impl SettingsPresenter {
             rx,
             profile_service,
             app_settings_service,
+            skills_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
@@ -133,11 +140,13 @@ impl SettingsPresenter {
         Self::emit_theme_snapshot(&self.app_settings_service, &self.view_tx, None).await;
         Self::emit_font_settings_snapshot(&self.app_settings_service, &self.view_tx).await;
         Self::emit_tool_approval_policy_snapshot(&self.app_settings_service, &self.view_tx).await;
+        Self::emit_skills_snapshot(&self.skills_service, &self.view_tx).await;
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
         let profile_service = self.profile_service.clone();
         let app_settings_service = self.app_settings_service.clone();
+        let skills_service = self.skills_service.clone();
         let view_tx = self.view_tx.clone();
         let config_path = self.config_path_override.clone();
 
@@ -148,6 +157,7 @@ impl SettingsPresenter {
                         Self::handle_event(
                             &profile_service,
                             &app_settings_service,
+                            &skills_service,
                             &view_tx,
                             event,
                             config_path.as_deref(),
@@ -199,6 +209,7 @@ impl SettingsPresenter {
     async fn handle_event(
         profile_service: &Arc<dyn ProfileService>,
         app_settings_service: &Arc<dyn AppSettingsService>,
+        skills_service: &Arc<dyn SkillsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
         config_path: Option<&std::path::Path>,
@@ -208,6 +219,7 @@ impl SettingsPresenter {
                 Self::handle_user_event(
                     profile_service,
                     app_settings_service,
+                    skills_service,
                     view_tx,
                     user_evt,
                     config_path,
@@ -240,89 +252,221 @@ impl SettingsPresenter {
     async fn handle_user_event(
         profile_service: &Arc<dyn ProfileService>,
         app_settings_service: &Arc<dyn AppSettingsService>,
+        skills_service: &Arc<dyn SkillsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
         config_path: Option<&std::path::Path>,
     ) {
+        if Self::handle_profile_user_event(profile_service, app_settings_service, view_tx, &event)
+            .await
+        {
+            return;
+        }
+
+        if Self::handle_refresh_user_event(
+            profile_service,
+            app_settings_service,
+            skills_service,
+            view_tx,
+            &event,
+        )
+        .await
+        {
+            return;
+        }
+
+        if Self::handle_tool_approval_user_event(app_settings_service, view_tx, &event).await {
+            return;
+        }
+
+        if Self::handle_skills_user_event(skills_service, view_tx, &event).await {
+            return;
+        }
+
+        if Self::handle_mcp_user_event(view_tx, config_path, &event).await {
+            return;
+        }
+
+        Self::handle_appearance_user_event(app_settings_service, view_tx, &event).await;
+    }
+
+    async fn handle_profile_user_event(
+        profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        event: &UserEvent,
+    ) -> bool {
         match event {
             UserEvent::SelectProfile { id } | UserEvent::SelectChatProfile { id } => {
-                Self::on_select_profile(profile_service, app_settings_service, view_tx, id).await;
+                Self::on_select_profile(profile_service, app_settings_service, view_tx, *id).await;
+                true
             }
             UserEvent::DeleteProfile { id } | UserEvent::ConfirmDeleteProfile { id } => {
-                Self::on_delete_profile(profile_service, app_settings_service, view_tx, id).await;
+                Self::on_delete_profile(profile_service, app_settings_service, view_tx, *id).await;
+                true
             }
             UserEvent::EditProfile { id } => {
-                Self::on_edit_profile(profile_service, view_tx, id).await;
+                Self::on_edit_profile(profile_service, view_tx, *id).await;
+                true
             }
+            _ => false,
+        }
+    }
+
+    async fn handle_refresh_user_event(
+        profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        skills_service: &Arc<dyn SkillsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        event: &UserEvent,
+    ) -> bool {
+        match event {
             UserEvent::RefreshProfiles => {
                 Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
                 Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
                 Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
                 Self::emit_tool_approval_policy_snapshot(app_settings_service, view_tx).await;
+                Self::emit_skills_snapshot(skills_service, view_tx).await;
+                true
             }
             UserEvent::RefreshToolApprovalPolicy => {
                 Self::emit_tool_approval_policy_snapshot(app_settings_service, view_tx).await;
+                true
             }
+            UserEvent::RefreshSkills => {
+                Self::emit_skills_snapshot(skills_service, view_tx).await;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    async fn handle_tool_approval_user_event(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        event: &UserEvent,
+    ) -> bool {
+        match event {
             UserEvent::SetToolApprovalYoloMode { enabled } => {
-                Self::on_set_tool_approval_yolo_mode(app_settings_service, view_tx, enabled).await;
+                Self::on_set_tool_approval_yolo_mode(app_settings_service, view_tx, *enabled).await;
+                true
             }
             UserEvent::SetToolApprovalAutoApproveReads { enabled } => {
                 Self::on_set_tool_approval_auto_approve_reads(
                     app_settings_service,
                     view_tx,
-                    enabled,
+                    *enabled,
                 )
                 .await;
+                true
+            }
+            UserEvent::SetToolApprovalSkillsAutoApprove { enabled } => {
+                Self::on_set_tool_approval_skills_auto_approve(
+                    app_settings_service,
+                    view_tx,
+                    *enabled,
+                )
+                .await;
+                true
             }
             UserEvent::SetToolApprovalMcpApprovalMode { mode } => {
-                Self::on_set_tool_approval_mcp_mode(app_settings_service, view_tx, mode).await;
+                Self::on_set_tool_approval_mcp_mode(app_settings_service, view_tx, *mode).await;
+                true
             }
             UserEvent::AddToolApprovalAllowlistPrefix { prefix } => {
-                Self::on_add_tool_approval_allowlist_prefix(app_settings_service, view_tx, prefix)
-                    .await;
+                Self::on_add_tool_approval_allowlist_prefix(
+                    app_settings_service,
+                    view_tx,
+                    prefix.clone(),
+                )
+                .await;
+                true
             }
             UserEvent::RemoveToolApprovalAllowlistPrefix { prefix } => {
                 Self::on_remove_tool_approval_allowlist_prefix(
                     app_settings_service,
                     view_tx,
-                    prefix,
+                    prefix.clone(),
                 )
                 .await;
+                true
             }
             UserEvent::AddToolApprovalDenylistPrefix { prefix } => {
-                Self::on_add_tool_approval_denylist_prefix(app_settings_service, view_tx, prefix)
-                    .await;
+                Self::on_add_tool_approval_denylist_prefix(
+                    app_settings_service,
+                    view_tx,
+                    prefix.clone(),
+                )
+                .await;
+                true
             }
             UserEvent::RemoveToolApprovalDenylistPrefix { prefix } => {
                 Self::on_remove_tool_approval_denylist_prefix(
                     app_settings_service,
                     view_tx,
-                    prefix,
+                    prefix.clone(),
                 )
                 .await;
+                true
             }
+            _ => false,
+        }
+    }
+
+    async fn handle_skills_user_event(
+        skills_service: &Arc<dyn SkillsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        event: &UserEvent,
+    ) -> bool {
+        match event {
+            UserEvent::SetSkillEnabled { name, enabled } => {
+                Self::on_set_skill_enabled(skills_service, view_tx, name.clone(), *enabled).await;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    async fn handle_mcp_user_event(
+        view_tx: &broadcast::Sender<ViewCommand>,
+        config_path: Option<&std::path::Path>,
+        event: &UserEvent,
+    ) -> bool {
+        match event {
             UserEvent::ToggleMcp { id, enabled } => {
-                Self::on_toggle_mcp(view_tx, id, enabled, config_path).await;
+                Self::on_toggle_mcp(view_tx, *id, *enabled, config_path).await;
+                true
             }
             UserEvent::DeleteMcp { id } | UserEvent::ConfirmDeleteMcp { id } => {
-                Self::on_delete_mcp(view_tx, id, config_path).await;
+                Self::on_delete_mcp(view_tx, *id, config_path).await;
+                true
             }
+            _ => false,
+        }
+    }
+
+    async fn handle_appearance_user_event(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        event: &UserEvent,
+    ) {
+        match event {
             UserEvent::SelectTheme { slug } => {
-                Self::on_select_theme(app_settings_service, view_tx, slug).await;
+                Self::on_select_theme(app_settings_service, view_tx, slug.clone()).await;
             }
             UserEvent::SetFontSize { size } => {
-                Self::on_set_font_size(app_settings_service, view_tx, size).await;
+                Self::on_set_font_size(app_settings_service, view_tx, *size).await;
             }
             UserEvent::SetUiFontFamily { name } => {
-                Self::on_set_ui_font_family(app_settings_service, view_tx, name).await;
+                Self::on_set_ui_font_family(app_settings_service, view_tx, name.clone()).await;
             }
             UserEvent::SetMonoFontFamily { name } => {
-                Self::on_set_mono_font_family(app_settings_service, view_tx, name).await;
+                Self::on_set_mono_font_family(app_settings_service, view_tx, name.clone()).await;
             }
             UserEvent::SetMonoLigatures { enabled } => {
-                Self::on_set_mono_ligatures(app_settings_service, view_tx, enabled).await;
+                Self::on_set_mono_ligatures(app_settings_service, view_tx, *enabled).await;
             }
-            _ => {} // Ignore other user events
+            _ => {}
         }
     }
 
@@ -582,6 +726,54 @@ impl SettingsPresenter {
             mono_family,
             ligatures,
         });
+    }
+
+    async fn emit_skills_snapshot(
+        skills_service: &Arc<dyn SkillsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
+        let skills = match skills_service.list_skills().await {
+            Ok(skills) => skills,
+            Err(error) => {
+                tracing::warn!("Failed to list skills for settings snapshot: {error}");
+                return;
+            }
+        };
+
+        let summaries = skills
+            .into_iter()
+            .map(|skill| SkillSummary {
+                name: skill.name,
+                description: skill.description,
+                source: skill.source,
+                enabled: skill.enabled,
+            })
+            .collect::<Vec<_>>();
+
+        let _ = view_tx.send(ViewCommand::SkillsLoaded { skills: summaries });
+    }
+
+    async fn on_set_skill_enabled(
+        skills_service: &Arc<dyn SkillsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        name: String,
+        enabled: bool,
+    ) {
+        if let Err(error) = skills_service.set_skill_enabled(&name, enabled).await {
+            tracing::warn!(
+                "Failed to update skill enabled state for {}: {}",
+                name,
+                error
+            );
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "Skills".to_string(),
+                message: format!("Failed to update skill '{name}': {error}"),
+                severity: super::view_command::ErrorSeverity::Warning,
+            });
+            return;
+        }
+
+        Self::emit_skills_snapshot(skills_service, view_tx).await;
     }
 }
 // Implement Presenter trait

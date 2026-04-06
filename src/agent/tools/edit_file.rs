@@ -326,6 +326,7 @@ mod tests {
                 view_tx,
                 approval_gate,
                 policy,
+                ..Default::default()
             },
             "test-model",
         )

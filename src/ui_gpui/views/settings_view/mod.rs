@@ -6,6 +6,7 @@
 mod command;
 mod render;
 mod render_appearance;
+mod render_skills;
 mod render_tool_approval;
 
 use gpui::{Bounds, Pixels};
@@ -17,7 +18,7 @@ use uuid::Uuid;
 
 use crate::agent::McpApprovalMode;
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::{ProfileSummary, ThemeSummary};
+use crate::presentation::view_command::{ProfileSummary, SkillSummary, ThemeSummary};
 use crate::ui_gpui::bridge::GpuiBridge;
 
 /// Represents a profile in the settings list
@@ -62,6 +63,25 @@ impl ProfileItem {
             self.name.clone()
         } else {
             format!("{} ({}:{})", self.name, self.provider, self.model)
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillItem {
+    pub name: String,
+    pub description: String,
+    pub source: crate::models::SkillSource,
+    pub enabled: bool,
+}
+
+impl From<SkillSummary> for SkillItem {
+    fn from(value: SkillSummary) -> Self {
+        Self {
+            name: value.name,
+            description: value.description,
+            source: value.source,
+            enabled: value.enabled,
         }
     }
 }
@@ -178,6 +198,7 @@ pub(super) enum ActiveField {
 pub struct SettingsState {
     pub profiles: Vec<ProfileItem>,
     pub mcps: Vec<McpItem>,
+    pub skills: Vec<SkillItem>,
     pub selected_profile_id: Option<Uuid>,
     pub selected_mcp_id: Option<Uuid>,
     /// Available themes for the dropdown.
@@ -188,6 +209,7 @@ pub struct SettingsState {
     pub theme_dropdown_open: bool,
     pub yolo_mode: bool,
     pub auto_approve_reads: bool,
+    pub skills_auto_approve: bool,
     pub mcp_approval_mode: McpApprovalMode,
     pub persistent_allowlist: Vec<String>,
     pub persistent_denylist: Vec<String>,
@@ -217,6 +239,7 @@ impl Default for SettingsState {
         Self {
             profiles: Vec::new(),
             mcps: Vec::new(),
+            skills: Vec::new(),
             selected_profile_id: None,
             selected_mcp_id: None,
             available_themes: Vec::new(),
@@ -225,6 +248,7 @@ impl Default for SettingsState {
             theme_dropdown_open: false,
             yolo_mode: false,
             auto_approve_reads: false,
+            skills_auto_approve: false,
             mcp_approval_mode: McpApprovalMode::PerTool,
             persistent_allowlist: Vec::new(),
             persistent_denylist: Vec::new(),
@@ -348,7 +372,14 @@ impl SettingsView {
         }
     }
 
-    /// Set MCPs from presenter
+    fn emit_set_skill_enabled(&self, name: String, enabled: bool) {
+        self.emit(&UserEvent::SetSkillEnabled { name, enabled });
+    }
+
+    fn emit_set_skills_auto_approve(&self, enabled: bool) {
+        self.emit(&UserEvent::SetToolApprovalSkillsAutoApprove { enabled });
+    }
+
     pub fn set_mcps(&mut self, mcps: Vec<McpItem>) {
         self.state.mcps = mcps;
 

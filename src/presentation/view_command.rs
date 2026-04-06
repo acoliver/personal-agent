@@ -188,6 +188,9 @@ pub enum ViewCommand {
         selected_profile_id: Option<Uuid>,
     },
 
+    /// Skills list updated for settings display.
+    SkillsLoaded { skills: Vec<SkillSummary> },
+
     /// Connection test started
     ProfileTestStarted { id: Uuid },
 
@@ -289,6 +292,7 @@ pub enum ViewCommand {
     ToolApprovalPolicyUpdated {
         yolo_mode: bool,
         auto_approve_reads: bool,
+        skills_auto_approve: bool,
         mcp_approval_mode: McpApprovalMode,
         persistent_allowlist: Vec<String>,
         persistent_denylist: Vec<String>,
@@ -373,6 +377,15 @@ pub struct ProfileSummary {
     pub provider_id: String,
     pub model_id: String,
     pub is_default: bool,
+}
+
+/// Skill summary for settings display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillSummary {
+    pub name: String,
+    pub description: String,
+    pub source: crate::models::SkillSource,
+    pub enabled: bool,
 }
 
 /// Theme summary for the settings theme dropdown.

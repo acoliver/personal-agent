@@ -36,7 +36,7 @@ use personal_agent::services::{
     AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl, ConversationService,
     McpRegistryService, McpRegistryServiceImpl, McpService, McpServiceImpl, ModelsRegistryService,
     ModelsRegistryServiceImpl, ProfileService, ProfileServiceImpl, SecretsService,
-    SecretsServiceImpl, SqliteConversationService,
+    SecretsServiceImpl, SkillsService, SkillsServiceImpl, SqliteConversationService,
 };
 use personal_agent::ui_gpui::app_store::{
     BeginSelectionMode, BeginSelectionResult, StartupInputs, StartupMode,
@@ -504,6 +504,7 @@ struct Services {
     app_settings: Arc<dyn AppSettingsService>,
     conversation: Arc<dyn ConversationService>,
     profile: Arc<dyn ProfileService>,
+    skills: Arc<dyn SkillsService>,
     mcp: Arc<dyn McpService>,
     models_registry: Arc<dyn ModelsRegistryService>,
     mcp_registry: Arc<dyn McpRegistryService>,
@@ -535,6 +536,13 @@ async fn create_services(
         .await
         .expect("Failed to initialize ProfileService");
     let profile: Arc<dyn ProfileService> = Arc::new(profile_impl);
+    let skills_impl =
+        SkillsServiceImpl::new(app_settings.clone()).expect("Failed to create SkillsService");
+    skills_impl
+        .discover_skills()
+        .await
+        .expect("Failed to discover startup skills");
+    let skills: Arc<dyn SkillsService> = Arc::new(skills_impl);
     let mcp: Arc<dyn McpService> = Arc::new(
         McpServiceImpl::new(runtime_paths.mcp_configs_dir.clone())
             .expect("Failed to create McpService"),
@@ -551,6 +559,7 @@ async fn create_services(
             conversation.clone(),
             profile.clone(),
             app_settings.clone(),
+            skills.clone(),
             view_tx,
             approval_gate,
         )
@@ -562,6 +571,7 @@ async fn create_services(
         app_settings,
         conversation,
         profile,
+        skills,
         mcp,
         models_registry,
         mcp_registry,
@@ -694,6 +704,7 @@ async fn start_all_presenters(
     let mut settings = SettingsPresenter::new_with_event_bus(
         services.profile.clone(),
         services.app_settings.clone(),
+        services.skills.clone(),
         event_bus,
         settings_view_tx,
     );

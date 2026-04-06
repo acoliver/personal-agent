@@ -865,6 +865,7 @@ async fn route_tool_approval_policy_updated_increments_counter(cx: &mut TestAppC
         ViewCommand::ToolApprovalPolicyUpdated {
             yolo_mode: true,
             auto_approve_reads: false,
+            skills_auto_approve: false,
             mcp_approval_mode: crate::agent::McpApprovalMode::PerTool,
             persistent_allowlist: vec!["git".to_string()],
             persistent_denylist: vec!["rm".to_string()],
@@ -897,6 +898,7 @@ async fn handle_command_forwards_tool_approval_policy_to_settings_view(cx: &mut 
             ViewCommand::ToolApprovalPolicyUpdated {
                 yolo_mode: true,
                 auto_approve_reads: true,
+                skills_auto_approve: false,
                 mcp_approval_mode: crate::agent::McpApprovalMode::PerServer,
                 persistent_allowlist: vec!["git".to_string(), "ls".to_string()],
                 persistent_denylist: vec!["rm".to_string()],

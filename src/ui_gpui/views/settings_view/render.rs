@@ -726,7 +726,7 @@ impl SettingsView {
             .child(self.render_profiles_section(cx))
     }
 
-    /// Security panel: reuses the tool approval section.
+    /// Security panel: reuses the tool approval section and skills section.
     fn render_security_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("security-panel-scroll")
@@ -734,7 +734,9 @@ impl SettingsView {
             .flex_col()
             .flex_1()
             .overflow_y_scroll()
+            .gap(px(16.0))
             .child(self.render_tool_approval_section(cx))
+            .child(self.render_skills_section(cx))
     }
 
     /// MCP Tools panel: full-height MCP server list.

@@ -13,8 +13,8 @@ use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent
 use crate::mcp::McpService;
 use crate::models::{Message, MessageRole};
 use crate::presentation::view_command::ViewCommand;
-use crate::services::template::{expand_system_prompt, TemplateContext};
-use crate::services::ConversationService;
+use crate::services::template::{build_skills_prompt_block, expand_system_prompt, TemplateContext};
+use crate::services::{ConversationService, SkillsService};
 use futures::{stream, Stream};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +30,7 @@ pub struct ChatServiceImpl {
     conversation_service: Arc<dyn ConversationService>,
     profile_service: Arc<dyn super::ProfileService>,
     app_settings_service: Arc<dyn super::AppSettingsService>,
+    skills_service: Arc<dyn SkillsService>,
     is_streaming: Arc<AtomicBool>,
     current_conversation_id: Arc<StdMutex<Option<Uuid>>>,
     stream_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
@@ -44,10 +45,12 @@ pub struct ChatServiceImpl {
 impl ChatServiceImpl {
     /// Create a new `ChatServiceImpl`
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         conversation_service: Arc<dyn ConversationService>,
         profile_service: Arc<dyn super::ProfileService>,
         app_settings_service: Arc<dyn super::AppSettingsService>,
+        skills_service: Arc<dyn SkillsService>,
         view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
         approval_gate: Arc<ApprovalGate>,
         policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
@@ -56,6 +59,7 @@ impl ChatServiceImpl {
             conversation_service,
             profile_service,
             app_settings_service,
+            skills_service,
             is_streaming: Arc::new(AtomicBool::new(false)),
             current_conversation_id: Arc::new(StdMutex::new(None)),
             stream_task: Arc::new(StdMutex::new(None)),
@@ -70,6 +74,7 @@ impl ChatServiceImpl {
         conversation_service: Arc<dyn ConversationService>,
         profile_service: Arc<dyn super::ProfileService>,
         app_settings_service: Arc<dyn super::AppSettingsService>,
+        skills_service: Arc<dyn SkillsService>,
         view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
         approval_gate: Arc<ApprovalGate>,
     ) -> Self {
@@ -81,6 +86,7 @@ impl ChatServiceImpl {
             conversation_service,
             profile_service,
             app_settings_service,
+            skills_service,
             view_tx,
             approval_gate,
             Arc::new(AsyncMutex::new(policy)),
@@ -103,13 +109,20 @@ impl ChatServiceImpl {
             uuid::Uuid::new_v4()
         ));
 
+        let app_settings = Arc::new(
+            super::AppSettingsServiceImpl::new(settings_path)
+                .expect("failed to create test app settings service"),
+        ) as Arc<dyn super::AppSettingsService>;
+        let skills_service = Arc::new(
+            super::SkillsServiceImpl::new(app_settings.clone())
+                .expect("failed to create test skills service"),
+        ) as Arc<dyn SkillsService>;
+
         Self::new(
             conversation_service,
             profile_service,
-            Arc::new(
-                super::AppSettingsServiceImpl::new(settings_path)
-                    .expect("failed to create test app settings service"),
-            ) as Arc<dyn super::AppSettingsService>,
+            app_settings,
+            skills_service,
             view_tx,
             approval_gate,
             Arc::new(AsyncMutex::new(ToolApprovalPolicy::default())),
@@ -249,13 +262,22 @@ impl ChatServiceImpl {
         // Expand template variables in the system prompt
         let template_ctx =
             TemplateContext::new(conversation.created_at, &profile.name, &profile.model_id);
-        let system_prompt = expand_system_prompt(&raw_system_prompt, &template_ctx);
+        let mut system_prompt = expand_system_prompt(&raw_system_prompt, &template_ctx);
+        let enabled_skills = self.skills_service.get_enabled_skills().await?;
+        let skills_prompt_block = build_skills_prompt_block(&enabled_skills);
+        if !skills_prompt_block.is_empty() {
+            if !system_prompt.trim().is_empty() {
+                system_prompt.push_str("\n\n");
+            }
+            system_prompt.push_str(&skills_prompt_block);
+        }
 
         Ok(PreparedMessageContext {
             profile,
             client,
             messages,
             system_prompt,
+            skills_service: self.skills_service.clone(),
         })
     }
 
@@ -473,6 +495,7 @@ impl ChatServiceImpl {
                 .try_send(ViewCommand::ToolApprovalPolicyUpdated {
                     yolo_mode: policy.yolo_mode,
                     auto_approve_reads: policy.auto_approve_reads,
+                    skills_auto_approve: policy.skills_auto_approve,
                     mcp_approval_mode: policy.mcp_approval_mode,
                     persistent_allowlist: policy.persistent_allowlist,
                     persistent_denylist: policy.persistent_denylist,
@@ -491,6 +514,7 @@ struct PreparedMessageContext {
     client: LlmClient,
     messages: Vec<LlmMessage>,
     system_prompt: String,
+    skills_service: Arc<dyn SkillsService>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -511,6 +535,7 @@ async fn run_stream_task(
         client,
         messages,
         system_prompt,
+        skills_service,
     } = prepared;
     let mut response_text = String::new();
     let mut thinking_text = String::new();
@@ -540,6 +565,7 @@ async fn run_stream_task(
         view_tx: view_tx.clone(),
         approval_gate: approval_gate.clone(),
         policy: policy.clone(),
+        skills_service,
     };
 
     if let Err(e) = client

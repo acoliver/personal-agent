@@ -474,6 +474,7 @@ async fn tool_approval_policy_updated_applies_all_fields(cx: &mut TestAppContext
             ViewCommand::ToolApprovalPolicyUpdated {
                 yolo_mode: true,
                 auto_approve_reads: true,
+                skills_auto_approve: false,
                 mcp_approval_mode: crate::agent::McpApprovalMode::PerServer,
                 persistent_allowlist: vec!["git".to_string(), "ls".to_string()],
                 persistent_denylist: vec!["rm".to_string()],
@@ -509,6 +510,7 @@ async fn tool_approval_policy_updated_clears_input_buffers(cx: &mut TestAppConte
             ViewCommand::ToolApprovalPolicyUpdated {
                 yolo_mode: false,
                 auto_approve_reads: false,
+                skills_auto_approve: false,
                 mcp_approval_mode: crate::agent::McpApprovalMode::PerTool,
                 persistent_allowlist: vec![],
                 persistent_denylist: vec![],

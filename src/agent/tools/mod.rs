@@ -26,12 +26,14 @@
 //! 3. Define a function that returns `ToolDefinition` for your tool
 //! 4. Register the tool in `client_agent.rs` in the `register_native_tools` function
 
+pub mod activate_skill;
 pub mod edit_file;
 pub mod read_file;
 pub mod search;
 pub mod shell_exec;
 pub mod write_file;
 
+pub use activate_skill::{get_activate_skill_tool_definition, ActivateSkillExecutor};
 pub use edit_file::{get_edit_file_tool_definition, EditFileExecutor};
 pub use read_file::{get_read_file_tool_definition, ReadFileExecutor};
 pub use search::{get_search_tool_definition, SearchExecutor};
