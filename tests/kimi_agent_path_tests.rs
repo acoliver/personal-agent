@@ -103,7 +103,7 @@ async fn agent_path_sends_user_agent_header_to_kimi() {
                 StreamEvent::TextDelta(text) => {
                     collected_text.push_str(&text);
                 }
-                StreamEvent::Complete => {
+                StreamEvent::Complete { .. } => {
                     saw_complete = true;
                 }
                 StreamEvent::Error(e) => {
@@ -311,7 +311,7 @@ data: [DONE]
             McpToolContext::default(),
             |event| match event {
                 StreamEvent::TextDelta(text) => collected_text.push_str(&text),
-                StreamEvent::Complete => saw_complete = true,
+                StreamEvent::Complete { .. } => saw_complete = true,
                 _ => {}
             },
         )
@@ -384,7 +384,7 @@ async fn agent_path_kimi_live_e2e() {
                 StreamEvent::ThinkingDelta(text) => {
                     collected_thinking.push_str(&text);
                 }
-                StreamEvent::Complete => {
+                StreamEvent::Complete { .. } => {
                     println!("\n[COMPLETE]");
                     saw_complete = true;
                 }

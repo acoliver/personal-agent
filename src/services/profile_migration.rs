@@ -75,6 +75,7 @@ where
             .and_then(Value::as_str)
             .unwrap_or(crate::models::profile::DEFAULT_SYSTEM_PROMPT)
             .to_string(),
+        context_window_size: 128_000,
     }
 }
 
@@ -116,6 +117,7 @@ where
         ),
         parameters: parse_parameters_from_legacy(obj.get("modelParams"), ephemeral),
         system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
+        context_window_size: 128_000,
     }
 }
 

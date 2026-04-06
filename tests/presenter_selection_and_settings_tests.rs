@@ -778,6 +778,7 @@ async fn edit_profile_emits_profile_editor_load_with_existing_data() {
         },
         parameters: ModelParameters::default(),
         system_prompt: "system".to_string(),
+        context_window_size: 128_000,
     };
 
     let profile_service =
@@ -844,6 +845,7 @@ async fn delete_profile_emits_profile_deleted_command() {
         },
         parameters: ModelParameters::default(),
         system_prompt: "system".to_string(),
+        context_window_size: 128_000,
     };
 
     let profile_service =

@@ -4,6 +4,9 @@
 /// @requirement REM-001, REM-002, REM-003, REM-004, REM-005, REM-006, REM-007
 use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
 use crate::agent::tool_approval_policy::ToolApprovalPolicy;
+use crate::compression::pipeline::{CompressionPipeline, CompressionResult};
+use crate::compression::thinking_stripper::strip_thinking_from_previous_turns;
+use crate::config::CompressionConfig;
 use crate::events::types::{ChatEvent, ToolApprovalResponseAction};
 use crate::events::{emit, AppEvent};
 use crate::llm::client_agent::ApprovalGate;
@@ -11,7 +14,7 @@ use crate::llm::error::debug_error_message;
 use crate::llm::AgentClientExt;
 use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::mcp::McpService;
-use crate::models::{Message, MessageRole};
+use crate::models::{ContextState, Message, MessageRole};
 use crate::presentation::view_command::ViewCommand;
 use crate::services::template::{expand_system_prompt, TemplateContext};
 use crate::services::ConversationService;
@@ -24,6 +27,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 const STREAM_ERROR_MESSAGE: &str = "An error interrupted the chat stream.";
+const COMPRESSION_SETTINGS_KEY: &str = "compression";
 
 /// Minimal implementation of `ChatService`
 pub struct ChatServiceImpl {
@@ -159,6 +163,31 @@ impl ChatServiceImpl {
         Ok(())
     }
 
+    async fn load_compression_config(&self) -> CompressionConfig {
+        match self
+            .app_settings_service
+            .get_setting(COMPRESSION_SETTINGS_KEY)
+            .await
+        {
+            Ok(Some(raw_config)) => serde_json::from_str::<CompressionConfig>(&raw_config)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        error = %error,
+                        "Failed to parse persisted compression config; using defaults"
+                    );
+                    CompressionConfig::default()
+                }),
+            Ok(None) => CompressionConfig::default(),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to load persisted compression config; using defaults"
+                );
+                CompressionConfig::default()
+            }
+        }
+    }
+
     fn cancel_active_stream(&self) {
         self.is_streaming.store(false, Ordering::Release);
 
@@ -242,7 +271,14 @@ impl ChatServiceImpl {
 
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
-        let messages = Self::build_llm_messages(&conversation, &profile);
+        let mut messages = Self::build_llm_messages(&conversation, &profile);
+        strip_thinking_from_previous_turns(&mut messages);
+        let compression_config = self.load_compression_config().await;
+        let compression_result = CompressionPipeline::new().compress(
+            messages,
+            profile.context_window_size,
+            &compression_config,
+        );
         let raw_system_prompt =
             Self::system_prompt_for_conversation(&conversation, &profile).to_string();
 
@@ -254,8 +290,9 @@ impl ChatServiceImpl {
         Ok(PreparedMessageContext {
             profile,
             client,
-            messages,
+            messages: compression_result.messages.clone(),
             system_prompt,
+            compression_result,
         })
     }
 
@@ -491,6 +528,44 @@ struct PreparedMessageContext {
     client: LlmClient,
     messages: Vec<LlmMessage>,
     system_prompt: String,
+    compression_result: CompressionResult,
+}
+
+#[allow(clippy::missing_const_for_fn)]
+fn build_stream_context(
+    view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
+    approval_gate: Arc<ApprovalGate>,
+    policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
+) -> crate::llm::client_agent::McpToolContext {
+    crate::llm::client_agent::McpToolContext {
+        view_tx,
+        approval_gate,
+        policy,
+    }
+}
+#[allow(clippy::too_many_arguments)]
+async fn create_stream_agent(
+    client: &LlmClient,
+    mcp_tools: Vec<crate::llm::tools::Tool>,
+    system_prompt: &str,
+    conversation_id: Uuid,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    is_streaming: &Arc<AtomicBool>,
+    current_conversation_id: &Arc<StdMutex<Option<Uuid>>>,
+) -> Option<serdes_ai_agent::Agent<crate::llm::client_agent::McpToolContext>> {
+    match client.create_agent(mcp_tools, system_prompt).await {
+        Ok(agent) => Some(agent),
+        Err(e) => {
+            tracing::error!(
+                conversation_id = %conversation_id,
+                error = %e,
+                "Failed to create agent for chat stream"
+            );
+            emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
+            clear_streaming_state(is_streaming, current_conversation_id, conversation_id);
+            None
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -511,36 +586,30 @@ async fn run_stream_task(
         client,
         messages,
         system_prompt,
+        compression_result,
     } = prepared;
     let mut response_text = String::new();
     let mut thinking_text = String::new();
     let mut tool_calls: Vec<crate::llm::tools::ToolUse> = Vec::new();
     let mut tool_results: Vec<crate::llm::tools::ToolResult> = Vec::new();
+    let mut input_tokens = None;
+    let mut output_tokens = None;
 
-    let agent = match client.create_agent(mcp_tools, &system_prompt).await {
-        Ok(agent) => agent,
-        Err(e) => {
-            tracing::error!(
-                conversation_id = %conversation_id,
-                error = %e,
-                "Failed to create agent for chat stream"
-            );
-            emit_stream_error(
-                conversation_id,
-                STREAM_ERROR_MESSAGE.to_string(),
-                false,
-                &tx,
-            );
-            clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
-            return;
-        }
+    let Some(agent) = create_stream_agent(
+        &client,
+        mcp_tools,
+        &system_prompt,
+        conversation_id,
+        &tx,
+        &is_streaming,
+        &current_conversation_id,
+    )
+    .await
+    else {
+        return;
     };
 
-    let context = crate::llm::client_agent::McpToolContext {
-        view_tx: view_tx.clone(),
-        approval_gate: approval_gate.clone(),
-        policy: policy.clone(),
-    };
+    let context = build_stream_context(view_tx.clone(), approval_gate.clone(), policy.clone());
 
     if let Err(e) = client
         .run_agent_stream(&agent, &messages, context, |event| {
@@ -552,6 +621,8 @@ async fn run_stream_task(
                 &mut thinking_text,
                 &mut tool_calls,
                 &mut tool_results,
+                &mut input_tokens,
+                &mut output_tokens,
             );
         })
         .await
@@ -582,10 +653,19 @@ async fn run_stream_task(
     )
     .await;
 
+    persist_context_state(
+        &conversation_service,
+        conversation_id,
+        compression_result,
+        input_tokens,
+        output_tokens,
+    )
+    .await;
+
     let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
         conversation_id,
         message_id: Uuid::new_v4(),
-        total_tokens: None,
+        total_tokens: input_tokens.and_then(|input| output_tokens.map(|output| input + output)),
     }));
     clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
 }
@@ -599,6 +679,8 @@ fn handle_llm_stream_event(
     thinking_text: &mut String,
     tool_calls: &mut Vec<crate::llm::tools::ToolUse>,
     tool_results: &mut Vec<crate::llm::tools::ToolResult>,
+    input_tokens: &mut Option<u32>,
+    output_tokens: &mut Option<u32>,
 ) {
     match event {
         LlmStreamEvent::TextDelta(text) => {
@@ -648,8 +730,16 @@ fn handle_llm_stream_event(
             *tool_calls = completed_tool_calls;
             *tool_results = completed_tool_results;
         }
-        LlmStreamEvent::Complete => {
-            let _ = tx.send(ChatStreamEvent::Complete);
+        LlmStreamEvent::Complete {
+            input_tokens: completed_input_tokens,
+            output_tokens: completed_output_tokens,
+        } => {
+            *input_tokens = completed_input_tokens;
+            *output_tokens = completed_output_tokens;
+            let _ = tx.send(ChatStreamEvent::Complete {
+                input_tokens: completed_input_tokens,
+                output_tokens: completed_output_tokens,
+            });
         }
         LlmStreamEvent::Error(err) => {
             tracing::error!(
@@ -732,6 +822,56 @@ fn clear_streaming_state(
     }
 }
 
+async fn persist_context_state(
+    conversation_service: &Arc<dyn ConversationService>,
+    conversation_id: Uuid,
+    compression_result: CompressionResult,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+) {
+    let mut state = match conversation_service
+        .get_context_state(conversation_id)
+        .await
+    {
+        Ok(Some(existing_state)) => existing_state,
+        Ok(None) => ContextState::default(),
+        Err(error) => {
+            tracing::warn!(
+                conversation_id = %conversation_id,
+                error = %error,
+                "Failed to load existing compression context state; creating a new state"
+            );
+            ContextState::default()
+        }
+    };
+
+    state.compression_phase = Some(compression_result.phase);
+    state.masked_tool_seqs = compression_result.masked_tool_seqs;
+    state.summary_range = compression_result.summary_range;
+    state.compressed_at = Some(chrono::Utc::now());
+    state.preserved_facts = compression_result.preserved_facts;
+    state.last_input_tokens = input_tokens;
+    state.last_output_tokens = output_tokens;
+
+    tracing::debug!(
+        conversation_id = %conversation_id,
+        ?state.compression_phase,
+        estimated_tokens = compression_result.estimated_tokens,
+        "Persisting compression context state"
+    );
+
+    if let Err(error) = conversation_service
+        .update_context_state(conversation_id, &state)
+        .await
+    {
+        tracing::warn!(
+            conversation_id = %conversation_id,
+            error = %error,
+            "Failed to persist compression context state"
+        );
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 #[async_trait::async_trait]
 impl ChatService for ChatServiceImpl {
@@ -748,6 +888,7 @@ impl ChatService for ChatServiceImpl {
             .prepare_message_context(conversation_id, content)
             .await?;
         Self::emit_stream_started(conversation_id, prepared.profile.model_id.clone());
+
         let mcp_tools = self.load_mcp_tools().await;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ChatStreamEvent>();

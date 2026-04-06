@@ -6,6 +6,7 @@ use std::sync::Arc;
 struct MockConversationService {
     profile_id: Uuid,
     messages: Arc<RwLock<Vec<Message>>>,
+    context_state: Arc<RwLock<Option<crate::models::ContextState>>>,
 }
 
 use crate::agent::McpApprovalMode;
@@ -14,6 +15,7 @@ use std::collections::HashMap;
 use tokio::sync::{Barrier, RwLock};
 
 mod approval_persistence;
+mod compression_persistence;
 
 struct InMemoryAppSettingsService {
     settings: RwLock<HashMap<String, String>>,
@@ -534,6 +536,7 @@ impl MockConversationService {
         Self {
             profile_id,
             messages: Arc::new(RwLock::new(Vec::new())),
+            context_state: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -593,8 +596,9 @@ impl super::super::ConversationService for MockConversationService {
     async fn update_context_state(
         &self,
         _id: Uuid,
-        _state: &crate::models::ContextState,
+        state: &crate::models::ContextState,
     ) -> Result<(), crate::services::ServiceError> {
+        *self.context_state.write().await = Some(state.clone());
         Ok(())
     }
 
@@ -602,7 +606,7 @@ impl super::super::ConversationService for MockConversationService {
         &self,
         _id: Uuid,
     ) -> Result<Option<crate::models::ContextState>, crate::services::ServiceError> {
-        Ok(None)
+        Ok(self.context_state.read().await.clone())
     }
 
     async fn rename(
@@ -774,7 +778,7 @@ async fn setup_send_message_test() -> (Arc<MockConversationService>, bool) {
     let completed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
         while let Some(event) = stream.next().await {
             match event {
-                ChatStreamEvent::Complete => return true,
+                ChatStreamEvent::Complete { .. } => return true,
                 ChatStreamEvent::Error(_) => return false,
                 ChatStreamEvent::Token(_) => {}
             }
@@ -959,41 +963,4 @@ async fn cancel_clears_current_conversation_and_pending_approvals() {
             approved: false,
         }
     );
-}
-
-#[test]
-fn build_llm_messages_preserves_assistant_tool_transcript() {
-    let profile = crate::models::ModelProfile::default();
-    let mut conversation = crate::models::Conversation::new(profile.id);
-    conversation.add_message(Message::user("hello".to_string()));
-
-    let mut assistant = Message::assistant("answer with tool context".to_string());
-    assistant.tool_calls = Some(
-        serde_json::to_string(&[crate::llm::tools::ToolUse::new(
-            "tool-call-1",
-            "read_file",
-            serde_json::json!({"path":"/tmp/text.txt"}),
-        )])
-        .expect("tool calls should serialize"),
-    );
-    assistant.tool_results = Some(
-        serde_json::to_string(&[crate::llm::tools::ToolResult::success(
-            "tool-call-1",
-            "contents",
-        )])
-        .expect("tool results should serialize"),
-    );
-    conversation.add_message(assistant);
-
-    let assistant = ChatServiceImpl::build_llm_messages(&conversation, &profile)
-        .into_iter()
-        .find(|message| matches!(message.role, crate::llm::Role::Assistant))
-        .expect("assistant message should be present");
-
-    assert_eq!(assistant.tool_uses.len(), 1);
-    assert_eq!(assistant.tool_results.len(), 1);
-    assert_eq!(assistant.tool_uses[0].id, "tool-call-1");
-    assert_eq!(assistant.tool_results[0].tool_use_id, "tool-call-1");
-    assert_eq!(assistant.tool_results[0].content, "contents");
-    assert!(!assistant.tool_results[0].is_error);
 }

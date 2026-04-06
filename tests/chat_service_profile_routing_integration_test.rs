@@ -342,7 +342,7 @@ async fn send_message_uses_conversation_profile_and_sends_kimi_headers() {
                 got_error = Some(e.to_string());
                 break;
             }
-            Ok(Some(personal_agent::services::ChatStreamEvent::Complete) | None) => break,
+            Ok(Some(personal_agent::services::ChatStreamEvent::Complete { .. }) | None) => break,
             Err(_) => {
                 got_error = Some("stream timed out".to_string());
                 break;

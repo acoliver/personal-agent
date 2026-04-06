@@ -338,6 +338,7 @@ async fn sqlite_conversation_context_state_persistence() {
         strategy: Some("summarize".to_string()),
         summary: Some("A brief summary of the conversation".to_string()),
         visible_range: Some((5, 20)),
+        ..ContextState::default()
     };
     svc.update_context_state(conv.id, &state)
         .await
@@ -776,6 +777,7 @@ async fn sqlite_conversation_context_state_round_trip() {
         strategy: Some("windowed".to_string()),
         summary: Some("Summary text".to_string()),
         visible_range: Some((0, 10)),
+        ..ContextState::default()
     };
     svc.update_context_state(conv.id, &state).await.unwrap();
 
