@@ -43,8 +43,14 @@ impl TopDownTruncator {
             if remove_index >= messages.len() {
                 break;
             }
-            messages.remove(remove_index);
-            dropped += 1;
+
+            let remove_count = tool_exchange_prefix_len(&messages[remove_index..]);
+            if messages.len().saturating_sub(remove_count) < config.min_keep_messages {
+                break;
+            }
+
+            messages.drain(remove_index..remove_index + remove_count);
+            dropped += remove_count;
         }
 
         TruncationResult {
@@ -59,6 +65,20 @@ fn scaled_fraction_count(total: usize, fraction: f64) -> usize {
     let scaled = (fraction * 1_000.0).round().to_string();
     let scaled = scaled.parse::<usize>().unwrap_or(FRACTION_SCALE);
     total.saturating_mul(scaled) / FRACTION_SCALE
+}
+
+fn tool_exchange_prefix_len(messages: &[LlmMessage]) -> usize {
+    match messages {
+        [first, second, ..]
+            if matches!(first.role, Role::Assistant)
+                && first.has_tool_uses()
+                && matches!(second.role, Role::User)
+                && second.has_tool_results() =>
+        {
+            2
+        }
+        _ => 1,
+    }
 }
 
 #[cfg(test)]
@@ -83,5 +103,44 @@ mod tests {
 
         assert!(matches!(messages[0].role, Role::System));
         assert!(result.dropped_messages > 0);
+    }
+
+    #[test]
+    fn truncation_preserves_tool_exchange_boundaries() {
+        let config = CompressionConfig {
+            truncation_target: 0.01,
+            min_keep_messages: 2,
+            ..CompressionConfig::default()
+        };
+        let mut messages = vec![
+            LlmMessage::assistant("tool call").with_tool_uses(vec![
+                crate::llm::tools::ToolUse::new(
+                    "tool-1",
+                    "read_file",
+                    serde_json::json!({"path":"/tmp/file.txt"}),
+                ),
+            ]),
+            LlmMessage::user("tool result").with_tool_results(vec![
+                crate::llm::tools::ToolResult::success("tool-1", "result payload"),
+            ]),
+            LlmMessage::assistant("tail".repeat(200)),
+            LlmMessage::user("keep".repeat(200)),
+        ];
+
+        let result = TopDownTruncator::new().truncate(&mut messages, 0.5, 100, &config);
+
+        assert!(result.dropped_messages >= 2);
+        assert!(
+            messages
+                .first()
+                .is_some_and(|message| !message.has_tool_results()),
+            "truncation should not leave a tool result orphaned at the front of history"
+        );
+        assert!(
+            messages
+                .first()
+                .is_none_or(|message| !message.has_tool_uses()),
+            "truncation should not leave a tool call without its paired tool result"
+        );
     }
 }

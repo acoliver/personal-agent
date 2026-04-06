@@ -27,6 +27,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 const STREAM_ERROR_MESSAGE: &str = "An error interrupted the chat stream.";
+const COMPRESSION_SETTINGS_KEY: &str = "compression";
 
 /// Minimal implementation of `ChatService`
 pub struct ChatServiceImpl {
@@ -162,6 +163,31 @@ impl ChatServiceImpl {
         Ok(())
     }
 
+    async fn load_compression_config(&self) -> CompressionConfig {
+        match self
+            .app_settings_service
+            .get_setting(COMPRESSION_SETTINGS_KEY)
+            .await
+        {
+            Ok(Some(raw_config)) => serde_json::from_str::<CompressionConfig>(&raw_config)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        error = %error,
+                        "Failed to parse persisted compression config; using defaults"
+                    );
+                    CompressionConfig::default()
+                }),
+            Ok(None) => CompressionConfig::default(),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to load persisted compression config; using defaults"
+                );
+                CompressionConfig::default()
+            }
+        }
+    }
+
     fn cancel_active_stream(&self) {
         self.is_streaming.store(false, Ordering::Release);
 
@@ -247,7 +273,7 @@ impl ChatServiceImpl {
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
         let mut messages = Self::build_llm_messages(&conversation, &profile);
         strip_thinking_from_previous_turns(&mut messages);
-        let compression_config = CompressionConfig::default();
+        let compression_config = self.load_compression_config().await;
         let compression_result = CompressionPipeline::new().compress(
             messages,
             profile.context_window_size,
@@ -803,16 +829,29 @@ async fn persist_context_state(
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,
 ) {
-    let state = ContextState {
-        compression_phase: Some(compression_result.phase),
-        masked_tool_seqs: compression_result.masked_tool_seqs,
-        summary_range: compression_result.summary_range,
-        compressed_at: Some(chrono::Utc::now()),
-        preserved_facts: compression_result.preserved_facts,
-        last_input_tokens: input_tokens,
-        last_output_tokens: output_tokens,
-        ..ContextState::default()
+    let mut state = match conversation_service
+        .get_context_state(conversation_id)
+        .await
+    {
+        Ok(Some(existing_state)) => existing_state,
+        Ok(None) => ContextState::default(),
+        Err(error) => {
+            tracing::warn!(
+                conversation_id = %conversation_id,
+                error = %error,
+                "Failed to load existing compression context state; creating a new state"
+            );
+            ContextState::default()
+        }
     };
+
+    state.compression_phase = Some(compression_result.phase);
+    state.masked_tool_seqs = compression_result.masked_tool_seqs;
+    state.summary_range = compression_result.summary_range;
+    state.compressed_at = Some(chrono::Utc::now());
+    state.preserved_facts = compression_result.preserved_facts;
+    state.last_input_tokens = input_tokens;
+    state.last_output_tokens = output_tokens;
 
     tracing::debug!(
         conversation_id = %conversation_id,
