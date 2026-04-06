@@ -218,7 +218,27 @@ impl HistoryView {
             .pl(px(if is_popout { 72.0 } else { 12.0 }))
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_body()))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(Theme::text_primary())
+                    .child("History"),
+            )
+    }
+
+    fn render_bottom_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("history-bottom-bar")
+            .h(px(36.0))
+            .w_full()
+            .flex_shrink_0()
+            .bg(Theme::bg_darker())
+            .border_t_1()
+            .border_color(Theme::border())
+            .px(px(12.0))
+            .flex()
+            .items_center()
             .child(
                 div()
                     .id("btn-back")
@@ -241,13 +261,6 @@ impl HistoryView {
                                 .request_navigate(crate::presentation::view_command::ViewId::Chat);
                         }),
                     ),
-            )
-            .child(
-                div()
-                    .text_size(px(Theme::font_size_body()))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(Theme::text_primary())
-                    .child("History"),
             )
     }
 
@@ -406,6 +419,7 @@ impl gpui::Render for HistoryView {
                         ),
                     ),
             )
+            .child(Self::render_bottom_bar(cx))
     }
 }
 
