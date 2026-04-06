@@ -73,6 +73,7 @@ pub struct SkillItem {
     pub description: String,
     pub source: crate::models::SkillSource,
     pub enabled: bool,
+    pub path: String,
 }
 
 impl From<SkillSummary> for SkillItem {
@@ -82,6 +83,7 @@ impl From<SkillSummary> for SkillItem {
             description: value.description,
             source: value.source,
             enabled: value.enabled,
+            path: value.path,
         }
     }
 }
@@ -159,15 +161,17 @@ pub enum SettingsCategory {
     General,
     Appearance,
     Models,
+    Skills,
     Security,
     McpTools,
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::General,
         Self::Appearance,
         Self::Models,
+        Self::Skills,
         Self::Security,
         Self::McpTools,
     ];
@@ -178,6 +182,7 @@ impl SettingsCategory {
             Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Models => "Models",
+            Self::Skills => "Skills",
             Self::Security => "Security",
             Self::McpTools => "MCP Tools",
         }
@@ -190,6 +195,7 @@ pub(super) enum ActiveField {
     AllowlistInput,
     DenylistInput,
     ExportDirInput,
+    InstallSkillUrlInput,
 }
 
 /// Settings view state
@@ -201,6 +207,7 @@ pub struct SettingsState {
     pub skills: Vec<SkillItem>,
     pub selected_profile_id: Option<Uuid>,
     pub selected_mcp_id: Option<Uuid>,
+    pub selected_skill_name: Option<String>,
     /// Available themes for the dropdown.
     pub available_themes: Vec<ThemeOption>,
     /// Slug of the currently-selected theme.
@@ -216,6 +223,9 @@ pub struct SettingsState {
     pub allowlist_input: String,
     pub denylist_input: String,
     pub export_dir_input: String,
+    pub install_skill_url_input: String,
+    pub watched_skill_directories: Vec<String>,
+    pub default_skill_directory: String,
     pub(super) active_field: Option<ActiveField>,
     pub status_message: Option<String>,
     pub status_is_error: bool,
@@ -242,6 +252,7 @@ impl Default for SettingsState {
             skills: Vec::new(),
             selected_profile_id: None,
             selected_mcp_id: None,
+            selected_skill_name: None,
             available_themes: Vec::new(),
             selected_theme_slug: "green-screen".to_string(),
             selected_category: SettingsCategory::General,
@@ -255,6 +266,9 @@ impl Default for SettingsState {
             allowlist_input: String::new(),
             denylist_input: String::new(),
             export_dir_input: String::new(),
+            install_skill_url_input: String::new(),
+            watched_skill_directories: Vec::new(),
+            default_skill_directory: String::new(),
             active_field: None,
             status_message: None,
             status_is_error: false,
@@ -376,8 +390,57 @@ impl SettingsView {
         self.emit(&UserEvent::SetSkillEnabled { name, enabled });
     }
 
-    fn emit_set_skills_auto_approve(&self, enabled: bool) {
-        self.emit(&UserEvent::SetToolApprovalSkillsAutoApprove { enabled });
+    fn emit_refresh_skills(&self) {
+        self.emit(&UserEvent::RefreshSkills);
+    }
+
+    fn emit_add_skills_directory(&self, path: String) {
+        self.emit(&UserEvent::AddSkillsDirectory { path });
+    }
+
+    fn emit_remove_skills_directory(&self, path: String) {
+        self.emit(&UserEvent::RemoveSkillsDirectory { path });
+    }
+
+    fn emit_install_skill_from_url(&self, url: String) {
+        self.emit(&UserEvent::InstallSkillFromUrl { url });
+    }
+
+    fn selected_skill(&self) -> Option<&SkillItem> {
+        self.state
+            .selected_skill_name
+            .as_ref()
+            .and_then(|selected_name| {
+                self.state
+                    .skills
+                    .iter()
+                    .find(|skill| &skill.name == selected_name)
+            })
+    }
+
+    fn set_skill_items(&mut self, skills: Vec<SkillItem>) {
+        self.state.skills = skills;
+
+        if self.state.selected_skill_name.is_none() {
+            self.state.selected_skill_name =
+                self.state.skills.first().map(|skill| skill.name.clone());
+        }
+
+        if let Some(selected_name) = self.state.selected_skill_name.as_ref() {
+            if self
+                .state
+                .skills
+                .iter()
+                .all(|skill| &skill.name != selected_name)
+            {
+                self.state.selected_skill_name =
+                    self.state.skills.first().map(|skill| skill.name.clone());
+            }
+        }
+    }
+
+    fn select_skill(&mut self, name: String) {
+        self.state.selected_skill_name = Some(name);
     }
 
     pub fn set_mcps(&mut self, mcps: Vec<McpItem>) {
@@ -419,6 +482,10 @@ impl SettingsView {
             Some(ActiveField::AllowlistInput) => self.state.allowlist_input.push_str(text),
             Some(ActiveField::DenylistInput) => self.state.denylist_input.push_str(text),
             Some(ActiveField::ExportDirInput) => self.state.export_dir_input.push_str(text),
+            Some(ActiveField::InstallSkillUrlInput) => {
+                self.state.install_skill_url_input.push_str(text);
+            }
+
             None => {}
         }
     }
@@ -433,6 +500,9 @@ impl SettingsView {
             }
             Some(ActiveField::ExportDirInput) => {
                 self.state.export_dir_input.pop();
+            }
+            Some(ActiveField::InstallSkillUrlInput) => {
+                self.state.install_skill_url_input.pop();
             }
             None => {}
         }
@@ -462,6 +532,12 @@ impl SettingsView {
                     .export_dir_input
                     .truncate(len.saturating_sub(byte_count));
             }
+            Some(ActiveField::InstallSkillUrlInput) => {
+                let len = self.state.install_skill_url_input.len();
+                self.state
+                    .install_skill_url_input
+                    .truncate(len.saturating_sub(byte_count));
+            }
             None => {}
         }
     }
@@ -471,6 +547,7 @@ impl SettingsView {
             Some(ActiveField::AllowlistInput) => &self.state.allowlist_input,
             Some(ActiveField::DenylistInput) => &self.state.denylist_input,
             Some(ActiveField::ExportDirInput) => &self.state.export_dir_input,
+            Some(ActiveField::InstallSkillUrlInput) => &self.state.install_skill_url_input,
             None => "",
         }
     }
@@ -484,7 +561,8 @@ impl SettingsView {
         let next = match self.state.active_field {
             Some(ActiveField::ExportDirInput) => ActiveField::AllowlistInput,
             Some(ActiveField::AllowlistInput) => ActiveField::DenylistInput,
-            Some(ActiveField::DenylistInput) | None => ActiveField::ExportDirInput,
+            Some(ActiveField::DenylistInput) => ActiveField::InstallSkillUrlInput,
+            Some(ActiveField::InstallSkillUrlInput) | None => ActiveField::ExportDirInput,
         };
         self.set_active_field(Some(next));
     }
@@ -742,6 +820,15 @@ impl SettingsView {
                 cx.notify();
                 return;
             }
+            Some(ActiveField::InstallSkillUrlInput) => {
+                let url = self.state.install_skill_url_input.trim().to_string();
+                if !url.is_empty() {
+                    self.emit_install_skill_from_url(url);
+                    self.state.install_skill_url_input.clear();
+                }
+                cx.notify();
+                return;
+            }
             None => {}
         }
         if self.state.selected_category == SettingsCategory::Appearance
@@ -769,6 +856,31 @@ impl SettingsView {
                         this.update(cx, |view, cx| {
                             view.state.export_dir_input = path_str;
                             view.save_export_directory();
+                            cx.notify();
+                        })
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    #[allow(clippy::unused_self)]
+    fn browse_skills_directory(&mut self, cx: &mut gpui::Context<Self>) {
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add Skills Directory".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(path) = paths.first() {
+                    let path_str = path.to_string_lossy().to_string();
+                    cx.update(|cx| {
+                        this.update(cx, |view, cx| {
+                            view.emit_add_skills_directory(path_str);
                             cx.notify();
                         })
                     })

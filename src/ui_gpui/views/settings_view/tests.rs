@@ -718,6 +718,12 @@ async fn cycle_active_field_rotates_through_fields(cx: &mut TestAppContext) {
         assert_eq!(view.state.active_field, Some(ActiveField::DenylistInput));
 
         view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::InstallSkillUrlInput)
+        );
+
+        view.cycle_active_field();
         assert_eq!(view.state.active_field, Some(ActiveField::ExportDirInput));
     });
 }
@@ -921,6 +927,12 @@ async fn cycle_active_field_includes_export_dir(cx: &mut TestAppContext) {
 
         view.cycle_active_field();
         assert_eq!(view.state.active_field, Some(ActiveField::DenylistInput));
+
+        view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::InstallSkillUrlInput)
+        );
 
         view.cycle_active_field();
         assert_eq!(view.state.active_field, Some(ActiveField::ExportDirInput));

@@ -678,6 +678,7 @@ impl SettingsView {
             SettingsCategory::General => self.render_general_panel(cx).into_any_element(),
             SettingsCategory::Appearance => self.render_appearance_panel(cx).into_any_element(),
             SettingsCategory::Models => self.render_models_panel(cx).into_any_element(),
+            SettingsCategory::Skills => self.render_skills_panel(cx).into_any_element(),
             SettingsCategory::Security => self.render_security_panel(cx).into_any_element(),
             SettingsCategory::McpTools => self.render_mcp_tools_panel(cx).into_any_element(),
         };
@@ -742,7 +743,7 @@ impl SettingsView {
             .child(self.render_profiles_section(cx))
     }
 
-    /// Security panel: reuses the tool approval section and skills section.
+    /// Security panel: renders tool approval controls, including skills auto-approve.
     fn render_security_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("security-panel-scroll")
@@ -752,7 +753,6 @@ impl SettingsView {
             .overflow_y_scroll()
             .gap(px(16.0))
             .child(self.render_tool_approval_section(cx))
-            .child(self.render_skills_section(cx))
     }
 
     /// MCP Tools panel: full-height MCP server list.

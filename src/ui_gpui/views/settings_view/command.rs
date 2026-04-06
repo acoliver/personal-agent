@@ -111,8 +111,18 @@ impl SettingsView {
                 self.state.denylist_input.clear();
                 true
             }
-            ViewCommand::SkillsLoaded { skills } => {
-                self.state.skills = skills.iter().cloned().map(Into::into).collect();
+            ViewCommand::SkillsLoaded {
+                skills,
+                watched_directories,
+                default_directory,
+            } => {
+                self.set_skill_items(skills.iter().cloned().map(Into::into).collect());
+                self.state
+                    .watched_skill_directories
+                    .clone_from(watched_directories);
+                self.state
+                    .default_skill_directory
+                    .clone_from(default_directory);
                 true
             }
             ViewCommand::YoloModeChanged { active } => {

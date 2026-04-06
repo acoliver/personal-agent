@@ -47,6 +47,40 @@ impl SkillsService for FailingSkillsService {
             "simulated skills failure".to_string(),
         ))
     }
+
+    async fn refresh(&self) -> ServiceResult<()> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn watched_directories(&self) -> ServiceResult<Vec<std::path::PathBuf>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn add_watched_directory(&self, _path: std::path::PathBuf) -> ServiceResult<()> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn remove_watched_directory(&self, _path: &std::path::Path) -> ServiceResult<()> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    fn default_user_skills_dir(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(".")
+    }
+
+    async fn install_skill_from_url(&self, _url: &str) -> ServiceResult<Skill> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
 }
 
 #[tokio::test]

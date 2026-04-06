@@ -206,8 +206,12 @@ pub enum ViewCommand {
         selected_profile_id: Option<Uuid>,
     },
 
-    /// Skills list updated for settings display.
-    SkillsLoaded { skills: Vec<SkillSummary> },
+    /// Skills list and directory metadata updated for settings display.
+    SkillsLoaded {
+        skills: Vec<SkillSummary>,
+        watched_directories: Vec<String>,
+        default_directory: String,
+    },
 
     /// Connection test started
     ProfileTestStarted { id: Uuid },
@@ -416,6 +420,7 @@ pub struct SkillSummary {
     pub description: String,
     pub source: crate::models::SkillSource,
     pub enabled: bool,
+    pub path: String,
 }
 
 /// Theme summary for the settings theme dropdown.
