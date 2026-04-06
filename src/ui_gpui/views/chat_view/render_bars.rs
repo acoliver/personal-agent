@@ -91,7 +91,6 @@ impl ChatView {
     }
 
     /// Right-side toolbar: [T][Y][R][H (popup only)][MD/TXT/JSON][Save][Popout/Popin][Settings][Exit]
-    #[allow(clippy::too_many_lines)]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
         let yolo_active = self.state.yolo_mode;
@@ -134,7 +133,6 @@ impl ChatView {
                     this.start_rename_conversation(cx);
                 })
             ))
-            // History button: hidden when popout sidebar is visible
             .when(show_history_btn, |d| {
                 d.child(icon_btn!(
                     "btn-history",
@@ -164,34 +162,7 @@ impl ChatView {
                     this.emit(UserEvent::SaveConversation);
                 })
             ))
-            // Popout / Pop-in toggle button
-            .child(
-                div()
-                    .id("btn-popout")
-                    .size(px(28.0))
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .when(is_popout, |d| d.bg(Theme::bg_dark()))
-                    .when(!is_popout, |d| {
-                        d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
-                    })
-                    .child(if is_popout {
-                        crate::ui_gpui::components::window_icons::popin_icon(16.0)
-                            .text_color(Theme::text_primary())
-                    } else {
-                        crate::ui_gpui::components::window_icons::popout_icon(16.0)
-                            .text_color(Theme::text_primary())
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, _cx| {
-                            this.emit(UserEvent::ToggleWindowMode);
-                        }),
-                    ),
-            )
+            .child(self.render_popout_toggle_button(is_popout, cx))
             .child(icon_btn!(
                 "btn-settings",
                 "\u{2699}",
@@ -202,27 +173,61 @@ impl ChatView {
                         .request_navigate(crate::presentation::view_command::ViewId::Settings);
                 })
             ))
-            .child(
-                div()
-                    .id("btn-exit")
-                    .size(px(28.0))
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .bg(Theme::bg_darker())
-                    .hover(|s| s.bg(Theme::danger()))
-                    .active(|s| s.bg(Theme::danger()))
-                    .text_size(px(Theme::font_size_body()))
+            .child(Self::render_exit_button(cx))
+    }
+
+    fn render_popout_toggle_button(
+        &self,
+        is_popout: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("btn-popout")
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when(is_popout, |d| d.bg(Theme::bg_dark()))
+            .when(!is_popout, |d| {
+                d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+            })
+            .child(if is_popout {
+                crate::ui_gpui::components::window_icons::popin_icon(16.0)
                     .text_color(Theme::text_primary())
-                    .child("\u{23FB}")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
-                            std::process::exit(0);
-                        }),
-                    ),
+            } else {
+                crate::ui_gpui::components::window_icons::popout_icon(16.0)
+                    .text_color(Theme::text_primary())
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, _cx| {
+                    this.emit(UserEvent::ToggleWindowMode);
+                }),
+            )
+    }
+
+    fn render_exit_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("btn-exit")
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .bg(Theme::bg_darker())
+            .hover(|s| s.bg(Theme::danger()))
+            .active(|s| s.bg(Theme::danger()))
+            .text_size(px(Theme::font_size_body()))
+            .text_color(Theme::text_primary())
+            .child("\u{23FB}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _, _window, _cx| {
+                    std::process::exit(0);
+                }),
             )
     }
 

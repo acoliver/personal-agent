@@ -175,9 +175,8 @@ impl ChatView {
     ) -> AnyElement {
         let is_selected = self.state.active_conversation_id == Some(conv.id);
         let conv_id = conv.id;
-        let is_confirming = self.state.delete_confirming_id == Some(conv.id);
 
-        if is_confirming {
+        if self.state.delete_confirming_id == Some(conv.id) {
             return self.render_delete_confirmation(conv, cx).into_any_element();
         }
 
@@ -192,76 +191,21 @@ impl ChatView {
         } else {
             conv.title.clone()
         };
-        let title_color = if is_selected {
-            Theme::selection_fg()
-        } else {
-            Theme::text_primary()
-        };
-        let meta_color = if is_selected {
-            Theme::selection_fg()
-        } else {
-            Theme::text_secondary()
-        };
+        let (title_color, meta_color) = selection_colors(is_selected);
         let updated = format_relative_time(conv.updated_at);
         let msg_count = conv.message_count;
         let preview = conv.preview.clone().unwrap_or_default();
 
-        div()
-            .id(SharedString::from(format!("conv-{conv_id}")))
-            .px(px(10.0))
-            .py(px(8.0))
-            .rounded(px(6.0))
-            .cursor_pointer()
-            .when(is_selected, |d| d.bg(Theme::selection_bg()))
-            .when(!is_selected, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            // Title row: delete-x + title
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(self.render_delete_x(conv_id, cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(px(12.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(title_color)
-                            .child(SharedString::from(title))
-                            .when(is_renaming, |d| {
-                                d.border_b_1().border_color(Theme::accent())
-                            }),
-                    ),
-            )
-            // Meta row: time + message count
-            .child(
-                div()
-                    .pl(px(22.0))
-                    .text_size(px(10.0))
-                    .text_color(meta_color)
-                    .child(SharedString::from(format!(
-                        "{updated} · {msg_count} messages"
-                    ))),
-            )
-            // Preview row
+        self.render_conv_item_body(conv_id, is_selected, cx)
+            .child(render_title_row(
+                self.render_delete_x(conv_id, cx),
+                title,
+                title_color,
+                is_renaming,
+            ))
+            .child(render_meta_row(&updated, msg_count, meta_color))
             .when(!preview.is_empty(), |d| {
-                d.child(
-                    div()
-                        .pl(px(22.0))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(px(10.0))
-                        .text_color(meta_color)
-                        .child(SharedString::from(preview)),
-                )
+                d.child(render_detail_row(preview, meta_color))
             })
             .on_mouse_down(MouseButton::Left, {
                 cx.listener(move |this, _, _window, cx| {
@@ -280,9 +224,8 @@ impl ChatView {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let conv_id = result.id;
-        let is_confirming = self.state.delete_confirming_id == Some(conv_id);
 
-        if is_confirming {
+        if self.state.delete_confirming_id == Some(conv_id) {
             let summary = ConversationSummary {
                 id: result.id,
                 title: result.title.clone(),
@@ -300,72 +243,23 @@ impl ChatView {
         let updated = format_relative_time(result.updated_at);
         let msg_count = result.message_count;
         let context = result.match_context.clone();
-        let title_color = if is_selected {
-            Theme::selection_fg()
-        } else {
-            Theme::text_primary()
-        };
-        let meta_color = if is_selected {
-            Theme::selection_fg()
-        } else {
-            Theme::text_secondary()
-        };
+        let (title_color, meta_color) = selection_colors(is_selected);
         let context_color = if is_selected {
             Theme::selection_fg()
         } else {
             Theme::accent()
         };
 
-        div()
-            .id(SharedString::from(format!("search-{conv_id}")))
-            .px(px(10.0))
-            .py(px(8.0))
-            .rounded(px(6.0))
-            .cursor_pointer()
-            .when(is_selected, |d| d.bg(Theme::selection_bg()))
-            .when(!is_selected, |d| d.hover(|s| s.bg(Theme::bg_dark())))
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(self.render_delete_x(conv_id, cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(px(12.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(title_color)
-                            .child(SharedString::from(title)),
-                    ),
-            )
-            .child(
-                div()
-                    .pl(px(22.0))
-                    .text_size(px(10.0))
-                    .text_color(meta_color)
-                    .child(SharedString::from(format!(
-                        "{updated} · {msg_count} messages"
-                    ))),
-            )
+        self.render_conv_item_body(conv_id, is_selected, cx)
+            .child(render_title_row(
+                self.render_delete_x(conv_id, cx),
+                title,
+                title_color,
+                false,
+            ))
+            .child(render_meta_row(&updated, msg_count, meta_color))
             .when(!context.is_empty(), |d| {
-                d.child(
-                    div()
-                        .pl(px(22.0))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(px(10.0))
-                        .text_color(context_color)
-                        .child(SharedString::from(context)),
-                )
+                d.child(render_detail_row(context, context_color))
             })
             .on_mouse_down(MouseButton::Left, {
                 cx.listener(move |this, _, _window, cx| {
@@ -376,6 +270,25 @@ impl ChatView {
                 })
             })
             .into_any_element()
+    }
+
+    fn render_conv_item_body(
+        &self,
+        conv_id: uuid::Uuid,
+        is_selected: bool,
+        _cx: &mut gpui::Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(SharedString::from(format!("conv-{conv_id}")))
+            .px(px(10.0))
+            .py(px(8.0))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .when(is_selected, |d| d.bg(Theme::selection_bg()))
+            .when(!is_selected, |d| d.hover(|s| s.bg(Theme::bg_dark())))
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
     }
 
     #[allow(clippy::unused_self)]
@@ -480,6 +393,63 @@ impl ChatView {
                     ),
             )
     }
+}
+
+fn selection_colors(is_selected: bool) -> (gpui::Hsla, gpui::Hsla) {
+    if is_selected {
+        (Theme::selection_fg(), Theme::selection_fg())
+    } else {
+        (Theme::text_primary(), Theme::text_secondary())
+    }
+}
+
+fn render_title_row(
+    delete_x: impl IntoElement,
+    title: String,
+    title_color: gpui::Hsla,
+    is_renaming: bool,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .child(delete_x)
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(title_color)
+                .child(SharedString::from(title))
+                .when(is_renaming, |d| {
+                    d.border_b_1().border_color(Theme::accent())
+                }),
+        )
+}
+
+fn render_meta_row(updated: &str, msg_count: usize, color: gpui::Hsla) -> impl IntoElement {
+    div()
+        .pl(px(22.0))
+        .text_size(px(10.0))
+        .text_color(color)
+        .child(SharedString::from(format!(
+            "{updated} \u{00B7} {msg_count} messages"
+        )))
+}
+
+fn render_detail_row(text: String, color: gpui::Hsla) -> impl IntoElement {
+    div()
+        .pl(px(22.0))
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .text_size(px(10.0))
+        .text_color(color)
+        .child(SharedString::from(text))
 }
 
 fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
