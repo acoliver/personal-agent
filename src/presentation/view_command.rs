@@ -318,6 +318,27 @@ pub enum ViewCommand {
     /// Request presenters/views to refresh tool approval settings from persistence.
     RefreshToolApprovalSettings,
 
+    // ===== Database Backup Commands =====
+    /// Backup settings and list loaded for settings view
+    BackupSettingsLoaded {
+        settings: crate::backup::DatabaseBackupSettings,
+        backups: Vec<crate::backup::BackupInfo>,
+        last_backup_time: Option<chrono::DateTime<chrono::Utc>>,
+    },
+
+    /// Backup operation completed
+    BackupCompleted { result: crate::backup::BackupResult },
+
+    /// Backup list refreshed
+    BackupListRefreshed {
+        backups: Vec<crate::backup::BackupInfo>,
+    },
+
+    /// Restore operation completed
+    RestoreCompleted {
+        result: crate::backup::RestoreResult,
+    },
+
     // ===== Error Commands =====
     /// Show error to user
     ShowError {

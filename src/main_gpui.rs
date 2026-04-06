@@ -33,10 +33,10 @@ use personal_agent::presentation::{
     ViewCommand,
 };
 use personal_agent::services::{
-    AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl, ConversationService,
-    McpRegistryService, McpRegistryServiceImpl, McpService, McpServiceImpl, ModelsRegistryService,
-    ModelsRegistryServiceImpl, ProfileService, ProfileServiceImpl, SecretsService,
-    SecretsServiceImpl, SqliteConversationService,
+    AppSettingsService, AppSettingsServiceImpl, BackupService, BackupServiceImpl, ChatService,
+    ChatServiceImpl, ConversationService, McpRegistryService, McpRegistryServiceImpl, McpService,
+    McpServiceImpl, ModelsRegistryService, ModelsRegistryServiceImpl, ProfileService,
+    ProfileServiceImpl, SecretsService, SecretsServiceImpl, SqliteConversationService,
 };
 use personal_agent::ui_gpui::app_store::{
     BeginSelectionMode, BeginSelectionResult, StartupInputs, StartupMode,
@@ -447,6 +447,50 @@ fn run_gpui_app(cx: &mut App) {
 
 /// Boot all services and presenters inside the background tokio runtime,
 /// then keep the runtime alive indefinitely.
+fn log_runtime_paths(runtime_paths: &RuntimePaths) {
+    tracing::info!(
+        data_dir = %runtime_paths.base_dir.display(),
+        config_dir = %runtime_paths.profiles_dir.parent().unwrap_or(&runtime_paths.profiles_dir).display(),
+        profiles_dir = %runtime_paths.profiles_dir.display(),
+        conversations_dir = %runtime_paths.conversations_dir.display(),
+        mcp_configs_dir = %runtime_paths.mcp_configs_dir.display(),
+        "Using platform-standard runtime directories"
+    );
+}
+
+fn ensure_runtime_directories(runtime_paths: &RuntimePaths) {
+    let _ = std::fs::create_dir_all(&runtime_paths.profiles_dir);
+    let _ = std::fs::create_dir_all(&runtime_paths.secrets_dir);
+    let _ = std::fs::create_dir_all(&runtime_paths.conversations_dir);
+    let _ = std::fs::create_dir_all(&runtime_paths.mcp_configs_dir);
+}
+
+async fn initialize_global_mcp_runtime() {
+    info!("Initializing global MCP runtime...");
+    let global = personal_agent::mcp::McpService::global();
+    let mut svc = global.lock().await;
+    if let Err(e) = svc.initialize().await {
+        tracing::error!("Global MCP initialization failed: {e}");
+    } else {
+        info!("Global MCP runtime initialized");
+    }
+}
+
+fn start_backup_scheduler(
+    backup_service: Arc<dyn personal_agent::services::BackupService>,
+) -> tokio::task::JoinHandle<()> {
+    info!("Starting backup scheduler...");
+    let (backup_scheduler_handle, _backup_shutdown_tx) =
+        personal_agent::backup::spawn_backup_scheduler(backup_service);
+    backup_scheduler_handle
+}
+
+async fn runtime_keepalive_loop() {
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+    }
+}
+
 async fn run_tokio_runtime(
     event_bus: Arc<EventBus>,
     view_cmd_tx: flume::Sender<personal_agent::presentation::ViewCommand>,
@@ -458,20 +502,8 @@ async fn run_tokio_runtime(
     let runtime_paths =
         resolve_runtime_paths().expect("Could not resolve runtime paths from platform directories");
 
-    tracing::info!(
-        data_dir = %runtime_paths.base_dir.display(),
-        config_dir = %runtime_paths.profiles_dir.parent().unwrap_or(&runtime_paths.profiles_dir).display(),
-        profiles_dir = %runtime_paths.profiles_dir.display(),
-        conversations_dir = %runtime_paths.conversations_dir.display(),
-        mcp_configs_dir = %runtime_paths.mcp_configs_dir.display(),
-        "Using platform-standard runtime directories"
-    );
-
-    // Create directories
-    let _ = std::fs::create_dir_all(&runtime_paths.profiles_dir);
-    let _ = std::fs::create_dir_all(&runtime_paths.secrets_dir);
-    let _ = std::fs::create_dir_all(&runtime_paths.conversations_dir);
-    let _ = std::fs::create_dir_all(&runtime_paths.mcp_configs_dir);
+    log_runtime_paths(&runtime_paths);
+    ensure_runtime_directories(&runtime_paths);
 
     if let Err(e) = bootstrap_legacy_runtime_data(&runtime_paths) {
         tracing::warn!("Legacy bootstrap copy failed: {}", e);
@@ -493,25 +525,16 @@ async fn run_tokio_runtime(
         &settings_view_tx_for_snapshot,
     );
 
-    // Initialize global MCP runtime so chat can discover tools
-    info!("Initializing global MCP runtime...");
-    {
-        let global = personal_agent::mcp::McpService::global();
-        let mut svc = global.lock().await;
-        if let Err(e) = svc.initialize().await {
-            tracing::error!("Global MCP initialization failed: {e}");
-        } else {
-            info!("Global MCP runtime initialized");
-        }
-    }
+    initialize_global_mcp_runtime().await;
+    let backup_scheduler_handle = start_backup_scheduler(services.backup.clone());
 
     // Prevent handles in `presenter_bridges` from being dropped (which would close the channels)
     let _keep_alive = presenter_bridges;
 
-    // Keep runtime alive
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-    }
+    // Keep the backup scheduler handle alive
+    let _backup_handle = backup_scheduler_handle;
+
+    runtime_keepalive_loop().await;
 }
 
 struct Services {
@@ -523,6 +546,7 @@ struct Services {
     models_registry: Arc<dyn ModelsRegistryService>,
     mcp_registry: Arc<dyn McpRegistryService>,
     chat: Arc<dyn ChatService>,
+    backup: Arc<dyn personal_agent::services::BackupService>,
 }
 
 async fn create_services(
@@ -538,11 +562,25 @@ async fn create_services(
             .expect("Failed to create AppSettingsService"),
     );
     let db_path = runtime_paths.base_dir.join("personalagent.db");
+    let db_path_for_backup = db_path.clone();
     let db = tokio::task::spawn_blocking(move || spawn_db_thread(&db_path))
         .await
         .expect("spawn_blocking join failed")
         .expect("Failed to spawn DB thread");
+
+    // Clone the DbHandle for the backup service (DbHandle is cheap to clone)
+    let db_for_backup = db.clone();
+
     let conversation: Arc<dyn ConversationService> = Arc::new(SqliteConversationService::new(db));
+
+    // Create backup service
+    let backup: Arc<dyn personal_agent::services::BackupService> =
+        Arc::new(personal_agent::services::BackupServiceImpl::new(
+            db_for_backup,
+            app_settings.clone(),
+            db_path_for_backup,
+        ));
+
     let profile_impl = ProfileServiceImpl::new(runtime_paths.profiles_dir.clone())
         .expect("Failed to create ProfileService");
     profile_impl
@@ -581,6 +619,7 @@ async fn create_services(
         models_registry,
         mcp_registry,
         chat,
+        backup,
     }
 }
 

@@ -11,6 +11,7 @@
 #![allow(clippy::unused_async)]
 
 pub mod agent;
+pub mod backup;
 pub mod compression;
 pub mod config;
 pub mod db;

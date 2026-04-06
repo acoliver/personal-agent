@@ -6,6 +6,7 @@
 mod command;
 mod render;
 mod render_appearance;
+mod render_backup_panel;
 mod render_tool_approval;
 
 use gpui::{Bounds, Pixels};
@@ -141,15 +142,17 @@ pub enum SettingsCategory {
     Models,
     Security,
     McpTools,
+    Backup,
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::General,
         Self::Appearance,
         Self::Models,
         Self::Security,
         Self::McpTools,
+        Self::Backup,
     ];
 
     #[must_use]
@@ -160,6 +163,7 @@ impl SettingsCategory {
             Self::Models => "Models",
             Self::Security => "Security",
             Self::McpTools => "MCP Tools",
+            Self::Backup => "Backup",
         }
     }
 }
@@ -203,6 +207,19 @@ pub struct SettingsState {
     pub mono_font_family: String,
     pub mono_ligatures: bool,
     pub font_dropdown_open_for: Option<FontDropdownTarget>,
+    // Backup settings (Backup panel)
+    /// Current backup configuration settings
+    pub backup_settings: Option<crate::backup::DatabaseBackupSettings>,
+    /// List of available backups for restore
+    pub backups: Vec<crate::backup::BackupInfo>,
+    /// Timestamp of last successful backup
+    pub last_backup_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Current backup status message
+    pub backup_status: Option<String>,
+    /// Whether a backup operation is currently in progress
+    pub backup_in_progress: bool,
+    /// Selected backup ID for restore
+    pub selected_backup_id: Option<usize>,
 }
 
 impl SettingsState {
@@ -239,6 +256,13 @@ impl Default for SettingsState {
             mono_font_family: crate::ui_gpui::theme::DEFAULT_MONO_FONT_FAMILY.to_string(),
             mono_ligatures: true,
             font_dropdown_open_for: None,
+            // Backup defaults
+            backup_settings: None,
+            backups: Vec::new(),
+            last_backup_time: None,
+            backup_status: None,
+            backup_in_progress: false,
+            selected_backup_id: None,
         }
     }
 }
@@ -250,6 +274,9 @@ pub struct SettingsView {
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) focus_handle: FocusHandle,
     pub(super) ime_marked_byte_count: usize,
+    /// Channel for backup restore confirmation dialog (for future use)
+    #[allow(dead_code)]
+    pub(super) backup_settings_tx: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
 impl SettingsView {
@@ -259,6 +286,7 @@ impl SettingsView {
             bridge: None,
             focus_handle: cx.focus_handle(),
             ime_marked_byte_count: 0,
+            backup_settings_tx: None,
         }
     }
 
@@ -468,6 +496,35 @@ impl SettingsView {
 
     fn emit_set_mcp_approval_mode(&self, mode: McpApprovalMode) {
         self.emit(&UserEvent::SetToolApprovalMcpApprovalMode { mode });
+    }
+
+    // Backup-related emit methods
+    pub(super) fn emit_set_backup_enabled(&self, enabled: bool) {
+        self.emit(&UserEvent::SetBackupEnabled { enabled });
+    }
+
+    pub(super) fn emit_set_backup_interval_hours(&self, hours: u32) {
+        self.emit(&UserEvent::SetBackupIntervalHours { hours });
+    }
+
+    pub(super) fn emit_set_backup_max_copies(&self, copies: u32) {
+        self.emit(&UserEvent::SetBackupMaxCopies { copies });
+    }
+
+    pub(super) fn emit_set_backup_directory(&self, path: Option<String>) {
+        self.emit(&UserEvent::SetBackupDirectory { path });
+    }
+
+    pub(super) fn emit_trigger_backup_now(&self) {
+        self.emit(&UserEvent::TriggerBackupNow);
+    }
+
+    pub(super) fn emit_restore_backup(&self, path: String) {
+        self.emit(&UserEvent::RestoreBackup { path });
+    }
+
+    pub(super) fn emit_refresh_backup_list(&self) {
+        self.emit(&UserEvent::RefreshBackupList);
     }
 
     fn add_allowlist_entry(&mut self) {

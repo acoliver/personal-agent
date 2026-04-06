@@ -680,6 +680,7 @@ impl SettingsView {
             SettingsCategory::Models => self.render_models_panel(cx).into_any_element(),
             SettingsCategory::Security => self.render_security_panel(cx).into_any_element(),
             SettingsCategory::McpTools => self.render_mcp_tools_panel(cx).into_any_element(),
+            SettingsCategory::Backup => self.render_backup_panel(cx).into_any_element(),
         };
 
         div()
