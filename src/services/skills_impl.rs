@@ -224,12 +224,19 @@ impl SkillsService for SkillsServiceImpl {
             return Ok(None);
         };
 
-        let (_metadata, body) = parse_skill_file(&skill.path)?;
+        let path = skill.path.clone();
+        let body_result =
+            tokio::task::spawn_blocking(move || parse_skill_file(&path).map(|(_, body)| body))
+                .await
+                .map_err(|error| {
+                    ServiceError::Io(format!("Failed to join skill body task: {error}"))
+                })?;
+        let body = body_result?;
         Ok(Some(body))
     }
 
     async fn set_skill_enabled(&self, name: &str, enabled: bool) -> ServiceResult<()> {
-        let previous_enabled = {
+        let toggle_result = {
             let mut skills = self.skills.write().await;
 
             let Some(skill) = skills.iter_mut().find(|skill| skill.name == name) else {
@@ -253,7 +260,7 @@ impl SkillsService for SkillsServiceImpl {
             (previous_enabled, serialized)
         };
 
-        let (previous_enabled, serialized) = previous_enabled;
+        let (previous_enabled, serialized) = toggle_result;
         if let Err(error) = self
             .app_settings_service
             .set_setting(DISABLED_SKILLS_SETTING_KEY, serialized)
