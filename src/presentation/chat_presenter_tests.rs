@@ -405,3 +405,62 @@ async fn test_handle_new_conversation() {
     assert!(found_created, "Should create conversation");
     assert!(found_activated, "Should activate conversation");
 }
+
+/// Test handle_search_conversations with empty query returns empty results
+#[tokio::test]
+async fn test_search_conversations_empty_query() {
+    let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
+
+    ChatPresenter::handle_search_conversations(&conversation_service, &view_tx, String::new())
+        .await;
+
+    let cmd = view_rx.try_recv().expect("Should emit search results");
+    match cmd {
+        ViewCommand::ConversationSearchResults { results } => {
+            assert!(results.is_empty(), "Empty query returns empty results");
+        }
+        other => panic!("Expected ConversationSearchResults, got {other:?}"),
+    }
+}
+
+/// Test handle_search_conversations with whitespace-only query returns empty results
+#[tokio::test]
+async fn test_search_conversations_whitespace_query() {
+    let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
+
+    ChatPresenter::handle_search_conversations(&conversation_service, &view_tx, "   ".to_string())
+        .await;
+
+    let cmd = view_rx.try_recv().expect("Should emit search results");
+    match cmd {
+        ViewCommand::ConversationSearchResults { results } => {
+            assert!(results.is_empty(), "Whitespace query returns empty results");
+        }
+        other => panic!("Expected ConversationSearchResults, got {other:?}"),
+    }
+}
+
+/// Test handle_search_conversations with non-empty query calls service
+#[tokio::test]
+async fn test_search_conversations_non_empty_query() {
+    let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
+
+    ChatPresenter::handle_search_conversations(
+        &conversation_service,
+        &view_tx,
+        "tokio".to_string(),
+    )
+    .await;
+
+    let cmd = view_rx.try_recv().expect("Should emit search results");
+    match cmd {
+        ViewCommand::ConversationSearchResults { results } => {
+            // MockConversationService returns empty vec for search
+            assert!(results.is_empty());
+        }
+        other => panic!("Expected ConversationSearchResults, got {other:?}"),
+    }
+}
