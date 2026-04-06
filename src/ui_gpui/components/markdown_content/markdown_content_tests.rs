@@ -500,6 +500,30 @@ mod tests {
     }
 
     /// @plan:PLAN-20260402-MARKDOWN.P04
+    /// @requirement:REQ-MD-PARSE-027
+    #[test]
+    fn test_parse_list_item_with_mixed_inline_styles_keeps_distinct_spans() {
+        let input = "- **Bold prefix** followed by a long plain-text continuation that should wrap";
+        let blocks = parse_markdown_blocks(input);
+
+        match &blocks[0] {
+            MarkdownBlock::List { items, .. } => {
+                assert_eq!(items.len(), 1);
+
+                match &items[0][0] {
+                    MarkdownBlock::Paragraph { spans, .. } => {
+                        assert!(spans.iter().any(|span| span.bold));
+                        assert!(spans.iter().any(|span| !span.bold));
+                        assert_eq!(spans_text(spans), "Bold prefix followed by a long plain-text continuation that should wrap");
+                    }
+                    _ => panic!("Expected Paragraph in list item"),
+                }
+            }
+            _ => panic!("Expected List"),
+        }
+    }
+
+    /// @plan:PLAN-20260402-MARKDOWN.P04
     /// @requirement:REQ-MD-PARSE-028
     #[test]
     fn test_parse_soft_break() {

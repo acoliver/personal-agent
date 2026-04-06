@@ -487,6 +487,8 @@ fn render_heading(
     };
 
     div()
+        .w_full()
+        .min_w(px(0.0))
         .text_size(px(size))
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(crate::ui_gpui::theme::Theme::text_primary())
