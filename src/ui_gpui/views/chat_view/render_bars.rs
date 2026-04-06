@@ -141,7 +141,7 @@ impl ChatView {
                     "H",
                     false,
                     cx.listener(|_this, _, _window, _cx| {
-                        println!(">>> HISTORY BUTTON CLICKED - using navigation_channel <<<");
+                        tracing::info!("History button clicked - using navigation_channel");
                         crate::ui_gpui::navigation_channel()
                             .request_navigate(crate::presentation::view_command::ViewId::History);
                     })
@@ -197,7 +197,7 @@ impl ChatView {
                 "\u{2699}",
                 false,
                 cx.listener(|_this, _, _window, _cx| {
-                    println!(">>> SETTINGS BUTTON CLICKED - using navigation_channel <<<");
+                    tracing::info!("Settings button clicked - using navigation_channel");
                     crate::ui_gpui::navigation_channel()
                         .request_navigate(crate::presentation::view_command::ViewId::Settings);
                 })
