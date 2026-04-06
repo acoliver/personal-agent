@@ -28,6 +28,7 @@ use crate::presentation::view_command::ConversationMessagePayload;
 use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, StreamingStoreSnapshot};
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
+use crate::ui_gpui::theme::Theme;
 use gpui::{point, px, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent};
 #[cfg(test)]
 use std::cell::Cell;
@@ -597,7 +598,7 @@ impl ChatView {
         sidebar_toggle_offset: f32,
     ) -> Pixels {
         let min_left = px(12.0);
-        let dropdown_width = px(260.0);
+        let dropdown_width = px(260.0 * Theme::ui_scale());
         // chat-title-bar left padding (12) + conversation selector width (220)
         // + gap (8) + new button width (28) + gap (8) + sidebar toggle offset
         let preferred = px(276.0 + sidebar_toggle_offset);
