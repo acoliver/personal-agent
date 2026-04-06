@@ -52,6 +52,34 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Handle YOLO mode activation - auto-approve any pending tool approval bubbles.
+    fn handle_yolo_mode_changed(&mut self, active: bool, cx: &mut gpui::Context<Self>) {
+        self.state.yolo_mode = active;
+        if active {
+            // Retroactively auto-approve any bubbles that arrived before YOLO was confirmed
+            let pending_ids: Vec<String> = self
+                .state
+                .approval_bubbles
+                .iter()
+                .filter(|b| b.state == ApprovalBubbleState::Pending)
+                .map(|b| b.request_id.clone())
+                .collect();
+
+            for request_id in pending_ids {
+                self.emit(UserEvent::ToolApprovalResponse {
+                    request_id,
+                    decision: ToolApprovalResponseAction::ProceedOnce,
+                });
+            }
+
+            // Drop all pending bubbles — they've been auto-approved
+            self.state
+                .approval_bubbles
+                .retain(|b| b.state != ApprovalBubbleState::Pending);
+        }
+        cx.notify();
+    }
+
     /// Handle incoming `ViewCommands` that are NOT store-managed.
     ///
     /// All shared state commands arrive exclusively through
@@ -141,8 +169,7 @@ impl ChatView {
                 cx.notify();
             }
             ViewCommand::YoloModeChanged { active } => {
-                self.state.yolo_mode = active;
-                cx.notify();
+                self.handle_yolo_mode_changed(active, cx);
             }
             ViewCommand::ConversationSearchResults { results } => {
                 if results.is_empty() && self.state.sidebar_search_query.is_empty() {
