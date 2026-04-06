@@ -566,6 +566,7 @@ fn render_list(ordered: bool, start: u64, items: &[Vec<MarkdownBlock>]) -> gpui:
                 )
                 .child(
                     div()
+                        .min_w(px(0.0))
                         .flex()
                         .flex_col()
                         .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
