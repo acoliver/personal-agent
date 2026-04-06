@@ -560,10 +560,10 @@ impl ChatView {
 
         div()
             .id("chat-profile-dropdown")
-            .max_w(px(225.0))
+            .max_w(px(225.0 * Theme::ui_scale()))
             .min_w(px(100.0))
-            .px(px(8.0))
-            .py(px(4.0))
+            .px(px(Theme::spacing_sm_scaled()))
+            .py(px(Theme::spacing_xs_scaled()))
             .rounded(px(4.0))
             .bg(Theme::bg_dark())
             .border_1()
@@ -755,14 +755,14 @@ impl ChatView {
                 div()
                     .id("chat-profile-dropdown-menu")
                     .absolute()
-                    .top(px(74.0))
+                    .top(px(74.0 * Theme::ui_scale()))
                     .left(Self::compute_profile_dropdown_left(
                         window.bounds().size.width,
                         Self::sidebar_toggle_offset(cx),
                     ))
-                    .w(px(260.0))
-                    .max_w(px(300.0))
-                    .max_h(px(220.0))
+                    .w(px(260.0 * Theme::ui_scale()))
+                    .max_w(px(300.0 * Theme::ui_scale()))
+                    .max_h(px(220.0 * Theme::ui_scale()))
                     .overflow_y_scroll()
                     .bg(Theme::bg_dark())
                     .border_1()
@@ -811,8 +811,8 @@ impl ChatView {
                 profile.id
             )))
             .w_full()
-            .px(px(8.0))
-            .py(px(6.0))
+            .px(px(Theme::spacing_sm_scaled()))
+            .py(px(Theme::spacing_md_scaled() * 0.5))
             .cursor_pointer()
             .when(is_selected, |row| {
                 row.bg(Theme::accent()).text_color(Theme::selection_fg())

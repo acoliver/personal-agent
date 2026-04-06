@@ -582,6 +582,32 @@ impl Theme {
 
     // ── Scaled font size accessors (dynamic, respects active font size) ──────
 
+    /// Returns the UI scale factor based on the ratio of active font size to default.
+    /// This provides a multiplier (1.0 at default 14px, ~1.71 at max 24px, ~0.71 at min 10px)
+    /// that can be applied to layout dimensions to scale proportionally with text.
+    #[must_use]
+    pub fn ui_scale() -> f32 {
+        active_font_size() / DEFAULT_FONT_SIZE
+    }
+
+    /// Extra small spacing scaled by the current UI scale factor.
+    #[must_use]
+    pub fn spacing_xs_scaled() -> f32 {
+        Self::SPACING_XS * Self::ui_scale()
+    }
+
+    /// Small spacing scaled by the current UI scale factor.
+    #[must_use]
+    pub fn spacing_sm_scaled() -> f32 {
+        Self::SPACING_SM * Self::ui_scale()
+    }
+
+    /// Medium spacing scaled by the current UI scale factor.
+    #[must_use]
+    pub fn spacing_md_scaled() -> f32 {
+        Self::SPACING_MD * Self::ui_scale()
+    }
+
     /// Heading 1 font size (2× base).
     #[must_use]
     pub fn font_size_h1() -> f32 {
