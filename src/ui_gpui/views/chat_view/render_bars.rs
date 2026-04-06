@@ -162,7 +162,7 @@ impl ChatView {
                     this.emit(UserEvent::SaveConversation);
                 })
             ))
-            .child(self.render_popout_toggle_button(is_popout, cx))
+            .child(Self::render_popout_toggle_button(is_popout, cx))
             .child(icon_btn!(
                 "btn-settings",
                 "\u{2699}",
@@ -177,7 +177,6 @@ impl ChatView {
     }
 
     fn render_popout_toggle_button(
-        &self,
         is_popout: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {

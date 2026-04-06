@@ -196,7 +196,7 @@ impl ChatView {
         let msg_count = conv.message_count;
         let preview = conv.preview.clone().unwrap_or_default();
 
-        self.render_conv_item_body(conv_id, is_selected, cx)
+        Self::render_conv_item_body(conv_id, is_selected)
             .child(render_title_row(
                 self.render_delete_x(conv_id, cx),
                 title,
@@ -250,7 +250,7 @@ impl ChatView {
             Theme::accent()
         };
 
-        self.render_conv_item_body(conv_id, is_selected, cx)
+        Self::render_conv_item_body(conv_id, is_selected)
             .child(render_title_row(
                 self.render_delete_x(conv_id, cx),
                 title,
@@ -272,12 +272,7 @@ impl ChatView {
             .into_any_element()
     }
 
-    fn render_conv_item_body(
-        &self,
-        conv_id: uuid::Uuid,
-        is_selected: bool,
-        _cx: &mut gpui::Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
+    fn render_conv_item_body(conv_id: uuid::Uuid, is_selected: bool) -> gpui::Stateful<gpui::Div> {
         div()
             .id(SharedString::from(format!("conv-{conv_id}")))
             .px(px(10.0))
