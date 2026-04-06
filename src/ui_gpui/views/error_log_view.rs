@@ -281,6 +281,10 @@ impl ErrorLogView {
     }
 
     fn render_top_bar(entries_len: usize, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let is_popout = cx
+            .try_global::<crate::ui_gpui::views::main_panel::MainPanelAppState>()
+            .is_some_and(|s| s.app_mode == crate::presentation::view_command::AppMode::Popout);
+
         div()
             .id("error-log-top-bar")
             .h(px(44.0))
@@ -288,7 +292,8 @@ impl ErrorLogView {
             .bg(Theme::bg_darker())
             .border_b_1()
             .border_color(Theme::border())
-            .px(px(Theme::SPACING_MD))
+            .pr(px(Theme::SPACING_MD))
+            .pl(px(if is_popout { 72.0 } else { Theme::SPACING_MD }))
             .flex()
             .items_center()
             .gap(px(Theme::SPACING_SM))
