@@ -99,6 +99,7 @@ impl ProfileService for RecordingProfileService {
             auth,
             parameters,
             system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
+            context_window_size: 128_000,
         })
     }
 
@@ -144,6 +145,7 @@ impl ProfileService for RecordingProfileService {
             }),
             parameters: parameters.unwrap_or_default(),
             system_prompt: personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
+            context_window_size: 128_000,
         })
     }
 

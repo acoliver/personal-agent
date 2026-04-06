@@ -42,6 +42,7 @@ fn keychain_profile(label: &str) -> ModelProfile {
         },
         parameters: ModelParameters::default(),
         system_prompt: "default system prompt".to_string(),
+        context_window_size: 128_000,
     }
 }
 

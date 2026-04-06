@@ -64,7 +64,7 @@ async fn test_agent_mode_basic() {
                     response.push_str(text);
                     saw_text = true;
                 }
-                StreamEvent::Complete => {
+                StreamEvent::Complete { .. } => {
                     saw_done = true;
                 }
                 _ => {}
@@ -173,7 +173,7 @@ async fn test_agent_tool_events() {
                     println!("[TOOL COMPLETED] {name} success={success} ({call_id})");
                     saw_tool_complete = true;
                 }
-                StreamEvent::Complete => {
+                StreamEvent::Complete { .. } => {
                     println!("\n[DONE]");
                 }
                 _ => {}

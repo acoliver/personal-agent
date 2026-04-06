@@ -565,7 +565,10 @@ impl crate::llm::LlmClient {
                             tool_calls,
                             tool_results,
                         });
-                        on_event(StreamEvent::Complete);
+                        on_event(StreamEvent::Complete {
+                            input_tokens: None,
+                            output_tokens: None,
+                        });
                     }
                     AgentStreamEvent::Error { message } => {
                         tracing::error!("run_agent_stream: Error: {}", message);

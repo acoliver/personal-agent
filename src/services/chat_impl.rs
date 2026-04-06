@@ -4,6 +4,9 @@
 /// @requirement REM-001, REM-002, REM-003, REM-004, REM-005, REM-006, REM-007
 use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
 use crate::agent::tool_approval_policy::ToolApprovalPolicy;
+use crate::compression::pipeline::{CompressionPipeline, CompressionResult};
+use crate::compression::thinking_stripper::strip_thinking_from_previous_turns;
+use crate::config::CompressionConfig;
 use crate::events::types::{ChatEvent, ToolApprovalResponseAction};
 use crate::events::{emit, AppEvent};
 use crate::llm::client_agent::ApprovalGate;
@@ -11,7 +14,7 @@ use crate::llm::error::debug_error_message;
 use crate::llm::AgentClientExt;
 use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
 use crate::mcp::McpService;
-use crate::models::{Message, MessageRole};
+use crate::models::{ContextState, Message, MessageRole};
 use crate::presentation::view_command::ViewCommand;
 use crate::services::template::{expand_system_prompt, TemplateContext};
 use crate::services::ConversationService;
@@ -242,7 +245,14 @@ impl ChatServiceImpl {
 
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
-        let messages = Self::build_llm_messages(&conversation, &profile);
+        let mut messages = Self::build_llm_messages(&conversation, &profile);
+        strip_thinking_from_previous_turns(&mut messages);
+        let compression_config = CompressionConfig::default();
+        let compression_result = CompressionPipeline::new().compress(
+            messages,
+            profile.context_window_size,
+            &compression_config,
+        );
         let raw_system_prompt =
             Self::system_prompt_for_conversation(&conversation, &profile).to_string();
 
@@ -254,8 +264,9 @@ impl ChatServiceImpl {
         Ok(PreparedMessageContext {
             profile,
             client,
-            messages,
+            messages: compression_result.messages.clone(),
             system_prompt,
+            compression_result,
         })
     }
 
@@ -491,6 +502,7 @@ struct PreparedMessageContext {
     client: LlmClient,
     messages: Vec<LlmMessage>,
     system_prompt: String,
+    compression_result: CompressionResult,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -511,11 +523,14 @@ async fn run_stream_task(
         client,
         messages,
         system_prompt,
+        compression_result,
     } = prepared;
     let mut response_text = String::new();
     let mut thinking_text = String::new();
     let mut tool_calls: Vec<crate::llm::tools::ToolUse> = Vec::new();
     let mut tool_results: Vec<crate::llm::tools::ToolResult> = Vec::new();
+    let mut input_tokens = None;
+    let mut output_tokens = None;
 
     let agent = match client.create_agent(mcp_tools, &system_prompt).await {
         Ok(agent) => agent,
@@ -552,6 +567,8 @@ async fn run_stream_task(
                 &mut thinking_text,
                 &mut tool_calls,
                 &mut tool_results,
+                &mut input_tokens,
+                &mut output_tokens,
             );
         })
         .await
@@ -582,10 +599,19 @@ async fn run_stream_task(
     )
     .await;
 
+    persist_context_state(
+        &conversation_service,
+        conversation_id,
+        compression_result,
+        input_tokens,
+        output_tokens,
+    )
+    .await;
+
     let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
         conversation_id,
         message_id: Uuid::new_v4(),
-        total_tokens: None,
+        total_tokens: input_tokens.and_then(|input| output_tokens.map(|output| input + output)),
     }));
     clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
 }
@@ -599,6 +625,8 @@ fn handle_llm_stream_event(
     thinking_text: &mut String,
     tool_calls: &mut Vec<crate::llm::tools::ToolUse>,
     tool_results: &mut Vec<crate::llm::tools::ToolResult>,
+    input_tokens: &mut Option<u32>,
+    output_tokens: &mut Option<u32>,
 ) {
     match event {
         LlmStreamEvent::TextDelta(text) => {
@@ -648,8 +676,16 @@ fn handle_llm_stream_event(
             *tool_calls = completed_tool_calls;
             *tool_results = completed_tool_results;
         }
-        LlmStreamEvent::Complete => {
-            let _ = tx.send(ChatStreamEvent::Complete);
+        LlmStreamEvent::Complete {
+            input_tokens: completed_input_tokens,
+            output_tokens: completed_output_tokens,
+        } => {
+            *input_tokens = completed_input_tokens;
+            *output_tokens = completed_output_tokens;
+            let _ = tx.send(ChatStreamEvent::Complete {
+                input_tokens: completed_input_tokens,
+                output_tokens: completed_output_tokens,
+            });
         }
         LlmStreamEvent::Error(err) => {
             tracing::error!(
@@ -732,6 +768,36 @@ fn clear_streaming_state(
     }
 }
 
+async fn persist_context_state(
+    conversation_service: &Arc<dyn ConversationService>,
+    conversation_id: Uuid,
+    compression_result: CompressionResult,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+) {
+    let state = ContextState {
+        compression_phase: Some(compression_result.phase),
+        masked_tool_seqs: compression_result.masked_tool_seqs,
+        summary_range: compression_result.summary_range,
+        compressed_at: Some(chrono::Utc::now()),
+        preserved_facts: compression_result.preserved_facts,
+        last_input_tokens: input_tokens,
+        last_output_tokens: output_tokens,
+        ..ContextState::default()
+    };
+
+    tracing::debug!(
+        conversation_id = %conversation_id,
+        ?state.compression_phase,
+        estimated_tokens = compression_result.estimated_tokens,
+        "Persisting compression context state"
+    );
+
+    let _ = conversation_service
+        .update_context_state(conversation_id, &state)
+        .await;
+}
+
 #[allow(clippy::too_many_lines)]
 #[async_trait::async_trait]
 impl ChatService for ChatServiceImpl {
@@ -748,6 +814,7 @@ impl ChatService for ChatServiceImpl {
             .prepare_message_context(conversation_id, content)
             .await?;
         Self::emit_stream_started(conversation_id, prepared.profile.model_id.clone());
+
         let mcp_tools = self.load_mcp_tools().await;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ChatStreamEvent>();

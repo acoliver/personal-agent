@@ -774,7 +774,7 @@ async fn setup_send_message_test() -> (Arc<MockConversationService>, bool) {
     let completed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
         while let Some(event) = stream.next().await {
             match event {
-                ChatStreamEvent::Complete => return true,
+                ChatStreamEvent::Complete { .. } => return true,
                 ChatStreamEvent::Error(_) => return false,
                 ChatStreamEvent::Token(_) => {}
             }

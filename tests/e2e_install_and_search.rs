@@ -177,7 +177,7 @@ async fn test_install_exa_and_search() {
                     }
                     saw_tool_complete = true;
                 }
-                StreamEvent::Complete => {
+                StreamEvent::Complete { .. } => {
                     println!("\n\n>>> [STREAM COMPLETE]");
                 }
                 StreamEvent::Error(e) => {

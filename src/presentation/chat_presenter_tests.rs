@@ -224,6 +224,7 @@ impl ProfileService for MockProfileService {
             },
             parameters: crate::models::ModelParameters::default(),
             system_prompt: "test".to_string(),
+            context_window_size: 128_000,
         }))
     }
 

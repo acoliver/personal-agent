@@ -56,7 +56,10 @@ pub enum StreamEvent {
         tool_results: Vec<crate::llm::tools::ToolResult>,
     },
     /// Stream completed
-    Complete,
+    Complete {
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+    },
     /// Error occurred
     Error(String),
 }
@@ -482,7 +485,10 @@ impl LlmClient {
             }
         }
 
-        on_event(StreamEvent::Complete);
+        on_event(StreamEvent::Complete {
+            input_tokens: None,
+            output_tokens: None,
+        });
         Ok(())
     }
 
