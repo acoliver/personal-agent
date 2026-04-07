@@ -63,3 +63,86 @@ pub struct SkillMetadata {
     #[serde(default)]
     pub metadata: HashMap<String, String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_new_generates_stable_uuid() {
+        let skill1 = Skill::new(
+            "test".to_string(),
+            "Test skill".to_string(),
+            std::path::PathBuf::from("/skills/test"),
+            SkillSource::Bundled,
+            true,
+        );
+        let skill2 = Skill::new(
+            "test".to_string(),
+            "Test skill".to_string(),
+            std::path::PathBuf::from("/skills/test"),
+            SkillSource::Bundled,
+            true,
+        );
+        // Same inputs should produce same UUID (deterministic)
+        assert_eq!(skill1.id, skill2.id);
+    }
+
+    #[test]
+    fn skill_new_different_paths_produce_different_ids() {
+        let skill1 = Skill::new(
+            "test".to_string(),
+            "Test skill".to_string(),
+            std::path::PathBuf::from("/skills/test1"),
+            SkillSource::Bundled,
+            true,
+        );
+        let skill2 = Skill::new(
+            "test".to_string(),
+            "Test skill".to_string(),
+            std::path::PathBuf::from("/skills/test2"),
+            SkillSource::Bundled,
+            true,
+        );
+        assert_ne!(skill1.id, skill2.id);
+    }
+
+    #[test]
+    fn skill_new_different_sources_produce_different_ids() {
+        let skill1 = Skill::new(
+            "test".to_string(),
+            "Test skill".to_string(),
+            std::path::PathBuf::from("/skills/test"),
+            SkillSource::Bundled,
+            true,
+        );
+        let skill2 = Skill::new(
+            "test".to_string(),
+            "Test skill".to_string(),
+            std::path::PathBuf::from("/skills/test"),
+            SkillSource::User,
+            true,
+        );
+        assert_ne!(skill1.id, skill2.id);
+    }
+
+    #[test]
+    fn skill_source_as_str() {
+        assert_eq!(SkillSource::Bundled.as_str(), "bundled");
+        assert_eq!(SkillSource::User.as_str(), "user");
+    }
+
+    #[test]
+    fn skill_metadata_defaults_empty_map() {
+        let yaml = "name: test\ndescription: desc\n";
+        let meta: SkillMetadata = serde_yaml::from_str(yaml).expect("parse");
+        assert!(meta.metadata.is_empty());
+    }
+
+    #[test]
+    fn skill_metadata_preserves_extra_fields() {
+        let yaml = "name: test\ndescription: desc\nmetadata:\n  key: value\n";
+        let meta: SkillMetadata = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(meta.metadata.get("key"), Some(&"value".to_string()));
+    }
+}
