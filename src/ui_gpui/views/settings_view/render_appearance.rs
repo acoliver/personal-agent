@@ -718,16 +718,7 @@ impl SettingsView {
     #[allow(clippy::too_many_lines)]
     pub(super) fn render_font_preview_section(&self) -> impl IntoElement {
         let base_size = self.state.font_size;
-        let h3_size = base_size * 1.25;
-        let body_size = base_size;
-        let mono_size = (base_size * 9.0) / 10.0;
         let ui_family = self.state.ui_font_family.as_ref().map(SharedString::from);
-        let mono_family = SharedString::from(self.state.mono_font_family.clone());
-        let mono_features = if self.state.mono_ligatures {
-            gpui::FontFeatures::default()
-        } else {
-            gpui::FontFeatures::disable_ligatures()
-        };
 
         div()
             .flex()
@@ -739,92 +730,126 @@ impl SettingsView {
                     .text_color(Theme::text_primary())
                     .child("PREVIEW"),
             )
-            .child(
-                div()
-                    .id("font-preview-box")
-                    .w_full()
-                    .p(px(12.0))
-                    .bg(Theme::bg_darker())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    // Heading line (uses UI font)
-                    .child(
-                        div()
-                            .when_some(ui_family.clone(), gpui::Styled::font_family)
-                            .text_size(px(h3_size))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::text_primary())
-                            .child("Heading Text"),
-                    )
-                    // Body line (uses UI font)
-                    .child(
-                        div()
-                            .when_some(ui_family.clone(), gpui::Styled::font_family)
-                            .text_size(px(body_size))
-                            .text_color(Theme::text_primary())
-                            .child("Body text looks like this in messages."),
-                    )
-                    // Mono preview line - dedicated to showing mono font + ligatures
-                    .child(
-                        div()
-                            .text_size(px(mono_size))
-                            .font_family(mono_family.clone())
-                            .font_features(mono_features.clone())
-                            .text_color(Theme::text_primary())
-                            .child("fn main() -> Result<(), Error>"),
-                    )
-                    // Ligature showcase (shows !=, =>, ->, ::, etc.)
-                    // With ligatures enabled: != becomes ≠, => becomes ⇒, -> becomes →
-                    .child(
-                        div()
-                            .text_size(px(mono_size))
-                            .font_family(mono_family.clone())
-                            .font_features(mono_features.clone())
-                            .text_color(Theme::accent())
-                            .bg(Theme::bg_dark())
-                            .px(px(4.0))
-                            .py(px(2.0))
-                            .rounded(px(2.0))
-                            .child("x != y && z => w"),
-                    )
-                    // Another ligature test: <->  ::=  /*
-                    .child(
-                        div()
-                            .text_size(px(mono_size))
-                            .font_family(mono_family.clone())
-                            .font_features(mono_features.clone())
-                            .text_color(Theme::text_secondary())
-                            .child("a <-> b ::= c /* comment */"),
-                    )
-                    // Mixed line: mono code span + body continuation
-                    .child(
-                        div()
-                            .flex()
-                            .items_baseline()
-                            .gap(px(2.0))
-                            .child(
-                                div()
-                                    .text_size(px(mono_size))
-                                    .font_family(mono_family)
-                                    .font_features(mono_features)
-                                    .text_color(Theme::accent())
-                                    .bg(Theme::bg_dark())
-                                    .px(px(4.0))
-                                    .rounded(px(2.0))
-                                    .child("let x = 42;"),
-                            )
-                            .child(
-                                div()
-                                    .when_some(ui_family, gpui::Styled::font_family)
-                                    .text_size(px(body_size))
-                                    .text_color(Theme::text_primary())
-                                    .child(" inline with body"),
-                            ),
-                    ),
-            )
+            .child(self.render_font_preview_box(base_size, ui_family))
+    }
+
+    /// The actual preview box container with all preview lines.
+    fn render_font_preview_box(
+        &self,
+        base_size: f32,
+        ui_family: Option<SharedString>,
+    ) -> impl IntoElement {
+        let h3_size = base_size * 1.25;
+        let body_size = base_size;
+        let mono_size = (base_size * 9.0) / 10.0;
+        let mono_family = SharedString::from(self.state.mono_font_family.clone());
+        let mono_features = if self.state.mono_ligatures {
+            gpui::FontFeatures::default()
+        } else {
+            gpui::FontFeatures::disable_ligatures()
+        };
+
+        div()
+            .id("font-preview-box")
+            .w_full()
+            .p(px(12.0))
+            .bg(Theme::bg_darker())
+            .border_1()
+            .border_color(Theme::border())
+            .rounded(px(4.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(Self::render_preview_heading_line(
+                h3_size,
+                ui_family.clone(),
+            ))
+            .child(Self::render_preview_body_line(body_size, ui_family))
+            .child(Self::render_preview_mono_line(
+                mono_size,
+                mono_family.clone(),
+                mono_features.clone(),
+            ))
+            .child(Self::render_preview_ligature_showcase(
+                mono_size,
+                mono_family.clone(),
+                mono_features.clone(),
+            ))
+            .child(Self::render_preview_ligature_alt(
+                mono_size,
+                mono_family,
+                mono_features,
+            ))
+    }
+
+    /// Heading line in font preview (uses UI font).
+    fn render_preview_heading_line(
+        h3_size: f32,
+        ui_family: Option<SharedString>,
+    ) -> impl IntoElement {
+        div()
+            .when_some(ui_family, gpui::Styled::font_family)
+            .text_size(px(h3_size))
+            .font_weight(FontWeight::BOLD)
+            .text_color(Theme::text_primary())
+            .child("Heading Text")
+    }
+
+    /// Body line in font preview (uses UI font).
+    fn render_preview_body_line(
+        body_size: f32,
+        ui_family: Option<SharedString>,
+    ) -> impl IntoElement {
+        div()
+            .when_some(ui_family, gpui::Styled::font_family)
+            .text_size(px(body_size))
+            .text_color(Theme::text_primary())
+            .child("Body text looks like this in messages.")
+    }
+
+    /// Mono preview line showing mono font.
+    fn render_preview_mono_line(
+        mono_size: f32,
+        mono_family: SharedString,
+        mono_features: gpui::FontFeatures,
+    ) -> impl IntoElement {
+        div()
+            .text_size(px(mono_size))
+            .font_family(mono_family)
+            .font_features(mono_features)
+            .text_color(Theme::text_primary())
+            .child("fn main() -> Result<(), Error>")
+    }
+
+    /// Ligature showcase line (shows !=, =>, etc.).
+    fn render_preview_ligature_showcase(
+        mono_size: f32,
+        mono_family: SharedString,
+        mono_features: gpui::FontFeatures,
+    ) -> impl IntoElement {
+        div()
+            .text_size(px(mono_size))
+            .font_family(mono_family)
+            .font_features(mono_features)
+            .text_color(Theme::accent())
+            .bg(Theme::bg_dark())
+            .px(px(4.0))
+            .py(px(2.0))
+            .rounded(px(2.0))
+            .child("x != y && z => w")
+    }
+
+    /// Alternative ligature test line (<->, ::=, /*, etc.).
+    fn render_preview_ligature_alt(
+        mono_size: f32,
+        mono_family: SharedString,
+        mono_features: gpui::FontFeatures,
+    ) -> impl IntoElement {
+        div()
+            .text_size(px(mono_size))
+            .font_family(mono_family)
+            .font_features(mono_features)
+            .text_color(Theme::text_secondary())
+            .child("a <-> b ::= c /* comment */")
     }
 }
