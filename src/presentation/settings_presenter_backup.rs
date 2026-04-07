@@ -1,7 +1,5 @@
 //! Backup handlers for `SettingsPresenter`.
 
-#![allow(dead_code)] // These handlers will be wired up to SettingsPresenter in a future update
-
 use std::sync::Arc;
 
 use tokio::sync::broadcast;
@@ -13,7 +11,7 @@ use crate::services::BackupService;
 
 impl SettingsPresenter {
     /// Handle backup-related user events
-    pub(super) async fn handle_backup_user_event(
+    pub async fn handle_backup_user_event(
         backup_service: &Arc<dyn BackupService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
@@ -45,7 +43,7 @@ impl SettingsPresenter {
     }
 
     /// Emit the initial backup settings snapshot
-    pub(super) async fn emit_backup_settings_snapshot(
+    pub async fn emit_backup_settings_snapshot(
         backup_service: &Arc<dyn BackupService>,
         view_tx: &broadcast::Sender<ViewCommand>,
     ) {
