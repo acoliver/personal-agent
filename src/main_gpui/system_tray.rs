@@ -480,12 +480,14 @@ impl SystemTray {
 
                 // Handle tray icon click events
                 while let Ok(event) = tray_rx.try_recv() {
-                    match event.event {
-                        tray_icon::ClickEvent::Left { .. } => {
-                            if let Ok(click_pos) = event.position {
-                                if let Ok(mut lock) = last_click_position.lock() {
-                                    *lock = Some((click_pos.x as f32, click_pos.y as f32));
-                                }
+                    match event {
+                        TrayIconEvent::Click {
+                            button: tray_icon::MouseButton::Left,
+                            position,
+                            ..
+                        } => {
+                            if let Ok(mut lock) = last_click_position.lock() {
+                                *lock = Some((position.x as f32, position.y as f32));
                             }
                             info!("Windows tray left-click detected");
                             let _ = cx.update_global::<Self, _>(|tray, cx| {
