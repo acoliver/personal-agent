@@ -604,23 +604,6 @@ async fn handle_command_does_not_forward_non_export_feedback_to_chat_view(cx: &m
 }
 
 #[gpui::test]
-async fn route_tool_approval_policy_updated_increments_counter(cx: &mut TestAppContext) {
-    let _ = cx;
-    assert_route_count(
-        ViewCommand::ToolApprovalPolicyUpdated {
-            yolo_mode: true,
-            auto_approve_reads: false,
-            skills_auto_approve: false,
-            mcp_approval_mode: crate::agent::McpApprovalMode::PerTool,
-            persistent_allowlist: vec!["git".to_string()],
-            persistent_denylist: vec!["rm".to_string()],
-        },
-        1,
-        |targets| targets.tool_approval_policy_count,
-    );
-}
-
-#[gpui::test]
 async fn route_yolo_mode_changed_increments_counter(cx: &mut TestAppContext) {
     let _ = cx;
     assert_route_count(
@@ -721,8 +704,11 @@ async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestApp
         panel.handle_command(
             ViewCommand::ToolApprovalRequest {
                 request_id: "req-1".to_string(),
-                tool_name: "WriteFile".to_string(),
-                tool_argument: "/tmp/example.txt".to_string(),
+                context: crate::presentation::view_command::ToolApprovalContext::new(
+                    "WriteFile",
+                    crate::presentation::view_command::ToolCategory::FileWrite,
+                    "/tmp/example.txt",
+                ),
             },
             cx,
         );
@@ -731,9 +717,12 @@ async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestApp
         chat_view.read_with(cx, |view, _| {
             assert_eq!(view.state.approval_bubbles.len(), 1);
             assert_eq!(view.state.approval_bubbles[0].request_id, "req-1");
-            assert_eq!(view.state.approval_bubbles[0].tool_name, "WriteFile");
             assert_eq!(
-                view.state.approval_bubbles[0].tool_argument,
+                view.state.approval_bubbles[0].context.tool_name,
+                "WriteFile"
+            );
+            assert_eq!(
+                view.state.approval_bubbles[0].context.primary_target,
                 "/tmp/example.txt"
             );
             assert_eq!(
@@ -797,3 +786,4 @@ async fn handle_command_forwards_skills_loaded_to_settings_view(cx: &mut TestApp
         });
     });
 }
+mod tool_approval;

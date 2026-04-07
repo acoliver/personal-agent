@@ -5,7 +5,7 @@
 
 use crate::agent::tool_approval_policy::ToolApprovalDecision;
 use crate::llm::client_agent::McpToolContext;
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ToolApprovalContext, ToolCategory, ViewCommand};
 use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
@@ -72,12 +72,14 @@ async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(),
                 .approval_gate
                 .wait_for_approval(request_id.clone(), "WriteFile".to_string());
 
+            // Build rich context for approval UI
+            let context = ToolApprovalContext::new("WriteFile", ToolCategory::FileWrite, path);
+
             if tool_context
                 .view_tx
                 .try_send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
-                    tool_name: "WriteFile".to_string(),
-                    tool_argument: path.to_string(),
+                    context,
                 })
                 .is_err()
             {

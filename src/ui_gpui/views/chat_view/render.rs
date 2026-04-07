@@ -267,12 +267,16 @@ impl ChatView {
                         .child(Self::render_message(&msg, show_thinking))
                 }))
             })
-            // Approval bubbles (inline in message stream)
+            // Approval bubbles (inline in message stream) - queue: only first pending
             .children(
                 self.state
                     .approval_bubbles
                     .iter()
                     .enumerate()
+                    .filter(|(_, bubble)| {
+                        matches!(bubble.state, super::state::ApprovalBubbleState::Pending)
+                    })
+                    .take(1)
                     .map(|(i, bubble)| {
                         let id = SharedString::from(format!("approval-{i}"));
                         div()
@@ -371,26 +375,30 @@ impl ChatView {
     ///
     /// A shared `AtomicBool` guard prevents duplicate responses from rapid
     /// clicks — once any button fires, all four become no-ops.
+    ///
+    /// For grouped bubbles, all `request_ids` in the group are resolved with
+    /// the same decision.
     fn render_approval_bubble(
         &self,
         bubble: &super::state::ToolApprovalBubble,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        let request_id = bubble.request_id.clone();
+        let request_ids = bubble.request_ids.clone();
         let state = bubble.state.clone();
+        let operation_count = bubble.operation_count();
+        let grouped_ops = bubble.grouped_operations.clone();
+        let expanded = bubble.expanded;
 
-        let mut approval = ApprovalBubble::new(
-            &bubble.request_id,
-            &bubble.tool_name,
-            &bubble.tool_argument,
-            state,
-        );
+        let mut approval = ApprovalBubble::new(&bubble.request_id, bubble.context.clone(), state)
+            .operation_count(operation_count)
+            .expanded(expanded)
+            .grouped_operations(grouped_ops);
 
         if matches!(bubble.state, ApprovalBubbleState::Pending) {
             let bridge = self.bridge.clone();
             let decided = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-            let rid = request_id.clone();
+            let rids = request_ids.clone();
             let b1 = bridge.clone();
             let d1 = decided.clone();
             approval = approval.on_yes(move || {
@@ -398,14 +406,16 @@ impl ChatView {
                     return;
                 }
                 if let Some(ref bridge) = b1 {
-                    bridge.emit(UserEvent::ToolApprovalResponse {
-                        request_id: rid.clone(),
-                        decision: ToolApprovalResponseAction::ProceedOnce,
-                    });
+                    for rid in &rids {
+                        bridge.emit(UserEvent::ToolApprovalResponse {
+                            request_id: rid.clone(),
+                            decision: ToolApprovalResponseAction::ProceedOnce,
+                        });
+                    }
                 }
             });
 
-            let rid = request_id.clone();
+            let rids = request_ids.clone();
             let b2 = bridge.clone();
             let d2 = decided.clone();
             approval = approval.on_session(move || {
@@ -413,14 +423,16 @@ impl ChatView {
                     return;
                 }
                 if let Some(ref bridge) = b2 {
-                    bridge.emit(UserEvent::ToolApprovalResponse {
-                        request_id: rid.clone(),
-                        decision: ToolApprovalResponseAction::ProceedSession,
-                    });
+                    for rid in &rids {
+                        bridge.emit(UserEvent::ToolApprovalResponse {
+                            request_id: rid.clone(),
+                            decision: ToolApprovalResponseAction::ProceedSession,
+                        });
+                    }
                 }
             });
 
-            let rid = request_id.clone();
+            let rids = request_ids.clone();
             let b3 = bridge.clone();
             let d3 = decided.clone();
             approval = approval.on_always(move || {
@@ -428,14 +440,16 @@ impl ChatView {
                     return;
                 }
                 if let Some(ref bridge) = b3 {
-                    bridge.emit(UserEvent::ToolApprovalResponse {
-                        request_id: rid.clone(),
-                        decision: ToolApprovalResponseAction::ProceedAlways,
-                    });
+                    for rid in &rids {
+                        bridge.emit(UserEvent::ToolApprovalResponse {
+                            request_id: rid.clone(),
+                            decision: ToolApprovalResponseAction::ProceedAlways,
+                        });
+                    }
                 }
             });
 
-            let rid = request_id;
+            let rids = request_ids;
             let b4 = bridge;
             let d4 = decided;
             approval = approval.on_no(move || {
@@ -443,10 +457,12 @@ impl ChatView {
                     return;
                 }
                 if let Some(ref bridge) = b4 {
-                    bridge.emit(UserEvent::ToolApprovalResponse {
-                        request_id: rid.clone(),
-                        decision: ToolApprovalResponseAction::Denied,
-                    });
+                    for rid in &rids {
+                        bridge.emit(UserEvent::ToolApprovalResponse {
+                            request_id: rid.clone(),
+                            decision: ToolApprovalResponseAction::Denied,
+                        });
+                    }
                 }
             });
         }
@@ -685,8 +701,8 @@ impl ChatView {
     /// Render the main chat content column (title bar + chat area + input bar).
     fn render_main_content(
         &self,
-        app_mode: AppMode,
-        window: &mut gpui::Window,
+        _app_mode: AppMode,
+        _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         div()
@@ -704,15 +720,8 @@ impl ChatView {
             .child(self.render_chat_area(cx))
             // Input bar (50px)
             .child(self.render_input_bar(cx))
-            // Overlay dropdowns (popup mode, or popout when sidebar hidden)
-            .when(
-                self.state.conversation_dropdown_open
-                    && (app_mode == AppMode::Popup || !self.state.sidebar_visible),
-                |d| d.child(self.render_conversation_dropdown(cx)),
-            )
-            .when(self.state.profile_dropdown_open, |d| {
-                d.child(self.render_profile_dropdown(window, cx))
-            })
+        // Note: Dropdown overlays are now rendered at root level in render()
+        // to avoid being clipped by the flex container
     }
 }
 
@@ -768,5 +777,14 @@ impl gpui::Render for ChatView {
                     // Main content column
                     .child(self.render_main_content(app_mode, window, cx))
             )
+            // Dropdown overlays - rendered at root level so they don't get clipped by flex containers
+            .when(
+                self.state.conversation_dropdown_open
+                    && (app_mode == AppMode::Popup || !self.state.sidebar_visible),
+                |d| d.child(self.render_conversation_dropdown(cx)),
+            )
+            .when(self.state.profile_dropdown_open, |d| {
+                d.child(self.render_profile_dropdown(window, cx))
+            })
     }
 }

@@ -79,8 +79,12 @@ async fn check_approval(
                 .view_tx
                 .try_send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
-                    tool_name: "activate_skill".to_string(),
-                    tool_argument: format!("{} — {}", skill.name, skill.description),
+                    context: crate::presentation::view_command::ToolApprovalContext::new(
+                        "activate_skill",
+                        crate::presentation::view_command::ToolCategory::FileRead,
+                        skill.name.clone(),
+                    )
+                    .with_detail("description", &skill.description),
                 })
                 .is_err()
             {
@@ -329,10 +333,10 @@ mod tests {
         match cmd {
             ViewCommand::ToolApprovalRequest {
                 request_id,
-                tool_name,
+                context,
                 ..
             } => {
-                assert_eq!(tool_name, "activate_skill");
+                assert_eq!(context.tool_name, "activate_skill");
                 // Approve the request
                 let _ = ctx.approval_gate.resolve(&request_id, true);
             }
@@ -383,10 +387,10 @@ mod tests {
         match cmd {
             ViewCommand::ToolApprovalRequest {
                 request_id,
-                tool_name,
+                context,
                 ..
             } => {
-                assert_eq!(tool_name, "activate_skill");
+                assert_eq!(context.tool_name, "activate_skill");
                 // Deny the request
                 let _ = ctx.approval_gate.resolve(&request_id, false);
             }

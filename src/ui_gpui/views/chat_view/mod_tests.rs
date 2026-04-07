@@ -266,6 +266,7 @@ async fn apply_store_snapshot_stream_finalize_calls_maybe_scroll_when_autoscroll
                 content: "final response".to_string(),
                 thinking_content: None,
                 timestamp: None,
+                model_id: None,
             }];
             let snapshot = ChatStoreSnapshot {
                 selected_conversation_id: Some(conversation_id),
@@ -319,6 +320,7 @@ async fn apply_store_snapshot_stream_finalize_skips_maybe_scroll_when_autoscroll
                 content: "final response".to_string(),
                 thinking_content: None,
                 timestamp: None,
+                model_id: None,
             }];
             let snapshot = ChatStoreSnapshot {
                 selected_conversation_id: Some(conversation_id),

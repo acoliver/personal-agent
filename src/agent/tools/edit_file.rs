@@ -6,7 +6,7 @@
 
 use crate::agent::tool_approval_policy::ToolApprovalDecision;
 use crate::llm::client_agent::McpToolContext;
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ToolApprovalContext, ToolCategory, ViewCommand};
 use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
@@ -46,7 +46,7 @@ impl ToolExecutor<McpToolContext> for EditFileExecutor {
         let absolute_path = resolve_path(&path)?;
         let approval_path = absolute_path.display().to_string();
 
-        check_approval(ctx.deps(), &approval_path).await?;
+        check_approval(ctx.deps(), &approval_path, start_line, end_line).await?;
 
         let content = tokio::fs::read_to_string(&absolute_path)
             .await
@@ -225,7 +225,12 @@ fn map_write_error(path: &Path, error: &std::io::Error) -> ToolError {
 }
 
 /// Check tool approval policy and await user decision if required.
-async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(), ToolError> {
+async fn check_approval(
+    tool_context: &McpToolContext,
+    path: &str,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+) -> Result<(), ToolError> {
     let decision = {
         let policy = tool_context.policy.lock().await;
         policy.evaluate("EditFile")
@@ -242,12 +247,20 @@ async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(),
                 .approval_gate
                 .wait_for_approval(request_id.clone(), "EditFile".to_string());
 
+            // Build rich context for approval UI
+            let mut context = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, path);
+            if let Some(start) = start_line {
+                context = context.with_detail(
+                    "line_range",
+                    end_line.map_or_else(|| format!("{start}"), |end| format!("{start}-{end}")),
+                );
+            }
+
             if tool_context
                 .view_tx
                 .try_send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
-                    tool_name: "EditFile".to_string(),
-                    tool_argument: path.to_string(),
+                    context,
                 })
                 .is_err()
             {

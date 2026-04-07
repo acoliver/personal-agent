@@ -337,6 +337,7 @@ async fn load_startup_transcript(
                                 content: message.content,
                                 thinking_content: message.thinking_content,
                                 timestamp: Some(message.timestamp.timestamp_millis() as u64),
+                                model_id: message.model_id,
                             },
                         )
                     })

@@ -902,6 +902,7 @@ impl SettingsView {
         self.state.theme_dropdown_open = !self.state.theme_dropdown_open;
     }
 
+    #[allow(dead_code)]
     pub(super) const fn close_theme_dropdown(&mut self) {
         self.state.theme_dropdown_open = false;
     }

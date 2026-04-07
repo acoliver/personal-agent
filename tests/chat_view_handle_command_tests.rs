@@ -52,6 +52,7 @@ fn payload(
         content: content.to_string(),
         thinking_content: thinking_content.map(str::to_string),
         timestamp,
+        model_id: None,
     }
 }
 
@@ -115,6 +116,7 @@ async fn apply_store_and_settings_snapshots_seed_visible_chat_state(cx: &mut Tes
                     stream_buffer: "partial".to_string(),
                     last_error: None,
                     active_target: Some(conversation_id),
+                    model_id: None,
                 },
                 conversations: vec![conversation(conversation_id, "Loaded Chat", 2)],
             },
@@ -578,6 +580,7 @@ async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestA
                     stream_buffer: "partial".to_string(),
                     last_error: None,
                     active_target: Some(conversation_id),
+                    model_id: None,
                 },
                 conversations: vec![conversation(conversation_id, "Current", 0)],
             },
@@ -606,6 +609,7 @@ async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestA
                     stream_buffer: String::new(),
                     last_error: None,
                     active_target: None,
+                    model_id: None,
                 },
                 conversations: vec![conversation(conversation_id, "Current", 1)],
             },
@@ -637,6 +641,7 @@ async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestA
                     stream_buffer: String::new(),
                     last_error: None,
                     active_target: None,
+                    model_id: None,
                 },
                 conversations: vec![conversation(conversation_id, "Current", 2)],
             },
@@ -668,6 +673,7 @@ async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestA
                     stream_buffer: String::new(),
                     last_error: Some("boom".to_string()),
                     active_target: None,
+                    model_id: None,
                 },
                 conversations: vec![conversation(conversation_id, "Current", 2)],
             },

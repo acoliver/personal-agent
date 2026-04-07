@@ -20,7 +20,8 @@ mod state;
 // ── Re-exports so downstream consumers (mod.rs, tests, main_panel.rs) ──
 // see the same type paths as before extraction.
 pub use state::{
-    ApprovalBubbleState, ChatMessage, ChatState, MessageRole, StreamingState, ToolApprovalBubble,
+    ApprovalBubbleState, ChatMessage, ChatState, GroupedOperation, MessageRole, StreamingState,
+    ToolApprovalBubble,
 };
 
 use crate::events::types::UserEvent;
@@ -28,6 +29,7 @@ use crate::presentation::view_command::ConversationMessagePayload;
 use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, StreamingStoreSnapshot};
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
+use crate::ui_gpui::theme::Theme;
 use gpui::{point, px, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent};
 #[cfg(test)]
 use std::cell::Cell;
@@ -135,7 +137,11 @@ impl ChatView {
                         ChatMessage::user(message.content)
                     }
                     crate::presentation::view_command::MessageRole::Assistant => {
-                        ChatMessage::assistant(message.content, current_model.to_string())
+                        // Use the per-message model_id if available, otherwise fall back to current_model
+                        let model_label = message
+                            .model_id
+                            .unwrap_or_else(|| current_model.to_string());
+                        ChatMessage::assistant(message.content, model_label)
                     }
                     crate::presentation::view_command::MessageRole::System
                     | crate::presentation::view_command::MessageRole::Tool => {
@@ -597,7 +603,7 @@ impl ChatView {
         sidebar_toggle_offset: f32,
     ) -> Pixels {
         let min_left = px(12.0);
-        let dropdown_width = px(260.0);
+        let dropdown_width = px(260.0 * Theme::ui_scale());
         // chat-title-bar left padding (12) + conversation selector width (220)
         // + gap (8) + new button width (28) + gap (8) + sidebar toggle offset
         let preferred = px(276.0 + sidebar_toggle_offset);

@@ -118,6 +118,7 @@ fn test_gpui_bridge_drain_commands() {
     view_tx
         .send(ViewCommand::ShowThinking {
             conversation_id: Uuid::new_v4(),
+            model_id: "test".to_string(),
         })
         .unwrap();
     view_tx
@@ -340,6 +341,7 @@ async fn test_full_bridge_round_trip() {
     // === Simulate tokio -> GPUI ===
     sink.send(ViewCommand::ShowThinking {
         conversation_id: Uuid::new_v4(),
+        model_id: "test".to_string(),
     });
 
     // GPUI should be notified
@@ -393,6 +395,7 @@ async fn test_e2e_with_state_application() {
     let conv_id = Uuid::new_v4();
     sink.send(ViewCommand::ShowThinking {
         conversation_id: conv_id,
+        model_id: "test".to_string(),
     });
     sink.send(ViewCommand::AppendStream {
         conversation_id: conv_id,

@@ -78,6 +78,7 @@ fn test_channel_communication() {
     view_cmd_tx
         .send(ViewCommand::ShowThinking {
             conversation_id: uuid::Uuid::new_v4(),
+            model_id: "test".to_string(),
         })
         .unwrap();
 

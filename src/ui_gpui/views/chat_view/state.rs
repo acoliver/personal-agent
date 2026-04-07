@@ -7,7 +7,8 @@
 
 use crate::models::ConversationExportFormat;
 use crate::presentation::view_command::{
-    ConversationSearchResult, ConversationSummary, ProfileSummary,
+    ConversationSearchResult, ConversationSummary, ProfileSummary, ToolApprovalContext,
+    ToolCategory,
 };
 use std::ops::Range;
 use uuid::Uuid;
@@ -83,12 +84,72 @@ pub enum ApprovalBubbleState {
 }
 
 /// A single inline tool approval request displayed in the chat stream.
+/// Supports grouping of related operations (same category + same primary target).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolApprovalBubble {
+    /// Single request ID for non-grouped, first request ID for grouped
     pub request_id: String,
-    pub tool_name: String,
-    pub tool_argument: String,
+    /// All request IDs in this group (for resolving)
+    pub request_ids: Vec<String>,
+    /// The approval context (shared across grouped operations)
+    pub context: ToolApprovalContext,
+    /// Lifecycle state
     pub state: ApprovalBubbleState,
+    /// Group key for matching incoming requests to existing bubbles
+    pub group_key: (ToolCategory, String),
+    /// Additional grouped operations (first is always in context)
+    pub grouped_operations: Vec<GroupedOperation>,
+    /// Whether the grouped operations list is expanded
+    pub expanded: bool,
+}
+
+/// Represents a single operation within a grouped approval bubble.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupedOperation {
+    pub request_id: String,
+    /// Per-operation details (e.g., line range for edit, pattern for search)
+    pub details: Vec<(String, String)>,
+}
+
+impl ToolApprovalBubble {
+    /// Create a new single-operation approval bubble.
+    pub fn new(request_id: impl Into<String>, context: ToolApprovalContext) -> Self {
+        let group_key = (context.category, context.primary_target.clone());
+        let request_id = request_id.into();
+        Self {
+            request_id: request_id.clone(),
+            request_ids: vec![request_id],
+            context,
+            state: ApprovalBubbleState::Pending,
+            group_key,
+            grouped_operations: Vec::new(),
+            expanded: false,
+        }
+    }
+
+    /// Check if this bubble can group with the given context.
+    #[must_use]
+    pub fn can_group_with(&self, context: &ToolApprovalContext) -> bool {
+        self.state == ApprovalBubbleState::Pending
+            && self.group_key.0 == context.category
+            && self.group_key.1 == context.primary_target
+    }
+
+    /// Add a grouped operation to this bubble.
+    pub fn add_operation(&mut self, request_id: impl Into<String>, details: Vec<(String, String)>) {
+        let request_id = request_id.into();
+        self.request_ids.push(request_id.clone());
+        self.grouped_operations.push(GroupedOperation {
+            request_id,
+            details,
+        });
+    }
+
+    /// Get the total number of operations in this bubble.
+    #[must_use]
+    pub const fn operation_count(&self) -> usize {
+        1 + self.grouped_operations.len()
+    }
 }
 
 /// Main chat state container
@@ -299,6 +360,12 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_with_timestamp() {
+        let msg = ChatMessage::user("hello").with_timestamp(1_234_567_890);
+        assert_eq!(msg.timestamp, Some(1_234_567_890));
+    }
+
+    #[test]
     fn chat_state_default_is_idle_with_empty_messages() {
         let state = ChatState::default();
         assert!(state.messages.is_empty());
@@ -339,6 +406,43 @@ mod tests {
 
         state.set_streaming(StreamingState::Idle);
         assert!(matches!(state.streaming, StreamingState::Idle));
+    }
+
+    #[test]
+    fn streaming_state_error_variant() {
+        let state = StreamingState::Error("test error".to_string());
+        assert!(matches!(state, StreamingState::Error(_)));
+    }
+
+    #[test]
+    fn streaming_state_streaming_variant() {
+        let state = StreamingState::Streaming {
+            content: "test".to_string(),
+            done: true,
+        };
+        assert!(matches!(state, StreamingState::Streaming { .. }));
+    }
+
+    #[test]
+    fn chat_state_set_thinking() {
+        let mut state = ChatState::new();
+        state.set_thinking(true, Some("thinking content".to_string()));
+        assert!(state.show_thinking);
+        assert_eq!(state.thinking_content, Some("thinking content".to_string()));
+    }
+
+    #[test]
+    fn chat_state_default_timestamp_is_none() {
+        let msg = ChatMessage::user("hello");
+        assert!(msg.timestamp.is_none());
+    }
+
+    #[test]
+    fn chat_state_new_creates_empty_state() {
+        let state = ChatState::new();
+        assert!(state.messages.is_empty());
+        assert_eq!(state.input_text, "");
+        assert_eq!(state.conversation_title, "New Conversation");
     }
 
     #[test]
@@ -428,38 +532,34 @@ mod tests {
 
     #[test]
     fn tool_approval_bubble_pending_state() {
-        let bubble = ToolApprovalBubble {
-            request_id: "req-1".into(),
-            tool_name: "shell".into(),
-            tool_argument: "git push".into(),
-            state: ApprovalBubbleState::Pending,
-        };
+        let bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("shell", ToolCategory::Shell, "git push"),
+        );
         assert_eq!(bubble.state, ApprovalBubbleState::Pending);
         assert_eq!(bubble.request_id, "req-1");
-        assert_eq!(bubble.tool_name, "shell");
-        assert_eq!(bubble.tool_argument, "git push");
+        assert_eq!(bubble.request_ids, vec!["req-1".to_string()]);
+        assert_eq!(bubble.context.tool_name, "shell");
+        assert_eq!(bubble.context.primary_target, "git push");
+        assert_eq!(bubble.operation_count(), 1);
     }
 
     #[test]
     fn tool_approval_bubble_transitions_to_approved() {
-        let mut bubble = ToolApprovalBubble {
-            request_id: "req-2".into(),
-            tool_name: "write".into(),
-            tool_argument: "/tmp/f.txt".into(),
-            state: ApprovalBubbleState::Pending,
-        };
+        let mut bubble = ToolApprovalBubble::new(
+            "req-2",
+            ToolApprovalContext::new("write", ToolCategory::FileWrite, "/tmp/f.txt"),
+        );
         bubble.state = ApprovalBubbleState::Approved;
         assert_eq!(bubble.state, ApprovalBubbleState::Approved);
     }
 
     #[test]
     fn tool_approval_bubble_transitions_to_denied() {
-        let mut bubble = ToolApprovalBubble {
-            request_id: "req-3".into(),
-            tool_name: "shell".into(),
-            tool_argument: "rm -rf /".into(),
-            state: ApprovalBubbleState::Pending,
-        };
+        let mut bubble = ToolApprovalBubble::new(
+            "req-3",
+            ToolApprovalContext::new("shell", ToolCategory::Shell, "rm -rf /"),
+        );
         bubble.state = ApprovalBubbleState::Denied;
         assert_eq!(bubble.state, ApprovalBubbleState::Denied);
     }
@@ -467,18 +567,17 @@ mod tests {
     #[test]
     fn approval_bubbles_can_be_pushed_to_state() {
         let mut state = ChatState::default();
-        state.approval_bubbles.push(ToolApprovalBubble {
-            request_id: "r1".into(),
-            tool_name: "shell".into(),
-            tool_argument: "ls".into(),
-            state: ApprovalBubbleState::Pending,
-        });
-        state.approval_bubbles.push(ToolApprovalBubble {
-            request_id: "r2".into(),
-            tool_name: "write".into(),
-            tool_argument: "/tmp/a.txt".into(),
-            state: ApprovalBubbleState::Approved,
-        });
+        let pending = ToolApprovalBubble::new(
+            "r1",
+            ToolApprovalContext::new("shell", ToolCategory::Shell, "ls"),
+        );
+        let mut approved = ToolApprovalBubble::new(
+            "r2",
+            ToolApprovalContext::new("write", ToolCategory::FileWrite, "/tmp/a.txt"),
+        );
+        approved.state = ApprovalBubbleState::Approved;
+        state.approval_bubbles.push(pending);
+        state.approval_bubbles.push(approved);
         assert_eq!(state.approval_bubbles.len(), 2);
         assert_eq!(
             state.approval_bubbles[0].state,
@@ -505,5 +604,72 @@ mod tests {
         assert!(state.yolo_mode);
         state.yolo_mode = false;
         assert!(!state.yolo_mode);
+    }
+
+    #[test]
+    fn tool_approval_bubble_can_group_with_same_category_and_target() {
+        let bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs"),
+        );
+        let context = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs");
+        assert!(bubble.can_group_with(&context));
+    }
+
+    #[test]
+    fn tool_approval_bubble_cannot_group_with_different_category() {
+        let bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs"),
+        );
+        let context =
+            ToolApprovalContext::new("WriteFile", ToolCategory::FileWrite, "/tmp/main.rs");
+        assert!(!bubble.can_group_with(&context));
+    }
+
+    #[test]
+    fn tool_approval_bubble_cannot_group_with_different_target() {
+        let bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/a.rs"),
+        );
+        let context = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/b.rs");
+        assert!(!bubble.can_group_with(&context));
+    }
+
+    #[test]
+    fn tool_approval_bubble_cannot_group_when_not_pending() {
+        let mut bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs"),
+        );
+        bubble.state = ApprovalBubbleState::Approved;
+        let context = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs");
+        assert!(!bubble.can_group_with(&context));
+    }
+
+    #[test]
+    fn tool_approval_bubble_add_operation() {
+        let mut bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs"),
+        );
+        assert_eq!(bubble.operation_count(), 1);
+        assert_eq!(bubble.request_ids.len(), 1);
+
+        bubble.add_operation("req-2", vec![("line".to_string(), "10".to_string())]);
+        assert_eq!(bubble.operation_count(), 2);
+        assert_eq!(bubble.request_ids.len(), 2);
+        assert_eq!(bubble.grouped_operations.len(), 1);
+    }
+
+    #[test]
+    fn grouped_operation_creation() {
+        let op = GroupedOperation {
+            request_id: "req-1".to_string(),
+            details: vec![("key".to_string(), "value".to_string())],
+        };
+        assert_eq!(op.request_id, "req-1");
+        assert_eq!(op.details.len(), 1);
     }
 }

@@ -39,6 +39,7 @@ pub enum ViewCommand {
         conversation_id: Uuid,
         role: MessageRole,
         content: String,
+        model_id: Option<String>,
     },
 
     /// Replace the visible transcript for a conversation with a full replay payload.
@@ -56,7 +57,10 @@ pub enum ViewCommand {
     },
 
     /// Show thinking indicator
-    ShowThinking { conversation_id: Uuid },
+    ShowThinking {
+        conversation_id: Uuid,
+        model_id: String,
+    },
 
     /// Hide thinking indicator
     HideThinking { conversation_id: Uuid },
@@ -300,8 +304,7 @@ pub enum ViewCommand {
     /// Display an inline approval bubble for a tool call.
     ToolApprovalRequest {
         request_id: String,
-        tool_name: String,
-        tool_argument: String,
+        context: ToolApprovalContext,
     },
 
     /// Update an existing approval bubble to reflect the user's decision.
@@ -348,6 +351,73 @@ pub enum ViewCommand {
     DismissModal,
 }
 
+/// Tool category for structured approval context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolCategory {
+    /// File edit operation (`EditFile`)
+    FileEdit,
+    /// File write operation (`WriteFile`)
+    FileWrite,
+    /// File read operation (`ReadFile`)
+    FileRead,
+    /// Search operation
+    Search,
+    /// Shell command execution
+    Shell,
+    /// MCP tool execution
+    Mcp,
+}
+
+/// Structured context for tool approval requests.
+///
+/// Replaces flat `tool_argument` strings with rich, tool-specific metadata
+/// for consistent display across all tool types.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolApprovalContext {
+    /// The tool name (e.g., `EditFile`, `ShellExec`)
+    pub tool_name: String,
+    /// The category of tool for grouping and icon selection
+    pub category: ToolCategory,
+    /// The primary target (file path, command, search pattern)
+    pub primary_target: String,
+    /// Additional key-value details (truncated for display)
+    pub details: Vec<(String, String)>,
+    /// For MCP tools, the server name
+    pub server_name: Option<String>,
+}
+
+impl ToolApprovalContext {
+    /// Create a new tool approval context.
+    #[must_use]
+    pub fn new(
+        tool_name: impl Into<String>,
+        category: ToolCategory,
+        primary_target: impl Into<String>,
+    ) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            category,
+            primary_target: primary_target.into(),
+            details: Vec::new(),
+            server_name: None,
+        }
+    }
+
+    /// Add a detail key-value pair.
+    #[must_use]
+    pub fn with_detail(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.details.push((key.into(), value.into()));
+        self
+    }
+
+    /// Set the server name (for MCP tools).
+    #[must_use]
+    pub fn with_server_name(mut self, server_name: impl Into<String>) -> Self {
+        self.server_name = Some(server_name.into());
+        self
+    }
+}
+
 /// Message role for display
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
@@ -365,6 +435,7 @@ pub struct ConversationMessagePayload {
     pub content: String,
     pub thinking_content: Option<String>,
     pub timestamp: Option<u64>,
+    pub model_id: Option<String>,
 }
 
 /// Conversation summary for list display
@@ -517,4 +588,102 @@ pub enum ErrorSeverity {
     Warning,
     Error,
     Critical,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_category_equality() {
+        assert_eq!(ToolCategory::FileEdit, ToolCategory::FileEdit);
+        assert_ne!(ToolCategory::FileEdit, ToolCategory::FileWrite);
+        assert_eq!(ToolCategory::Shell, ToolCategory::Shell);
+        assert_eq!(ToolCategory::Mcp, ToolCategory::Mcp);
+    }
+
+    #[test]
+    fn tool_approval_context_new_sets_fields() {
+        let ctx = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/test.rs");
+        assert_eq!(ctx.tool_name, "EditFile");
+        assert_eq!(ctx.category, ToolCategory::FileEdit);
+        assert_eq!(ctx.primary_target, "/tmp/test.rs");
+        assert!(ctx.details.is_empty());
+        assert!(ctx.server_name.is_none());
+    }
+
+    #[test]
+    fn tool_approval_context_with_detail_adds_pair() {
+        let ctx = ToolApprovalContext::new("ShellExec", ToolCategory::Shell, "git status")
+            .with_detail("working_dir", "/home/user");
+        assert_eq!(ctx.details.len(), 1);
+        assert_eq!(ctx.details[0].0, "working_dir");
+        assert_eq!(ctx.details[0].1, "/home/user");
+    }
+
+    #[test]
+    fn tool_approval_context_with_multiple_details() {
+        let ctx = ToolApprovalContext::new("Search", ToolCategory::Search, "/src")
+            .with_detail("pattern", "fn main")
+            .with_detail("include", "*.rs");
+        assert_eq!(ctx.details.len(), 2);
+        assert_eq!(
+            ctx.details[0],
+            ("pattern".to_string(), "fn main".to_string())
+        );
+        assert_eq!(ctx.details[1], ("include".to_string(), "*.rs".to_string()));
+    }
+
+    #[test]
+    fn tool_approval_context_with_server_name() {
+        let ctx = ToolApprovalContext::new("mcp-tool", ToolCategory::Mcp, "query")
+            .with_server_name("test-server");
+        assert_eq!(ctx.server_name, Some("test-server".to_string()));
+    }
+
+    #[test]
+    fn tool_approval_context_builder_chaining() {
+        let ctx = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/file.txt")
+            .with_detail("line_range", "10-20")
+            .with_detail("encoding", "utf-8")
+            .with_server_name("local");
+        assert_eq!(ctx.tool_name, "EditFile");
+        assert_eq!(ctx.category, ToolCategory::FileEdit);
+        assert_eq!(ctx.primary_target, "/tmp/file.txt");
+        assert_eq!(ctx.details.len(), 2);
+        assert_eq!(ctx.server_name, Some("local".to_string()));
+    }
+
+    #[test]
+    fn message_role_equality() {
+        assert_eq!(MessageRole::User, MessageRole::User);
+        assert_eq!(MessageRole::Assistant, MessageRole::Assistant);
+        assert_ne!(MessageRole::User, MessageRole::Assistant);
+    }
+
+    #[test]
+    fn error_severity_equality() {
+        assert_eq!(ErrorSeverity::Info, ErrorSeverity::Info);
+        assert_eq!(ErrorSeverity::Critical, ErrorSeverity::Critical);
+        assert_ne!(ErrorSeverity::Warning, ErrorSeverity::Error);
+    }
+
+    #[test]
+    fn view_id_equality() {
+        assert_eq!(ViewId::Chat, ViewId::Chat);
+        assert_eq!(ViewId::Settings, ViewId::Settings);
+        assert_ne!(ViewId::Chat, ViewId::History);
+    }
+
+    #[test]
+    fn modal_id_equality() {
+        assert_eq!(
+            ModalId::ConfirmDeleteConversation,
+            ModalId::ConfirmDeleteConversation
+        );
+        assert_ne!(
+            ModalId::ConfirmDeleteConversation,
+            ModalId::ConfirmDeleteProfile
+        );
+    }
 }

@@ -11,7 +11,7 @@ use tokio::io::AsyncReadExt;
 
 use crate::agent::{ToolApprovalDecision, ToolApprovalPolicy};
 use crate::llm::client_agent::McpToolContext;
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ToolApprovalContext, ToolCategory, ViewCommand};
 use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
@@ -86,7 +86,7 @@ impl ToolExecutor<McpToolContext> for ShellExecExecutor {
     ) -> Result<ToolReturn, ToolError> {
         let params = parse_params(&args)?;
 
-        check_approval(ctx.deps(), &params.command).await?;
+        check_approval(ctx.deps(), &params.command, params.working_dir.as_deref()).await?;
 
         let result = execute_shell_command(&params).await?;
         Ok(ToolReturn::text(result.format_for_agent()))
@@ -142,7 +142,11 @@ fn parse_params(args: &serde_json::Value) -> Result<ShellExecParams, ToolError> 
 }
 
 /// Check tool approval policy and await user decision if required.
-async fn check_approval(tool_context: &McpToolContext, command: &str) -> Result<(), ToolError> {
+async fn check_approval(
+    tool_context: &McpToolContext,
+    command: &str,
+    working_dir: Option<&str>,
+) -> Result<(), ToolError> {
     let (decision, mut identifiers) = {
         let policy = tool_context.policy.lock().await;
         (
@@ -166,12 +170,17 @@ async fn check_approval(tool_context: &McpToolContext, command: &str) -> Result<
                 .approval_gate
                 .wait_for_approvals(request_id.clone(), identifiers);
 
+            // Build rich context for approval UI
+            let mut context = ToolApprovalContext::new("ShellExec", ToolCategory::Shell, command);
+            if let Some(dir) = working_dir {
+                context = context.with_detail("working_dir", dir);
+            }
+
             if tool_context
                 .view_tx
                 .send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
-                    tool_name: "ShellExec".to_string(),
-                    tool_argument: command.to_string(),
+                    context,
                 })
                 .await
                 .is_err()
