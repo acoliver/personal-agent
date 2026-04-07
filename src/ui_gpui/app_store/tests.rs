@@ -34,6 +34,7 @@ fn user_message(content: &str) -> ConversationMessagePayload {
         content: content.to_string(),
         thinking_content: None,
         timestamp: None,
+        model_id: None,
     }
 }
 

@@ -357,6 +357,7 @@ pub struct ConversationMessagePayload {
     pub content: String,
     pub thinking_content: Option<String>,
     pub timestamp: Option<u64>,
+    pub model_id: Option<String>,
 }
 
 /// Conversation summary for list display

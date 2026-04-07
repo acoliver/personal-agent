@@ -567,7 +567,6 @@ async fn create_stream_agent(
         }
     }
 }
-
 #[allow(clippy::too_many_arguments)]
 async fn run_stream_task(
     prepared: PreparedMessageContext,
@@ -582,7 +581,7 @@ async fn run_stream_task(
     policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
 ) {
     let PreparedMessageContext {
-        profile: _,
+        profile,
         client,
         messages,
         system_prompt,
@@ -650,9 +649,9 @@ async fn run_stream_task(
         &thinking_text,
         &tool_calls,
         &tool_results,
+        &profile.name,
     )
     .await;
-
     persist_context_state(
         &conversation_service,
         conversation_id,
@@ -769,6 +768,7 @@ fn emit_stream_error(
     let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(error)));
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn persist_assistant_response(
     conversation_service: &Arc<dyn ConversationService>,
     conversation_id: Uuid,
@@ -776,6 +776,7 @@ async fn persist_assistant_response(
     thinking_text: &str,
     tool_calls: &[crate::llm::tools::ToolUse],
     tool_results: &[crate::llm::tools::ToolResult],
+    model_label: &str,
 ) {
     if response_text.is_empty()
         && thinking_text.is_empty()
@@ -790,6 +791,9 @@ async fn persist_assistant_response(
     } else {
         Message::assistant_with_thinking(response_text.to_string(), thinking_text.to_string())
     };
+
+    // Set the model_id to preserve which profile generated this response
+    msg.model_id = Some(model_label.to_string());
 
     if !tool_calls.is_empty() {
         msg.tool_calls = Some(serde_json::to_string(tool_calls).unwrap_or_else(|error| {

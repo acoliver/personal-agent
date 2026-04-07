@@ -37,6 +37,7 @@ fn make_message(role: MessageRole, content: &str) -> ConversationMessagePayload 
         content: content.to_string(),
         thinking_content: None,
         timestamp: None,
+        model_id: None,
     }
 }
 

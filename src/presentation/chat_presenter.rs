@@ -493,6 +493,7 @@ impl ChatPresenter {
                     content: message.content,
                     thinking_content: message.thinking_content,
                     timestamp: Some(message.timestamp.timestamp_millis().cast_unsigned()),
+                    model_id: message.model_id,
                 })
             })
             .collect::<Vec<_>>();

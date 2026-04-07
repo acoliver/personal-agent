@@ -854,6 +854,7 @@ fn append_persisted_message_if_target_matches_selected(
             content,
             thinking_content: None,
             timestamp: None,
+            model_id: None,
         });
     true
 }

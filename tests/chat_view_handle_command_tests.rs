@@ -52,6 +52,7 @@ fn payload(
         content: content.to_string(),
         thinking_content: thinking_content.map(str::to_string),
         timestamp,
+        model_id: None,
     }
 }
 

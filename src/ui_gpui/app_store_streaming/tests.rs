@@ -56,6 +56,7 @@ fn begin_and_ready(store: &GpuiAppStore, conversation_id: Uuid) -> u64 {
             content: "seed".to_string(),
             thinking_content: None,
             timestamp: None,
+            model_id: None,
         }],
     }]);
     assert!(changed);

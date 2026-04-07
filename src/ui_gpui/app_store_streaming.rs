@@ -147,6 +147,7 @@ pub(super) fn finalize_stream_if_target_matches_selected_or_nil(
             content: inner.snapshot.chat.streaming.stream_buffer.clone(),
             thinking_content: non_empty_or_none(&inner.snapshot.chat.streaming.thinking_buffer),
             timestamp: None,
+            model_id: None,
         };
         inner.snapshot.chat.transcript.push(assistant_payload);
         inner.last_finalized_stream_guard = Some(FinalizedStreamGuard {
