@@ -15,7 +15,7 @@
 use super::state::{ApprovalBubbleState, ToolApprovalBubble};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ToolApprovalContext, ViewCommand};
 
 impl ChatView {
     fn is_export_notification(message: &str) -> bool {
@@ -29,8 +29,7 @@ impl ChatView {
     fn handle_tool_approval_request(
         &mut self,
         request_id: String,
-        tool_name: String,
-        tool_argument: String,
+        context: ToolApprovalContext,
         cx: &mut gpui::Context<Self>,
     ) {
         if self.state.yolo_mode {
@@ -42,12 +41,24 @@ impl ChatView {
             return;
         }
 
-        self.state.approval_bubbles.push(ToolApprovalBubble {
-            request_id,
-            tool_name,
-            tool_argument,
-            state: ApprovalBubbleState::Pending,
-        });
+        // Try to find an existing pending bubble to group with
+        if let Some(existing) = self
+            .state
+            .approval_bubbles
+            .iter_mut()
+            .find(|b| b.can_group_with(&context))
+        {
+            // Group with existing bubble
+            let details = context.details.clone();
+            existing.add_operation(request_id, details);
+            cx.notify();
+            return;
+        }
+
+        // Create new bubble
+        self.state
+            .approval_bubbles
+            .push(ToolApprovalBubble::new(request_id, context));
         self.maybe_scroll_chat_to_bottom(cx);
         cx.notify();
     }
@@ -141,20 +152,20 @@ impl ChatView {
             }
             ViewCommand::ToolApprovalRequest {
                 request_id,
-                tool_name,
-                tool_argument,
+                context,
             } => {
-                self.handle_tool_approval_request(request_id, tool_name, tool_argument, cx);
+                self.handle_tool_approval_request(request_id, context, cx);
             }
             ViewCommand::ToolApprovalResolved {
                 request_id,
                 approved,
             } => {
+                // Find the bubble containing this request_id
                 if let Some(bubble) = self
                     .state
                     .approval_bubbles
                     .iter_mut()
-                    .find(|b| b.request_id == request_id)
+                    .find(|b| b.request_ids.contains(&request_id))
                 {
                     bubble.state = if approved {
                         ApprovalBubbleState::Approved

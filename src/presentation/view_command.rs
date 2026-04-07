@@ -293,8 +293,7 @@ pub enum ViewCommand {
     /// Display an inline approval bubble for a tool call.
     ToolApprovalRequest {
         request_id: String,
-        tool_name: String,
-        tool_argument: String,
+        context: ToolApprovalContext,
     },
 
     /// Update an existing approval bubble to reflect the user's decision.
@@ -338,6 +337,73 @@ pub enum ViewCommand {
 
     /// Dismiss modal
     DismissModal,
+}
+
+/// Tool category for structured approval context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolCategory {
+    /// File edit operation (`EditFile`)
+    FileEdit,
+    /// File write operation (`WriteFile`)
+    FileWrite,
+    /// File read operation (`ReadFile`)
+    FileRead,
+    /// Search operation
+    Search,
+    /// Shell command execution
+    Shell,
+    /// MCP tool execution
+    Mcp,
+}
+
+/// Structured context for tool approval requests.
+///
+/// Replaces flat `tool_argument` strings with rich, tool-specific metadata
+/// for consistent display across all tool types.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolApprovalContext {
+    /// The tool name (e.g., `EditFile`, `ShellExec`)
+    pub tool_name: String,
+    /// The category of tool for grouping and icon selection
+    pub category: ToolCategory,
+    /// The primary target (file path, command, search pattern)
+    pub primary_target: String,
+    /// Additional key-value details (truncated for display)
+    pub details: Vec<(String, String)>,
+    /// For MCP tools, the server name
+    pub server_name: Option<String>,
+}
+
+impl ToolApprovalContext {
+    /// Create a new tool approval context.
+    #[must_use]
+    pub fn new(
+        tool_name: impl Into<String>,
+        category: ToolCategory,
+        primary_target: impl Into<String>,
+    ) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            category,
+            primary_target: primary_target.into(),
+            details: Vec::new(),
+            server_name: None,
+        }
+    }
+
+    /// Add a detail key-value pair.
+    #[must_use]
+    pub fn with_detail(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.details.push((key.into(), value.into()));
+        self
+    }
+
+    /// Set the server name (for MCP tools).
+    #[must_use]
+    pub fn with_server_name(mut self, server_name: impl Into<String>) -> Self {
+        self.server_name = Some(server_name.into());
+        self
+    }
 }
 
 /// Message role for display

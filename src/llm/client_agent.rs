@@ -2,7 +2,7 @@
 use crate::agent::tool_approval_policy::{ToolApprovalDecision, ToolApprovalPolicy};
 use crate::llm::error::debug_error_message;
 use crate::llm::{LlmError, Message, Role, StreamEvent};
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ToolApprovalContext, ToolCategory, ViewCommand};
 use futures::StreamExt;
 use serdes_ai::core::messages::{
     ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart, TextPart, ThinkingPart,
@@ -257,6 +257,40 @@ fn register_native_tools(
     builder
 }
 
+/// Extract a sensible primary target from MCP tool arguments.
+/// Tries to find the first string argument or the first key as fallback.
+fn extract_primary_target(args: &serde_json::Value, tool_name: &str) -> String {
+    // Try to find the first string value in the args object
+    if let Some(obj) = args.as_object() {
+        for value in obj.values() {
+            if let Some(s) = value.as_str() {
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            }
+        }
+        // If no string value found, use the first key
+        if let Some(key) = obj.keys().next() {
+            return key.clone();
+        }
+    }
+    // Fallback to tool name
+    tool_name.to_string()
+}
+
+/// Truncate a JSON value for display in approval UI.
+fn truncate_value(value: &serde_json::Value, max_len: usize) -> String {
+    let s = match value {
+        serde_json::Value::String(s) => s.clone(),
+        _ => value.to_string(),
+    };
+    if s.len() > max_len {
+        format!("{}...", &s[..max_len])
+    } else {
+        s
+    }
+}
+
 /// Executor that bridges Agent tools to MCP
 struct McpToolExecutor {
     tool_name: String,
@@ -306,13 +340,29 @@ impl ToolExecutor<McpToolContext> for McpToolExecutor {
                     .approval_gate
                     .wait_for_approval(request_id.clone(), tool_identifier.clone());
 
+                // Build rich context for MCP tool approval
+                let mut context = ToolApprovalContext::new(
+                    &self.tool_name,
+                    ToolCategory::Mcp,
+                    extract_primary_target(&args, &self.tool_name),
+                )
+                .with_server_name(&provider.mcp_name);
+
+                // Flatten JSON args into details
+                if let Some(obj) = args.as_object() {
+                    for (key, value) in obj.iter().take(5) {
+                        // Limit to first 5 keys
+                        let value_str = truncate_value(value, 50);
+                        context = context.with_detail(key.clone(), value_str);
+                    }
+                }
+
                 if ctx
                     .deps()
                     .view_tx
                     .try_send(ViewCommand::ToolApprovalRequest {
                         request_id: request_id.clone(),
-                        tool_name: self.tool_name.clone(),
-                        tool_argument: args.to_string(),
+                        context,
                     })
                     .is_err()
                 {
@@ -602,7 +652,8 @@ impl crate::llm::LlmClient {
         let mut builder = AgentBuilder::from_arc(model)
             .temperature(self.profile.parameters.temperature)
             .top_p(self.profile.parameters.top_p)
-            .max_tokens(u64::from(self.profile.parameters.max_tokens));
+            .max_tokens(u64::from(self.profile.parameters.max_tokens))
+            .parallel_tool_calls(true);
 
         if !system_prompt.is_empty() {
             builder = builder.system_prompt(system_prompt);

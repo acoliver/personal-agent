@@ -949,6 +949,8 @@ async fn handle_command_forwards_yolo_mode_changed_to_settings_and_chat(cx: &mut
 
 #[gpui::test]
 async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestAppContext) {
+    use crate::presentation::view_command::{ToolApprovalContext, ToolCategory};
+
     let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
     cx.set_global(app_state);
     let panel = cx.new(MainPanel::new);
@@ -959,8 +961,11 @@ async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestApp
         panel.handle_command(
             ViewCommand::ToolApprovalRequest {
                 request_id: "req-1".to_string(),
-                tool_name: "WriteFile".to_string(),
-                tool_argument: "/tmp/example.txt".to_string(),
+                context: ToolApprovalContext::new(
+                    "WriteFile",
+                    ToolCategory::FileWrite,
+                    "/tmp/example.txt",
+                ),
             },
             cx,
         );
@@ -969,9 +974,12 @@ async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestApp
         chat_view.read_with(cx, |view, _| {
             assert_eq!(view.state.approval_bubbles.len(), 1);
             assert_eq!(view.state.approval_bubbles[0].request_id, "req-1");
-            assert_eq!(view.state.approval_bubbles[0].tool_name, "WriteFile");
             assert_eq!(
-                view.state.approval_bubbles[0].tool_argument,
+                view.state.approval_bubbles[0].context.tool_name,
+                "WriteFile"
+            );
+            assert_eq!(
+                view.state.approval_bubbles[0].context.primary_target,
                 "/tmp/example.txt"
             );
             assert_eq!(

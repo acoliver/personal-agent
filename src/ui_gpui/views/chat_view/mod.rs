@@ -20,7 +20,8 @@ mod state;
 // ── Re-exports so downstream consumers (mod.rs, tests, main_panel.rs) ──
 // see the same type paths as before extraction.
 pub use state::{
-    ApprovalBubbleState, ChatMessage, ChatState, MessageRole, StreamingState, ToolApprovalBubble,
+    ApprovalBubbleState, ChatMessage, ChatState, GroupedOperation, MessageRole, StreamingState,
+    ToolApprovalBubble,
 };
 
 use crate::events::types::UserEvent;

@@ -6,7 +6,7 @@
 
 use crate::agent::tool_approval_policy::ToolApprovalDecision;
 use crate::llm::client_agent::McpToolContext;
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ToolApprovalContext, ToolCategory, ViewCommand};
 use glob::Pattern;
 use ignore::WalkBuilder;
 use regex::Regex;
@@ -42,20 +42,6 @@ struct SearchArgs {
     include: Option<String>,
 }
 
-impl SearchArgs {
-    fn approval_summary(&self) -> String {
-        self.include.as_ref().map_or_else(
-            || format!("pattern={} path={}", self.pattern, self.path),
-            |include| {
-                format!(
-                    "pattern={} path={} include={include}",
-                    self.pattern, self.path
-                )
-            },
-        )
-    }
-}
-
 #[derive(Debug)]
 enum RipgrepError {
     NotFound,
@@ -77,9 +63,14 @@ impl ToolExecutor<McpToolContext> for SearchExecutor {
         ctx: &RunContext<McpToolContext>,
     ) -> Result<ToolReturn, ToolError> {
         let search_args = parse_search_args(&args).map_err(ToolError::execution_failed)?;
-        let approval_summary = search_args.approval_summary();
 
-        check_approval(ctx.deps(), &approval_summary).await?;
+        check_approval(
+            ctx.deps(),
+            &search_args.pattern,
+            &search_args.path,
+            search_args.include.as_deref(),
+        )
+        .await?;
         execute_search(search_args)
             .await
             .map(ToolReturn::text)
@@ -90,7 +81,9 @@ impl ToolExecutor<McpToolContext> for SearchExecutor {
 /// Check tool approval policy and await user decision if required.
 async fn check_approval(
     tool_context: &McpToolContext,
-    tool_argument: &str,
+    pattern: &str,
+    path: &str,
+    include: Option<&str>,
 ) -> Result<(), ToolError> {
     let decision = {
         let policy = tool_context.policy.lock().await;
@@ -108,12 +101,18 @@ async fn check_approval(
                 .approval_gate
                 .wait_for_approval(request_id.clone(), "Search".to_string());
 
+            // Build rich context for approval UI
+            let mut context = ToolApprovalContext::new("Search", ToolCategory::Search, path);
+            context = context.with_detail("pattern", pattern);
+            if let Some(inc) = include {
+                context = context.with_detail("include", inc);
+            }
+
             if tool_context
                 .view_tx
                 .try_send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
-                    tool_name: "Search".to_string(),
-                    tool_argument: tool_argument.to_string(),
+                    context,
                 })
                 .is_err()
             {
@@ -847,11 +846,11 @@ mod tests {
         let request_id = match request {
             ViewCommand::ToolApprovalRequest {
                 request_id,
-                tool_name,
-                tool_argument,
+                context,
             } => {
-                assert_eq!(tool_name, "Search");
-                assert_eq!(tool_argument, format!("pattern=needle path={path}"));
+                assert_eq!(context.tool_name, "Search");
+                assert_eq!(context.category, ToolCategory::Search);
+                assert_eq!(context.primary_target, path);
                 request_id
             }
             other => panic!("expected ToolApprovalRequest, got {other:?}"),
