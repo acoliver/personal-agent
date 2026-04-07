@@ -1,3 +1,8 @@
+//! Behavioral tests for Skills-related presenter flows.
+//!
+//! These tests verify that user events produce the correct observable
+//! `ViewCommand` outputs, using real services and persistence.
+
 use std::sync::Arc;
 
 use tokio::sync::broadcast;
@@ -5,7 +10,6 @@ use tokio::time::{sleep, timeout, Duration};
 use uuid::Uuid;
 
 use personal_agent::events::types::{AppEvent, UserEvent};
-use personal_agent::models::SkillSource;
 use personal_agent::presentation::{
     settings_presenter::SettingsPresenter,
     view_command::{ErrorSeverity, ViewCommand},
@@ -16,9 +20,11 @@ const PROCESSING_DELAY: Duration = Duration::from_millis(30);
 const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
 // ---------------------------------------------------------------------------
-// Mock ProfileService (minimal stub)
+// Stub ProfileService
 // ---------------------------------------------------------------------------
 
+/// Minimal stub that returns empty results for all profile operations.
+/// Skills tests don't need profile functionality.
 #[derive(Clone)]
 struct MinimalProfileService;
 
@@ -132,7 +138,7 @@ async fn send_event(tx: &broadcast::Sender<AppEvent>, event: UserEvent) {
     sleep(PROCESSING_DELAY).await;
 }
 
-/// Receive a specific `ViewCommand` variant, skipping others (like startup commands).
+/// Receive a specific `ViewCommand` variant, skipping others.
 async fn recv_matching(
     rx: &mut broadcast::Receiver<ViewCommand>,
     predicate: fn(&ViewCommand) -> bool,
@@ -165,28 +171,18 @@ const fn is_show_notification(cmd: &ViewCommand) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// BEHAVIORAL TESTS: Refresh and initial load
 // ---------------------------------------------------------------------------
 
+/// `RefreshSkills` event should emit a `SkillsLoaded` snapshot reflecting current state.
 #[tokio::test]
 async fn refresh_skills_emits_skills_loaded_snapshot() {
     let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
     presenter.start().await.expect("start");
 
-    // The startup already emits a SkillsLoaded — drain it.
-    let startup_cmd = recv_matching(&mut view_rx, is_skills_loaded).await;
-    match &startup_cmd {
-        ViewCommand::SkillsLoaded { skills, .. } => {
-            // No bundled skills in the test harness
-            assert!(
-                skills.is_empty() || !skills.is_empty(),
-                "skills snapshot received"
-            );
-        }
-        other => panic!("expected SkillsLoaded, got {other:?}"),
-    }
+    // Drain startup snapshot
+    let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
 
-    // Now send RefreshSkills and verify it emits another snapshot
     send_event(&event_tx, UserEvent::RefreshSkills).await;
     let cmd = recv_matching(&mut view_rx, is_skills_loaded).await;
     match cmd {
@@ -195,27 +191,52 @@ async fn refresh_skills_emits_skills_loaded_snapshot() {
             watched_directories,
             default_directory,
         } => {
-            // Just verify the shape is sane
-            assert!(
-                skills.is_empty() || !skills.is_empty(),
-                "refresh should produce a skills list"
-            );
+            // Verify the snapshot shape is correct
+            let _ = skills;
+            let _ = watched_directories;
             assert!(
                 !default_directory.is_empty(),
                 "should have a non-empty default directory"
             );
-            let _ = watched_directories; // may be empty — fine
         }
         other => panic!("expected SkillsLoaded after refresh, got {other:?}"),
     }
 }
 
+/// Initial startup should emit `SkillsLoaded` with the default directory populated.
+#[tokio::test]
+async fn skills_loaded_includes_default_directory() {
+    let (mut presenter, _event_tx, mut view_rx, _temp_dir) = setup();
+    presenter.start().await.expect("start");
+
+    let cmd = recv_matching(&mut view_rx, is_skills_loaded).await;
+    match cmd {
+        ViewCommand::SkillsLoaded {
+            default_directory, ..
+        } => {
+            assert!(
+                !default_directory.is_empty(),
+                "default_directory should not be empty"
+            );
+            assert!(
+                default_directory.contains("skills") || default_directory.contains("Skills"),
+                "default_directory should contain 'skills': {default_directory}"
+            );
+        }
+        other => panic!("expected SkillsLoaded, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BEHAVIORAL TESTS: Skill enable/disable
+// ---------------------------------------------------------------------------
+
+/// Attempting to disable a nonexistent skill should emit `ShowError`.
 #[tokio::test]
 async fn set_skill_enabled_on_unknown_skill_emits_error() {
     let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
     presenter.start().await.expect("start");
 
-    // Drain startup
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
 
     send_event(
@@ -245,12 +266,16 @@ async fn set_skill_enabled_on_unknown_skill_emits_error() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// BEHAVIORAL TESTS: Watched directories
+// ---------------------------------------------------------------------------
+
+/// Adding a watched directory should emit notification and updated snapshot.
 #[tokio::test]
 async fn add_skills_directory_success_emits_notification_and_snapshot() {
     let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
     presenter.start().await.expect("start");
 
-    // Drain startup
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
 
     let test_dir = std::env::temp_dir().join(format!("skills-add-test-{}", Uuid::new_v4()));
@@ -294,56 +319,12 @@ async fn add_skills_directory_success_emits_notification_and_snapshot() {
     std::fs::remove_dir_all(&test_dir).ok();
 }
 
-#[tokio::test]
-async fn remove_skills_directory_not_in_list_is_idempotent() {
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
-    presenter.start().await.expect("start");
-
-    // Drain startup
-    let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
-
-    // Removing a path that was never added should still succeed (idempotent).
-    // The presenter emits a notification + refreshed snapshot, not an error.
-    send_event(
-        &event_tx,
-        UserEvent::RemoveSkillsDirectory {
-            path: "/nonexistent/skills/dir".to_string(),
-        },
-    )
-    .await;
-
-    let notification = recv_matching(&mut view_rx, is_show_notification).await;
-    match notification {
-        ViewCommand::ShowNotification { message } => {
-            assert!(
-                message.contains("Removed watched skills directory"),
-                "got: {message}"
-            );
-        }
-        other => panic!("expected ShowNotification, got {other:?}"),
-    }
-
-    let snapshot = recv_matching(&mut view_rx, is_skills_loaded).await;
-    match snapshot {
-        ViewCommand::SkillsLoaded {
-            watched_directories,
-            ..
-        } => {
-            assert!(
-                watched_directories.is_empty(),
-                "no directories should be watched: {watched_directories:?}"
-            );
-        }
-        other => panic!("expected SkillsLoaded, got {other:?}"),
-    }
-}
-
+/// Removing a watched directory should emit notification and updated snapshot.
 #[tokio::test]
 async fn remove_skills_directory_success_emits_notification_and_snapshot() {
     let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
     presenter.start().await.expect("start");
 
-    // Drain startup
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
 
     // First add a directory
@@ -356,7 +337,6 @@ async fn remove_skills_directory_success_emits_notification_and_snapshot() {
         },
     )
     .await;
-    // Drain add notification + snapshot
     let _ = recv_matching(&mut view_rx, is_show_notification).await;
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
 
@@ -399,12 +379,58 @@ async fn remove_skills_directory_success_emits_notification_and_snapshot() {
     std::fs::remove_dir_all(&test_dir).ok();
 }
 
+/// Removing a directory that was never added should succeed idempotently.
+#[tokio::test]
+async fn remove_skills_directory_not_in_list_is_idempotent() {
+    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    presenter.start().await.expect("start");
+
+    let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
+
+    send_event(
+        &event_tx,
+        UserEvent::RemoveSkillsDirectory {
+            path: "/nonexistent/skills/dir".to_string(),
+        },
+    )
+    .await;
+
+    let notification = recv_matching(&mut view_rx, is_show_notification).await;
+    match notification {
+        ViewCommand::ShowNotification { message } => {
+            assert!(
+                message.contains("Removed watched skills directory"),
+                "got: {message}"
+            );
+        }
+        other => panic!("expected ShowNotification, got {other:?}"),
+    }
+
+    let snapshot = recv_matching(&mut view_rx, is_skills_loaded).await;
+    match snapshot {
+        ViewCommand::SkillsLoaded {
+            watched_directories,
+            ..
+        } => {
+            assert!(
+                watched_directories.is_empty(),
+                "no directories should be watched: {watched_directories:?}"
+            );
+        }
+        other => panic!("expected SkillsLoaded, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BEHAVIORAL TESTS: Skill installation
+// ---------------------------------------------------------------------------
+
+/// Installing from an invalid URL should emit `ShowError`.
 #[tokio::test]
 async fn install_skill_from_invalid_url_emits_error() {
     let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
     presenter.start().await.expect("start");
 
-    // Drain startup
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
 
     send_event(
@@ -430,51 +456,5 @@ async fn install_skill_from_invalid_url_emits_error() {
             assert_eq!(severity, ErrorSeverity::Warning);
         }
         other => panic!("expected ShowError for bad URL, got {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn skills_loaded_includes_default_directory() {
-    let (mut presenter, _event_tx, mut view_rx, _temp_dir) = setup();
-    presenter.start().await.expect("start");
-
-    let cmd = recv_matching(&mut view_rx, is_skills_loaded).await;
-    match cmd {
-        ViewCommand::SkillsLoaded {
-            default_directory, ..
-        } => {
-            assert!(
-                !default_directory.is_empty(),
-                "default_directory should not be empty"
-            );
-            assert!(
-                default_directory.contains("skills") || default_directory.contains("Skills"),
-                "default_directory should contain 'skills': {default_directory}"
-            );
-        }
-        other => panic!("expected SkillsLoaded, got {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn skills_snapshot_has_correct_source_field_for_bundled_skills() {
-    // Verify the SkillSummary shape even with empty lists
-    let (mut presenter, _event_tx, mut view_rx, _temp_dir) = setup();
-    presenter.start().await.expect("start");
-
-    let cmd = recv_matching(&mut view_rx, is_skills_loaded).await;
-    match cmd {
-        ViewCommand::SkillsLoaded { skills, .. } => {
-            // With no bundled skills dir, list should be empty — that's fine.
-            // If any skills were present, verify the source field type.
-            for skill in &skills {
-                assert!(
-                    skill.source == SkillSource::Bundled || skill.source == SkillSource::User,
-                    "unexpected source: {:?}",
-                    skill.source
-                );
-            }
-        }
-        other => panic!("expected SkillsLoaded, got {other:?}"),
     }
 }

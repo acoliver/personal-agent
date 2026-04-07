@@ -118,3 +118,172 @@ pub fn get_activate_skill_tool_definition() -> ToolDefinition {
     )
     .with_parameters(input_schema)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::tool_approval_policy::ToolApprovalPolicy;
+    use crate::llm::client_agent::{ApprovalGate, McpToolContext};
+    use crate::services::{AppSettingsServiceImpl, SkillsService, SkillsServiceImpl};
+    use serdes_ai_agent::prelude::RunContext;
+    use std::sync::Arc;
+    use tokio::sync::Mutex as AsyncMutex;
+
+    /// Write a skill file to disk with YAML frontmatter and body.
+    fn write_skill(root: &std::path::Path, dir_name: &str, name: &str, body: &str) {
+        let skill_dir = root.join(dir_name);
+        std::fs::create_dir_all(&skill_dir).expect("skill dir should exist");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Test skill\n---\n{body}"),
+        )
+        .expect("skill file should write");
+    }
+
+    /// Create a test context with real services and a temp directory.
+    fn create_test_context() -> (
+        McpToolContext,
+        tempfile::TempDir,
+        Arc<SkillsServiceImpl>,
+        tokio::sync::mpsc::Receiver<ViewCommand>,
+    ) {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir should exist");
+
+        let settings = Arc::new(
+            AppSettingsServiceImpl::new(temp_dir.path().join("settings.json"))
+                .expect("settings should initialize"),
+        );
+
+        let skills_service = Arc::new(
+            SkillsServiceImpl::new_for_tests(
+                settings,
+                temp_dir.path().join("bundled"),
+                temp_dir.path().join("user"),
+            )
+            .expect("skills service should initialize"),
+        );
+
+        let (view_tx, view_rx) = tokio::sync::mpsc::channel(16);
+        let approval_gate = Arc::new(ApprovalGate::new());
+        let policy = Arc::new(AsyncMutex::new(ToolApprovalPolicy {
+            skills_auto_approve: true,
+            ..ToolApprovalPolicy::default()
+        }));
+
+        let ctx = McpToolContext {
+            view_tx,
+            approval_gate,
+            policy,
+            skills_service: skills_service.clone(),
+        };
+
+        (ctx, temp_dir, skills_service, view_rx)
+    }
+
+    /// Activating an existing enabled skill returns its body.
+    #[tokio::test]
+    async fn execute_returns_skill_body_for_existing_enabled_skill() {
+        let (ctx, temp_dir, skills_service, _view_rx) = create_test_context();
+
+        write_skill(
+            &temp_dir.path().join("bundled"),
+            "writer",
+            "docs-writer",
+            "Write comprehensive documentation.\n",
+        );
+
+        skills_service
+            .discover_skills()
+            .await
+            .expect("discovery should succeed");
+
+        let run_context = RunContext::new(ctx, "test-model");
+        let args = serde_json::json!({"skill_name": "docs-writer"});
+
+        let result = ActivateSkillExecutor
+            .execute(args, &run_context)
+            .await
+            .expect("execute should succeed");
+
+        let text = result.as_text().expect("should have text content");
+        assert!(text.contains("# Skill: docs-writer"));
+        assert!(text.contains("Write comprehensive documentation"));
+    }
+
+    /// Activating a nonexistent skill returns an error.
+    #[tokio::test]
+    async fn execute_returns_error_for_nonexistent_skill() {
+        let (ctx, _temp_dir, skills_service, _view_rx) = create_test_context();
+
+        skills_service
+            .discover_skills()
+            .await
+            .expect("discovery should succeed");
+
+        let run_context = RunContext::new(ctx, "test-model");
+        let args = serde_json::json!({"skill_name": "no-such-skill"});
+
+        let error = ActivateSkillExecutor
+            .execute(args, &run_context)
+            .await
+            .expect_err("should fail for nonexistent skill");
+
+        assert!(error.to_string().contains("Skill not found"));
+    }
+
+    /// Activating a disabled skill returns an error.
+    #[tokio::test]
+    async fn execute_returns_error_for_disabled_skill() {
+        let (ctx, temp_dir, skills_service, _view_rx) = create_test_context();
+
+        write_skill(
+            &temp_dir.path().join("bundled"),
+            "writer",
+            "docs-writer",
+            "Write documentation.\n",
+        );
+
+        skills_service
+            .discover_skills()
+            .await
+            .expect("discovery should succeed");
+
+        skills_service
+            .set_skill_enabled("docs-writer", false)
+            .await
+            .expect("disable should succeed");
+
+        let run_context = RunContext::new(ctx, "test-model");
+        let args = serde_json::json!({"skill_name": "docs-writer"});
+
+        let error = ActivateSkillExecutor
+            .execute(args, &run_context)
+            .await
+            .expect_err("should fail for disabled skill");
+
+        assert!(error.to_string().contains("Skill is disabled"));
+    }
+
+    /// Missing `skill_name` argument returns an error.
+    #[tokio::test]
+    async fn execute_returns_error_for_missing_skill_name_argument() {
+        let (ctx, _temp_dir, skills_service, _view_rx) = create_test_context();
+
+        skills_service
+            .discover_skills()
+            .await
+            .expect("discovery should succeed");
+
+        let run_context = RunContext::new(ctx, "test-model");
+        let args = serde_json::json!({});
+
+        let error = ActivateSkillExecutor
+            .execute(args, &run_context)
+            .await
+            .expect_err("should fail for missing argument");
+
+        assert!(error
+            .to_string()
+            .contains("Missing required 'skill_name' argument"));
+    }
+}
