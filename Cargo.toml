@@ -57,6 +57,7 @@ tiktoken-rs = "0.9"
 # Issue #130: Local LLM support
 sysinfo = "0.38"
 crossbeam-channel = "0.5"
+llama-gguf = "0.14"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

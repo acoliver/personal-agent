@@ -890,6 +890,7 @@ impl SystemTray {
 impl SystemTray {
     /// Get position for popup window (below status item).
     #[allow(clippy::option_if_let_else)]
+    #[allow(clippy::cognitive_complexity)]
     fn get_popup_position(&self, menu_width: f32, menu_height: f32, _cx: &App) -> (f32, f32) {
         if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
             // Keep automation popup visible near the top-right on the main screen.

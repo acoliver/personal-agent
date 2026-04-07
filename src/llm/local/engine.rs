@@ -9,6 +9,7 @@ use std::thread::{self, JoinHandle};
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::llm::local::capabilities::ModelCapabilities;
+use crate::llm::local::chat_template::QwenChatTemplate;
 use crate::llm::local::error::{LocalModelError, LocalModelResult};
 use crate::llm::{Message, StreamEvent, Tool};
 
@@ -20,6 +21,8 @@ pub struct InferenceRequest {
     pub tools: Option<Vec<Tool>>,
     /// Channel to send response events.
     pub event_tx: Sender<InferenceEvent>,
+    /// System prompt override.
+    pub system_prompt: Option<String>,
 }
 
 /// Events sent back from the inference thread.
@@ -52,6 +55,8 @@ pub struct LocalEngine {
     capabilities: ModelCapabilities,
     /// Path to the model file.
     model_path: PathBuf,
+    /// Context window size.
+    context_window: usize,
 }
 
 impl LocalEngine {
@@ -76,7 +81,9 @@ impl LocalEngine {
         let thread_handle = thread::Builder::new()
             .name("local-llm-inference".to_string())
             .spawn(move || {
-                run_inference_loop(&model_path_clone, context_window, &request_rx);
+                if let Err(e) = run_inference_loop(&model_path_clone, context_window, &request_rx) {
+                    tracing::error!("Inference thread error: {e}");
+                }
             })
             .map_err(|e| LocalModelError::ThreadSpawnFailed(e.to_string()))?;
 
@@ -85,6 +92,7 @@ impl LocalEngine {
             thread_handle: Some(thread_handle),
             capabilities,
             model_path,
+            context_window,
         })
     }
 
@@ -108,12 +116,23 @@ impl LocalEngine {
         &self.model_path
     }
 
+    /// Get context window size.
+    #[must_use]
+    pub const fn context_window(&self) -> usize {
+        self.context_window
+    }
+
     /// Generate a response (non-streaming).
     ///
     /// # Errors
     ///
     /// Returns an error if inference fails.
-    pub fn chat(&self, messages: &[Message], tools: Option<&[Tool]>) -> LocalModelResult<Message> {
+    pub fn chat(
+        &self,
+        messages: &[Message],
+        tools: Option<&[Tool]>,
+        system_prompt: Option<&str>,
+    ) -> LocalModelResult<Message> {
         let request_tx = self
             .request_tx
             .as_ref()
@@ -125,6 +144,7 @@ impl LocalEngine {
             messages: messages.to_vec(),
             tools: tools.map(<[Tool]>::to_vec),
             event_tx,
+            system_prompt: system_prompt.map(str::to_string),
         };
 
         request_tx
@@ -179,6 +199,7 @@ impl LocalEngine {
         &self,
         messages: &[Message],
         tools: Option<&[Tool]>,
+        system_prompt: Option<&str>,
         mut on_event: F,
     ) -> LocalModelResult<()>
     where
@@ -195,6 +216,7 @@ impl LocalEngine {
             messages: messages.to_vec(),
             tools: tools.map(<[Tool]>::to_vec),
             event_tx,
+            system_prompt: system_prompt.map(str::to_string),
         };
 
         request_tx
@@ -218,7 +240,7 @@ impl LocalEngine {
                 InferenceEvent::Complete { total_tokens } => {
                     on_event(StreamEvent::Complete {
                         input_tokens: None,
-                        output_tokens: u32::try_from(total_tokens).ok(),
+                        output_tokens: Some(u32::try_from(total_tokens).unwrap_or(u32::MAX)),
                     });
                     break;
                 }
@@ -252,6 +274,134 @@ impl Drop for LocalEngine {
     }
 }
 
+/// Inference thread state - holds the loaded engine.
+struct InferenceThreadState {
+    engine: llama_gguf::engine::Engine,
+    chat_template: QwenChatTemplate,
+    #[allow(dead_code)]
+    context_window: usize,
+}
+
+impl InferenceThreadState {
+    /// Load the model and create inference state.
+    fn load(model_path: &std::path::Path, context_window: usize) -> LocalModelResult<Self> {
+        tracing::info!(
+            "Loading model from {} with {} token context",
+            model_path.display(),
+            context_window
+        );
+
+        // Configure engine with model path and context window
+        let config = llama_gguf::engine::EngineConfig {
+            model_path: model_path.to_string_lossy().to_string(),
+            max_context_len: Some(context_window),
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            repeat_penalty: 1.1,
+            max_tokens: 4096,
+            seed: None,
+            use_gpu: false,
+            tokenizer_path: None,
+            kv_cache_type: llama_gguf::model::KVCacheType::default(),
+        };
+
+        // Load the engine from GGUF file
+        let engine = llama_gguf::engine::Engine::load(config)
+            .map_err(|e| LocalModelError::LoadFailed(e.to_string()))?;
+
+        tracing::info!("Model loaded successfully");
+
+        Ok(Self {
+            engine,
+            chat_template: QwenChatTemplate::new(),
+            context_window,
+        })
+    }
+
+    /// Process a chat request.
+    fn process_request(&mut self, request: &InferenceRequest) {
+        // Format messages using Qwen chat template
+        let prompt = self.format_prompt(request);
+
+        // Generate response with streaming - generate_streaming returns an iterator directly
+        let stream = self.engine.generate_streaming(&prompt, 4096);
+
+        let mut total_tokens = 0;
+        let mut accumulated = String::new();
+
+        for token_result in stream {
+            match token_result {
+                Ok(token) => {
+                    accumulated.push_str(&token);
+                    total_tokens += 1;
+
+                    // Parse thinking tags and tool calls from accumulated
+                    let (thinking, _content, tool_calls) =
+                        self.chat_template.parse_response(&accumulated);
+
+                    // Send thinking content
+                    if let Some(think) = thinking {
+                        let _ = request.event_tx.send(InferenceEvent::Thinking(think));
+                    }
+
+                    // Send content tokens
+                    if !token.is_empty() {
+                        let _ = request.event_tx.send(InferenceEvent::Token(token));
+                    }
+
+                    // Send tool calls if detected
+                    for tc in tool_calls {
+                        let _ = request.event_tx.send(InferenceEvent::ToolCall {
+                            name: tc.name,
+                            arguments: tc.arguments,
+                        });
+                    }
+                }
+                Err(e) => {
+                    let _ = request.event_tx.send(InferenceEvent::Error(e.to_string()));
+                    return;
+                }
+            }
+        }
+
+        let _ = request
+            .event_tx
+            .send(InferenceEvent::Complete { total_tokens });
+    }
+
+    /// Format messages into prompt using Qwen template.
+    fn format_prompt(&self, request: &InferenceRequest) -> String {
+        let system = request
+            .system_prompt
+            .as_deref()
+            .unwrap_or("You are a helpful assistant. Respond concisely and accurately.");
+
+        let mut messages: Vec<(&str, &str)> = vec![("system", system)];
+
+        for msg in &request.messages {
+            let role = match msg.role {
+                crate::llm::client::Role::User => "user",
+                crate::llm::client::Role::Assistant => "assistant",
+                crate::llm::client::Role::System => continue, // Skip, we already added system
+            };
+            messages.push((role, &msg.content));
+        }
+
+        // If tools are provided, format them into the system prompt
+        if let Some(ref tools) = request.tools {
+            let tools_section = QwenChatTemplate::format_tools(tools);
+            let enhanced_system = format!("{system}\n\n# Available Tools\n\n{tools_section}");
+            messages[0] = (
+                "system",
+                Box::leak(enhanced_system.into_boxed_str()) as &str,
+            );
+        }
+
+        self.chat_template.format_messages(&messages)
+    }
+}
+
 /// Run the inference loop in a dedicated thread.
 ///
 /// This function loads the model and processes incoming requests.
@@ -259,44 +409,19 @@ fn run_inference_loop(
     model_path: &std::path::Path,
     context_window: usize,
     request_rx: &Receiver<InferenceRequest>,
-) {
-    // For now, use a simple stub implementation
-    // In production, this would use llama-gguf's ChatEngine
+) -> LocalModelResult<()> {
+    // Load model in this thread
+    let mut state = InferenceThreadState::load(model_path, context_window)?;
 
-    tracing::info!(
-        "Loading model from {} with {} token context",
-        model_path.display(),
-        context_window
-    );
+    tracing::info!("Inference thread ready, waiting for requests");
 
-    // TODO: Replace with actual llama-gguf implementation
-    // let file = llama_gguf::GgufFile::open(model_path)?;
-    // let config = llama_gguf::engine::ChatEngineConfig {
-    //     context_size: context_window,
-    //     ..Default::default()
-    // };
-    // let engine = llama_gguf::engine::ChatEngine::from_file(model_path, config)?;
-
-    tracing::info!("Model loaded, waiting for requests");
-
-    // Process requests
+    // Process requests until channel is closed
     while let Ok(request) = request_rx.recv() {
-        process_request(&request);
+        state.process_request(&request);
     }
 
     tracing::info!("Inference thread exiting");
-}
-
-/// Process a single inference request.
-///
-/// TODO: Replace with actual llama-gguf inference.
-fn process_request(request: &InferenceRequest) {
-    let _ = request.event_tx.send(InferenceEvent::Token(
-        "Local inference not yet implemented. Model loaded successfully.".to_string(),
-    ));
-    let _ = request
-        .event_tx
-        .send(InferenceEvent::Complete { total_tokens: 10 });
+    Ok(())
 }
 
 #[cfg(test)]

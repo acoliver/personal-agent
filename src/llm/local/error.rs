@@ -22,6 +22,10 @@ pub enum LocalModelError {
     #[error("Failed to load model: {0}")]
     ModelLoadFailed(String),
 
+    /// Failed to load model (engine error).
+    #[error("Failed to load model engine: {0}")]
+    LoadFailed(String),
+
     /// Inference failed during generation.
     #[error("Inference error: {0}")]
     InferenceError(String),

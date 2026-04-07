@@ -164,7 +164,7 @@ impl LocalProvider {
         };
 
         engine
-            .chat(messages, effective_tools)
+            .chat(messages, effective_tools, None)
             .map_err(|e| LlmError::LocalModel(e.to_string()))
     }
 
@@ -202,7 +202,7 @@ impl LocalProvider {
         };
 
         engine
-            .chat_stream(messages, effective_tools, on_event)
+            .chat_stream(messages, effective_tools, None, on_event)
             .map_err(|e| LlmError::LocalModel(e.to_string()))
     }
 
