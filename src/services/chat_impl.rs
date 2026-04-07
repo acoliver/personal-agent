@@ -1,4 +1,4 @@
-use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
+use super::{AppSettingsService, ChatService, ChatStreamEvent, ServiceError, ServiceResult};
 use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::compression::pipeline::{CompressionPipeline, CompressionResult};
 use crate::compression::thinking_stripper::strip_thinking_from_previous_turns;
@@ -317,24 +317,7 @@ impl ChatServiceImpl {
             system_prompt.push_str(&skills_prompt_block);
         }
 
-        // If emoji filter is enabled, append emoji avoidance instruction
-        let filter_emoji = match self.app_settings_service.get_filter_emoji().await {
-            Ok(Some(enabled)) => enabled,
-            Ok(None) => false,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "Failed to read emoji filter setting; defaulting to disabled"
-                );
-                false
-            }
-        };
-        if filter_emoji {
-            if !system_prompt.trim().is_empty() {
-                system_prompt.push_str("\n\n");
-            }
-            system_prompt.push_str("Please avoid using emojis in your responses.");
-        }
+        Self::append_emoji_avoidance(&self.app_settings_service, &mut system_prompt).await;
 
         Ok(PreparedMessageContext {
             profile,
@@ -454,6 +437,33 @@ impl ChatServiceImpl {
             .map(|message| message.content.as_str())
             .filter(|prompt| !prompt.trim().is_empty())
             .unwrap_or(profile.system_prompt.as_str())
+    }
+
+    async fn append_emoji_avoidance(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        system_prompt: &mut String,
+    ) {
+        let filter_emoji = match app_settings_service.get_filter_emoji().await {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to read emoji filter setting; defaulting to disabled"
+                );
+                false
+            }
+        };
+        if filter_emoji {
+            if !system_prompt.trim().is_empty() {
+                system_prompt.push_str(
+                    "
+
+",
+                );
+            }
+            system_prompt.push_str("Please avoid using emojis in your responses.");
+        }
     }
 
     async fn load_mcp_tools(&self) -> Vec<crate::llm::tools::Tool> {
