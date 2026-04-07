@@ -12,8 +12,19 @@ use uuid::Uuid;
 fn resolve_smithery_key(key_or_path: &str) -> Result<String, String> {
     let trimmed = key_or_path.trim();
 
-    // Check if it looks like a path
-    if trimmed.starts_with('/') || trimmed.starts_with("~/") || trimmed.starts_with("./") {
+    // Check if it looks like a path (Unix or Windows style)
+    let looks_like_path = trimmed.starts_with('/')
+        || trimmed.starts_with("~/")
+        || trimmed.starts_with("./")
+        // Windows absolute paths: drive letter (C:\, D:\, etc.)
+        || (trimmed.len() >= 3
+            && trimmed.as_bytes()[0].is_ascii_alphabetic()
+            && trimmed.as_bytes()[1] == b':'
+            && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/'))
+        // Windows UNC paths: \\server\share
+        || trimmed.starts_with("\\\\");
+
+    if looks_like_path {
         // Expand ~ to home dir
         let path = if let Some(stripped) = trimmed.strip_prefix("~/") {
             dirs::home_dir().ok_or("No home directory")?.join(stripped)

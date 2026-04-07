@@ -1,4 +1,4 @@
-name: Release (macOS arm64 + Linux x86_64)
+name: Release (macOS arm64 + Linux x86_64 + Windows x86_64)
 
 on:
   push:
@@ -243,3 +243,93 @@ jobs:
                 --title "${release_tag}" \
                 --generate-notes
             }
+
+  # Windows release job - builds .zip artifact for Windows
+  # No additional secrets required - uploads go to GitHub Releases using GITHUB_TOKEN
+  windows-release:
+    name: Build + package (Windows x86_64)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Resolve release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $releaseTag = '${{ inputs.release_tag }}'
+          } else {
+            $releaseTag = $env:GITHUB_REF_NAME
+          }
+
+          if ($releaseTag -notmatch '^v\d+\.\d+\.\d+$') {
+            Write-Error "Release tag must look like vX.Y.Z (received: $releaseTag)"
+            exit 1
+          }
+
+          echo "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
+
+      - name: Build and package Windows artifacts
+        shell: pwsh
+        run: scripts/release/package_windows_x86_64.ps1 "${{ steps.tag.outputs.release_tag }}"
+
+      - name: Gather artifact metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifactDir = "artifacts/release"
+
+          $zipName = Get-Content "$artifactDir/zip_name.txt" -Raw
+          $zipPath = Get-Content "$artifactDir/zip_path.txt" -Raw
+          $zipSha = Get-Content "$artifactDir/zip_sha256.txt" -Raw
+
+          echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          echo "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          echo "zip_sha=$zipSha" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Windows artifact to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseTag = '${{ steps.tag.outputs.release_tag }}'
+
+          # Wait for release to exist (macOS job creates it, or create if needed)
+          $maxAttempts = 30
+          for ($i = 1; $i -le $maxAttempts; $i++) {
+            if (gh release view $releaseTag 2>$null) {
+              Write-Host "Release $releaseTag found"
+              break
+            }
+            Write-Host "Waiting for release $releaseTag to be created..."
+            Start-Sleep -Seconds 10
+          }
+
+          # Upload Windows artifact
+          gh release upload $releaseTag `
+            '${{ steps.meta.outputs.zip_path }}' `
+            artifacts/release/SHA256SUMS.txt `
+            --clobber
+
+          if ($LASTEXITCODE -ne 0) {
+            # If release doesn't exist yet, create it
+            gh release create $releaseTag `
+              --verify-tag `
+              '${{ steps.meta.outputs.zip_path }}' `
+              artifacts/release/SHA256SUMS.txt `
+              --title $releaseTag `
+              --generate-notes
+          }

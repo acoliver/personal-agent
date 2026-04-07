@@ -36,7 +36,17 @@ fn temp_config_path() -> std::path::PathBuf {
 
 /// Create a temporary config file whose path is unwritable (for failure tests).
 fn broken_config_path() -> std::path::PathBuf {
-    std::path::PathBuf::from("/nonexistent/dir/config.json")
+    // On Unix, use a non-existent absolute path
+    #[cfg(not(windows))]
+    {
+        std::path::PathBuf::from("/nonexistent/dir/config.json")
+    }
+    // On Windows, use a path with an invalid colon (colons only allowed after drive letter)
+    // This will cause file creation to fail
+    #[cfg(windows)]
+    {
+        std::path::PathBuf::from("invalid:path\\config.json")
+    }
 }
 
 /// Build a rich `McpConfig` for test payloads (replaces old lossy placeholder).

@@ -19,7 +19,10 @@ pub fn parse_skill_file(path: &Path) -> ServiceResult<(SkillMetadata, String)> {
 }
 
 pub(crate) fn parse_skill_content(raw: &str) -> ServiceResult<(SkillMetadata, String)> {
-    let Some(rest) = raw.strip_prefix("---\n") else {
+    // Normalize line endings to LF for consistent parsing (handles CRLF on Windows)
+    let normalized = raw.replace("\r\n", "\n");
+
+    let Some(rest) = normalized.strip_prefix("---\n") else {
         return Err(ServiceError::Validation(
             "Skill file must begin with YAML frontmatter delimited by ---".to_string(),
         ));

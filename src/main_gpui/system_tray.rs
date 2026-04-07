@@ -3,7 +3,7 @@
 //! Manages tray click detection and popup window lifecycle.
 
 use std::sync::Arc;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::sync::Mutex;
 
 use gpui::*;
@@ -117,6 +117,9 @@ pub struct SystemTray {
 
     #[cfg(target_os = "linux")]
     _tray_handle: Option<Arc<KsniHandle<LinuxTray>>>,
+
+    #[cfg(target_os = "windows")]
+    _windows_tray: Option<Arc<Mutex<WindowsTrayState>>>,
 }
 
 impl Global for SystemTray {}
@@ -386,23 +389,262 @@ impl SystemTray {
 }
 
 // ============================================================================
-// Other platforms (no-op tray)
+// Windows tray adapter (using tray-icon and muda)
 // ============================================================================
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+
+#[cfg(target_os = "windows")]
+use tray_icon::{
+    menu::MenuEvent, Icon, TrayIcon, TrayIconBuilder, TrayIconEvent, TrayIconEventReceiver,
+};
+
+#[cfg(target_os = "windows")]
+use muda::{Menu, MenuItem, PredefinedMenuItem};
+
+#[cfg(target_os = "windows")]
+static TRAY_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+struct WindowsTrayState {
+    _tray: TrayIcon,
+    menu: Menu,
+    last_click_position: Arc<Mutex<Option<(f32, f32)>>>,
+}
+
+#[cfg(target_os = "windows")]
 impl SystemTray {
     pub fn new() -> Self {
+        // Load the icon from embedded PNG data
+        let icon_data = include_bytes!("../../assets/MenuBarIcon.imageset/icon-32.png");
+        let icon = load_windows_icon(icon_data);
+
+        // Create the context menu
+        let menu = Menu::new();
+        let open_popup_item = MenuItem::with_id("open_popup", "Open Popup", true, None);
+        let open_popout_item = MenuItem::with_id("open_popout", "Open Pop-out", true, None);
+        let settings_item = MenuItem::with_id("settings", "Settings", true, None);
+        let quit_item = MenuItem::with_id("quit", "Quit", true, None);
+        let separator = PredefinedMenuItem::separator();
+
+        menu.append_items(&[
+            &open_popup_item,
+            &open_popout_item,
+            &separator,
+            &settings_item,
+            &quit_item,
+        ]);
+
+        // Create tray icon with menu
+        let tray = TrayIconBuilder::new()
+            .with_menu(Box::new(menu.clone()))
+            .with_tooltip("PersonalAgent")
+            .with_icon(icon)
+            .build()
+            .expect("Failed to create Windows tray icon");
+
+        TRAY_INITIALIZED.store(true, AtomicOrdering::SeqCst);
+        info!("Windows tray icon created successfully");
+
         Self {
             popup_window: None,
             app_mode: AppMode::Popup,
+            _windows_tray: Some(Arc::new(Mutex::new(WindowsTrayState {
+                _tray: tray,
+                menu,
+                last_click_position: Arc::new(Mutex::new(None)),
+            }))),
         }
     }
 
-    pub fn start_click_listener(&self, _cx: &mut App) {}
+    pub fn start_click_listener(&self, cx: &mut App) {
+        let Some(tray_state) = self._windows_tray.clone() else {
+            info!("Windows tray state not available; skipping click listener");
+            return;
+        };
 
-    fn get_popup_position(&self, _menu_width: f32, _menu_height: f32, _cx: &App) -> (f32, f32) {
-        (100.0, 30.0)
+        cx.spawn(async move |cx| {
+            let last_click_position = {
+                let state = tray_state.lock().expect("tray state poisoned");
+                state.last_click_position.clone()
+            };
+
+            // Get static event receiver
+            let tray_rx = TrayIconEvent::receiver();
+            let menu_rx = MenuEvent::receiver();
+
+            // Poll tray icon events
+            loop {
+                smol::Timer::after(std::time::Duration::from_millis(50)).await;
+
+                // Handle tray icon click events
+                while let Ok(event) = tray_rx.try_recv() {
+                    match event {
+                        TrayIconEvent::Click {
+                            button: tray_icon::MouseButton::Left,
+                            position,
+                            ..
+                        } => {
+                            if let Ok(mut lock) = last_click_position.lock() {
+                                *lock = Some((position.x as f32, position.y as f32));
+                            }
+                            info!("Windows tray left-click detected");
+                            let _ = cx.update_global::<Self, _>(|tray, cx| {
+                                tray.toggle_popup(cx);
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Handle menu events
+                while let Ok(event) = menu_rx.try_recv() {
+                    let id_str = event.id.0.as_str();
+                    match id_str {
+                        "open_popup" => {
+                            info!("Windows tray menu: Open Popup");
+                            let _ = cx.update_global::<Self, _>(|tray, cx| {
+                                if tray.popup_window.is_some() {
+                                    tray.close_popup(cx);
+                                }
+                                tray.app_mode = AppMode::Popup;
+                                tray.open_popup(cx);
+                            });
+                        }
+                        "open_popout" => {
+                            info!("Windows tray menu: Open Pop-out");
+                            let _ = cx.update_global::<Self, _>(|tray, cx| {
+                                if tray.popup_window.is_some() {
+                                    tray.close_popup(cx);
+                                }
+                                tray.app_mode = AppMode::Popout;
+                                tray.open_popout(cx);
+                            });
+                        }
+                        "settings" => {
+                            info!("Windows tray menu: Settings (not yet implemented)");
+                            // TODO: Implement settings navigation
+                        }
+                        "quit" => {
+                            info!("Windows tray menu: Quit");
+                            let _ = cx.update(|cx| {
+                                cx.quit();
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        })
+        .detach();
+
+        info!("Windows tray click listener started");
     }
+
+    fn popup_display_context(&self, cx: &App) -> Option<(DisplayId, Bounds<Pixels>)> {
+        // Try to use the click position to determine display
+        if let Some(ref tray_state) = self._windows_tray {
+            let state = tray_state.lock().expect("tray state poisoned");
+            let click_position = state.last_click_position.lock().ok().and_then(|lock| *lock);
+
+            if let Some((x, y)) = click_position {
+                for display in cx.displays() {
+                    let bounds = display.bounds();
+                    let origin_x = f32::from(bounds.origin.x);
+                    let origin_y = f32::from(bounds.origin.y);
+                    let width = f32::from(bounds.size.width);
+                    let height = f32::from(bounds.size.height);
+
+                    let in_x = x >= origin_x && x <= origin_x + width;
+                    let in_y = y >= origin_y && y <= origin_y + height;
+                    if in_x && in_y {
+                        return Some((display.id(), bounds));
+                    }
+                }
+            }
+        }
+
+        cx.primary_display()
+            .map(|display| (display.id(), display.bounds()))
+    }
+
+    fn popup_display_id(&self, cx: &App) -> Option<DisplayId> {
+        self.popup_display_context(cx).map(|(id, _)| id)
+    }
+
+    fn get_popup_position(&self, menu_width: f32, menu_height: f32, cx: &App) -> (f32, f32) {
+        let Some((_display_id, bounds)) = self.popup_display_context(cx) else {
+            info!("No Windows display detected; using fallback popup position");
+            return (100.0, 30.0);
+        };
+
+        let screen_width = f32::from(bounds.size.width);
+        let screen_height = f32::from(bounds.size.height);
+        let origin_x = f32::from(bounds.origin.x);
+        let origin_y = f32::from(bounds.origin.y);
+
+        if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
+            // Place near bottom-right for testing
+            let x = (screen_width - menu_width - 24.0).max(0.0);
+            let y = (screen_height - menu_height - 48.0).max(0.0);
+            return (x, y);
+        }
+
+        // Get click position if available
+        let click_position = self._windows_tray.as_ref().and_then(|ts| {
+            ts.lock()
+                .ok()
+                .and_then(|state| state.last_click_position.lock().ok().and_then(|lock| *lock))
+        });
+
+        if let Some((click_x, click_y)) = click_position {
+            let relative_x = click_x - origin_x;
+            let relative_y = click_y - origin_y;
+
+            // Position popup near the click, typically above the taskbar
+            let raw_x = relative_x - (menu_width / 2.0);
+            let raw_y = relative_y - menu_height - 12.0;
+
+            let max_x = (screen_width - menu_width).max(0.0);
+            let max_y = (screen_height - menu_height).max(0.0);
+
+            let clamped_x = raw_x.clamp(0.0, max_x);
+            let clamped_y = raw_y.clamp(0.0, max_y);
+
+            info!(
+                click_x,
+                click_y,
+                raw_x,
+                raw_y,
+                clamped_x,
+                clamped_y,
+                "Computed Windows popup position from tray click"
+            );
+
+            (clamped_x, clamped_y)
+        } else {
+            // Default to bottom-right area near system tray
+            info!("No Windows tray click position available; using fallback near taskbar");
+            let x = (screen_width - menu_width - 24.0).max(0.0);
+            let y = (screen_height - menu_height - 48.0).max(0.0);
+            (x, y)
+        }
+    }
+}
+
+/// Load a Windows icon from PNG data.
+#[cfg(target_os = "windows")]
+fn load_windows_icon(png_data: &[u8]) -> Icon {
+    let img = image::load_from_memory(png_data)
+        .expect("Failed to load tray icon image from embedded PNG");
+    let rgba = img.to_rgba8();
+    let width = rgba.width();
+    let height = rgba.height();
+    let rgba_data = rgba.into_raw();
+
+    Icon::from_rgba(rgba_data, width, height)
+        .expect("Failed to create Windows tray icon from RGBA data")
 }
 
 // ============================================================================
@@ -478,9 +720,9 @@ impl SystemTray {
 
         let (origin_x, origin_y) = self.get_popup_position(menu_width, menu_height, cx);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let display_id = self.popup_display_id(cx);
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let display_id = None;
 
         let window_options = WindowOptions {
