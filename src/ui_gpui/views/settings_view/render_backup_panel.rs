@@ -404,83 +404,96 @@ impl SettingsView {
                     .items_center()
                     .gap(px(8.0))
                     .flex_wrap()
-                    .child(
-                        div()
-                            .id("btn-backup-now")
-                            .px(px(16.0))
-                            .py(px(8.0))
-                            .rounded(px(4.0))
-                            .cursor_pointer()
-                            .when(!in_progress, |d| d.hover(|s| s.bg(Theme::accent())))
-                            .bg(if in_progress {
-                                Theme::bg_dark()
-                            } else {
-                                Theme::selection_bg()
-                            })
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(if in_progress {
-                                Theme::text_muted()
-                            } else {
-                                Theme::selection_fg()
-                            })
-                            .child(if in_progress {
-                                "Backing up..."
-                            } else {
-                                "Back Up Now"
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, _window, _cx| {
-                                    if !in_progress {
-                                        this.emit_trigger_backup_now();
-                                    }
-                                }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("btn-refresh-backups")
-                            .px(px(12.0))
-                            .py(px(8.0))
-                            .rounded(px(4.0))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::bg_dark()))
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_primary())
-                            .child("Refresh")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
-                                    this.emit_refresh_backup_list();
-                                }),
-                            ),
-                    )
+                    .child(self.render_backup_now_button(in_progress, cx))
+                    .child(self.render_refresh_button(cx))
                     .when(can_restore, |d| {
                         let path = restore_path.unwrap_or_default();
-                        d.child(
-                            div()
-                                .id("btn-restore-backup")
-                                .px(px(16.0))
-                                .py(px(8.0))
-                                .rounded(px(4.0))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(Theme::danger()))
-                                .bg(Theme::error())
-                                .text_size(px(Theme::font_size_ui()))
-                                .text_color(Theme::selection_fg())
-                                .child("Restore Selected")
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _, _window, cx| {
-                                        this.state.backup_in_progress = true;
-                                        this.state.backup_status =
-                                            Some("Restoring backup...".to_string());
-                                        cx.notify();
-                                        this.emit_restore_backup(path.clone());
-                                    }),
-                                ),
-                        )
+                        d.child(self.render_restore_action_button(path, cx))
                     }),
+            )
+    }
+
+    fn render_backup_now_button(
+        &self,
+        in_progress: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("btn-backup-now")
+            .px(px(16.0))
+            .py(px(8.0))
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .when(!in_progress, |d| d.hover(|s| s.bg(Theme::accent())))
+            .bg(if in_progress {
+                Theme::bg_dark()
+            } else {
+                Theme::selection_bg()
+            })
+            .text_size(px(Theme::font_size_ui()))
+            .text_color(if in_progress {
+                Theme::text_muted()
+            } else {
+                Theme::selection_fg()
+            })
+            .child(if in_progress {
+                "Backing up..."
+            } else {
+                "Back Up Now"
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, _cx| {
+                    if !in_progress {
+                        this.emit_trigger_backup_now();
+                    }
+                }),
+            )
+    }
+
+    fn render_refresh_button(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("btn-refresh-backups")
+            .px(px(12.0))
+            .py(px(8.0))
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(Theme::bg_dark()))
+            .text_size(px(Theme::font_size_ui()))
+            .text_color(Theme::text_primary())
+            .child("Refresh")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, _cx| {
+                    this.emit_refresh_backup_list();
+                }),
+            )
+    }
+
+    fn render_restore_action_button(
+        &self,
+        path: String,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("btn-restore-backup")
+            .px(px(16.0))
+            .py(px(8.0))
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(Theme::danger()))
+            .bg(Theme::error())
+            .text_size(px(Theme::font_size_ui()))
+            .text_color(Theme::selection_fg())
+            .child("Restore Selected")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    this.state.backup_in_progress = true;
+                    this.state.backup_status = Some("Restoring backup...".to_string());
+                    cx.notify();
+                    this.emit_restore_backup(path.clone());
+                }),
             )
     }
 
