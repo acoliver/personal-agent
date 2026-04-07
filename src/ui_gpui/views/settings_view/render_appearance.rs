@@ -76,16 +76,17 @@ impl SettingsView {
             .child(self.render_controls_column(cx))
             // Right column: preview (fixed, always visible)
             .child(self.render_preview_column())
-            // Dropdown overlays — rendered at root level so they don't push content
+            // Dropdown overlays — backdrop first, then dropdowns on top
+            // Later sibling renders on top, so dropdowns receive pointer events
+            // in their bounds while the backdrop catches everything else.
+            .when(any_dropdown_open, |d| {
+                d.child(Self::render_dropdown_backdrop(cx))
+            })
             .when(self.state.theme_dropdown_open, |d| {
                 d.child(self.render_theme_dropdown_overlay(cx))
             })
             .when_some(self.state.font_dropdown_open_for, |d, target| {
                 d.child(self.render_font_dropdown_overlay(target, cx))
-            })
-            // Invisible backdrop to close dropdowns when clicking outside
-            .when(any_dropdown_open, |d| {
-                d.child(Self::render_dropdown_backdrop(cx))
             })
     }
 
@@ -118,6 +119,7 @@ impl SettingsView {
             .flex_shrink_0()
             .h_full()
             .items_start()
+            .overflow_y_scroll()
             .child(self.render_font_preview_section())
     }
 
@@ -640,6 +642,15 @@ impl SettingsView {
                     .text_color(Theme::text_primary())
             })
             .text_size(px(Theme::font_size_mono()))
+            // Render each font name in its own typeface (except System Default)
+            .when_some(
+                if font_str == "System Default" {
+                    None
+                } else {
+                    Some(SharedString::from(font_str.clone()))
+                },
+                gpui::Styled::font_family,
+            )
             .child(font_str.clone())
             .on_mouse_down(
                 MouseButton::Left,
@@ -704,6 +715,7 @@ impl SettingsView {
     }
 
     /// Live font preview section.
+    #[allow(clippy::too_many_lines)]
     pub(super) fn render_font_preview_section(&self) -> impl IntoElement {
         let base_size = self.state.font_size;
         let h3_size = base_size * 1.25;
@@ -730,7 +742,6 @@ impl SettingsView {
             .child(
                 div()
                     .id("font-preview-box")
-                    .when_some(ui_family, gpui::Styled::font_family)
                     .w_full()
                     .p(px(12.0))
                     .bg(Theme::bg_darker())
@@ -739,21 +750,55 @@ impl SettingsView {
                     .rounded(px(4.0))
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
-                    // Heading line
+                    .gap(px(8.0))
+                    // Heading line (uses UI font)
                     .child(
                         div()
+                            .when_some(ui_family.clone(), gpui::Styled::font_family)
                             .text_size(px(h3_size))
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::text_primary())
                             .child("Heading Text"),
                     )
-                    // Body line
+                    // Body line (uses UI font)
                     .child(
                         div()
+                            .when_some(ui_family.clone(), gpui::Styled::font_family)
                             .text_size(px(body_size))
                             .text_color(Theme::text_primary())
                             .child("Body text looks like this in messages."),
+                    )
+                    // Mono preview line - dedicated to showing mono font + ligatures
+                    .child(
+                        div()
+                            .text_size(px(mono_size))
+                            .font_family(mono_family.clone())
+                            .font_features(mono_features.clone())
+                            .text_color(Theme::text_primary())
+                            .child("fn main() -> Result<(), Error>"),
+                    )
+                    // Ligature showcase (shows !=, =>, ->, ::, etc.)
+                    // With ligatures enabled: != becomes ≠, => becomes ⇒, -> becomes →
+                    .child(
+                        div()
+                            .text_size(px(mono_size))
+                            .font_family(mono_family.clone())
+                            .font_features(mono_features.clone())
+                            .text_color(Theme::accent())
+                            .bg(Theme::bg_dark())
+                            .px(px(4.0))
+                            .py(px(2.0))
+                            .rounded(px(2.0))
+                            .child("x != y && z => w"),
+                    )
+                    // Another ligature test: <->  ::=  /*
+                    .child(
+                        div()
+                            .text_size(px(mono_size))
+                            .font_family(mono_family.clone())
+                            .font_features(mono_features.clone())
+                            .text_color(Theme::text_secondary())
+                            .child("a <-> b ::= c /* comment */"),
                     )
                     // Mixed line: mono code span + body continuation
                     .child(
@@ -770,10 +815,11 @@ impl SettingsView {
                                     .bg(Theme::bg_dark())
                                     .px(px(4.0))
                                     .rounded(px(2.0))
-                                    .child("fn main()"),
+                                    .child("let x = 42;"),
                             )
                             .child(
                                 div()
+                                    .when_some(ui_family, gpui::Styled::font_family)
                                     .text_size(px(body_size))
                                     .text_color(Theme::text_primary())
                                     .child(" inline with body"),
