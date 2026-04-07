@@ -659,3 +659,35 @@ async fn install_skill_from_url_invalid_skill_content_emits_error() {
         other => panic!("expected ShowError for invalid skill content, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// BEHAVIORAL TESTS: Edge cases in skill handling
+// ---------------------------------------------------------------------------
+
+/// Installing a skill from an empty URL should emit `ShowError`.
+#[tokio::test]
+async fn install_skill_from_empty_url_emits_error() {
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
+    presenter.start().await.expect("start");
+
+    let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
+
+    send_event(
+        &event_tx,
+        UserEvent::InstallSkillFromUrl { url: String::new() },
+    )
+    .await;
+
+    let cmd = recv_matching(&mut view_rx, is_show_error).await;
+    match cmd {
+        ViewCommand::ShowError { message, .. } => {
+            assert!(
+                message.contains("Failed to download")
+                    || message.contains("Failed to parse")
+                    || message.contains("Failed to read"),
+                "error should mention failure: {message}"
+            );
+        }
+        other => panic!("expected ShowError for empty URL, got {other:?}"),
+    }
+}
