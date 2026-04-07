@@ -74,4 +74,64 @@ mod tests {
             .to_string()
             .contains("must begin with YAML frontmatter"));
     }
+
+    #[test]
+    fn parse_skill_content_rejects_missing_closing_delimiter() {
+        let raw = "---\nname: example\ndescription: Example skill\nNo closing delimiter";
+        let error = parse_skill_content(raw).expect_err("missing closing delimiter should fail");
+        assert!(error
+            .to_string()
+            .contains("must include a closing --- frontmatter delimiter"));
+    }
+
+    #[test]
+    fn parse_skill_content_rejects_empty_name() {
+        let raw = "---\nname: ''\ndescription: Has description\n---\nBody\n";
+        let error = parse_skill_content(raw).expect_err("empty name should fail");
+        assert!(error.to_string().contains("non-empty name"));
+    }
+
+    #[test]
+    fn parse_skill_content_rejects_whitespace_only_name() {
+        let raw = "---\nname: '   '\ndescription: Has description\n---\nBody\n";
+        let error = parse_skill_content(raw).expect_err("whitespace-only name should fail");
+        assert!(error.to_string().contains("non-empty name"));
+    }
+
+    #[test]
+    fn parse_skill_content_rejects_empty_description() {
+        let raw = "---\nname: has-name\ndescription: ''\n---\nBody\n";
+        let error = parse_skill_content(raw).expect_err("empty description should fail");
+        assert!(error.to_string().contains("non-empty description"));
+    }
+
+    #[test]
+    fn parse_skill_content_rejects_whitespace_only_description() {
+        let raw = "---\nname: has-name\ndescription: '   '\n---\nBody\n";
+        let error = parse_skill_content(raw).expect_err("whitespace-only description should fail");
+        assert!(error.to_string().contains("non-empty description"));
+    }
+
+    #[test]
+    fn parse_skill_content_rejects_invalid_yaml() {
+        let raw = "---\nname: [unclosed\n---\nBody\n";
+        let error = parse_skill_content(raw).expect_err("invalid YAML should fail");
+        assert!(error.to_string().contains("Invalid skill frontmatter YAML"));
+    }
+
+    #[test]
+    fn parse_skill_content_allows_optional_metadata() {
+        let raw = "---\nname: skill\ndescription: desc\nadditional: value\n---\nBody\n";
+        // This should succeed - metadata is flexible and additional fields are ignored
+        let result = parse_skill_content(raw);
+        assert!(result.is_ok(), "optional metadata fields should be allowed");
+    }
+
+    #[test]
+    fn parse_skill_content_preserves_body_whitespace() {
+        let raw = "---\nname: skill\ndescription: desc\n---\n\n  Indented\n\nTrailing\n\n";
+        let (metadata, body) = parse_skill_content(raw).expect("should parse");
+        assert_eq!(metadata.name, "skill");
+        assert_eq!(body, "\n  Indented\n\nTrailing\n\n");
+    }
 }
