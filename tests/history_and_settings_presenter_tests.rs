@@ -6,6 +6,8 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::{sleep, timeout, Duration};
 use uuid::Uuid;
 
+use chrono::{DateTime, Utc};
+use personal_agent::backup::{BackupInfo, BackupResult, DatabaseBackupSettings, RestoreResult};
 use personal_agent::events::{
     bus::EventBus,
     types::{AppEvent, ConversationEvent, McpEvent, ProfileEvent, SystemEvent, UserEvent},
@@ -20,8 +22,9 @@ use personal_agent::presentation::{
     view_command::{ErrorSeverity, McpStatus, ProfileSummary, ViewCommand, ViewId},
 };
 use personal_agent::services::{
-    AppSettingsService, ConversationService, ProfileService, ServiceError,
+    AppSettingsService, BackupService, ConversationService, ProfileService, ServiceError,
 };
+use std::path::Path;
 
 const PROCESSING_DELAY: Duration = Duration::from_millis(25);
 const RECV_TIMEOUT: Duration = Duration::from_millis(250);
@@ -135,6 +138,45 @@ impl ConversationService for MockConversationService {
         _model_profile_id: Option<Uuid>,
     ) -> Result<Conversation, ServiceError> {
         Err(ServiceError::NotFound("not implemented".to_string()))
+    }
+}
+
+struct MockBackupService;
+
+#[async_trait::async_trait]
+impl BackupService for MockBackupService {
+    async fn create_backup(&self) -> personal_agent::services::ServiceResult<BackupResult> {
+        Ok(BackupResult::Skipped {
+            reason: "Test".to_string(),
+        })
+    }
+    async fn list_backups(&self) -> personal_agent::services::ServiceResult<Vec<BackupInfo>> {
+        Ok(vec![])
+    }
+    async fn restore_backup(
+        &self,
+        _path: &Path,
+    ) -> personal_agent::services::ServiceResult<RestoreResult> {
+        Ok(RestoreResult::Success)
+    }
+    async fn get_settings(
+        &self,
+    ) -> personal_agent::services::ServiceResult<DatabaseBackupSettings> {
+        Ok(DatabaseBackupSettings::default())
+    }
+    async fn update_settings(
+        &self,
+        _settings: DatabaseBackupSettings,
+    ) -> personal_agent::services::ServiceResult<()> {
+        Ok(())
+    }
+    async fn get_last_backup_time(
+        &self,
+    ) -> personal_agent::services::ServiceResult<Option<DateTime<Utc>>> {
+        Ok(None)
+    }
+    async fn should_backup(&self) -> personal_agent::services::ServiceResult<bool> {
+        Ok(false)
     }
 }
 
@@ -706,6 +748,7 @@ mod settings_presenter_tests {
         let presenter = SettingsPresenter::new(
             Arc::new(profile_service.clone()),
             Arc::new(app_settings_service.clone()),
+            Arc::new(MockBackupService),
             &event_tx,
             view_tx,
         );
@@ -734,6 +777,7 @@ mod settings_presenter_tests {
         let presenter = SettingsPresenter::new(
             Arc::new(profile_service.clone()),
             Arc::new(app_settings_service.clone()),
+            Arc::new(MockBackupService),
             &event_tx,
             view_tx,
         )
@@ -776,9 +820,9 @@ mod settings_presenter_tests {
         (dir, path, mcp_id)
     }
 
-    /// Drain all 6 startup commands emitted by the settings presenter.
+    /// Drain all 7 startup commands emitted by the settings presenter.
     async fn drain_startup(rx: &mut broadcast::Receiver<ViewCommand>) {
-        for _ in 0..6 {
+        for _ in 0..7 {
             let _ = recv_broadcast_command(rx).await;
         }
     }
@@ -810,7 +854,8 @@ mod settings_presenter_tests {
                 selected_profile_id: Some(profile.id),
             }
         );
-        // Drain ShowSettingsTheme + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged
+        // Drain ShowSettingsTheme + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged + BackupSettingsLoaded
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;

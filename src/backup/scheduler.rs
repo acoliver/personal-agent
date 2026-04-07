@@ -316,7 +316,6 @@ pub fn spawn_backup_scheduler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     struct MockBackupService;
 
@@ -378,11 +377,13 @@ mod tests {
 
     #[test]
     fn test_compute_next_backup_time_with_previous() {
-        let last_backup = Utc.with_ymd_and_hms(2026, 4, 6, 10, 0, 0).unwrap();
+        // Use a last_backup time that's slightly in the future so that
+        // last_backup + 12 hours is also in the future (relative to now)
+        let last_backup = Utc::now() + TimeDelta::hours(1);
         let next = BackupScheduler::compute_next_backup_time(Some(last_backup), 12);
 
-        // Expected: 2026-04-06 22:00:00 UTC
-        let expected = Utc.with_ymd_and_hms(2026, 4, 6, 22, 0, 0).unwrap();
+        // Expected: last_backup + 12 hours (which should be in the future)
+        let expected = last_backup + TimeDelta::hours(12);
         assert_eq!(next, expected);
     }
 

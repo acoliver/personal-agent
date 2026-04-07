@@ -748,6 +748,7 @@ async fn start_all_presenters(
     let mut settings = SettingsPresenter::new_with_event_bus(
         services.profile.clone(),
         services.app_settings.clone(),
+        services.backup.clone(),
         event_bus,
         settings_view_tx,
     );

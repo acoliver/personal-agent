@@ -3,6 +3,8 @@
 //! @plan PLAN-20250130-GPUIREDUX.P06
 //! @requirement REQ-UI-ST
 
+mod backup_actions;
+
 mod command;
 mod render;
 mod render_appearance;
@@ -496,35 +498,6 @@ impl SettingsView {
 
     fn emit_set_mcp_approval_mode(&self, mode: McpApprovalMode) {
         self.emit(&UserEvent::SetToolApprovalMcpApprovalMode { mode });
-    }
-
-    // Backup-related emit methods
-    pub(super) fn emit_set_backup_enabled(&self, enabled: bool) {
-        self.emit(&UserEvent::SetBackupEnabled { enabled });
-    }
-
-    pub(super) fn emit_set_backup_interval_hours(&self, hours: u32) {
-        self.emit(&UserEvent::SetBackupIntervalHours { hours });
-    }
-
-    pub(super) fn emit_set_backup_max_copies(&self, copies: u32) {
-        self.emit(&UserEvent::SetBackupMaxCopies { copies });
-    }
-
-    pub(super) fn emit_set_backup_directory(&self, path: Option<String>) {
-        self.emit(&UserEvent::SetBackupDirectory { path });
-    }
-
-    pub(super) fn emit_trigger_backup_now(&self) {
-        self.emit(&UserEvent::TriggerBackupNow);
-    }
-
-    pub(super) fn emit_restore_backup(&self, path: String) {
-        self.emit(&UserEvent::RestoreBackup { path });
-    }
-
-    pub(super) fn emit_refresh_backup_list(&self) {
-        self.emit(&UserEvent::RefreshBackupList);
     }
 
     fn add_allowlist_entry(&mut self) {

@@ -270,8 +270,8 @@ impl SettingsView {
                             .child("Change")
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
-                                    this.emit_set_backup_directory(Some("/".to_string()));
+                                cx.listener(|this, _, _window, cx| {
+                                    this.browse_backup_directory(cx);
                                 }),
                             ),
                     ),

@@ -12,6 +12,7 @@ use chrono::Utc;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
+use personal_agent::backup::{BackupInfo, BackupResult, DatabaseBackupSettings, RestoreResult};
 use personal_agent::events::{bus::EventBus, types::UserEvent, AppEvent};
 use personal_agent::models::{
     AuthConfig, ContextState, Conversation, ConversationMetadata, Message,
@@ -23,8 +24,10 @@ use personal_agent::presentation::{
     view_command::{MessageRole, ViewCommand, ViewId},
 };
 use personal_agent::services::{
-    AppSettingsService, ChatService, ConversationService, ProfileService, ServiceError,
+    AppSettingsService, BackupService, ChatService, ConversationService, ProfileService,
+    ServiceError,
 };
+use std::path::Path;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ChatPresenter conversation selection test doubles
@@ -345,6 +348,46 @@ fn assert_selection_generation_protocol(commands: &[ViewCommand]) {
         activated_generation, loaded_generation,
         "selection_generation protocol: generation token must be consistent across ConversationActivated and ConversationMessagesLoaded"
     );
+}
+
+// Mock BackupService for tests
+struct MockBackupService;
+
+#[async_trait::async_trait]
+impl BackupService for MockBackupService {
+    async fn create_backup(&self) -> personal_agent::services::ServiceResult<BackupResult> {
+        Ok(BackupResult::Skipped {
+            reason: "Test".to_string(),
+        })
+    }
+    async fn list_backups(&self) -> personal_agent::services::ServiceResult<Vec<BackupInfo>> {
+        Ok(vec![])
+    }
+    async fn restore_backup(
+        &self,
+        _path: &Path,
+    ) -> personal_agent::services::ServiceResult<RestoreResult> {
+        Ok(RestoreResult::Success)
+    }
+    async fn get_settings(
+        &self,
+    ) -> personal_agent::services::ServiceResult<DatabaseBackupSettings> {
+        Ok(DatabaseBackupSettings::default())
+    }
+    async fn update_settings(
+        &self,
+        _settings: DatabaseBackupSettings,
+    ) -> personal_agent::services::ServiceResult<()> {
+        Ok(())
+    }
+    async fn get_last_backup_time(
+        &self,
+    ) -> personal_agent::services::ServiceResult<Option<chrono::DateTime<chrono::Utc>>> {
+        Ok(None)
+    }
+    async fn should_backup(&self) -> personal_agent::services::ServiceResult<bool> {
+        Ok(false)
+    }
 }
 
 #[tokio::test]
@@ -791,7 +834,14 @@ async fn edit_profile_emits_profile_editor_load_with_existing_data() {
     let (event_tx, _) = broadcast::channel::<AppEvent>(64);
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(64);
 
-    let mut presenter = SettingsPresenter::new(profile_service, app_settings, &event_tx, view_tx);
+    let backup_service = Arc::new(MockBackupService) as Arc<dyn BackupService>;
+    let mut presenter = SettingsPresenter::new(
+        profile_service,
+        app_settings,
+        backup_service,
+        &event_tx,
+        view_tx,
+    );
     presenter.start().await.expect("start settings presenter");
 
     event_tx
@@ -858,7 +908,14 @@ async fn delete_profile_emits_profile_deleted_command() {
     let (event_tx, _) = broadcast::channel::<AppEvent>(64);
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(64);
 
-    let mut presenter = SettingsPresenter::new(profile_service, app_settings, &event_tx, view_tx);
+    let backup_service = Arc::new(MockBackupService) as Arc<dyn BackupService>;
+    let mut presenter = SettingsPresenter::new(
+        profile_service,
+        app_settings,
+        backup_service,
+        &event_tx,
+        view_tx,
+    );
     presenter.start().await.expect("start settings presenter");
 
     event_tx

@@ -8,17 +8,67 @@
 //! This test proves `SettingsPresenter` receives MCP events and emits `ViewCommands`.
 //! No real MCP server needed - we manually publish events to test the presenter.
 
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use personal_agent::{
+    backup::{BackupInfo, BackupResult, DatabaseBackupSettings, RestoreResult},
     events::{types::McpEvent, AppEvent},
     presentation::{settings_presenter::SettingsPresenter, view_command::ViewCommand},
     services::{
         app_settings_impl::AppSettingsServiceImpl, profile_impl::ProfileServiceImpl,
-        AppSettingsService, ProfileService,
+        AppSettingsService, BackupService, ProfileService,
     },
 };
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
+
+/// Mock backup service for testing
+struct MockBackupService;
+
+#[async_trait]
+impl BackupService for MockBackupService {
+    async fn create_backup(&self) -> personal_agent::services::ServiceResult<BackupResult> {
+        Ok(BackupResult::Skipped {
+            reason: "Test mode".to_string(),
+        })
+    }
+
+    async fn list_backups(&self) -> personal_agent::services::ServiceResult<Vec<BackupInfo>> {
+        Ok(vec![])
+    }
+
+    async fn restore_backup(
+        &self,
+        _path: &Path,
+    ) -> personal_agent::services::ServiceResult<RestoreResult> {
+        Ok(RestoreResult::Success)
+    }
+
+    async fn get_settings(
+        &self,
+    ) -> personal_agent::services::ServiceResult<DatabaseBackupSettings> {
+        Ok(DatabaseBackupSettings::default())
+    }
+
+    async fn update_settings(
+        &self,
+        _settings: DatabaseBackupSettings,
+    ) -> personal_agent::services::ServiceResult<()> {
+        Ok(())
+    }
+
+    async fn get_last_backup_time(
+        &self,
+    ) -> personal_agent::services::ServiceResult<Option<DateTime<Utc>>> {
+        Ok(None)
+    }
+
+    async fn should_backup(&self) -> personal_agent::services::ServiceResult<bool> {
+        Ok(false)
+    }
+}
 
 /// Setup test environment - returns event sender and view command receiver
 async fn setup_test_environment() -> (broadcast::Sender<AppEvent>, mpsc::Receiver<ViewCommand>) {
@@ -48,10 +98,13 @@ async fn setup_test_environment() -> (broadcast::Sender<AppEvent>, mpsc::Receive
     let (view_mpsc_tx, view_mpsc_rx) = mpsc::channel::<ViewCommand>(100);
     let (view_bcast_tx, _) = broadcast::channel::<ViewCommand>(100);
 
+    let backup_service: Arc<dyn BackupService> = Arc::new(MockBackupService);
+
     // Create and start presenter
     let mut presenter = SettingsPresenter::new(
         profile_service,
         app_settings_service,
+        backup_service,
         &event_tx,
         view_bcast_tx.clone(),
     );
