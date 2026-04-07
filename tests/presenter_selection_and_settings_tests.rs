@@ -797,6 +797,14 @@ impl AppSettingsService for MockAppSettings {
         Ok(())
     }
 
+    async fn get_filter_emoji(&self) -> Result<Option<bool>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_filter_emoji(&self, _enabled: bool) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
     async fn get_setting(&self, _key: &str) -> Result<Option<String>, ServiceError> {
         Ok(None)
     }

@@ -26,6 +26,9 @@ pub struct Config {
     /// Smithery API key or path to keyfile
     #[serde(default)]
     pub smithery_auth: Option<String>,
+    /// When true, strip emojis from assistant message display
+    #[serde(default)]
+    pub filter_emoji: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -63,6 +66,7 @@ impl Default for Config {
             profiles: Vec::new(),
             mcps: Vec::new(),
             smithery_auth: None,
+            filter_emoji: false,
         }
     }
 }

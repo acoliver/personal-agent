@@ -196,6 +196,8 @@ pub struct ChatState {
     pub sidebar_search_results: Option<Vec<ConversationSearchResult>>,
     /// Conversation ID pending delete confirmation in the sidebar.
     pub delete_confirming_id: Option<Uuid>,
+    /// When true, emojis are stripped from assistant message display.
+    pub filter_emoji: bool,
 }
 
 impl Default for ChatState {
@@ -233,6 +235,7 @@ impl Default for ChatState {
             export_feedback_message: None,
             export_feedback_is_error: false,
             export_feedback_path: None,
+            filter_emoji: false,
         }
     }
 }

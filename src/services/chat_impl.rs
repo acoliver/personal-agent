@@ -317,6 +317,20 @@ impl ChatServiceImpl {
             system_prompt.push_str(&skills_prompt_block);
         }
 
+        // If emoji filter is enabled, append emoji avoidance instruction
+        let filter_emoji = self
+            .app_settings_service
+            .get_filter_emoji()
+            .await
+            .unwrap_or(None)
+            .unwrap_or(false);
+        if filter_emoji {
+            if !system_prompt.trim().is_empty() {
+                system_prompt.push_str("\n\n");
+            }
+            system_prompt.push_str("Please avoid using emojis in your responses.");
+        }
+
         Ok(PreparedMessageContext {
             profile,
             client,

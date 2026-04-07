@@ -66,6 +66,9 @@ pub enum UserEvent {
     /// User refreshed conversation list (e.g., after restore)
     RefreshConversations,
 
+    /// User toggled emoji filter mode
+    ToggleEmojiFilter,
+
     /// User requested conversation export with the currently selected format.
     SaveConversation,
 

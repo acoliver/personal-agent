@@ -695,13 +695,76 @@ impl SettingsView {
             .child(panel)
     }
 
-    /// General panel: export directory.
+    /// General panel: export directory and emoji filter toggle.
     fn render_general_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .gap(px(16.0))
             .child(self.render_export_dir_section(cx))
+            .child(self.render_emoji_filter_section(cx))
+    }
+
+    /// Emoji filter toggle section.
+    fn render_emoji_filter_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let filter_emoji = self.state.filter_emoji;
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_primary())
+                    .child("EMOJI FILTER"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.toggle_emoji_filter(cx);
+                        }),
+                    )
+                    .child(Self::render_emoji_filter_indicator(filter_emoji))
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(Theme::text_primary())
+                            .child("Filter emojis from assistant messages"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_muted())
+                    .child("When enabled, emojis are stripped from AI responses for a cleaner display."),
+            )
+    }
+
+    /// Indicator for emoji filter toggle.
+    fn render_emoji_filter_indicator(filter_emoji: bool) -> impl IntoElement {
+        div()
+            .size(px(14.0))
+            .rounded(px(2.0))
+            .border_1()
+            .border_color(Theme::border())
+            .bg(if filter_emoji {
+                Theme::accent()
+            } else {
+                Theme::bg_dark()
+            })
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(Theme::font_size_ui()))
+            .text_color(Theme::text_primary())
+            .when(filter_emoji, |d| d.child("\u{2713}"))
     }
 
     /// Models panel: full-height profiles list + Refresh Models button.

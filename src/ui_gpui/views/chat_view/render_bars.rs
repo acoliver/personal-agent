@@ -99,9 +99,10 @@ impl ChatView {
             .child("YOLO")
     }
 
-    /// Right-side toolbar: [T][Y][R][H (popup only)][MD/TXT/JSON][Save][Popout/Popin][Settings][Exit]
+    /// Right-side toolbar: [T][E][Y][R][H (popup only)][MD/TXT/JSON][Save][Popout/Popin][Settings][Exit]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
+        let filter_emoji = self.state.filter_emoji;
         let yolo_active = self.state.yolo_mode;
         let app_mode = cx
             .try_global::<MainPanelAppState>()
@@ -122,6 +123,19 @@ impl ChatView {
                 cx.listener(|this, _, _window, _cx| {
                     tracing::info!("Toggle thinking clicked - emitting UserEvent");
                     this.emit(UserEvent::ToggleThinking);
+                })
+            ))
+            .child(icon_btn!(
+                "btn-emoji-filter",
+                if filter_emoji {
+                    "\u{1F60A}"
+                } else {
+                    "\u{1F60A}\u{0338}"
+                },
+                filter_emoji,
+                cx.listener(|this, _, _window, cx| {
+                    this.emit(UserEvent::ToggleEmojiFilter);
+                    cx.notify();
                 })
             ))
             .child(icon_btn!(

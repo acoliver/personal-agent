@@ -211,6 +211,9 @@ impl ChatPresenter {
             UserEvent::ToggleThinking => {
                 Self::handle_toggle_thinking(view_tx).await;
             }
+            UserEvent::ToggleEmojiFilter => {
+                Self::handle_toggle_emoji_filter(app_settings_service, view_tx).await;
+            }
             UserEvent::ConfirmRenameConversation { id, title } => {
                 Self::handle_rename_conversation(conversation_service, view_tx, id, title).await;
             }
@@ -260,18 +263,8 @@ impl ChatPresenter {
                 request_id,
                 decision,
             } => {
-                if let Err(error) = chat_service
-                    .resolve_tool_approval(request_id, decision)
-                    .await
-                {
-                    let _ = view_tx
-                        .send(ViewCommand::ShowError {
-                            title: "Tool Approval".to_string(),
-                            message: format!("Failed to resolve tool approval: {error}"),
-                            severity: ErrorSeverity::Error,
-                        })
-                        .await;
-                }
+                Self::handle_tool_approval_response(chat_service, view_tx, request_id, decision)
+                    .await;
             }
             UserEvent::ToggleWindowMode => {
                 let _ = view_tx.send(ViewCommand::ToggleWindowMode).await;
@@ -280,6 +273,26 @@ impl ChatPresenter {
                 Self::handle_search_conversations(conversation_service, view_tx, query).await;
             }
             _ => {} // Ignore other user events
+        }
+    }
+
+    async fn handle_tool_approval_response(
+        chat_service: &Arc<dyn ChatService>,
+        view_tx: &mpsc::Sender<ViewCommand>,
+        request_id: String,
+        decision: crate::events::types::ToolApprovalResponseAction,
+    ) {
+        if let Err(error) = chat_service
+            .resolve_tool_approval(request_id, decision)
+            .await
+        {
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Tool Approval".to_string(),
+                    message: format!("Failed to resolve tool approval: {error}"),
+                    severity: ErrorSeverity::Error,
+                })
+                .await;
         }
     }
 
@@ -595,6 +608,20 @@ impl ChatPresenter {
     /// @requirement REQ-027.1
     async fn handle_toggle_thinking(view_tx: &mut mpsc::Sender<ViewCommand>) {
         let _ = view_tx.send(ViewCommand::ToggleThinkingVisibility).await;
+    }
+
+    /// Handle `ToggleEmojiFilter` user event
+    async fn handle_toggle_emoji_filter(
+        app_settings_service: &Arc<dyn crate::services::AppSettingsService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+    ) {
+        let current = app_settings_service
+            .get_filter_emoji()
+            .await
+            .unwrap_or(None)
+            .unwrap_or(false);
+        let _ = app_settings_service.set_filter_emoji(!current).await;
+        let _ = view_tx.send(ViewCommand::ToggleEmojiFilterVisibility).await;
     }
 
     /// Handle `ConfirmRenameConversation` user event
