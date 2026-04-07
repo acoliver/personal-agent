@@ -566,3 +566,101 @@ pub enum ErrorSeverity {
     Error,
     Critical,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_category_equality() {
+        assert_eq!(ToolCategory::FileEdit, ToolCategory::FileEdit);
+        assert_ne!(ToolCategory::FileEdit, ToolCategory::FileWrite);
+        assert_eq!(ToolCategory::Shell, ToolCategory::Shell);
+        assert_eq!(ToolCategory::Mcp, ToolCategory::Mcp);
+    }
+
+    #[test]
+    fn tool_approval_context_new_sets_fields() {
+        let ctx = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/test.rs");
+        assert_eq!(ctx.tool_name, "EditFile");
+        assert_eq!(ctx.category, ToolCategory::FileEdit);
+        assert_eq!(ctx.primary_target, "/tmp/test.rs");
+        assert!(ctx.details.is_empty());
+        assert!(ctx.server_name.is_none());
+    }
+
+    #[test]
+    fn tool_approval_context_with_detail_adds_pair() {
+        let ctx = ToolApprovalContext::new("ShellExec", ToolCategory::Shell, "git status")
+            .with_detail("working_dir", "/home/user");
+        assert_eq!(ctx.details.len(), 1);
+        assert_eq!(ctx.details[0].0, "working_dir");
+        assert_eq!(ctx.details[0].1, "/home/user");
+    }
+
+    #[test]
+    fn tool_approval_context_with_multiple_details() {
+        let ctx = ToolApprovalContext::new("Search", ToolCategory::Search, "/src")
+            .with_detail("pattern", "fn main")
+            .with_detail("include", "*.rs");
+        assert_eq!(ctx.details.len(), 2);
+        assert_eq!(
+            ctx.details[0],
+            ("pattern".to_string(), "fn main".to_string())
+        );
+        assert_eq!(ctx.details[1], ("include".to_string(), "*.rs".to_string()));
+    }
+
+    #[test]
+    fn tool_approval_context_with_server_name() {
+        let ctx = ToolApprovalContext::new("mcp-tool", ToolCategory::Mcp, "query")
+            .with_server_name("test-server");
+        assert_eq!(ctx.server_name, Some("test-server".to_string()));
+    }
+
+    #[test]
+    fn tool_approval_context_builder_chaining() {
+        let ctx = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/file.txt")
+            .with_detail("line_range", "10-20")
+            .with_detail("encoding", "utf-8")
+            .with_server_name("local");
+        assert_eq!(ctx.tool_name, "EditFile");
+        assert_eq!(ctx.category, ToolCategory::FileEdit);
+        assert_eq!(ctx.primary_target, "/tmp/file.txt");
+        assert_eq!(ctx.details.len(), 2);
+        assert_eq!(ctx.server_name, Some("local".to_string()));
+    }
+
+    #[test]
+    fn message_role_equality() {
+        assert_eq!(MessageRole::User, MessageRole::User);
+        assert_eq!(MessageRole::Assistant, MessageRole::Assistant);
+        assert_ne!(MessageRole::User, MessageRole::Assistant);
+    }
+
+    #[test]
+    fn error_severity_equality() {
+        assert_eq!(ErrorSeverity::Info, ErrorSeverity::Info);
+        assert_eq!(ErrorSeverity::Critical, ErrorSeverity::Critical);
+        assert_ne!(ErrorSeverity::Warning, ErrorSeverity::Error);
+    }
+
+    #[test]
+    fn view_id_equality() {
+        assert_eq!(ViewId::Chat, ViewId::Chat);
+        assert_eq!(ViewId::Settings, ViewId::Settings);
+        assert_ne!(ViewId::Chat, ViewId::History);
+    }
+
+    #[test]
+    fn modal_id_equality() {
+        assert_eq!(
+            ModalId::ConfirmDeleteConversation,
+            ModalId::ConfirmDeleteConversation
+        );
+        assert_ne!(
+            ModalId::ConfirmDeleteConversation,
+            ModalId::ConfirmDeleteProfile
+        );
+    }
+}
