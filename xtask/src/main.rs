@@ -302,6 +302,7 @@ fn coverage_ignore_regex() -> String {
         r"/render_sidebar\.rs$",
         r"/render_tool_approval\.rs$",
         r"/render_appearance\.rs$",
+        r"/render_backup_panel\.rs$",
         r"/ime\.rs$",
     ]
     .join("|")
