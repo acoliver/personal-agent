@@ -37,4 +37,11 @@ mod tests {
         assert!(!POPIN_SVG_PATH.is_empty());
         assert!(!SIDEBAR_SVG_PATH.is_empty());
     }
+
+    #[test]
+    fn icon_builders_construct_svg_elements() {
+        let _ = popout_icon(16.0);
+        let _ = popin_icon(16.0);
+        let _ = sidebar_icon(16.0);
+    }
 }

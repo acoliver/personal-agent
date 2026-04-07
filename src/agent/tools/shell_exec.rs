@@ -425,6 +425,7 @@ mod tests {
             view_tx,
             approval_gate: std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new()),
             policy: std::sync::Arc::new(tokio::sync::Mutex::new(policy)),
+            ..Default::default()
         }
     }
 

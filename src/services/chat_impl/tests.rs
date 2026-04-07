@@ -1,174 +1,86 @@
 use super::*;
-use crate::models::{AuthConfig, Message, ModelParameters};
-use futures::StreamExt;
-use std::sync::Arc;
-
-struct MockConversationService {
-    profile_id: Uuid,
-    messages: Arc<RwLock<Vec<Message>>>,
-    context_state: Arc<RwLock<Option<crate::models::ContextState>>>,
-}
-
 use crate::agent::McpApprovalMode;
-use crate::services::{AppSettingsService, ServiceError, ServiceResult};
-use std::collections::HashMap;
-use tokio::sync::{Barrier, RwLock};
+use crate::models::{AuthConfig, ContextState, Message, Skill};
+use crate::services::{AppSettingsService, ProfileService, SkillsService};
+use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::sync::Barrier;
+use uuid::Uuid;
 
 mod approval_persistence;
+#[path = "support.rs"]
+mod chat_test_support;
 mod compression_persistence;
 
-struct InMemoryAppSettingsService {
-    settings: RwLock<HashMap<String, String>>,
-}
+use chat_test_support::*;
 
-impl InMemoryAppSettingsService {
-    fn new() -> Self {
-        Self {
-            settings: RwLock::new(HashMap::new()),
-        }
-    }
-}
+struct FailingSkillsService;
 
-#[async_trait::async_trait]
-impl AppSettingsService for InMemoryAppSettingsService {
-    async fn get_default_profile_id(&self) -> ServiceResult<Option<Uuid>> {
-        Ok(None)
-    }
-
-    async fn set_default_profile_id(&self, _id: Uuid) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn clear_default_profile_id(&self) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn get_current_conversation_id(&self) -> ServiceResult<Option<Uuid>> {
-        Ok(None)
-    }
-
-    async fn set_current_conversation_id(&self, _id: Uuid) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn get_hotkey(&self) -> ServiceResult<Option<String>> {
-        Ok(None)
-    }
-
-    async fn set_hotkey(&self, _hotkey: String) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn get_theme(&self) -> ServiceResult<Option<String>> {
-        Ok(None)
-    }
-
-    async fn set_theme(&self, _theme: String) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn get_setting(&self, key: &str) -> ServiceResult<Option<String>> {
-        Ok(self.settings.read().await.get(key).cloned())
-    }
-
-    async fn set_setting(&self, key: &str, value: String) -> ServiceResult<()> {
-        self.settings.write().await.insert(key.to_string(), value);
-        Ok(())
-    }
-
-    async fn reset_to_defaults(&self) -> ServiceResult<()> {
-        self.settings.write().await.clear();
-        Ok(())
-    }
-}
-
-struct FailingAppSettingsService;
-
-#[async_trait::async_trait]
-impl AppSettingsService for FailingAppSettingsService {
-    async fn get_default_profile_id(&self) -> ServiceResult<Option<Uuid>> {
-        Ok(None)
-    }
-
-    async fn set_default_profile_id(&self, _id: Uuid) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn clear_default_profile_id(&self) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn get_current_conversation_id(&self) -> ServiceResult<Option<Uuid>> {
-        Ok(None)
-    }
-
-    async fn set_current_conversation_id(&self, _id: Uuid) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn get_hotkey(&self) -> ServiceResult<Option<String>> {
-        Ok(None)
-    }
-
-    async fn set_hotkey(&self, _hotkey: String) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn get_theme(&self) -> ServiceResult<Option<String>> {
-        Ok(None)
-    }
-
-    async fn set_theme(&self, _theme: String) -> ServiceResult<()> {
-        Ok(())
-    }
-
-    async fn get_setting(&self, _key: &str) -> ServiceResult<Option<String>> {
-        Ok(None)
-    }
-
-    async fn set_setting(&self, _key: &str, _value: String) -> ServiceResult<()> {
-        Err(ServiceError::Storage(
-            "simulated settings persistence failure".to_string(),
+#[async_trait]
+impl SkillsService for FailingSkillsService {
+    async fn list_skills(&self) -> ServiceResult<Vec<Skill>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
         ))
     }
 
-    async fn reset_to_defaults(&self) -> ServiceResult<()> {
-        Ok(())
+    async fn get_skill(&self, _name: &str) -> ServiceResult<Option<Skill>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
     }
-}
 
-fn make_approval_test_chat_service(
-    app_settings_service: Arc<dyn AppSettingsService>,
-) -> (
-    ChatServiceImpl,
-    tokio::sync::mpsc::Receiver<ViewCommand>,
-    Arc<ApprovalGate>,
-) {
-    let conversation_service = Arc::new(MockConversationService::new(Uuid::new_v4()))
-        as Arc<dyn super::super::ConversationService>;
-    let profile_service =
-        Arc::new(MockProfileService::new()) as Arc<dyn crate::services::ProfileService>;
-    let (view_tx, view_rx) = tokio::sync::mpsc::channel(8);
-    let approval_gate = Arc::new(ApprovalGate::new());
-    let policy = Arc::new(AsyncMutex::new(ToolApprovalPolicy {
-        yolo_mode: false,
-        auto_approve_reads: false,
-        mcp_approval_mode: McpApprovalMode::PerTool,
-        persistent_allowlist: Vec::new(),
-        persistent_denylist: Vec::new(),
-        session_allowlist: std::collections::HashSet::new(),
-    }));
+    async fn get_skill_body(&self, _name: &str) -> ServiceResult<Option<String>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
 
-    let service = ChatServiceImpl::new(
-        conversation_service,
-        profile_service,
-        app_settings_service,
-        view_tx,
-        approval_gate.clone(),
-        policy,
-    );
+    async fn set_skill_enabled(&self, _name: &str, _enabled: bool) -> ServiceResult<()> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
 
-    (service, view_rx, approval_gate)
+    async fn get_enabled_skills(&self) -> ServiceResult<Vec<Skill>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn refresh(&self) -> ServiceResult<()> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn watched_directories(&self) -> ServiceResult<Vec<std::path::PathBuf>> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn add_watched_directory(&self, _path: std::path::PathBuf) -> ServiceResult<()> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    async fn remove_watched_directory(&self, _path: &std::path::Path) -> ServiceResult<()> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
+
+    fn default_user_skills_dir(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(".")
+    }
+
+    async fn install_skill_from_url(&self, _url: &str) -> ServiceResult<Skill> {
+        Err(ServiceError::Internal(
+            "simulated skills failure".to_string(),
+        ))
+    }
 }
 
 #[tokio::test]
@@ -366,6 +278,7 @@ async fn resolve_tool_approval_proceed_always_persists_all_identifiers() {
         ViewCommand::ToolApprovalPolicyUpdated {
             yolo_mode: false,
             auto_approve_reads: false,
+            skills_auto_approve: false,
             mcp_approval_mode: McpApprovalMode::PerTool,
             persistent_allowlist: vec!["git status".to_string(), "pwd".to_string()],
             persistent_denylist: Vec::new(),
@@ -427,6 +340,7 @@ async fn send_message_clears_session_allowlist_when_yolo_turns_off_in_settings()
     let persisted_policy = crate::agent::ToolApprovalPolicy {
         yolo_mode: false,
         auto_approve_reads: false,
+        skills_auto_approve: false,
         mcp_approval_mode: McpApprovalMode::PerTool,
         persistent_allowlist: Vec::new(),
         persistent_denylist: Vec::new(),
@@ -444,16 +358,22 @@ async fn send_message_clears_session_allowlist_when_yolo_turns_off_in_settings()
     let in_memory_policy = crate::agent::ToolApprovalPolicy {
         yolo_mode: true,
         auto_approve_reads: false,
+        skills_auto_approve: false,
         mcp_approval_mode: McpApprovalMode::PerTool,
         persistent_allowlist: Vec::new(),
         persistent_denylist: Vec::new(),
         session_allowlist,
     };
 
+    let skills_service = Arc::new(
+        crate::services::SkillsServiceImpl::new(app_settings.clone())
+            .expect("skills service should initialize"),
+    ) as Arc<dyn crate::services::SkillsService>;
     let chat_service = ChatServiceImpl::new(
         conversation_service,
         profile_service,
         app_settings,
+        skills_service,
         view_tx,
         approval_gate,
         Arc::new(AsyncMutex::new(in_memory_policy)),
@@ -531,277 +451,6 @@ async fn resolve_tool_approval_is_atomic_between_competing_decisions() {
     }
 }
 
-impl MockConversationService {
-    fn new(profile_id: Uuid) -> Self {
-        Self {
-            profile_id,
-            messages: Arc::new(RwLock::new(Vec::new())),
-            context_state: Arc::new(RwLock::new(None)),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl super::super::ConversationService for MockConversationService {
-    async fn create(
-        &self,
-        _title: Option<String>,
-        model_profile_id: Uuid,
-    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-        Ok(crate::models::Conversation::new(model_profile_id))
-    }
-
-    async fn load(
-        &self,
-        _id: Uuid,
-    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-        let mut conversation = crate::models::Conversation::new(self.profile_id);
-        conversation.messages = self.messages.read().await.clone();
-        Ok(conversation)
-    }
-
-    async fn list_metadata(
-        &self,
-        _limit: Option<usize>,
-        _offset: Option<usize>,
-    ) -> Result<Vec<crate::models::ConversationMetadata>, crate::services::ServiceError> {
-        Ok(vec![])
-    }
-
-    async fn add_message(
-        &self,
-        _conversation_id: Uuid,
-        message: Message,
-    ) -> Result<Message, crate::services::ServiceError> {
-        self.messages.write().await.push(message.clone());
-        Ok(message)
-    }
-
-    async fn search(
-        &self,
-        _query: &str,
-        _limit: Option<usize>,
-        _offset: Option<usize>,
-    ) -> Result<Vec<crate::models::SearchResult>, crate::services::ServiceError> {
-        Ok(vec![])
-    }
-
-    async fn message_count(
-        &self,
-        _conversation_id: Uuid,
-    ) -> Result<usize, crate::services::ServiceError> {
-        Ok(0)
-    }
-
-    async fn update_context_state(
-        &self,
-        _id: Uuid,
-        state: &crate::models::ContextState,
-    ) -> Result<(), crate::services::ServiceError> {
-        *self.context_state.write().await = Some(state.clone());
-        Ok(())
-    }
-
-    async fn get_context_state(
-        &self,
-        _id: Uuid,
-    ) -> Result<Option<crate::models::ContextState>, crate::services::ServiceError> {
-        Ok(self.context_state.read().await.clone())
-    }
-
-    async fn rename(
-        &self,
-        _id: Uuid,
-        _new_title: String,
-    ) -> Result<(), crate::services::ServiceError> {
-        Ok(())
-    }
-
-    async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-        Ok(())
-    }
-
-    async fn set_active(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-        Ok(())
-    }
-
-    async fn get_active(&self) -> Result<Option<Uuid>, crate::services::ServiceError> {
-        Ok(None)
-    }
-
-    async fn get_messages(
-        &self,
-        _conversation_id: Uuid,
-    ) -> Result<Vec<Message>, crate::services::ServiceError> {
-        Ok(vec![])
-    }
-
-    async fn update(
-        &self,
-        _id: Uuid,
-        _title: Option<String>,
-        _model_profile_id: Option<Uuid>,
-    ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
-        Err(crate::services::ServiceError::NotFound("test".to_string()))
-    }
-}
-
-struct MockProfileService {
-    profile: Arc<RwLock<Option<crate::models::ModelProfile>>>,
-    profiles_by_id: Arc<RwLock<std::collections::HashMap<Uuid, crate::models::ModelProfile>>>,
-}
-
-impl MockProfileService {
-    fn new() -> Self {
-        Self {
-            profile: Arc::new(RwLock::new(None)),
-            profiles_by_id: Arc::new(RwLock::new(std::collections::HashMap::new())),
-        }
-    }
-
-    async fn set_default_profile(&self, profile: crate::models::ModelProfile) {
-        *self.profile.write().await = Some(profile);
-    }
-
-    async fn add_profile(&self, profile: crate::models::ModelProfile) {
-        self.profiles_by_id
-            .write()
-            .await
-            .insert(profile.id, profile);
-    }
-}
-
-#[async_trait::async_trait]
-impl crate::services::ProfileService for MockProfileService {
-    async fn list(
-        &self,
-    ) -> Result<Vec<crate::models::ModelProfile>, crate::services::ServiceError> {
-        Ok(vec![])
-    }
-
-    async fn get(
-        &self,
-        id: Uuid,
-    ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-        self.profiles_by_id
-            .read()
-            .await
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| {
-                crate::services::ServiceError::NotFound(format!("profile {id} not found"))
-            })
-    }
-
-    async fn create(
-        &self,
-        _name: String,
-        _provider: String,
-        _model: String,
-        _base_url: Option<String>,
-        _auth: AuthConfig,
-        _parameters: ModelParameters,
-        _system_prompt: Option<String>,
-    ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-        Ok(crate::models::ModelProfile::new(
-            _name,
-            _provider,
-            _model,
-            _base_url.unwrap_or_else(|| "https://api.test.com/v1".to_string()),
-            _auth,
-        ))
-    }
-
-    async fn update(
-        &self,
-        _id: Uuid,
-        _name: Option<String>,
-        _provider: Option<String>,
-        _model: Option<String>,
-        _base_url: Option<String>,
-        _auth: Option<AuthConfig>,
-        _parameters: Option<ModelParameters>,
-        _system_prompt: Option<String>,
-    ) -> Result<crate::models::ModelProfile, crate::services::ServiceError> {
-        Err(crate::services::ServiceError::NotFound("test".to_string()))
-    }
-
-    async fn delete(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-        Err(crate::services::ServiceError::NotFound("test".to_string()))
-    }
-
-    async fn test_connection(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-        Ok(())
-    }
-
-    async fn get_default(
-        &self,
-    ) -> Result<Option<crate::models::ModelProfile>, crate::services::ServiceError> {
-        Ok(self.profile.read().await.clone())
-    }
-
-    async fn set_default(&self, _id: Uuid) -> Result<(), crate::services::ServiceError> {
-        Ok(())
-    }
-}
-
-async fn setup_send_message_test() -> (Arc<MockConversationService>, bool) {
-    crate::services::secure_store::use_mock_backend();
-    crate::services::secure_store::api_keys::store("_test_send_msg", "fake-key-for-test")
-        .expect("store test key");
-
-    let profile = crate::models::ModelProfile::new(
-        "Test Profile".to_string(),
-        "openai".to_string(),
-        "gpt-4".to_string(),
-        "https://api.openai.com/v1".to_string(),
-        AuthConfig::Keychain {
-            label: "_test_send_msg".to_string(),
-        },
-    );
-    let profile_id = profile.id;
-
-    let conversation_service_impl = Arc::new(MockConversationService::new(profile_id));
-    let conversation_service =
-        conversation_service_impl.clone() as Arc<dyn super::super::ConversationService>;
-    let mock_profile_service = Arc::new(MockProfileService::new());
-    mock_profile_service.set_default_profile(profile).await;
-    let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
-
-    let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
-    let conversation_id = Uuid::new_v4();
-    let mut stream = chat_service
-        .send_message(conversation_id, "Hello, world!".to_string())
-        .await
-        .expect("send_message should return Ok with a stream");
-
-    let completed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        while let Some(event) = stream.next().await {
-            match event {
-                ChatStreamEvent::Complete { .. } => return true,
-                ChatStreamEvent::Error(_) => return false,
-                ChatStreamEvent::Token(_) => {}
-            }
-        }
-        false
-    })
-    .await
-    .unwrap_or(false);
-
-    (conversation_service_impl, completed)
-}
-
-fn assert_non_empty_tool_json<T: serde::de::DeserializeOwned>(
-    maybe_json: Option<&str>,
-    deserialize_err: &str,
-    empty_err: &str,
-) {
-    if let Some(json) = maybe_json {
-        let parsed: Vec<T> = serde_json::from_str(json).expect(deserialize_err);
-        assert!(!parsed.is_empty(), "{empty_err}");
-    }
-}
-
 #[tokio::test]
 async fn test_send_message() {
     let (conversation_service_impl, completed) = setup_send_message_test().await;
@@ -835,6 +484,202 @@ async fn test_send_message() {
     }
 
     let _ = crate::services::secure_store::api_keys::delete("_test_send_msg");
+}
+
+#[tokio::test]
+async fn support_app_settings_services_cover_success_and_failure_paths() {
+    let in_memory = InMemoryAppSettingsService::new();
+    let profile_id = Uuid::new_v4();
+    let conversation_id = Uuid::new_v4();
+
+    assert_eq!(in_memory.get_default_profile_id().await.unwrap(), None);
+    in_memory.set_default_profile_id(profile_id).await.unwrap();
+    in_memory.clear_default_profile_id().await.unwrap();
+    assert_eq!(in_memory.get_current_conversation_id().await.unwrap(), None);
+    in_memory
+        .set_current_conversation_id(conversation_id)
+        .await
+        .unwrap();
+    assert_eq!(in_memory.get_hotkey().await.unwrap(), None);
+    in_memory
+        .set_hotkey("Cmd+Shift+K".to_string())
+        .await
+        .unwrap();
+    assert_eq!(in_memory.get_theme().await.unwrap(), None);
+    in_memory.set_theme("dark".to_string()).await.unwrap();
+    assert_eq!(in_memory.get_setting("missing").await.unwrap(), None);
+    in_memory
+        .set_setting("skills.disabled", "[\"drafting\"]".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        in_memory.get_setting("skills.disabled").await.unwrap(),
+        Some("[\"drafting\"]".to_string())
+    );
+    in_memory.reset_to_defaults().await.unwrap();
+    assert_eq!(
+        in_memory.get_setting("skills.disabled").await.unwrap(),
+        None
+    );
+
+    let failing = FailingAppSettingsService;
+    assert_eq!(failing.get_default_profile_id().await.unwrap(), None);
+    failing.set_default_profile_id(profile_id).await.unwrap();
+    failing.clear_default_profile_id().await.unwrap();
+    assert_eq!(failing.get_current_conversation_id().await.unwrap(), None);
+    failing
+        .set_current_conversation_id(conversation_id)
+        .await
+        .unwrap();
+    assert_eq!(failing.get_hotkey().await.unwrap(), None);
+    failing.set_hotkey("Cmd+Shift+K".to_string()).await.unwrap();
+    assert_eq!(failing.get_theme().await.unwrap(), None);
+    failing.set_theme("dark".to_string()).await.unwrap();
+    assert_eq!(failing.get_setting("missing").await.unwrap(), None);
+    let error = failing
+        .set_setting("tool_approval.policy", "{}".to_string())
+        .await
+        .expect_err("failing settings should surface storage errors");
+    assert!(error
+        .to_string()
+        .contains("simulated settings persistence failure"));
+    failing.reset_to_defaults().await.unwrap();
+}
+
+#[tokio::test]
+async fn support_mock_conversation_service_covers_crud_and_lookup_paths() {
+    let profile_id = Uuid::new_v4();
+    let conversation_service = MockConversationService::new(profile_id);
+
+    let created = conversation_service
+        .create(Some("Hello".to_string()), profile_id)
+        .await
+        .expect("conversation create should succeed");
+    assert_eq!(created.profile_id, profile_id);
+    assert!(conversation_service
+        .list_metadata(None, None)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let stored = conversation_service
+        .add_message(Uuid::new_v4(), Message::user("hello".to_string()))
+        .await
+        .expect("add_message should succeed");
+    assert_eq!(stored.content, "hello");
+
+    let loaded = conversation_service
+        .load(Uuid::new_v4())
+        .await
+        .expect("conversation load should succeed");
+    assert_eq!(loaded.messages.len(), 1);
+    assert_eq!(
+        conversation_service
+            .search("hello", None, None)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        conversation_service
+            .message_count(Uuid::new_v4())
+            .await
+            .unwrap(),
+        0
+    );
+    conversation_service
+        .update_context_state(
+            Uuid::new_v4(),
+            &ContextState {
+                strategy: Some("summary".to_string()),
+                summary: Some("condensed".to_string()),
+                visible_range: Some((0, 1)),
+                ..ContextState::default()
+            },
+        )
+        .await
+        .unwrap();
+    let stored_state = conversation_service
+        .get_context_state(Uuid::new_v4())
+        .await
+        .unwrap()
+        .expect("context state should be stored by the mock service");
+    assert_eq!(stored_state.strategy.as_deref(), Some("summary"));
+    conversation_service
+        .rename(Uuid::new_v4(), "Renamed".to_string())
+        .await
+        .unwrap();
+    conversation_service.delete(Uuid::new_v4()).await.unwrap();
+    conversation_service
+        .set_active(Uuid::new_v4())
+        .await
+        .unwrap();
+    assert_eq!(conversation_service.get_active().await.unwrap(), None);
+    assert!(conversation_service
+        .get_messages(Uuid::new_v4())
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(conversation_service
+        .update(Uuid::new_v4(), Some("title".to_string()), Some(profile_id))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn support_mock_profile_service_covers_crud_and_lookup_paths() {
+    let profile = crate::models::ModelProfile::new(
+        "Support Profile".to_string(),
+        "openai".to_string(),
+        "gpt-4o".to_string(),
+        "https://api.openai.com/v1".to_string(),
+        AuthConfig::Keychain {
+            label: "support-key".to_string(),
+        },
+    );
+    let profile_id = profile.id;
+    let profile_service = MockProfileService::new();
+
+    profile_service.set_default_profile(profile.clone()).await;
+    profile_service.add_profile(profile.clone()).await;
+    assert!(profile_service.list().await.unwrap().is_empty());
+    assert_eq!(
+        profile_service.get(profile_id).await.unwrap().id,
+        profile_id
+    );
+    assert_eq!(
+        profile_service
+            .get_default()
+            .await
+            .unwrap()
+            .expect("default profile")
+            .id,
+        profile_id
+    );
+    profile_service.set_default(profile_id).await.unwrap();
+    profile_service.test_connection(profile_id).await.unwrap();
+
+    let created_profile = profile_service
+        .create(
+            "Created".to_string(),
+            "openai".to_string(),
+            "gpt-4.1".to_string(),
+            Some("https://api.example.com/v1".to_string()),
+            AuthConfig::Keychain {
+                label: "created-key".to_string(),
+            },
+            crate::models::ModelParameters::default(),
+            None,
+        )
+        .await
+        .expect("profile create should succeed");
+    assert_eq!(created_profile.name, "Created");
+    assert!(profile_service
+        .update(profile_id, None, None, None, None, None, None, None)
+        .await
+        .is_err());
+    assert!(profile_service.delete(profile_id).await.is_err());
 }
 
 async fn make_basic_chat_service() -> ChatServiceImpl {
@@ -918,6 +763,60 @@ async fn prepare_message_context_uses_conversation_profile_id() {
     assert_eq!(prepared.profile.provider_id, "kimi-for-coding");
 
     let _ = crate::services::secure_store::api_keys::delete("_test_conv_prof");
+}
+
+#[tokio::test]
+async fn prepare_message_context_ignores_skill_lookup_failures() {
+    crate::services::secure_store::use_mock_backend();
+    crate::services::secure_store::api_keys::store(
+        "_test_skills_failure",
+        "fake-key-for-skills-failure-test",
+    )
+    .expect("store test key");
+
+    let profile = crate::models::ModelProfile::new(
+        "Default".to_string(),
+        "openai".to_string(),
+        "gpt-4o".to_string(),
+        "https://api.openai.com/v1".to_string(),
+        AuthConfig::Keychain {
+            label: "_test_skills_failure".to_string(),
+        },
+    );
+    let profile_id = profile.id;
+
+    let conversation_service = Arc::new(MockConversationService::new(profile_id))
+        as Arc<dyn super::super::ConversationService>;
+    let mock_profile_service = Arc::new(MockProfileService::new());
+    mock_profile_service
+        .set_default_profile(profile.clone())
+        .await;
+    mock_profile_service.add_profile(profile).await;
+    let profile_service: Arc<dyn crate::services::ProfileService> = mock_profile_service;
+
+    let app_settings = Arc::new(InMemoryAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+    let (view_tx, _view_rx) = tokio::sync::mpsc::channel(8);
+    let chat_service = ChatServiceImpl::new(
+        conversation_service,
+        profile_service,
+        app_settings,
+        Arc::new(FailingSkillsService),
+        view_tx,
+        Arc::new(ApprovalGate::new()),
+        Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default())),
+    );
+
+    let prepared = chat_service
+        .prepare_message_context(Uuid::new_v4(), "hello".to_string())
+        .await
+        .expect("prepare_message_context should succeed even when skills lookup fails");
+
+    assert!(
+        !prepared.system_prompt.contains("available_skills"),
+        "skills prompt block should be omitted when skill lookup fails"
+    );
+
+    let _ = crate::services::secure_store::api_keys::delete("_test_skills_failure");
 }
 
 #[tokio::test]

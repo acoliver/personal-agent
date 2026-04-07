@@ -8,7 +8,7 @@ use crate::ui_gpui::theme::Theme;
 use gpui::{div, prelude::*, px, MouseButton, SharedString};
 
 impl SettingsView {
-    fn render_toggle(
+    pub(super) fn render_toggle(
         id: &str,
         label: &str,
         checked: bool,

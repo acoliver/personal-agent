@@ -19,6 +19,7 @@ impl SettingsPresenter {
                 let _ = view_tx.send(ViewCommand::ToolApprovalPolicyUpdated {
                     yolo_mode: policy.yolo_mode,
                     auto_approve_reads: policy.auto_approve_reads,
+                    skills_auto_approve: policy.skills_auto_approve,
                     mcp_approval_mode: policy.mcp_approval_mode,
                     persistent_allowlist: policy.persistent_allowlist,
                     persistent_denylist: policy.persistent_denylist,
@@ -105,6 +106,43 @@ impl SettingsPresenter {
             let _ = view_tx.send(ViewCommand::ShowError {
                 title: "Tool Approval Settings".to_string(),
                 message: "Failed to persist read-only approval mode".to_string(),
+                severity: super::view_command::ErrorSeverity::Warning,
+            });
+            return;
+        }
+
+        Self::emit_tool_approval_policy_snapshot(app_settings_service, view_tx).await;
+    }
+
+    pub(super) async fn on_set_tool_approval_skills_auto_approve(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        enabled: bool,
+    ) {
+        let mut policy =
+            match ToolApprovalPolicy::load_from_settings(app_settings_service.as_ref()).await {
+                Ok(policy) => policy,
+                Err(error) => {
+                    tracing::warn!("Failed to load tool approval policy for skill toggle: {error}");
+                    let _ = view_tx.send(ViewCommand::ShowError {
+                        title: "Tool Approval Settings".to_string(),
+                        message: "Failed to update skill approval mode".to_string(),
+                        severity: super::view_command::ErrorSeverity::Warning,
+                    });
+                    return;
+                }
+            };
+
+        if policy.skills_auto_approve == enabled {
+            return;
+        }
+
+        policy.skills_auto_approve = enabled;
+        if let Err(error) = policy.save_to_settings(app_settings_service.as_ref()).await {
+            tracing::warn!("Failed to persist skill approval mode: {error}");
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "Tool Approval Settings".to_string(),
+                message: "Failed to persist skill approval mode".to_string(),
                 severity: super::view_command::ErrorSeverity::Warning,
             });
             return;

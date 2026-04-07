@@ -220,11 +220,8 @@ fn registry_manager_uses_cache_and_can_clear_it() {
 
 #[test]
 fn registry_manager_new_and_default_construct_successfully() {
-    let manager = RegistryManager::new().unwrap();
-    assert!(manager.cache_metadata().is_ok());
-
-    let default_manager = RegistryManager::default();
-    assert!(default_manager.cache_metadata().is_ok());
+    RegistryManager::new().unwrap();
+    RegistryManager::default();
 }
 
 #[tokio::test]

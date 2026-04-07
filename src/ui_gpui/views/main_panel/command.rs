@@ -65,18 +65,16 @@ impl MainPanel {
 
             ErrorLogExportCompleted { .. } => self.forward_to_error_log(cmd, cx),
 
-            // ── export directory (settings view) ────────────────────────
-            ExportDirectoryLoaded { .. } => self.forward_to_settings(cmd, cx),
+            // ── settings-only forwarding ─────────────────────────────
+            ExportDirectoryLoaded { .. }
+            | SkillsLoaded { .. }
+            | ToolApprovalPolicyUpdated { .. } => self.forward_to_settings(cmd, cx),
 
             // ── model selector + profile editor ─────────────────────────
             ModelSearchResults { .. } | ModelSelected { .. } | ProfileEditorLoad { .. } => {
                 self.handle_model_profile_command(cmd, cx);
             }
 
-            // ── tool approval (settings + chat) ────────────────────────
-            ToolApprovalPolicyUpdated { .. } => {
-                self.forward_to_settings(cmd, cx);
-            }
             YoloModeChanged { .. } => {
                 self.forward_yolo_to_settings_and_chat(&cmd, cx);
             }

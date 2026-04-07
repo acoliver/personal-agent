@@ -3,21 +3,22 @@
 //! @plan PLAN-20250130-GPUIREDUX.P06
 //! @requirement REQ-UI-ST
 
+mod actions;
 mod command;
+mod input;
 mod render;
 mod render_appearance;
+mod render_skills;
 mod render_tool_approval;
 
-use gpui::{Bounds, Pixels};
+use gpui::FocusHandle;
 
-use gpui::{FocusHandle, Window};
-use std::ops::Range;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::agent::McpApprovalMode;
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::{ProfileSummary, ThemeSummary};
+use crate::presentation::view_command::{ProfileSummary, SkillSummary, ThemeSummary};
 use crate::ui_gpui::bridge::GpuiBridge;
 
 /// Represents a profile in the settings list
@@ -62,6 +63,27 @@ impl ProfileItem {
             self.name.clone()
         } else {
             format!("{} ({}:{})", self.name, self.provider, self.model)
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillItem {
+    pub name: String,
+    pub description: String,
+    pub source: crate::models::SkillSource,
+    pub enabled: bool,
+    pub path: String,
+}
+
+impl From<SkillSummary> for SkillItem {
+    fn from(value: SkillSummary) -> Self {
+        Self {
+            name: value.name,
+            description: value.description,
+            source: value.source,
+            enabled: value.enabled,
+            path: value.path,
         }
     }
 }
@@ -139,15 +161,17 @@ pub enum SettingsCategory {
     General,
     Appearance,
     Models,
+    Skills,
     Security,
     McpTools,
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::General,
         Self::Appearance,
         Self::Models,
+        Self::Skills,
         Self::Security,
         Self::McpTools,
     ];
@@ -158,6 +182,7 @@ impl SettingsCategory {
             Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Models => "Models",
+            Self::Skills => "Skills",
             Self::Security => "Security",
             Self::McpTools => "MCP Tools",
         }
@@ -170,6 +195,7 @@ pub(super) enum ActiveField {
     AllowlistInput,
     DenylistInput,
     ExportDirInput,
+    InstallSkillUrlInput,
 }
 
 /// Settings view state
@@ -178,8 +204,10 @@ pub(super) enum ActiveField {
 pub struct SettingsState {
     pub profiles: Vec<ProfileItem>,
     pub mcps: Vec<McpItem>,
+    pub skills: Vec<SkillItem>,
     pub selected_profile_id: Option<Uuid>,
     pub selected_mcp_id: Option<Uuid>,
+    pub selected_skill_name: Option<String>,
     /// Available themes for the dropdown.
     pub available_themes: Vec<ThemeOption>,
     /// Slug of the currently-selected theme.
@@ -188,12 +216,16 @@ pub struct SettingsState {
     pub theme_dropdown_open: bool,
     pub yolo_mode: bool,
     pub auto_approve_reads: bool,
+    pub skills_auto_approve: bool,
     pub mcp_approval_mode: McpApprovalMode,
     pub persistent_allowlist: Vec<String>,
     pub persistent_denylist: Vec<String>,
     pub allowlist_input: String,
     pub denylist_input: String,
     pub export_dir_input: String,
+    pub install_skill_url_input: String,
+    pub watched_skill_directories: Vec<String>,
+    pub default_skill_directory: String,
     pub(super) active_field: Option<ActiveField>,
     pub status_message: Option<String>,
     pub status_is_error: bool,
@@ -217,20 +249,26 @@ impl Default for SettingsState {
         Self {
             profiles: Vec::new(),
             mcps: Vec::new(),
+            skills: Vec::new(),
             selected_profile_id: None,
             selected_mcp_id: None,
+            selected_skill_name: None,
             available_themes: Vec::new(),
             selected_theme_slug: "green-screen".to_string(),
             selected_category: SettingsCategory::General,
             theme_dropdown_open: false,
             yolo_mode: false,
             auto_approve_reads: false,
+            skills_auto_approve: false,
             mcp_approval_mode: McpApprovalMode::PerTool,
             persistent_allowlist: Vec::new(),
             persistent_denylist: Vec::new(),
             allowlist_input: String::new(),
             denylist_input: String::new(),
             export_dir_input: String::new(),
+            install_skill_url_input: String::new(),
+            watched_skill_directories: Vec::new(),
+            default_skill_directory: String::new(),
             active_field: None,
             status_message: None,
             status_is_error: false,
@@ -348,7 +386,63 @@ impl SettingsView {
         }
     }
 
-    /// Set MCPs from presenter
+    fn emit_set_skill_enabled(&self, name: String, enabled: bool) {
+        self.emit(&UserEvent::SetSkillEnabled { name, enabled });
+    }
+
+    fn emit_refresh_skills(&self) {
+        self.emit(&UserEvent::RefreshSkills);
+    }
+
+    fn emit_add_skills_directory(&self, path: String) {
+        self.emit(&UserEvent::AddSkillsDirectory { path });
+    }
+
+    fn emit_remove_skills_directory(&self, path: String) {
+        self.emit(&UserEvent::RemoveSkillsDirectory { path });
+    }
+
+    fn emit_install_skill_from_url(&self, url: String) {
+        self.emit(&UserEvent::InstallSkillFromUrl { url });
+    }
+
+    fn selected_skill(&self) -> Option<&SkillItem> {
+        self.state
+            .selected_skill_name
+            .as_ref()
+            .and_then(|selected_name| {
+                self.state
+                    .skills
+                    .iter()
+                    .find(|skill| &skill.name == selected_name)
+            })
+    }
+
+    fn set_skill_items(&mut self, skills: Vec<SkillItem>) {
+        self.state.skills = skills;
+
+        if self.state.selected_skill_name.is_none() {
+            self.state.selected_skill_name =
+                self.state.skills.first().map(|skill| skill.name.clone());
+        }
+
+        if let Some(selected_name) = self.state.selected_skill_name.as_ref() {
+            if self
+                .state
+                .skills
+                .iter()
+                .all(|skill| &skill.name != selected_name)
+            {
+                self.state.selected_skill_name =
+                    self.state.skills.first().map(|skill| skill.name.clone());
+            }
+        }
+    }
+
+    fn select_skill(&mut self, name: String) {
+        self.state.selected_skill_name = Some(name);
+    }
+
     pub fn set_mcps(&mut self, mcps: Vec<McpItem>) {
         self.state.mcps = mcps;
 
@@ -388,6 +482,10 @@ impl SettingsView {
             Some(ActiveField::AllowlistInput) => self.state.allowlist_input.push_str(text),
             Some(ActiveField::DenylistInput) => self.state.denylist_input.push_str(text),
             Some(ActiveField::ExportDirInput) => self.state.export_dir_input.push_str(text),
+            Some(ActiveField::InstallSkillUrlInput) => {
+                self.state.install_skill_url_input.push_str(text);
+            }
+
             None => {}
         }
     }
@@ -402,6 +500,9 @@ impl SettingsView {
             }
             Some(ActiveField::ExportDirInput) => {
                 self.state.export_dir_input.pop();
+            }
+            Some(ActiveField::InstallSkillUrlInput) => {
+                self.state.install_skill_url_input.pop();
             }
             None => {}
         }
@@ -431,6 +532,12 @@ impl SettingsView {
                     .export_dir_input
                     .truncate(len.saturating_sub(byte_count));
             }
+            Some(ActiveField::InstallSkillUrlInput) => {
+                let len = self.state.install_skill_url_input.len();
+                self.state
+                    .install_skill_url_input
+                    .truncate(len.saturating_sub(byte_count));
+            }
             None => {}
         }
     }
@@ -440,6 +547,7 @@ impl SettingsView {
             Some(ActiveField::AllowlistInput) => &self.state.allowlist_input,
             Some(ActiveField::DenylistInput) => &self.state.denylist_input,
             Some(ActiveField::ExportDirInput) => &self.state.export_dir_input,
+            Some(ActiveField::InstallSkillUrlInput) => &self.state.install_skill_url_input,
             None => "",
         }
     }
@@ -453,7 +561,8 @@ impl SettingsView {
         let next = match self.state.active_field {
             Some(ActiveField::ExportDirInput) => ActiveField::AllowlistInput,
             Some(ActiveField::AllowlistInput) => ActiveField::DenylistInput,
-            Some(ActiveField::DenylistInput) | None => ActiveField::ExportDirInput,
+            Some(ActiveField::DenylistInput) => ActiveField::InstallSkillUrlInput,
+            Some(ActiveField::InstallSkillUrlInput) | None => ActiveField::ExportDirInput,
         };
         self.set_active_field(Some(next));
     }
@@ -711,6 +820,15 @@ impl SettingsView {
                 cx.notify();
                 return;
             }
+            Some(ActiveField::InstallSkillUrlInput) => {
+                let url = self.state.install_skill_url_input.trim().to_string();
+                if !url.is_empty() {
+                    self.emit_install_skill_from_url(url);
+                    self.state.install_skill_url_input.clear();
+                }
+                cx.notify();
+                return;
+            }
             None => {}
         }
         if self.state.selected_category == SettingsCategory::Appearance
@@ -720,11 +838,6 @@ impl SettingsView {
             self.state.theme_dropdown_open = false;
             cx.notify();
         }
-    }
-
-    fn save_export_directory(&self) {
-        let path = self.state.export_dir_input.trim().to_string();
-        self.emit(&UserEvent::SetExportDirectory { path });
     }
 
     #[allow(clippy::unused_self)] // cx.spawn closure captures the entity handle
@@ -753,25 +866,29 @@ impl SettingsView {
         .detach();
     }
 
-    fn apply_selected_theme(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.state.available_themes.is_empty() {
-            return;
-        }
-        let selected_slug = self
-            .state
-            .available_themes
-            .iter()
-            .find(|theme| theme.slug == self.state.selected_theme_slug)
-            .map(|theme| theme.slug.clone())
-            .or_else(|| {
-                self.state
-                    .available_themes
-                    .first()
-                    .map(|theme| theme.slug.clone())
-            });
-        if let Some(slug) = selected_slug {
-            self.select_theme(slug, cx);
-        }
+    #[allow(clippy::unused_self)]
+    fn browse_skills_directory(&mut self, cx: &mut gpui::Context<Self>) {
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add Skills Directory".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(path) = paths.first() {
+                    let path_str = path.to_string_lossy().to_string();
+                    cx.update(|cx| {
+                        this.update(cx, |view, cx| {
+                            view.emit_add_skills_directory(path_str);
+                            cx.notify();
+                        })
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     pub(super) const fn select_category(&mut self, category: SettingsCategory) {
@@ -873,104 +990,6 @@ impl SettingsView {
         } else {
             tracing::warn!("No bridge set - event not emitted: {:?}", event);
         }
-    }
-}
-
-impl gpui::EntityInputHandler for SettingsView {
-    fn text_for_range(
-        &mut self,
-        range: Range<usize>,
-        _adjusted_range: &mut Option<Range<usize>>,
-        _window: &mut Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<String> {
-        let text = self.active_field_text();
-        let utf16: Vec<u16> = text.encode_utf16().collect();
-        let start = range.start.min(utf16.len());
-        let end = range.end.min(utf16.len());
-        String::from_utf16(&utf16[start..end]).ok()
-    }
-
-    fn selected_text_range(
-        &mut self,
-        _ignore_disabled_input: bool,
-        _window: &mut Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<gpui::UTF16Selection> {
-        let len16 = self.active_field_text().encode_utf16().count();
-        Some(gpui::UTF16Selection {
-            range: len16..len16,
-            reversed: false,
-        })
-    }
-
-    fn marked_text_range(
-        &self,
-        _window: &mut Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<Range<usize>> {
-        if self.ime_marked_byte_count > 0 {
-            let text = self.active_field_text();
-            let len16: usize = text.encode_utf16().count();
-            let start_utf8 = text.len().saturating_sub(self.ime_marked_byte_count);
-            let start_utf16: usize = text[..start_utf8].encode_utf16().count();
-            Some(start_utf16..len16)
-        } else {
-            None
-        }
-    }
-
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) {
-        self.ime_marked_byte_count = 0;
-    }
-
-    fn replace_text_in_range(
-        &mut self,
-        _range: Option<Range<usize>>,
-        text: &str,
-        _window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
-        self.ime_marked_byte_count = 0;
-        self.append_to_active_field(text);
-        cx.notify();
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        _range: Option<Range<usize>>,
-        new_text: &str,
-        _new_selected_range: Option<Range<usize>>,
-        _window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
-        self.ime_marked_byte_count = 0;
-        if !new_text.is_empty() {
-            self.append_to_active_field(new_text);
-            self.ime_marked_byte_count = new_text.len();
-        }
-        cx.notify();
-    }
-
-    fn bounds_for_range(
-        &mut self,
-        _range: Range<usize>,
-        _element_bounds: Bounds<Pixels>,
-        _window: &mut Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        None
-    }
-
-    fn character_index_for_point(
-        &mut self,
-        _point: gpui::Point<Pixels>,
-        _window: &mut Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<usize> {
-        None
     }
 }
 

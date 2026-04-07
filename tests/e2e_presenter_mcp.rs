@@ -49,9 +49,18 @@ async fn setup_test_environment() -> (broadcast::Sender<AppEvent>, mpsc::Receive
     let (view_bcast_tx, _) = broadcast::channel::<ViewCommand>(100);
 
     // Create and start presenter
+    let skills_service = Arc::new(
+        personal_agent::services::SkillsServiceImpl::new_for_tests(
+            app_settings_service.clone(),
+            std::path::PathBuf::from("/tmp/nonexistent-bundled-skills"),
+            std::env::temp_dir().join(format!("e2e-presenter-mcp-skills-{}", uuid::Uuid::new_v4())),
+        )
+        .expect("skills service should initialize for tests"),
+    ) as Arc<dyn personal_agent::services::SkillsService>;
     let mut presenter = SettingsPresenter::new(
         profile_service,
         app_settings_service,
+        skills_service,
         &event_tx,
         view_bcast_tx.clone(),
     );

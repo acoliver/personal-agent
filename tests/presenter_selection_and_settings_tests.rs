@@ -791,7 +791,24 @@ async fn edit_profile_emits_profile_editor_load_with_existing_data() {
     let (event_tx, _) = broadcast::channel::<AppEvent>(64);
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(64);
 
-    let mut presenter = SettingsPresenter::new(profile_service, app_settings, &event_tx, view_tx);
+    let skills_service = Arc::new(
+        personal_agent::services::SkillsServiceImpl::new_for_tests(
+            app_settings.clone(),
+            std::path::PathBuf::from("/tmp/nonexistent-bundled-skills"),
+            std::env::temp_dir().join(format!(
+                "presenter-selection-settings-skills-{}",
+                uuid::Uuid::new_v4()
+            )),
+        )
+        .expect("skills service should initialize for tests"),
+    ) as Arc<dyn personal_agent::services::SkillsService>;
+    let mut presenter = SettingsPresenter::new(
+        profile_service,
+        app_settings,
+        skills_service,
+        &event_tx,
+        view_tx,
+    );
     presenter.start().await.expect("start settings presenter");
 
     event_tx
@@ -858,7 +875,24 @@ async fn delete_profile_emits_profile_deleted_command() {
     let (event_tx, _) = broadcast::channel::<AppEvent>(64);
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(64);
 
-    let mut presenter = SettingsPresenter::new(profile_service, app_settings, &event_tx, view_tx);
+    let skills_service = Arc::new(
+        personal_agent::services::SkillsServiceImpl::new_for_tests(
+            app_settings.clone(),
+            std::path::PathBuf::from("/tmp/nonexistent-bundled-skills"),
+            std::env::temp_dir().join(format!(
+                "presenter-selection-settings-skills-{}",
+                uuid::Uuid::new_v4()
+            )),
+        )
+        .expect("skills service should initialize for tests"),
+    ) as Arc<dyn personal_agent::services::SkillsService>;
+    let mut presenter = SettingsPresenter::new(
+        profile_service,
+        app_settings,
+        skills_service,
+        &event_tx,
+        view_tx,
+    );
     presenter.start().await.expect("start settings presenter");
 
     event_tx
