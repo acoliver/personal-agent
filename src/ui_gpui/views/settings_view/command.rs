@@ -339,12 +339,6 @@ impl SettingsView {
                 self.state.backup_in_progress = false;
                 // Clear selection so user can select a different backup
                 self.state.selected_backup_id = None;
-                if result.is_success() {
-                    // Show restart prompt
-                    self.state.backup_status = Some(
-                        "Database restored successfully. Please restart the app for changes to take effect.".to_string()
-                    );
-                }
                 true
             }
             _ => false,

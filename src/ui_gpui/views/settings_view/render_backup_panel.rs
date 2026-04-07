@@ -375,12 +375,19 @@ impl SettingsView {
             })
     }
 
-    /// Action buttons: Back Up Now, Refresh List.
+    /// Action buttons: Back Up Now, Refresh List, Restore.
     fn render_backup_actions_section(
         &self,
         in_progress: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        let selected_backup_id = self.state.selected_backup_id;
+        let backups = &self.state.backups;
+        let restore_path = selected_backup_id
+            .and_then(|id| backups.get(id))
+            .map(|b| b.path.display().to_string());
+        let can_restore = restore_path.is_some() && !in_progress;
+
         div()
             .flex()
             .flex_col()
@@ -396,6 +403,7 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
+                    .flex_wrap()
                     .child(
                         div()
                             .id("btn-backup-now")
@@ -446,7 +454,33 @@ impl SettingsView {
                                     this.emit_refresh_backup_list();
                                 }),
                             ),
-                    ),
+                    )
+                    .when(can_restore, |d| {
+                        let path = restore_path.unwrap_or_default();
+                        d.child(
+                            div()
+                                .id("btn-restore-backup")
+                                .px(px(16.0))
+                                .py(px(8.0))
+                                .rounded(px(4.0))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(Theme::danger()))
+                                .bg(Theme::error())
+                                .text_size(px(Theme::font_size_ui()))
+                                .text_color(Theme::selection_fg())
+                                .child("Restore Selected")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _window, cx| {
+                                        this.state.backup_in_progress = true;
+                                        this.state.backup_status =
+                                            Some("Restoring backup...".to_string());
+                                        cx.notify();
+                                        this.emit_restore_backup(path.clone());
+                                    }),
+                                ),
+                        )
+                    }),
             )
     }
 
@@ -465,18 +499,9 @@ impl SettingsView {
                 div()
                     .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
-                    .child("RESTORE FROM BACKUP"),
-            )
-            .child(
-                div()
-                    .text_size(px(Theme::font_size_ui()))
-                    .text_color(Theme::text_muted())
-                    .child("Select a backup to restore your database:"),
+                    .child("AVAILABLE BACKUPS"),
             )
             .child(self.render_backup_list(backups, selected_backup_id, cx))
-            .when(selected_backup_id.is_some(), |d| {
-                d.child(self.render_restore_button(selected_backup_id, backups, cx))
-            })
     }
 
     /// Render the list of available backups.
@@ -510,15 +535,15 @@ impl SettingsView {
                 let is_selected = selected_backup_id == Some(idx);
                 let timestamp = backup.formatted_timestamp();
                 let size = backup.formatted_size();
-                let path_str = backup.path.display().to_string();
 
                 div()
                     .id(SharedString::from(format!("backup-{idx}")))
                     .w_full()
-                    .h(px(32.0))
+                    .h(px(28.0))
                     .px(px(8.0))
                     .flex()
                     .items_center()
+                    .justify_between()
                     .cursor_pointer()
                     .when(is_selected, |d| {
                         d.bg(Theme::selection_bg())
@@ -536,24 +561,19 @@ impl SettingsView {
                             .child(self.render_checkbox_indicator(is_selected))
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(Theme::font_size_mono()))
-                                            .child(timestamp),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(Theme::font_size_ui()))
-                                            .text_color(if is_selected {
-                                                Theme::selection_fg()
-                                            } else {
-                                                Theme::text_muted()
-                                            })
-                                            .child(format!("{size} — {path_str}")),
-                                    ),
+                                    .text_size(px(Theme::font_size_mono()))
+                                    .child(timestamp),
                             ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_ui()))
+                            .text_color(if is_selected {
+                                Theme::selection_fg()
+                            } else {
+                                Theme::text_muted()
+                            })
+                            .child(size),
                     )
                     .on_mouse_down(
                         MouseButton::Left,
@@ -566,7 +586,9 @@ impl SettingsView {
             }))
     }
 
-    /// Restore button for selected backup.
+    /// Restore button for selected backup - NO LONGER USED (moved to actions section).
+    /// Kept for reference but not called.
+    #[allow(dead_code)]
     fn render_restore_button(
         &self,
         _selected_backup_id: Option<usize>,

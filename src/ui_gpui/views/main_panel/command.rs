@@ -56,6 +56,7 @@ impl MainPanel {
 
             // ── chat-only ephemeral commands (forward to chat_view) ────
             ConversationCleared
+            | ClearActiveConversation
             | ToggleThinkingVisibility
             | ShowConversationExportFormat { .. }
             | ExportCompleted { .. }
@@ -117,8 +118,10 @@ impl MainPanel {
 
             // ── database restored - emit refresh event ───────────────────
             DatabaseRestored => {
-                tracing::info!("MainPanel: database restored, emitting RefreshConversations");
-                // Get the bridge from global state to emit refresh event
+                tracing::info!("MainPanel: database restored, clearing and refreshing");
+                // First clear the active conversation (it may not exist after restore)
+                self.forward_to_chat(ViewCommand::ClearActiveConversation, cx);
+                // Then get the bridge to emit refresh event
                 if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
                     let _ = app_state
                         .gpui_bridge

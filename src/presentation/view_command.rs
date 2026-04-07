@@ -342,6 +342,9 @@ pub enum ViewCommand {
     /// Database was restored - refresh all data
     DatabaseRestored,
 
+    /// Clear the active conversation (e.g., after restore if conversation no longer exists)
+    ClearActiveConversation,
+
     // ===== Error Commands =====
     /// Show error to user
     ShowError {
