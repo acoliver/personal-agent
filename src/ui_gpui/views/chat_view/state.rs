@@ -432,6 +432,20 @@ mod tests {
     }
 
     #[test]
+    fn chat_state_default_timestamp_is_none() {
+        let msg = ChatMessage::user("hello");
+        assert!(msg.timestamp.is_none());
+    }
+
+    #[test]
+    fn chat_state_new_creates_empty_state() {
+        let state = ChatState::new();
+        assert!(state.messages.is_empty());
+        assert_eq!(state.input_text, "");
+        assert_eq!(state.conversation_title, "New Conversation");
+    }
+
+    #[test]
     fn selected_profile_prefers_explicit_then_default() {
         let p1 = ProfileSummary {
             id: Uuid::new_v4(),
