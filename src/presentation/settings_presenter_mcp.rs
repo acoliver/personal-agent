@@ -254,6 +254,7 @@ impl SettingsPresenter {
             Ok(profile) => {
                 let api_key_label = match &profile.auth {
                     crate::models::AuthConfig::Keychain { label } => label.clone(),
+                    crate::models::AuthConfig::None => String::new(),
                 };
 
                 let _ = view_tx.send(ViewCommand::ProfileEditorLoad {

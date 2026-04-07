@@ -576,6 +576,8 @@ pub enum SystemEvent {
 pub enum ModelProfileAuth {
     /// API key stored in OS keychain, referenced by label.
     Keychain { label: String },
+    /// No authentication required (for local/offline models).
+    None,
 }
 
 /// Lightweight profile parameters payload for GPUI save flow

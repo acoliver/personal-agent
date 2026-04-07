@@ -82,7 +82,8 @@ fn apply_api_keys_listed(state: &mut ProfileEditorState, keys: Vec<ApiKeyInfo>) 
 fn cycle_api_type(data: &mut ProfileEditorData) {
     data.api_type = match data.api_type.clone() {
         ApiType::Anthropic => ApiType::OpenAI,
-        ApiType::OpenAI | ApiType::Custom(_) => ApiType::Anthropic,
+        ApiType::OpenAI => ApiType::Local,
+        ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
     };
 
     if data.base_url.trim().is_empty() {
@@ -90,6 +91,7 @@ fn cycle_api_type(data: &mut ProfileEditorData) {
             personal_agent::config::default_api_base_url_for_provider(&match &data.api_type {
                 ApiType::Anthropic => "anthropic".to_string(),
                 ApiType::OpenAI => "openai".to_string(),
+                ApiType::Local => "local".to_string(),
                 ApiType::Custom(provider) => provider.clone(),
             });
     }
@@ -102,19 +104,26 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
         .and_then(|raw| Uuid::parse_str(raw).ok())
         .unwrap_or_else(Uuid::new_v4);
 
+    let auth = if data.api_type.requires_api_key() {
+        Some(personal_agent::events::types::ModelProfileAuth::Keychain {
+            label: data.key_label.clone(),
+        })
+    } else {
+        Some(personal_agent::events::types::ModelProfileAuth::None)
+    };
+
     personal_agent::events::types::ModelProfile {
         id,
         name: data.name.clone(),
         provider_id: Some(match &data.api_type {
             ApiType::Anthropic => "anthropic".to_string(),
             ApiType::OpenAI => "openai".to_string(),
+            ApiType::Local => "local".to_string(),
             ApiType::Custom(provider) => provider.clone(),
         }),
         model_id: Some(data.model_id.clone()),
         base_url: Some(data.base_url.clone()),
-        auth: Some(personal_agent::events::types::ModelProfileAuth::Keychain {
-            label: data.key_label.clone(),
-        }),
+        auth,
         parameters: Some(personal_agent::events::types::ModelProfileParameters {
             temperature: Some(f64::from(data.temperature)),
             max_tokens: Some(data.max_tokens),
@@ -364,10 +373,9 @@ fn api_type_cycling_updates_empty_base_url_only() {
     let preserved_url = "https://custom.host/v1".to_string();
     data.base_url = preserved_url.clone();
     cycle_api_type(&mut data);
-    assert_eq!(data.api_type, ApiType::Anthropic);
+    assert_eq!(data.api_type, ApiType::Local);
     assert_eq!(data.base_url, preserved_url);
 
-    data.api_type = ApiType::Custom("custom-provider".to_string());
     data.base_url.clear();
     cycle_api_type(&mut data);
     assert_eq!(data.api_type, ApiType::Anthropic);

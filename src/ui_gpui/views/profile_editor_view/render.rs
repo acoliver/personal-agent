@@ -271,8 +271,14 @@ impl ProfileEditorView {
                         cx.listener(|this, _, _window, cx| {
                             this.state.data.api_type = match this.state.data.api_type {
                                 ApiType::Anthropic => ApiType::OpenAI,
-                                ApiType::OpenAI | ApiType::Custom(_) => ApiType::Anthropic,
+                                ApiType::OpenAI => ApiType::Local,
+                                ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
                             };
+
+                            // Clear key_label when switching to Local (no key needed)
+                            if matches!(this.state.data.api_type, ApiType::Local) {
+                                this.state.data.key_label.clear();
+                            }
 
                             if this.state.data.base_url.trim().is_empty() {
                                 this.state.data.base_url = default_api_base_url_for_provider(
@@ -318,95 +324,124 @@ impl ProfileEditorView {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     /// Render API key label dropdown and "Manage Keys" button.
     fn render_key_label_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // For Local provider, show "No API key required" message instead of key dropdown
+        if !self.state.data.api_type.requires_api_key() {
+            return div()
+                .flex()
+                .flex_col()
+                .child(Self::render_label("API KEY"))
+                .child(
+                    div()
+                        .w(px(360.0))
+                        .h(px(24.0))
+                        .px(px(8.0))
+                        .bg(Theme::bg_dark())
+                        .border_1()
+                        .border_color(Theme::border())
+                        .rounded(px(4.0))
+                        .flex()
+                        .items_center()
+                        .text_size(px(Theme::font_size_mono()))
+                        .text_color(Theme::text_muted())
+                        .child("No API key required"),
+                )
+                .into_any_element();
+        }
+
         let current_label = if self.state.data.key_label.is_empty() {
             "Select API Key…".to_string()
         } else {
             self.state.data.key_label.clone()
         };
-        let _available = self.state.data.available_keys.clone();
 
         div()
             .flex()
             .flex_col()
             .child(Self::render_label("API KEY"))
+            .child(Self::render_key_dropdown_and_manage_button(current_label, cx))
+            .into_any_element()
+    }
+
+    /// Render the key dropdown and manage button for providers that require API keys.
+    fn render_key_dropdown_and_manage_button(
+        current_label: String,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            // Dropdown cycling through available keys
             .child(
                 div()
+                    .id("dropdown-key-label")
+                    .flex_1()
+                    .h(px(24.0))
+                    .px(px(8.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    // Dropdown cycling through available keys
-                    .child(
-                        div()
-                            .id("dropdown-key-label")
-                            .flex_1()
-                            .h(px(24.0))
-                            .px(px(8.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(Theme::border())
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .cursor_pointer()
-                            .text_size(px(Theme::font_size_mono()))
-                            .text_color(if self.state.data.key_label.is_empty() {
-                                Theme::text_muted()
-                            } else {
-                                Theme::text_primary()
-                            })
-                            .overflow_hidden()
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, _window, cx| {
-                                    if this.state.data.available_keys.is_empty() {
-                                        this.request_api_key_refresh();
-                                        cx.notify();
-                                        return;
-                                    }
-                                    let current_idx = this
-                                        .state
-                                        .data
-                                        .available_keys
-                                        .iter()
-                                        .position(|k| k == &this.state.data.key_label)
-                                        .map_or(0, |i| i + 1);
-                                    let next_idx =
-                                        current_idx % this.state.data.available_keys.len();
-                                    this.state.data.key_label =
-                                        this.state.data.available_keys[next_idx].clone();
-                                    cx.notify();
-                                }),
-                            )
-                            .child(current_label)
-                            .child(div().text_color(Theme::text_muted()).child("▾")),
+                    .justify_between()
+                    .cursor_pointer()
+                    .text_size(px(Theme::font_size_mono()))
+                    .text_color(if current_label == "Select API Key…" {
+                        Theme::text_muted()
+                    } else {
+                        Theme::text_primary()
+                    })
+                    .overflow_hidden()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _window, cx| {
+                            if this.state.data.available_keys.is_empty() {
+                                this.request_api_key_refresh();
+                                cx.notify();
+                                return;
+                            }
+                            let current_idx = this
+                                .state
+                                .data
+                                .available_keys
+                                .iter()
+                                .position(|k| k == &this.state.data.key_label)
+                                .map_or(0, |i| i + 1);
+                            let next_idx = current_idx % this.state.data.available_keys.len();
+                            this.state.data.key_label =
+                                this.state.data.available_keys[next_idx].clone();
+                            cx.notify();
+                        }),
                     )
-                    // "Manage Keys" button
-                    .child(
-                        div()
-                            .id("btn-manage-keys")
-                            .h(px(24.0))
-                            .px(px(8.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(Theme::border())
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::bg_darker()))
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_secondary())
-                            .child("Manage Keys")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_this, _, _window, _cx| {
-                                    crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::ApiKeyManager,
-                                    );
-                                }),
-                            ),
+                    .child(current_label)
+                    .child(div().text_color(Theme::text_muted()).child("▾")),
+            )
+            // "Manage Keys" button
+            .child(
+                div()
+                    .id("btn-manage-keys")
+                    .h(px(24.0))
+                    .px(px(8.0))
+                    .bg(Theme::bg_dark())
+                    .border_1()
+                    .border_color(Theme::border())
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::bg_darker()))
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_secondary())
+                    .child("Manage Keys")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _window, _cx| {
+                            crate::ui_gpui::navigation_channel().request_navigate(
+                                crate::presentation::view_command::ViewId::ApiKeyManager,
+                            );
+                        }),
                     ),
             )
     }
