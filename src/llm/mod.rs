@@ -7,6 +7,7 @@ mod client;
 pub mod client_agent;
 pub mod error;
 pub mod events;
+pub mod mcp_tool_executor;
 mod normalizing_model;
 mod provider_quirks;
 pub(crate) mod sse_normalize;
