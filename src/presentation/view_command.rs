@@ -39,6 +39,7 @@ pub enum ViewCommand {
         conversation_id: Uuid,
         role: MessageRole,
         content: String,
+        model_id: Option<String>,
     },
 
     /// Replace the visible transcript for a conversation with a full replay payload.
@@ -56,7 +57,10 @@ pub enum ViewCommand {
     },
 
     /// Show thinking indicator
-    ShowThinking { conversation_id: Uuid },
+    ShowThinking {
+        conversation_id: Uuid,
+        model_id: String,
+    },
 
     /// Hide thinking indicator
     HideThinking { conversation_id: Uuid },
@@ -357,6 +361,7 @@ pub struct ConversationMessagePayload {
     pub content: String,
     pub thinking_content: Option<String>,
     pub timestamp: Option<u64>,
+    pub model_id: Option<String>,
 }
 
 /// Conversation summary for list display

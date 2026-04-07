@@ -30,6 +30,7 @@ pub struct StreamingStoreSnapshot {
     pub stream_buffer: String,
     pub last_error: Option<String>,
     pub active_target: Option<Uuid>,
+    pub model_id: Option<String>,
 }
 
 /// Store-owned chat snapshot slice used by mounted GPUI views.

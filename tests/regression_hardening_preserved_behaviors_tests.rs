@@ -25,6 +25,7 @@ fn transcript_message(role: MessageRole, content: &str) -> ConversationMessagePa
         content: content.to_string(),
         thinking_content: None,
         timestamp: None,
+        model_id: None,
     }
 }
 
@@ -246,7 +247,10 @@ fn finalize_stream_durable_proof() {
     let (store, conversation_id, transcript) = selected_store_with_transcript();
 
     let changed = store.reduce_batch(vec![
-        ViewCommand::ShowThinking { conversation_id },
+        ViewCommand::ShowThinking {
+            conversation_id,
+            model_id: "test".to_string(),
+        },
         ViewCommand::AppendStream {
             conversation_id,
             chunk: "hello".to_string(),
@@ -274,6 +278,7 @@ fn finalize_stream_durable_proof() {
         conversation_id,
         role: MessageRole::Assistant,
         content: "hello".to_string(),
+        model_id: None,
     }]);
     assert!(!duplicate_changed);
     assert_eq!(
@@ -292,6 +297,7 @@ fn finalize_stream_nil_resolves_to_active() {
     let changed = store.reduce_batch(vec![
         ViewCommand::ShowThinking {
             conversation_id: Uuid::nil(),
+            model_id: "test".to_string(),
         },
         ViewCommand::AppendStream {
             conversation_id: Uuid::nil(),
@@ -327,6 +333,7 @@ fn finalize_stream_stale_target_rejected() {
     assert!(store.reduce_batch(vec![
         ViewCommand::ShowThinking {
             conversation_id: conversation_a,
+            model_id: "test".to_string(),
         },
         ViewCommand::AppendStream {
             conversation_id: conversation_a,

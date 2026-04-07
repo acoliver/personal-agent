@@ -56,6 +56,7 @@ fn begin_and_ready(store: &GpuiAppStore, conversation_id: Uuid) -> u64 {
             content: "seed".to_string(),
             thinking_content: None,
             timestamp: None,
+            model_id: None,
         }],
     }]);
     assert!(changed);
@@ -73,6 +74,7 @@ fn background_streaming_state(
     let started_stream = store.reduce_batch(vec![
         ViewCommand::ShowThinking {
             conversation_id: streaming_conversation_id,
+            model_id: "test".to_string(),
         },
         ViewCommand::AppendThinking {
             conversation_id: streaming_conversation_id,

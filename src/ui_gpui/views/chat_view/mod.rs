@@ -136,7 +136,11 @@ impl ChatView {
                         ChatMessage::user(message.content)
                     }
                     crate::presentation::view_command::MessageRole::Assistant => {
-                        ChatMessage::assistant(message.content, current_model.to_string())
+                        // Use the per-message model_id if available, otherwise fall back to current_model
+                        let model_label = message
+                            .model_id
+                            .unwrap_or_else(|| current_model.to_string());
+                        ChatMessage::assistant(message.content, model_label)
                     }
                     crate::presentation::view_command::MessageRole::System
                     | crate::presentation::view_command::MessageRole::Tool => {

@@ -493,6 +493,7 @@ impl ChatPresenter {
                     content: message.content,
                     thinking_content: message.thinking_content,
                     timestamp: Some(message.timestamp.timestamp_millis().cast_unsigned()),
+                    model_id: message.model_id,
                 })
             })
             .collect::<Vec<_>>();
@@ -551,12 +552,16 @@ impl ChatPresenter {
                 conversation_id,
                 role: MessageRole::User,
                 content: trimmed.to_string(),
+                model_id: None,
             })
             .await;
 
         // Show loading state
         let _ = view_tx
-            .send(ViewCommand::ShowThinking { conversation_id })
+            .send(ViewCommand::ShowThinking {
+                conversation_id,
+                model_id: "Assistant".to_string(),
+            })
             .await;
 
         // Send message via service

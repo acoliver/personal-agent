@@ -466,12 +466,14 @@ async fn startup_and_manual_selection_converge_on_one_authoritative_delivery_pat
             content: "hello".to_string(),
             thinking_content: None,
             timestamp: Some(1000),
+            model_id: None,
         },
         ConversationMessagePayload {
             role: MessageRole::Assistant,
             content: "world".to_string(),
             thinking_content: None,
             timestamp: Some(2000),
+            model_id: None,
         },
     ];
 
@@ -513,6 +515,7 @@ async fn startup_and_manual_selection_converge_on_one_authoritative_delivery_pat
         content: "runtime message".to_string(),
         thinking_content: None,
         timestamp: Some(3000),
+        model_id: None,
     }];
 
     let result = store.begin_selection(other_id, BeginSelectionMode::PublishImmediately);

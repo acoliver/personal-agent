@@ -15,7 +15,6 @@
 //! @requirement REQ-ARCH-006.7
 //! @pseudocode analysis/pseudocode/01-app-store.md:001-405
 //! @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-087
-
 use std::sync::Mutex;
 
 use uuid::Uuid;
@@ -24,8 +23,6 @@ use crate::presentation::view_command::{
     ConversationMessagePayload, ConversationSummary, MessageRole, ProfileSummary, ViewCommand,
 };
 
-pub use crate::ui_gpui::app_store_types::*;
-
 use crate::ui_gpui::app_store_streaming::{
     append_stream_buffer_if_target_matches_selected_or_nil,
     append_thinking_buffer_if_target_matches_selected_or_nil, clear_streaming_ephemera_for_target,
@@ -33,6 +30,7 @@ use crate::ui_gpui::app_store_streaming::{
     hide_thinking_if_target_matches_selected_or_nil,
     show_thinking_if_target_matches_selected_or_nil,
 };
+pub use crate::ui_gpui::app_store_types::*;
 
 /// Startup hydration inputs.
 ///
@@ -98,7 +96,6 @@ pub(super) struct FinalizedStreamGuard {
     pub(super) conversation_id: Uuid,
     pub(super) transcript_len_after_finalize: usize,
 }
-
 #[derive(Clone, Debug, Default)]
 pub(super) enum SelectedTitleProvenance {
     HistoryBacked,
@@ -137,7 +134,6 @@ pub(super) struct AppStoreInner {
 pub struct GpuiAppStore {
     inner: Mutex<AppStoreInner>,
 }
-
 impl GpuiAppStore {
     /// @plan PLAN-20260304-GPUIREMEDIATE.P06
     /// @requirement REQ-ARCH-002.1
@@ -336,7 +332,6 @@ fn reduce_startup_batch(inner: &mut AppStoreInner, inputs: StartupInputs) -> boo
         ) {
             changed = true;
         }
-
         let completion_changed = match selection.mode {
             StartupMode::ModeA {
                 transcript_result: StartupTranscriptResult::Success(messages),
@@ -447,10 +442,12 @@ fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewC
             conversation_id,
             role,
             content,
-        } => reduce_message_appended(inner, conversation_id, role, content),
-        ViewCommand::ShowThinking { conversation_id } => {
-            reduce_show_thinking(inner, conversation_id)
-        }
+            model_id,
+        } => reduce_message_appended(inner, conversation_id, role, content, model_id),
+        ViewCommand::ShowThinking {
+            conversation_id,
+            model_id,
+        } => reduce_show_thinking(inner, conversation_id, model_id),
         ViewCommand::HideThinking { conversation_id } => {
             reduce_hide_thinking(inner, conversation_id)
         }
@@ -571,7 +568,6 @@ fn reduce_messages_loaded(
     inner.last_finalized_stream_guard = None;
     true
 }
-
 fn reduce_conversation_load_failed(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
@@ -608,6 +604,7 @@ fn reduce_message_appended(
     conversation_id: Uuid,
     role: MessageRole,
     content: String,
+    model_id: Option<String>,
 ) -> bool {
     if role == MessageRole::Assistant
         && inner
@@ -623,11 +620,25 @@ fn reduce_message_appended(
     {
         return false;
     }
-    append_persisted_message_if_target_matches_selected(inner, conversation_id, role, content)
+    append_persisted_message_if_target_matches_selected(
+        inner,
+        conversation_id,
+        role,
+        content,
+        model_id,
+    )
 }
 
-fn reduce_show_thinking(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
-    show_thinking_if_target_matches_selected_or_nil(inner, conversation_id)
+fn reduce_show_thinking(
+    inner: &mut AppStoreInner,
+    conversation_id: Uuid,
+    model_id: String,
+) -> bool {
+    let changed = show_thinking_if_target_matches_selected_or_nil(inner, conversation_id);
+    if changed {
+        inner.snapshot.chat.streaming.model_id = Some(model_id);
+    }
+    changed
 }
 
 fn reduce_hide_thinking(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
@@ -691,7 +702,6 @@ fn reduce_default_profile_changed(inner: &mut AppStoreInner, profile_id: Option<
 fn reduce_conversation_renamed(inner: &mut AppStoreInner, id: Uuid, new_title: &str) -> bool {
     mutate_history_and_selected_title_if_targeted(inner, id, new_title)
 }
-
 fn reduce_conversation_title_updated(inner: &mut AppStoreInner, id: Uuid, title: &str) -> bool {
     mutate_history_and_selected_title_if_targeted(inner, id, title)
 }
@@ -811,7 +821,6 @@ fn authoritative_history_title(
         .find(|conversation| conversation.id == conversation_id)
         .map(|conversation| normalize_title(&conversation.title))
 }
-
 fn load_state_targets_different_conversation(
     load_state: &ConversationLoadState,
     conversation_id: Uuid,
@@ -838,6 +847,7 @@ fn append_persisted_message_if_target_matches_selected(
     conversation_id: Uuid,
     role: MessageRole,
     content: String,
+    model_id: Option<String>,
 ) -> bool {
     if matches!(role, MessageRole::User | MessageRole::Assistant)
         && inner.snapshot.chat.selected_conversation_id != Some(conversation_id)
@@ -854,6 +864,7 @@ fn append_persisted_message_if_target_matches_selected(
             content,
             thinking_content: None,
             timestamp: None,
+            model_id,
         });
     true
 }
