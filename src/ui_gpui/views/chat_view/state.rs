@@ -360,6 +360,12 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_with_timestamp() {
+        let msg = ChatMessage::user("hello").with_timestamp(1_234_567_890);
+        assert_eq!(msg.timestamp, Some(1_234_567_890));
+    }
+
+    #[test]
     fn chat_state_default_is_idle_with_empty_messages() {
         let state = ChatState::default();
         assert!(state.messages.is_empty());
@@ -400,6 +406,12 @@ mod tests {
 
         state.set_streaming(StreamingState::Idle);
         assert!(matches!(state.streaming, StreamingState::Idle));
+    }
+
+    #[test]
+    fn streaming_state_error_variant() {
+        let state = StreamingState::Error("test error".to_string());
+        assert!(matches!(state, StreamingState::Error(_)));
     }
 
     #[test]
