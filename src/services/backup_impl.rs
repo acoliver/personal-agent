@@ -111,7 +111,7 @@ impl BackupServiceImpl {
 
     /// Parse a timestamp from a backup filename
     fn parse_backup_filename(filename: &str) -> Option<DateTime<Utc>> {
-        // Expected format: personalagent-2026-04-05T08-00-00Z.db.gz
+        // Expected format: personalagent-2026-04-07T04-47-19Z.db.gz
         let prefix = format!("{BACKUP_FILENAME_PREFIX}-");
         let suffix = ".db.gz";
 
@@ -119,9 +119,20 @@ impl BackupServiceImpl {
             return None;
         }
 
+        // Extract: 2026-04-07T04-47-19Z
         let timestamp_part = &filename[prefix.len()..filename.len() - suffix.len()];
-        let iso_str = timestamp_part.replace('-', ":");
-        let iso_str = format!("{}T{}Z", &iso_str[..10], &iso_str[11..19]);
+
+        // Convert to RFC3339: 2026-04-07T04:47:19Z
+        // Format: YYYY-MM-DDTHH-MM-SSZ
+        // Only the time portion (HH-MM-SS) needs hyphens replaced with colons
+        if timestamp_part.len() != 20 {
+            return None;
+        }
+
+        let date_part = &timestamp_part[..10]; // 2026-04-07
+        let time_part = &timestamp_part[11..19]; // 04-47-19
+        let time_with_colons = time_part.replace('-', ":");
+        let iso_str = format!("{date_part}T{time_with_colons}Z");
 
         DateTime::parse_from_rfc3339(&iso_str)
             .map(|dt| dt.with_timezone(&chrono::Utc))
