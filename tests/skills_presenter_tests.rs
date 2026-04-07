@@ -106,6 +106,7 @@ fn setup() -> (
     broadcast::Sender<AppEvent>,
     broadcast::Receiver<ViewCommand>,
     tempfile::TempDir,
+    Arc<personal_agent::services::SkillsServiceImpl>,
 ) {
     let temp_dir = tempfile::TempDir::new().expect("temp dir should exist");
     let (event_tx, _) = broadcast::channel(64);
@@ -129,12 +130,12 @@ fn setup() -> (
     let presenter = SettingsPresenter::new(
         Arc::new(MinimalProfileService),
         app_settings_service,
-        skills_service,
+        skills_service.clone(),
         &event_tx,
         view_tx,
     );
 
-    (presenter, event_tx, view_rx, temp_dir)
+    (presenter, event_tx, view_rx, temp_dir, skills_service)
 }
 
 async fn send_event(tx: &broadcast::Sender<AppEvent>, event: UserEvent) {
@@ -181,7 +182,7 @@ const fn is_show_notification(cmd: &ViewCommand) -> bool {
 /// `RefreshSkills` event should emit a `SkillsLoaded` snapshot reflecting current state.
 #[tokio::test]
 async fn refresh_skills_emits_skills_loaded_snapshot() {
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     // Drain startup snapshot
@@ -210,7 +211,7 @@ async fn refresh_skills_emits_skills_loaded_snapshot() {
 /// Initial startup should emit `SkillsLoaded` with the default directory populated.
 #[tokio::test]
 async fn skills_loaded_includes_default_directory() {
-    let (mut presenter, _event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, _event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let cmd = recv_matching(&mut view_rx, is_skills_loaded).await;
@@ -238,7 +239,7 @@ async fn skills_loaded_includes_default_directory() {
 /// Attempting to disable a nonexistent skill should emit `ShowError`.
 #[tokio::test]
 async fn set_skill_enabled_on_unknown_skill_emits_error() {
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
@@ -271,13 +272,17 @@ async fn set_skill_enabled_on_unknown_skill_emits_error() {
 }
 
 // ---------------------------------------------------------------------------
+// BEHAVIORAL TESTS: Skill enable/disable success
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // BEHAVIORAL TESTS: Watched directories
 // ---------------------------------------------------------------------------
 
 /// Adding a watched directory should emit notification and updated snapshot.
 #[tokio::test]
 async fn add_skills_directory_success_emits_notification_and_snapshot() {
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
@@ -326,7 +331,7 @@ async fn add_skills_directory_success_emits_notification_and_snapshot() {
 /// Removing a watched directory should emit notification and updated snapshot.
 #[tokio::test]
 async fn remove_skills_directory_success_emits_notification_and_snapshot() {
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
@@ -386,7 +391,7 @@ async fn remove_skills_directory_success_emits_notification_and_snapshot() {
 /// Removing a directory that was never added should succeed idempotently.
 #[tokio::test]
 async fn remove_skills_directory_not_in_list_is_idempotent() {
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
@@ -432,7 +437,7 @@ async fn remove_skills_directory_not_in_list_is_idempotent() {
 /// Installing from an invalid URL should emit `ShowError`.
 #[tokio::test]
 async fn install_skill_from_invalid_url_emits_error() {
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
@@ -481,7 +486,7 @@ async fn install_skill_from_valid_url_creates_skill_and_emits_notification() {
         .mount(&mock_server)
         .await;
 
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
@@ -529,7 +534,7 @@ async fn install_skill_from_url_404_emits_error() {
         .mount(&mock_server)
         .await;
 
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
@@ -571,7 +576,7 @@ async fn install_skill_from_url_invalid_skill_content_emits_error() {
         .mount(&mock_server)
         .await;
 
-    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    let (mut presenter, event_tx, mut view_rx, _temp_dir, _skills_service) = setup();
     presenter.start().await.expect("start");
 
     let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
