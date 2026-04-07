@@ -15,6 +15,7 @@ use gpui::{
 
 #[test]
 fn messages_from_payload_uses_model_id_when_present() {
+    // Verify that assistant messages with a stored model_id display the correct model name
     let messages = vec![ConversationMessagePayload {
         role: MessageRole::Assistant,
         content: "Hello".to_string(),
