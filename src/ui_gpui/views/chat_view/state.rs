@@ -562,4 +562,71 @@ mod tests {
         state.yolo_mode = false;
         assert!(!state.yolo_mode);
     }
+
+    #[test]
+    fn tool_approval_bubble_can_group_with_same_category_and_target() {
+        let bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs"),
+        );
+        let context = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs");
+        assert!(bubble.can_group_with(&context));
+    }
+
+    #[test]
+    fn tool_approval_bubble_cannot_group_with_different_category() {
+        let bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs"),
+        );
+        let context =
+            ToolApprovalContext::new("WriteFile", ToolCategory::FileWrite, "/tmp/main.rs");
+        assert!(!bubble.can_group_with(&context));
+    }
+
+    #[test]
+    fn tool_approval_bubble_cannot_group_with_different_target() {
+        let bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/a.rs"),
+        );
+        let context = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/b.rs");
+        assert!(!bubble.can_group_with(&context));
+    }
+
+    #[test]
+    fn tool_approval_bubble_cannot_group_when_not_pending() {
+        let mut bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs"),
+        );
+        bubble.state = ApprovalBubbleState::Approved;
+        let context = ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs");
+        assert!(!bubble.can_group_with(&context));
+    }
+
+    #[test]
+    fn tool_approval_bubble_add_operation() {
+        let mut bubble = ToolApprovalBubble::new(
+            "req-1",
+            ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, "/tmp/main.rs"),
+        );
+        assert_eq!(bubble.operation_count(), 1);
+        assert_eq!(bubble.request_ids.len(), 1);
+
+        bubble.add_operation("req-2", vec![("line".to_string(), "10".to_string())]);
+        assert_eq!(bubble.operation_count(), 2);
+        assert_eq!(bubble.request_ids.len(), 2);
+        assert_eq!(bubble.grouped_operations.len(), 1);
+    }
+
+    #[test]
+    fn grouped_operation_creation() {
+        let op = GroupedOperation {
+            request_id: "req-1".to_string(),
+            details: vec![("key".to_string(), "value".to_string())],
+        };
+        assert_eq!(op.request_id, "req-1");
+        assert_eq!(op.details.len(), 1);
+    }
 }
