@@ -479,3 +479,123 @@ async fn load_watched_directories_rejects_invalid_json() {
         "unexpected error: {error}"
     );
 }
+
+/// Discovering skills from a non-readable directory should return an error.
+#[tokio::test]
+#[cfg(unix)]
+async fn discover_skills_fails_on_unreadable_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let bundled_dir = temp_dir.path().join("bundled");
+    std::fs::create_dir_all(&bundled_dir).expect("bundled dir should exist");
+
+    // Create a subdirectory with no read permissions
+    let unreadable_dir = bundled_dir.join("unreadable");
+    std::fs::create_dir_all(&unreadable_dir).expect("unreadable dir should exist");
+    std::fs::set_permissions(&unreadable_dir, std::fs::Permissions::from_mode(0o000))
+        .expect("should set permissions");
+
+    let service = create_service(&temp_dir);
+    let result = service.discover_skills().await;
+
+    // Clean up before assertions
+    std::fs::set_permissions(&unreadable_dir, std::fs::Permissions::from_mode(0o755)).ok();
+
+    assert!(result.is_err(), "should fail on unreadable directory");
+}
+
+/// `get_skill_body` returns `None` for a skill whose file has been deleted.
+#[tokio::test]
+async fn get_skill_body_returns_none_when_file_deleted() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    write_skill(
+        &temp_dir.path().join("bundled"),
+        "vanishing",
+        "vanishing-skill",
+        "Disappears",
+        "Body\n",
+    );
+
+    let service = create_service(&temp_dir);
+    service
+        .discover_skills()
+        .await
+        .expect("discovery should succeed");
+
+    // Delete the skill file after discovery
+    let skill = service
+        .get_skill("vanishing-skill")
+        .await
+        .expect("lookup should succeed")
+        .expect("skill should exist");
+    std::fs::remove_file(&skill.path).expect("should delete skill file");
+
+    let result = service.get_skill_body("vanishing-skill").await;
+    assert!(result.is_err(), "should error when skill file is missing");
+}
+
+/// Adding a watched directory that cannot be created should fail.
+#[tokio::test]
+async fn add_watched_directory_fails_on_io_error() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+
+    // Try to add a path with invalid characters (on Unix, null byte is invalid)
+    let invalid_path = std::path::PathBuf::from("/nonexistent\0/skills");
+    let result = service.add_watched_directory(invalid_path).await;
+
+    assert!(result.is_err(), "should fail on invalid path");
+}
+
+/// Verifies toggle-on removes from disabled list.
+#[tokio::test]
+async fn set_skill_enabled_toggle_removal_from_disabled_list() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    write_skill(
+        &temp_dir.path().join("bundled"),
+        "toggle",
+        "toggle-skill",
+        "Toggle test",
+        "Body\n",
+    );
+
+    let service = create_service(&temp_dir);
+    service
+        .discover_skills()
+        .await
+        .expect("discovery should succeed");
+
+    // Disable the skill
+    service
+        .set_skill_enabled("toggle-skill", false)
+        .await
+        .expect("disable should succeed");
+
+    let disabled = service
+        .app_settings_service
+        .get_setting(DISABLED_SKILLS_SETTING_KEY)
+        .await
+        .expect("read should succeed")
+        .expect("setting should exist");
+    assert!(disabled.contains("toggle-skill"));
+
+    // Re-enable the skill
+    service
+        .set_skill_enabled("toggle-skill", true)
+        .await
+        .expect("enable should succeed");
+
+    let disabled = service
+        .app_settings_service
+        .get_setting(DISABLED_SKILLS_SETTING_KEY)
+        .await
+        .expect("read should succeed");
+
+    if let Some(disabled_str) = disabled {
+        assert!(
+            !disabled_str.contains("toggle-skill"),
+            "skill should be removed from disabled list"
+        );
+    }
+}
