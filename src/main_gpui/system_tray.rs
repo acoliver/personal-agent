@@ -397,20 +397,19 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 #[cfg(target_os = "windows")]
 use tray_icon::{
-    menu::MenuEvent, streams::TrayIconEventReceiver, Icon, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    menu::MenuEvent, Icon, TrayIcon, TrayIconBuilder, TrayIconEvent, TrayIconEventReceiver,
 };
 
 #[cfg(target_os = "windows")]
-use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem};
+use muda::{Menu, MenuItem, PredefinedMenuItem};
 
 #[cfg(target_os = "windows")]
 static TRAY_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "windows")]
 struct WindowsTrayState {
-    tray: TrayIcon,
+    _tray: TrayIcon,
     menu: Menu,
-    event_rx: TrayIconEventReceiver,
     last_click_position: Arc<Mutex<Option<(f32, f32)>>>,
 }
 
@@ -423,11 +422,10 @@ impl SystemTray {
 
         // Create the context menu
         let menu = Menu::new();
-        let open_popup_item = MenuItem::new("Open Popup", true, Some(MenuId::new("open_popup")));
-        let open_popout_item =
-            MenuItem::new("Open Pop-out", true, Some(MenuId::new("open_popout")));
-        let settings_item = MenuItem::new("Settings", true, Some(MenuId::new("settings")));
-        let quit_item = MenuItem::new("Quit", true, Some(MenuId::new("quit")));
+        let open_popup_item = MenuItem::with_id("open_popup", "Open Popup", true, None);
+        let open_popout_item = MenuItem::with_id("open_popout", "Open Pop-out", true, None);
+        let settings_item = MenuItem::with_id("settings", "Settings", true, None);
+        let quit_item = MenuItem::with_id("quit", "Quit", true, None);
         let separator = PredefinedMenuItem::separator();
 
         menu.append_items(&[
@@ -446,10 +444,6 @@ impl SystemTray {
             .build()
             .expect("Failed to create Windows tray icon");
 
-        let event_rx = tray
-            .event_receiver()
-            .expect("Failed to get tray event receiver");
-
         TRAY_INITIALIZED.store(true, AtomicOrdering::SeqCst);
         info!("Windows tray icon created successfully");
 
@@ -457,9 +451,8 @@ impl SystemTray {
             popup_window: None,
             app_mode: AppMode::Popup,
             _windows_tray: Some(Arc::new(Mutex::new(WindowsTrayState {
-                tray,
+                _tray: tray,
                 menu,
-                event_rx,
                 last_click_position: Arc::new(Mutex::new(None)),
             }))),
         }
@@ -472,17 +465,21 @@ impl SystemTray {
         };
 
         cx.spawn(async move |cx| {
-            let (event_rx, last_click_position) = {
+            let last_click_position = {
                 let state = tray_state.lock().expect("tray state poisoned");
-                (state.event_rx.clone(), state.last_click_position.clone())
+                state.last_click_position.clone()
             };
+
+            // Get static event receiver
+            let tray_rx = TrayIconEvent::receiver();
+            let menu_rx = MenuEvent::receiver();
 
             // Poll tray icon events
             loop {
                 smol::Timer::after(std::time::Duration::from_millis(50)).await;
 
                 // Handle tray icon click events
-                while let Ok(event) = event_rx.try_recv() {
+                while let Ok(event) = tray_rx.try_recv() {
                     match event.event {
                         tray_icon::ClickEvent::Left { .. } => {
                             if let Ok(click_pos) = event.position {
@@ -500,8 +497,9 @@ impl SystemTray {
                 }
 
                 // Handle menu events
-                while let Ok(event) = MenuEvent::receiver().try_recv() {
-                    match event.id.as_str() {
+                while let Ok(event) = menu_rx.try_recv() {
+                    let id_str = event.id.0.as_str();
+                    match id_str {
                         "open_popup" => {
                             info!("Windows tray menu: Open Popup");
                             let _ = cx.update_global::<Self, _>(|tray, cx| {
