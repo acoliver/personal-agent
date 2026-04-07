@@ -286,4 +286,113 @@ mod tests {
             .to_string()
             .contains("Missing required 'skill_name' argument"));
     }
+
+    /// When policy requires approval and user approves, execution succeeds.
+    #[tokio::test]
+    async fn execute_succeeds_when_user_approves_after_ask() {
+        let (ctx, temp_dir, skills_service, mut view_rx) = create_test_context();
+
+        // Override policy to require approval
+        {
+            let mut policy = ctx.policy.lock().await;
+            policy.skills_auto_approve = false;
+        }
+
+        write_skill(
+            &temp_dir.path().join("bundled"),
+            "writer",
+            "docs-writer",
+            "Write documentation.\n",
+        );
+
+        skills_service
+            .discover_skills()
+            .await
+            .expect("discovery should succeed");
+
+        let ctx_clone = ctx.clone();
+        let handle = tokio::spawn(async move {
+            let run_context = RunContext::new(ctx_clone, "test-model");
+            let args = serde_json::json!({"skill_name": "docs-writer"});
+
+            let result = ActivateSkillExecutor
+                .execute(args, &run_context)
+                .await
+                .expect("execute should succeed after approval");
+
+            let text = result.as_text().expect("should have text content");
+            assert!(text.contains("# Skill: docs-writer"));
+        });
+
+        // Wait for the approval request to be sent
+        let cmd = view_rx.recv().await.expect("should receive view command");
+        match cmd {
+            ViewCommand::ToolApprovalRequest {
+                request_id,
+                tool_name,
+                ..
+            } => {
+                assert_eq!(tool_name, "activate_skill");
+                // Approve the request
+                let _ = ctx.approval_gate.resolve(&request_id, true);
+            }
+            other => panic!("expected ToolApprovalRequest, got {other:?}"),
+        }
+
+        handle.await.expect("task should complete");
+    }
+
+    /// When policy requires approval and user denies, execution fails.
+    #[tokio::test]
+    async fn execute_fails_when_user_denies_after_ask() {
+        let (ctx, temp_dir, skills_service, mut view_rx) = create_test_context();
+
+        // Override policy to require approval
+        {
+            let mut policy = ctx.policy.lock().await;
+            policy.skills_auto_approve = false;
+        }
+
+        write_skill(
+            &temp_dir.path().join("bundled"),
+            "writer",
+            "docs-writer",
+            "Write documentation.\n",
+        );
+
+        skills_service
+            .discover_skills()
+            .await
+            .expect("discovery should succeed");
+
+        let ctx_clone = ctx.clone();
+        let handle = tokio::spawn(async move {
+            let run_context = RunContext::new(ctx_clone, "test-model");
+            let args = serde_json::json!({"skill_name": "docs-writer"});
+
+            let error = ActivateSkillExecutor
+                .execute(args, &run_context)
+                .await
+                .expect_err("should fail after denial");
+
+            assert!(error.to_string().contains("denied by user"));
+        });
+
+        // Wait for the approval request to be sent
+        let cmd = view_rx.recv().await.expect("should receive view command");
+        match cmd {
+            ViewCommand::ToolApprovalRequest {
+                request_id,
+                tool_name,
+                ..
+            } => {
+                assert_eq!(tool_name, "activate_skill");
+                // Deny the request
+                let _ = ctx.approval_gate.resolve(&request_id, false);
+            }
+            other => panic!("expected ToolApprovalRequest, got {other:?}"),
+        }
+
+        handle.await.expect("task should complete");
+    }
 }
