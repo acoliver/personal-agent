@@ -55,23 +55,101 @@ fn mono_font_options(cx: &gpui::App) -> Vec<String> {
 }
 
 impl SettingsView {
-    /// Appearance panel: theme, font size, UI font, mono font, and preview.
+    /// Appearance panel: two-column layout with controls (left) and preview (right).
+    ///
+    /// The controls column scrolls independently while the preview stays visible.
+    /// Dropdowns render as overlays to avoid pushing content and causing unwanted scroll.
     pub(super) fn render_appearance_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let any_dropdown_open =
+            self.state.theme_dropdown_open || self.state.font_dropdown_open_for.is_some();
+
         div()
-            .id("appearance-panel-scroll")
+            .id("appearance-panel")
+            .relative()
+            .flex()
+            .flex_row()
+            .h_full()
+            .w_full()
+            .gap(px(16.0))
+            .overflow_hidden()
+            // Left column: controls with independent scroll
+            .child(self.render_controls_column(cx))
+            // Right column: preview (fixed, always visible)
+            .child(self.render_preview_column())
+            // Dropdown overlays — backdrop first, then dropdowns on top
+            // Later sibling renders on top, so dropdowns receive pointer events
+            // in their bounds while the backdrop catches everything else.
+            .when(any_dropdown_open, |d| {
+                d.child(Self::render_dropdown_backdrop(cx))
+            })
+            .when(self.state.theme_dropdown_open, |d| {
+                d.child(self.render_theme_dropdown_overlay(cx))
+            })
+            .when_some(self.state.font_dropdown_open_for, |d, target| {
+                d.child(self.render_font_dropdown_overlay(target, cx))
+            })
+    }
+
+    /// Left column: all font controls with independent vertical scrolling.
+    fn render_controls_column(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("appearance-controls-column")
             .flex()
             .flex_col()
             .flex_1()
+            .min_w(px(280.0))
+            .max_w(px(400.0))
+            .min_h_0()
             .gap(px(16.0))
             .overflow_y_scroll()
             .child(self.render_theme_section(cx))
             .child(self.render_font_size_section(cx))
             .child(self.render_ui_font_section(cx))
             .child(self.render_mono_font_section(cx))
+    }
+
+    /// Right column: font preview, always visible.
+    fn render_preview_column(&self) -> impl IntoElement {
+        div()
+            .id("appearance-preview-column")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(240.0))
+            .flex_shrink_0()
+            .h_full()
+            .items_start()
+            .overflow_y_scroll()
             .child(self.render_font_preview_section())
     }
 
-    /// Theme section (moved from General panel).
+    /// Invisible backdrop to catch clicks and close any open dropdown.
+    fn render_dropdown_backdrop(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("appearance-dropdown-backdrop")
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .right(px(0.0))
+            .bottom(px(0.0))
+            .block_mouse_except_scroll()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.close_all_dropdowns();
+                    cx.notify();
+                }),
+            )
+    }
+
+    /// Close all open dropdowns.
+    pub(super) const fn close_all_dropdowns(&mut self) {
+        self.state.theme_dropdown_open = false;
+        self.state.font_dropdown_open_for = None;
+    }
+
+    /// Theme section.
+    /// Note: dropdown list is rendered as an overlay, not inline.
     pub(super) fn render_theme_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let themes = &self.state.available_themes;
         let selected_name = themes
@@ -93,14 +171,45 @@ impl SettingsView {
                     .text_color(Theme::text_primary())
                     .child("THEME"),
             )
-            .child(self.render_theme_dropdown_trigger(&selected_name, cx))
-            .when(is_open, |d| d.child(self.render_theme_list(cx)))
+            .child(self.render_theme_dropdown_trigger(&selected_name, is_open, cx))
+    }
+
+    /// Theme dropdown overlay (floating, positioned below trigger).
+    fn render_theme_dropdown_overlay(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let themes = &self.state.available_themes;
+
+        div()
+            .id("theme-dropdown-overlay")
+            .absolute()
+            .top(px(56.0)) // Below header + trigger height
+            .left(px(0.0))
+            .min_w(px(200.0))
+            .max_w(px(360.0))
+            .max_h(px(200.0))
+            .bg(Theme::bg_dark())
+            .border_1()
+            .border_color(Theme::accent())
+            .rounded(px(4.0))
+            .shadow_lg()
+            .overflow_y_scroll()
+            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {}))
+            .children(themes.iter().map(|t| self.render_theme_row(t, cx)))
+            .when(themes.is_empty(), |d| {
+                d.items_center().justify_center().child(
+                    div()
+                        .text_size(px(Theme::font_size_mono()))
+                        .text_color(Theme::text_muted())
+                        .child("No themes available"),
+                )
+            })
     }
 
     /// Shared theme dropdown trigger button (used by Appearance panel).
+    #[allow(clippy::unused_self)] // &self needed for cx.listener pattern
     pub(super) fn render_theme_dropdown_trigger(
         &self,
         selected_name: &str,
+        is_open: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let selected_name = selected_name.to_string();
@@ -111,7 +220,7 @@ impl SettingsView {
             .px(px(8.0))
             .bg(Theme::bg_dark())
             .border_1()
-            .border_color(if self.state.theme_dropdown_open {
+            .border_color(if is_open {
                 Theme::accent()
             } else {
                 Theme::border()
@@ -128,11 +237,7 @@ impl SettingsView {
                 div()
                     .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_muted())
-                    .child(if self.state.theme_dropdown_open {
-                        "▲"
-                    } else {
-                        "▼"
-                    }),
+                    .child(if is_open { "▲" } else { "▼" }),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -141,32 +246,6 @@ impl SettingsView {
                     cx.notify();
                 }),
             )
-    }
-
-    /// Theme dropdown list (rendered inline like font dropdowns).
-    fn render_theme_list(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let themes = &self.state.available_themes;
-
-        div()
-            .id("theme-dropdown-list")
-            .w_full()
-            .max_h(px(200.0))
-            .bg(Theme::bg_dark())
-            .border_1()
-            .border_color(Theme::accent())
-            .rounded(px(4.0))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .children(themes.iter().map(|t| self.render_theme_row(t, cx)))
-            .when(themes.is_empty(), |d| {
-                d.items_center().justify_center().child(
-                    div()
-                        .text_size(px(Theme::font_size_mono()))
-                        .text_color(Theme::text_muted())
-                        .child("No themes available"),
-                )
-            })
     }
 
     /// Single theme row in the dropdown list.
@@ -343,8 +422,8 @@ impl SettingsView {
     }
 
     /// UI font family dropdown section.
+    /// Note: dropdown list is rendered as an overlay, not inline.
     fn render_ui_font_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let fonts = ui_font_options(cx);
         let current_label = self
             .state
             .ui_font_family
@@ -359,7 +438,6 @@ impl SettingsView {
             .gap(px(6.0))
             .child(Self::render_ui_font_header())
             .child(Self::render_ui_font_trigger(current_label, is_open, cx))
-            .when(is_open, |d| d.child(self.render_ui_font_list(&fonts, cx)))
             .child(Self::render_ui_font_help())
     }
 
@@ -417,69 +495,9 @@ impl SettingsView {
             )
     }
 
-    fn render_ui_font_list(
-        &self,
-        fonts: &[String],
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .id("ui-font-list")
-            .w_full()
-            .bg(Theme::bg_dark())
-            .border_1()
-            .border_color(Theme::accent())
-            .rounded(px(4.0))
-            .flex()
-            .flex_col()
-            .children(
-                fonts
-                    .iter()
-                    .map(|font| self.render_ui_font_option(font, cx).into_any_element()),
-            )
-    }
-
-    fn render_ui_font_option(&self, font: &str, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let font_str = font.to_string();
-        let is_selected = if font == "System Default" {
-            self.state.ui_font_family.is_none()
-        } else {
-            self.state.ui_font_family.as_deref() == Some(font)
-        };
-
-        div()
-            .id(SharedString::from(format!("ui-font-{font_str}")))
-            .w_full()
-            .h(px(24.0))
-            .px(px(8.0))
-            .flex()
-            .items_center()
-            .cursor_pointer()
-            .when(is_selected, |d| {
-                d.bg(Theme::selection_bg())
-                    .text_color(Theme::selection_fg())
-            })
-            .when(!is_selected, |d| {
-                d.hover(|s| s.bg(Theme::bg_dark()))
-                    .text_color(Theme::text_primary())
-            })
-            .text_size(px(Theme::font_size_mono()))
-            .child(font_str.clone())
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    let value = if font_str == "System Default" {
-                        None
-                    } else {
-                        Some(font_str.clone())
-                    };
-                    this.select_ui_font(value, cx);
-                }),
-            )
-    }
-
     /// Mono font family dropdown + ligatures toggle section.
+    /// Note: dropdown list is rendered as an overlay, not inline.
     fn render_mono_font_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let fonts = mono_font_options(cx);
         let current_mono = self.state.mono_font_family.clone();
         let is_open = self.state.font_dropdown_open_for == Some(FontDropdownTarget::MonoFont);
         let ligatures = self.state.mono_ligatures;
@@ -490,7 +508,6 @@ impl SettingsView {
             .gap(px(6.0))
             .child(Self::render_mono_font_header())
             .child(Self::render_mono_font_trigger(current_mono, is_open, cx))
-            .when(is_open, |d| d.child(self.render_mono_font_list(&fonts, cx)))
             .child(Self::render_ligatures_toggle_row(ligatures, cx))
             .child(Self::render_mono_font_help())
     }
@@ -549,37 +566,67 @@ impl SettingsView {
             )
     }
 
-    fn render_mono_font_list(
+    /// Render font dropdown overlay for either UI or Mono font.
+    fn render_font_dropdown_overlay(
         &self,
-        fonts: &[String],
+        target: FontDropdownTarget,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        let fonts = match target {
+            FontDropdownTarget::UiFont => ui_font_options(cx),
+            FontDropdownTarget::MonoFont => mono_font_options(cx),
+        };
+
+        // Position differs based on which dropdown is open
+        let top = match target {
+            FontDropdownTarget::UiFont => px(224.0), // Below theme, font size, and UI font header
+            FontDropdownTarget::MonoFont => px(310.0), // Below all controls
+        };
+
         div()
-            .id("mono-font-list")
-            .w_full()
+            .id(SharedString::from(format!(
+                "font-dropdown-overlay-{target:?}"
+            )))
+            .absolute()
+            .top(top)
+            .left(px(0.0))
+            .min_w(px(200.0))
+            .max_w(px(360.0))
+            .max_h(px(300.0))
             .bg(Theme::bg_dark())
             .border_1()
             .border_color(Theme::accent())
             .rounded(px(4.0))
-            .flex()
-            .flex_col()
-            .children(
-                fonts
-                    .iter()
-                    .map(|font| self.render_mono_font_option(font, cx).into_any_element()),
-            )
+            .shadow_lg()
+            .overflow_y_scroll()
+            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {}))
+            .children(fonts.iter().map(|font| {
+                self.render_font_option_row(font, target, cx)
+                    .into_any_element()
+            }))
     }
 
-    fn render_mono_font_option(
+    /// Render a single font option row in the dropdown overlay.
+    fn render_font_option_row(
         &self,
         font: &str,
+        target: FontDropdownTarget,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let font_str = font.to_string();
-        let is_selected = self.state.mono_font_family == font;
+        let is_selected = match target {
+            FontDropdownTarget::UiFont => {
+                if font == "System Default" {
+                    self.state.ui_font_family.is_none()
+                } else {
+                    self.state.ui_font_family.as_deref() == Some(font)
+                }
+            }
+            FontDropdownTarget::MonoFont => self.state.mono_font_family == font,
+        };
 
         div()
-            .id(SharedString::from(format!("mono-font-{font_str}")))
+            .id(SharedString::from(format!("{target:?}-font-{font_str}")))
             .w_full()
             .h(px(24.0))
             .px(px(8.0))
@@ -595,11 +642,30 @@ impl SettingsView {
                     .text_color(Theme::text_primary())
             })
             .text_size(px(Theme::font_size_mono()))
+            // Render each font name in its own typeface (except System Default)
+            .when_some(
+                if font_str == "System Default" {
+                    None
+                } else {
+                    Some(SharedString::from(font_str.clone()))
+                },
+                gpui::Styled::font_family,
+            )
             .child(font_str.clone())
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    this.select_mono_font(font_str.clone(), cx);
+                cx.listener(move |this, _, _window, cx| match target {
+                    FontDropdownTarget::UiFont => {
+                        let value = if font_str == "System Default" {
+                            None
+                        } else {
+                            Some(font_str.clone())
+                        };
+                        this.select_ui_font(value, cx);
+                    }
+                    FontDropdownTarget::MonoFont => {
+                        this.select_mono_font(font_str.clone(), cx);
+                    }
                 }),
             )
     }
@@ -649,18 +715,10 @@ impl SettingsView {
     }
 
     /// Live font preview section.
+    #[allow(clippy::too_many_lines)]
     pub(super) fn render_font_preview_section(&self) -> impl IntoElement {
         let base_size = self.state.font_size;
-        let h3_size = base_size * 1.25;
-        let body_size = base_size;
-        let mono_size = (base_size * 9.0) / 10.0;
         let ui_family = self.state.ui_font_family.as_ref().map(SharedString::from);
-        let mono_family = SharedString::from(self.state.mono_font_family.clone());
-        let mono_features = if self.state.mono_ligatures {
-            gpui::FontFeatures::default()
-        } else {
-            gpui::FontFeatures::disable_ligatures()
-        };
 
         div()
             .flex()
@@ -672,58 +730,126 @@ impl SettingsView {
                     .text_color(Theme::text_primary())
                     .child("PREVIEW"),
             )
-            .child(
-                div()
-                    .id("font-preview-box")
-                    .when_some(ui_family, gpui::Styled::font_family)
-                    .w_full()
-                    .p(px(12.0))
-                    .bg(Theme::bg_darker())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.0))
-                    // Heading line
-                    .child(
-                        div()
-                            .text_size(px(h3_size))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::text_primary())
-                            .child("Heading Text"),
-                    )
-                    // Body line
-                    .child(
-                        div()
-                            .text_size(px(body_size))
-                            .text_color(Theme::text_primary())
-                            .child("Body text looks like this in messages."),
-                    )
-                    // Mixed line: mono code span + body continuation
-                    .child(
-                        div()
-                            .flex()
-                            .items_baseline()
-                            .gap(px(2.0))
-                            .child(
-                                div()
-                                    .text_size(px(mono_size))
-                                    .font_family(mono_family)
-                                    .font_features(mono_features)
-                                    .text_color(Theme::accent())
-                                    .bg(Theme::bg_dark())
-                                    .px(px(4.0))
-                                    .rounded(px(2.0))
-                                    .child("fn main()"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(body_size))
-                                    .text_color(Theme::text_primary())
-                                    .child(" inline with body"),
-                            ),
-                    ),
-            )
+            .child(self.render_font_preview_box(base_size, ui_family))
+    }
+
+    /// The actual preview box container with all preview lines.
+    fn render_font_preview_box(
+        &self,
+        base_size: f32,
+        ui_family: Option<SharedString>,
+    ) -> impl IntoElement {
+        let h3_size = base_size * 1.25;
+        let body_size = base_size;
+        let mono_size = (base_size * 9.0) / 10.0;
+        let mono_family = SharedString::from(self.state.mono_font_family.clone());
+        let mono_features = if self.state.mono_ligatures {
+            gpui::FontFeatures::default()
+        } else {
+            gpui::FontFeatures::disable_ligatures()
+        };
+
+        div()
+            .id("font-preview-box")
+            .w_full()
+            .p(px(12.0))
+            .bg(Theme::bg_darker())
+            .border_1()
+            .border_color(Theme::border())
+            .rounded(px(4.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(Self::render_preview_heading_line(
+                h3_size,
+                ui_family.clone(),
+            ))
+            .child(Self::render_preview_body_line(body_size, ui_family))
+            .child(Self::render_preview_mono_line(
+                mono_size,
+                mono_family.clone(),
+                mono_features.clone(),
+            ))
+            .child(Self::render_preview_ligature_showcase(
+                mono_size,
+                mono_family.clone(),
+                mono_features.clone(),
+            ))
+            .child(Self::render_preview_ligature_alt(
+                mono_size,
+                mono_family,
+                mono_features,
+            ))
+    }
+
+    /// Heading line in font preview (uses UI font).
+    fn render_preview_heading_line(
+        h3_size: f32,
+        ui_family: Option<SharedString>,
+    ) -> impl IntoElement {
+        div()
+            .when_some(ui_family, gpui::Styled::font_family)
+            .text_size(px(h3_size))
+            .font_weight(FontWeight::BOLD)
+            .text_color(Theme::text_primary())
+            .child("Heading Text")
+    }
+
+    /// Body line in font preview (uses UI font).
+    fn render_preview_body_line(
+        body_size: f32,
+        ui_family: Option<SharedString>,
+    ) -> impl IntoElement {
+        div()
+            .when_some(ui_family, gpui::Styled::font_family)
+            .text_size(px(body_size))
+            .text_color(Theme::text_primary())
+            .child("Body text looks like this in messages.")
+    }
+
+    /// Mono preview line showing mono font.
+    fn render_preview_mono_line(
+        mono_size: f32,
+        mono_family: SharedString,
+        mono_features: gpui::FontFeatures,
+    ) -> impl IntoElement {
+        div()
+            .text_size(px(mono_size))
+            .font_family(mono_family)
+            .font_features(mono_features)
+            .text_color(Theme::text_primary())
+            .child("fn main() -> Result<(), Error>")
+    }
+
+    /// Ligature showcase line (shows !=, =>, etc.).
+    fn render_preview_ligature_showcase(
+        mono_size: f32,
+        mono_family: SharedString,
+        mono_features: gpui::FontFeatures,
+    ) -> impl IntoElement {
+        div()
+            .text_size(px(mono_size))
+            .font_family(mono_family)
+            .font_features(mono_features)
+            .text_color(Theme::accent())
+            .bg(Theme::bg_dark())
+            .px(px(4.0))
+            .py(px(2.0))
+            .rounded(px(2.0))
+            .child("x != y && z => w")
+    }
+
+    /// Alternative ligature test line (<->, ::=, /*, etc.).
+    fn render_preview_ligature_alt(
+        mono_size: f32,
+        mono_family: SharedString,
+        mono_features: gpui::FontFeatures,
+    ) -> impl IntoElement {
+        div()
+            .text_size(px(mono_size))
+            .font_family(mono_family)
+            .font_features(mono_features)
+            .text_color(Theme::text_secondary())
+            .child("a <-> b ::= c /* comment */")
     }
 }
