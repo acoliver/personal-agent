@@ -480,6 +480,76 @@ async fn load_watched_directories_rejects_invalid_json() {
     );
 }
 
+/// Adding an empty skills directory path should fail validation.
+#[tokio::test]
+async fn add_watched_directory_empty_path_fails_validation() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+
+    let error = service
+        .add_watched_directory(std::path::PathBuf::new())
+        .await
+        .expect_err("empty path should fail");
+
+    assert!(error.to_string().contains("cannot be empty"));
+}
+
+/// Adding a relative path should resolve against current directory.
+#[tokio::test]
+async fn add_watched_directory_relative_path_resolves() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+
+    // Use a relative path
+    let relative_path = std::path::PathBuf::from("relative/skills");
+    service
+        .add_watched_directory(relative_path.clone())
+        .await
+        .expect("relative path should succeed");
+
+    let watched = service.watched_directories().await.expect("should list");
+    assert_eq!(watched.len(), 1);
+
+    // The path should have been resolved to absolute
+    let cwd = std::env::current_dir().expect("should get cwd");
+    let expected = cwd.join(relative_path);
+    assert_eq!(watched[0], expected);
+}
+
+/// Adding a path with ~ should expand to home directory.
+#[tokio::test]
+async fn add_watched_directory_expands_tilde() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+
+    let home_path = std::path::PathBuf::from("~/skills");
+    service
+        .add_watched_directory(home_path)
+        .await
+        .expect("tilde path should succeed");
+
+    let watched = service.watched_directories().await.expect("should list");
+    assert_eq!(watched.len(), 1);
+
+    // The path should have been expanded to home directory
+    let home = dirs::home_dir().expect("should have home dir");
+    assert!(watched[0].starts_with(home));
+}
+
+/// Whitespace-only path should fail validation.
+#[tokio::test]
+async fn add_watched_directory_whitespace_path_fails() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+
+    let whitespace_path = std::path::PathBuf::from("   ");
+    let error = service
+        .add_watched_directory(whitespace_path)
+        .await
+        .expect_err("whitespace path should fail");
+
+    assert!(error.to_string().contains("cannot be empty"));
+}
 /// Discovering skills from a non-readable directory should return an error.
 #[tokio::test]
 #[cfg(unix)]
