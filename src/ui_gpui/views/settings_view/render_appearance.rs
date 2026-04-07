@@ -81,6 +81,7 @@ impl SettingsView {
                 || self.state.selected_theme_slug.clone(),
                 |t| t.name.clone(),
             );
+        let is_open = self.state.theme_dropdown_open;
 
         div()
             .flex()
@@ -93,6 +94,7 @@ impl SettingsView {
                     .child("THEME"),
             )
             .child(self.render_theme_dropdown_trigger(&selected_name, cx))
+            .when(is_open, |d| d.child(self.render_theme_list(cx)))
     }
 
     /// Shared theme dropdown trigger button (used by Appearance panel).
@@ -137,6 +139,69 @@ impl SettingsView {
                 cx.listener(|this, _, _window, cx| {
                     this.toggle_theme_dropdown();
                     cx.notify();
+                }),
+            )
+    }
+
+    /// Theme dropdown list (rendered inline like font dropdowns).
+    fn render_theme_list(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let themes = &self.state.available_themes;
+
+        div()
+            .id("theme-dropdown-list")
+            .w_full()
+            .max_h(px(200.0))
+            .bg(Theme::bg_dark())
+            .border_1()
+            .border_color(Theme::accent())
+            .rounded(px(4.0))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .children(themes.iter().map(|t| self.render_theme_row(t, cx)))
+            .when(themes.is_empty(), |d| {
+                d.items_center().justify_center().child(
+                    div()
+                        .text_size(px(Theme::font_size_mono()))
+                        .text_color(Theme::text_muted())
+                        .child("No themes available"),
+                )
+            })
+    }
+
+    /// Single theme row in the dropdown list.
+    fn render_theme_row(
+        &self,
+        option: &super::ThemeOption,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let slug = option.slug.clone();
+        let name = option.name.clone();
+        let is_selected = self.state.selected_theme_slug == slug;
+
+        div()
+            .id(SharedString::from(format!("theme-{slug}")))
+            .w_full()
+            .h(px(24.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .when(is_selected, |d| {
+                d.bg(Theme::selection_bg())
+                    .text_color(Theme::selection_fg())
+            })
+            .when(!is_selected, |d| {
+                d.hover(|s| s.bg(Theme::bg_dark()))
+                    .text_color(Theme::text_primary())
+            })
+            .text_size(px(Theme::font_size_mono()))
+            .child(name)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    tracing::info!("Theme selected: {}", slug);
+                    this.select_theme_from_dropdown(slug.clone(), cx);
                 }),
             )
     }
