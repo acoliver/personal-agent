@@ -63,6 +63,9 @@ pub enum UserEvent {
     /// User toggled thinking display
     ToggleThinking,
 
+    /// User refreshed conversation list (e.g., after restore)
+    RefreshConversations,
+
     /// User requested conversation export with the currently selected format.
     SaveConversation,
 

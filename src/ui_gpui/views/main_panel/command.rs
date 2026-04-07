@@ -115,6 +115,17 @@ impl MainPanel {
                 self.forward_to_settings(cmd, cx);
             }
 
+            // ── database restored - emit refresh event ───────────────────
+            DatabaseRestored => {
+                tracing::info!("MainPanel: database restored, emitting RefreshConversations");
+                // Get the bridge from global state to emit refresh event
+                if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
+                    let _ = app_state
+                        .gpui_bridge
+                        .emit(crate::events::types::UserEvent::RefreshConversations);
+                }
+            }
+
             other => {
                 tracing::debug!("MainPanel: command {:?} not forwarded to child view", other);
             }

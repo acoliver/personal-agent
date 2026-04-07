@@ -339,6 +339,9 @@ pub enum ViewCommand {
         result: crate::backup::RestoreResult,
     },
 
+    /// Database was restored - refresh all data
+    DatabaseRestored,
+
     // ===== Error Commands =====
     /// Show error to user
     ShowError {

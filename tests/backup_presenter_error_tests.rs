@@ -173,9 +173,13 @@ async fn handle_backup_user_event_restore_backup() {
     let cmd = rx.recv().await.expect("receive command");
     assert!(matches!(cmd, ViewCommand::RestoreCompleted { .. }));
 
+    // Should receive DatabaseRestored for success
+    let cmd2 = rx.recv().await.expect("receive database restored");
+    assert!(matches!(cmd2, ViewCommand::DatabaseRestored));
+
     // Should receive ShowNotification for success
-    let cmd2 = rx.recv().await.expect("receive notification");
-    assert!(matches!(cmd2, ViewCommand::ShowNotification { .. }));
+    let cmd3 = rx.recv().await.expect("receive notification");
+    assert!(matches!(cmd3, ViewCommand::ShowNotification { .. }));
 }
 
 /// Test: `handle_backup_user_event` handles restore error

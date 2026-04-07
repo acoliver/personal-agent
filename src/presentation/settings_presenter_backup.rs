@@ -192,6 +192,8 @@ impl SettingsPresenter {
                 });
 
                 if result.is_success() {
+                    // Notify that database was restored so UI can refresh
+                    let _ = view_tx.send(ViewCommand::DatabaseRestored);
                     let _ = view_tx.send(ViewCommand::ShowNotification {
                         message: "Database restored successfully".to_string(),
                     });

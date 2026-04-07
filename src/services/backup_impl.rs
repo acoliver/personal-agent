@@ -500,12 +500,15 @@ impl BackupService for BackupServiceImpl {
             }
         }
 
-        // Replace current database with restored backup
-        // Note: In a real app, we'd need to ensure the DB worker is shut down first
-        // For now, we assume restore is done when app is not actively using the DB
-        let backup_of_current = self.db_path.with_extension("pre_restore.bak");
+        // Close the database connection to allow file replacement
+        tracing::info!("Closing database connection for restore...");
+        if let Err(e) = self.db.close().await {
+            tracing::warn!("Failed to close database: {}", e);
+            // Continue anyway - the file replace might still work
+        }
 
         // Backup current database if it exists
+        let backup_of_current = self.db_path.with_extension("pre_restore.bak");
         if self.db_path.exists() {
             if let Err(e) = fs::copy(&self.db_path, &backup_of_current) {
                 tracing::warn!("Failed to backup current database before restore: {}", e);
@@ -517,6 +520,15 @@ impl BackupService for BackupServiceImpl {
             ServiceError::Io(format!("Failed to replace database with backup: {e}"))
         })?;
 
+        // Reopen the database connection
+        tracing::info!("Reopening database connection after restore...");
+        if let Err(e) = self.db.reopen().await {
+            return Ok(RestoreResult::Failed {
+                error: format!("Database file replaced but failed to reopen: {e}"),
+            });
+        }
+
+        tracing::info!("Database restored and reopened successfully");
         Ok(RestoreResult::Success)
     }
 
