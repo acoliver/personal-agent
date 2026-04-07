@@ -1,11 +1,4 @@
 //! `ChatPresenter` - handles user chat events and service coordination
-//!
-//! `ChatPresenter` subscribes to user chat events and chat domain events,
-//! coordinates with chat and conversation services, and emits view commands.
-//!
-//! @plan PLAN-20250125-REFACTOR.P12
-//! @requirement REQ-027.1
-//! @pseudocode presenters.md lines 20-251
 
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -26,43 +19,18 @@ use crate::services::{
     AppSettingsService, ChatService, ConversationService, ProfileService, ServiceError,
 };
 
-/// `ChatPresenter` - handles chat UI events and service coordination
-///
-/// @plan PLAN-20250125-REFACTOR.P12
-/// @requirement REQ-027.1
-/// @pseudocode presenters.md lines 20-25
 pub struct ChatPresenter {
-    /// Reference to event bus for subscribing to events
     event_bus: Arc<EventBus>,
-
-    /// Reference to conversation service
     conversation_service: Arc<dyn ConversationService>,
-
-    /// Reference to chat service
     chat_service: Arc<dyn ChatService>,
-
-    /// Reference to profile service
     profile_service: Arc<dyn ProfileService>,
-
-    /// Reference to app settings service
     app_settings_service: Arc<dyn AppSettingsService>,
-
-    /// View command sender (mpsc for reliable delivery)
     view_tx: mpsc::Sender<ViewCommand>,
-
-    /// Running flag for event loop
     running: Arc<std::sync::atomic::AtomicBool>,
-
-    /// In-session export format selection used for save operations.
     current_export_format: Arc<std::sync::Mutex<crate::models::ConversationExportFormat>>,
 }
 
 impl ChatPresenter {
-    /// Create a new `ChatPresenter`
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    /// @pseudocode presenters.md lines 31-42
     pub fn new(
         event_bus: Arc<EventBus>,
         conversation_service: Arc<dyn ConversationService>,
@@ -85,15 +53,10 @@ impl ChatPresenter {
         }
     }
 
-    /// Start the presenter event loop
+    /// Start the presenter event loop.
     ///
     /// # Errors
-    ///
-    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    /// @pseudocode presenters.md lines 50-69
+    /// Returns `PresenterError` if the presenter fails to start.
     pub async fn start(&mut self) -> Result<(), PresenterError> {
         if self.running.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -115,33 +78,21 @@ impl ChatPresenter {
         Ok(())
     }
 
-    /// Stop the presenter event loop
+    /// Stop the presenter event loop.
     ///
     /// # Errors
-    ///
-    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    /// @pseudocode presenters.md lines 250-253
+    /// Returns `PresenterError` if the presenter fails to stop.
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
-    /// Check if presenter is running
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Handle events from `EventBus`
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
     #[allow(clippy::too_many_arguments)]
     async fn handle_event(
         conversation_service: &Arc<dyn ConversationService>,
@@ -610,17 +561,38 @@ impl ChatPresenter {
         let _ = view_tx.send(ViewCommand::ToggleThinkingVisibility).await;
     }
 
-    /// Handle `ToggleEmojiFilter` user event
     async fn handle_toggle_emoji_filter(
         app_settings_service: &Arc<dyn crate::services::AppSettingsService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
     ) {
-        let current = app_settings_service
-            .get_filter_emoji()
-            .await
-            .unwrap_or(None)
-            .unwrap_or(false);
-        let _ = app_settings_service.set_filter_emoji(!current).await;
+        let current = match app_settings_service.get_filter_emoji().await {
+            Ok(Some(value)) => value,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!("Failed to read emoji filter setting: {error}");
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Emoji Filter".to_string(),
+                        message: "Failed to read emoji filter preference".to_string(),
+                        severity: ErrorSeverity::Warning,
+                    })
+                    .await;
+                return;
+            }
+        };
+
+        if let Err(error) = app_settings_service.set_filter_emoji(!current).await {
+            tracing::warn!("Failed to persist emoji filter setting: {error}");
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Emoji Filter".to_string(),
+                    message: "Failed to persist emoji filter preference".to_string(),
+                    severity: ErrorSeverity::Warning,
+                })
+                .await;
+            return;
+        }
+
         let _ = view_tx.send(ViewCommand::ToggleEmojiFilterVisibility).await;
     }
 
