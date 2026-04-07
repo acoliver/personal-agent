@@ -8,6 +8,10 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::time::{sleep, timeout, Duration};
 use uuid::Uuid;
+#[cfg(test)]
+use wiremock::matchers::{method, path};
+#[cfg(test)]
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use personal_agent::events::types::{AppEvent, UserEvent};
 use personal_agent::presentation::{
@@ -456,5 +460,143 @@ async fn install_skill_from_invalid_url_emits_error() {
             assert_eq!(severity, ErrorSeverity::Warning);
         }
         other => panic!("expected ShowError for bad URL, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BEHAVIORAL TESTS: Skill installation from mock HTTP server
+// ---------------------------------------------------------------------------
+
+/// Installing from a valid URL with a valid skill file should create the skill
+/// and emit a notification and updated snapshot with the new skill present.
+#[tokio::test]
+async fn install_skill_from_valid_url_creates_skill_and_emits_notification() {
+    let mock_server = MockServer::start().await;
+
+    // Mock a valid SKILL.md response
+    let skill_body = "---\nname: installed-test-skill\ndescription: A skill installed from mock server\n---\nThis is the skill body.\n";
+    Mock::given(method("GET"))
+        .and(path("/skills/SKILL.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(skill_body))
+        .mount(&mock_server)
+        .await;
+
+    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    presenter.start().await.expect("start");
+
+    let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
+
+    let url = format!("{}/skills/SKILL.md", mock_server.uri());
+    send_event(
+        &event_tx,
+        UserEvent::InstallSkillFromUrl { url: url.clone() },
+    )
+    .await;
+
+    // Should get a notification about success
+    let notification = recv_matching(&mut view_rx, is_show_notification).await;
+    match notification {
+        ViewCommand::ShowNotification { message } => {
+            assert!(
+                message.contains("installed-test-skill"),
+                "notification should mention skill name: {message}"
+            );
+        }
+        other => panic!("expected ShowNotification, got {other:?}"),
+    }
+
+    // Should get an updated snapshot with the new skill
+    let snapshot = recv_matching(&mut view_rx, is_skills_loaded).await;
+    match snapshot {
+        ViewCommand::SkillsLoaded { skills, .. } => {
+            assert!(
+                skills.iter().any(|s| s.name == "installed-test-skill"),
+                "skills should contain the newly installed skill: {skills:?}"
+            );
+        }
+        other => panic!("expected SkillsLoaded, got {other:?}"),
+    }
+}
+
+/// Installing from a URL that returns HTTP 404 should emit `ShowError`.
+#[tokio::test]
+async fn install_skill_from_url_404_emits_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/missing/SKILL.md"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    presenter.start().await.expect("start");
+
+    let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
+
+    let url = format!("{}/missing/SKILL.md", mock_server.uri());
+    send_event(
+        &event_tx,
+        UserEvent::InstallSkillFromUrl { url: url.clone() },
+    )
+    .await;
+
+    let cmd = recv_matching(&mut view_rx, is_show_error).await;
+    match cmd {
+        ViewCommand::ShowError {
+            title,
+            message,
+            severity,
+        } => {
+            assert_eq!(title, "Skills");
+            assert!(
+                message.contains("HTTP 404") || message.contains("Failed to download"),
+                "error should mention HTTP failure: {message}"
+            );
+            assert_eq!(severity, ErrorSeverity::Warning);
+        }
+        other => panic!("expected ShowError for HTTP 404, got {other:?}"),
+    }
+}
+
+/// Installing from a URL that returns invalid YAML frontmatter should emit `ShowError`.
+#[tokio::test]
+async fn install_skill_from_url_invalid_skill_content_emits_error() {
+    let mock_server = MockServer::start().await;
+
+    // Return content without proper frontmatter
+    Mock::given(method("GET"))
+        .and(path("/invalid/SKILL.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("This is not a valid skill file"))
+        .mount(&mock_server)
+        .await;
+
+    let (mut presenter, event_tx, mut view_rx, _temp_dir) = setup();
+    presenter.start().await.expect("start");
+
+    let _ = recv_matching(&mut view_rx, is_skills_loaded).await;
+
+    let url = format!("{}/invalid/SKILL.md", mock_server.uri());
+    send_event(
+        &event_tx,
+        UserEvent::InstallSkillFromUrl { url: url.clone() },
+    )
+    .await;
+
+    let cmd = recv_matching(&mut view_rx, is_show_error).await;
+    match cmd {
+        ViewCommand::ShowError {
+            title,
+            message,
+            severity,
+        } => {
+            assert_eq!(title, "Skills");
+            assert!(
+                message.contains("frontmatter") || message.contains("parse"),
+                "error should mention parsing issue: {message}"
+            );
+            assert_eq!(severity, ErrorSeverity::Warning);
+        }
+        other => panic!("expected ShowError for invalid skill content, got {other:?}"),
     }
 }
