@@ -246,4 +246,92 @@ mod tests {
         let result = expand_system_prompt(template, &ctx);
         assert_eq!(result, "2026-03-30 and 2026-03-30 again");
     }
+
+    #[test]
+    fn test_build_skills_prompt_block_empty_skills() {
+        let skills: Vec<Skill> = vec![];
+        let result = build_skills_prompt_block(&skills);
+        assert!(
+            result.is_empty(),
+            "empty skills should produce empty string"
+        );
+    }
+
+    #[test]
+    fn test_build_skills_prompt_block_single_skill() {
+        use crate::models::SkillSource;
+        let skills = vec![Skill::new(
+            "docx".to_string(),
+            "Word document processing".to_string(),
+            std::path::PathBuf::from("/skills/docx"),
+            SkillSource::Bundled,
+            true,
+        )];
+        let result = build_skills_prompt_block(&skills);
+        assert!(result.contains("activate_skill"));
+        assert!(result.contains("<available_skills>"));
+        assert!(result.contains("</available_skills>"));
+        assert!(result.contains("name=\"docx\""));
+        assert!(result.contains("description=\"Word document processing\""));
+    }
+
+    #[test]
+    fn test_build_skills_prompt_block_multiple_skills() {
+        use crate::models::SkillSource;
+        let skills = vec![
+            Skill::new(
+                "alpha".to_string(),
+                "First skill".to_string(),
+                std::path::PathBuf::from("/skills/alpha"),
+                SkillSource::Bundled,
+                true,
+            ),
+            Skill::new(
+                "beta".to_string(),
+                "Second skill".to_string(),
+                std::path::PathBuf::from("/skills/beta"),
+                SkillSource::User,
+                true,
+            ),
+        ];
+        let result = build_skills_prompt_block(&skills);
+        assert!(result.contains("name=\"alpha\""));
+        assert!(result.contains("name=\"beta\""));
+    }
+
+    #[test]
+    fn test_build_skills_prompt_block_escapes_xml_special_chars() {
+        use crate::models::SkillSource;
+        let skills = vec![Skill::new(
+            "test<skill>".to_string(),
+            "Has \"quotes\" & 'apostrophes'".to_string(),
+            std::path::PathBuf::from("/skills/test"),
+            SkillSource::Bundled,
+            true,
+        )];
+        let result = build_skills_prompt_block(&skills);
+        // Name should be escaped
+        assert!(result.contains("&lt;") && result.contains("&gt;"));
+        // Description should escape quotes and ampersand
+        assert!(result.contains("&quot;"));
+        assert!(result.contains("&amp;"));
+        assert!(result.contains("&apos;"));
+        // Raw chars should NOT appear
+        assert!(!result.contains("<skill>"));
+        assert!(!result.contains("\"quotes\""));
+    }
+
+    #[test]
+    fn test_xml_escape_all_special_chars() {
+        let input = "<>&\"'";
+        let result = xml_escape(input);
+        assert_eq!(result, "&lt;&gt;&amp;&quot;&apos;");
+    }
+
+    #[test]
+    fn test_xml_escape_no_special_chars() {
+        let input = "normal text 123";
+        let result = xml_escape(input);
+        assert_eq!(result, "normal text 123");
+    }
 }
