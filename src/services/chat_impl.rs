@@ -282,6 +282,15 @@ impl ChatServiceImpl {
             self.default_profile("No active profile").await?
         };
 
+        // Check if this is a local (in-process) model
+        if profile.is_local() {
+            // For local models, we return early with a special path
+            // The send() method will handle this via send_local_message
+            return Err(ServiceError::Internal(
+                "Local model selected - use send_local_message path".to_string(),
+            ));
+        }
+
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
         let mut messages = Self::build_llm_messages(&conversation, &profile);
@@ -451,6 +460,112 @@ impl ChatServiceImpl {
         }));
     }
 
+    /// Send a message using local (in-process) inference.
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::significant_drop_tightening)]
+    async fn send_local_message(
+        &self,
+        conversation_id: Uuid,
+        conversation: crate::models::Conversation,
+        profile: crate::models::ModelProfile,
+        _content: String,
+    ) -> ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> {
+        use crate::llm::local::LocalProvider;
+
+        // Check if model is downloaded
+        let model_path = dirs::cache_dir()
+            .ok_or_else(|| ServiceError::Internal("Cannot determine cache directory".to_string()))?
+            .join("PersonalAgent")
+            .join("models")
+            .join("Qwen3.5-4B-Q4_K_M.gguf");
+
+        if !model_path.exists() {
+            return Err(ServiceError::Internal(
+                "Local model not downloaded. Download it first.".to_string(),
+            ));
+        }
+
+        Self::emit_stream_started(conversation_id, profile.model_id.clone());
+
+        // Build messages for local inference
+        let messages = Self::build_llm_messages(&conversation, &profile);
+
+        // Create local provider
+        let provider = LocalProvider::new(model_path, profile.context_window_size)
+            .map_err(|e| ServiceError::Internal(format!("Failed to create local provider: {e}")))?;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ChatStreamEvent>();
+        let is_streaming = self.is_streaming.clone();
+        let current_conversation_id = self.current_conversation_id.clone();
+        let conversation_service = self.conversation_service.clone();
+
+        // Spawn local inference task
+        let handle = tokio::spawn(async move {
+            // Run streaming inference
+            let mut response_text = String::new();
+            let mut thinking_text = String::new();
+
+            let result = provider
+                .request_stream(&messages, &[], |event| match event {
+                    crate::llm::StreamEvent::TextDelta(text) => {
+                        response_text.push_str(&text);
+                        let _ = tx.send(ChatStreamEvent::Token(text));
+                    }
+                    crate::llm::StreamEvent::ThinkingDelta(think) => {
+                        thinking_text.push_str(&think);
+                        // Thinking is stored but not streamed separately
+                    }
+                    crate::llm::StreamEvent::Complete { output_tokens, .. } => {
+                        let _ = tx.send(ChatStreamEvent::Complete {
+                            input_tokens: None,
+                            output_tokens,
+                        });
+                    }
+                    crate::llm::StreamEvent::Error(e) => {
+                        tracing::error!("Local inference error: {e}");
+                        let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(e)));
+                    }
+                    _ => {}
+                })
+                .await;
+
+            if let Err(e) = result {
+                tracing::error!("Local inference failed: {e}");
+                let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(
+                    e.to_string(),
+                )));
+            }
+
+            // Persist the response
+            let _ = conversation_service
+                .add_message(
+                    conversation_id,
+                    crate::models::Message::assistant_with_thinking(
+                        response_text.clone(),
+                        thinking_text,
+                    ),
+                )
+                .await;
+
+            // Clear streaming state
+            clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
+        });
+
+        // Store task handle
+        let mut stream_task = self.stream_task.lock().expect("stream task mutex poisoned");
+        if let Some(previous_task) = stream_task.replace(handle) {
+            previous_task.abort();
+        }
+
+        // Create stream from channel
+        let message_stream: Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>> =
+            Box::pin(stream::unfold(rx, move |mut rx| async move {
+                rx.recv().await.map(|event| (event, rx))
+            }));
+
+        Ok(Box::new(message_stream))
+    }
+
     async fn spawn_stream_task(
         &self,
         conversation_id: Uuid,
@@ -615,6 +730,30 @@ impl ChatService for ChatServiceImpl {
     ) -> ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> {
         self.begin_stream(conversation_id).await?;
         self.refresh_tool_approval_policy_from_settings().await;
+
+        // Check if the profile is a local model and route accordingly
+        let conversation = self
+            .conversation_service
+            .load(conversation_id)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("Failed to load conversation: {e}")))?;
+
+        let profile = if let Ok(p) = self.profile_service.get(conversation.profile_id).await {
+            p
+        } else {
+            self.profile_service
+                .get_default()
+                .await
+                .map_err(|_| ServiceError::Internal("No default profile available".to_string()))?
+                .ok_or_else(|| ServiceError::Internal("No default profile available".to_string()))?
+        };
+
+        // Route local models to local inference path
+        if profile.is_local() {
+            return self
+                .send_local_message(conversation_id, conversation, profile, content)
+                .await;
+        }
 
         let prepared = self
             .prepare_message_context(conversation_id, content)
