@@ -571,12 +571,13 @@ async fn send_message_creates_conversation_and_appends_user_message() {
         ViewCommand::MessageAppended {
             conversation_id: seen_id,
             role: MessageRole::User,
-            content
+            content,
+            ..
         } if *seen_id == conversation_id && content == "hello world"
     )));
     assert!(commands.iter().any(|command| matches!(
         command,
-        ViewCommand::ShowThinking { conversation_id: seen_id } if *seen_id == conversation_id
+        ViewCommand::ShowThinking { conversation_id: seen_id, .. } if *seen_id == conversation_id
     )));
 }
 
@@ -1271,7 +1272,7 @@ async fn chat_events_surface_errors_and_completion_commands() {
 
     assert!(commands.iter().any(|command| matches!(
         command,
-        ViewCommand::ShowThinking { conversation_id: seen_id } if *seen_id == conversation_id
+        ViewCommand::ShowThinking { conversation_id: seen_id, .. } if *seen_id == conversation_id
     )));
     assert!(commands.iter().any(|command| matches!(
         command,

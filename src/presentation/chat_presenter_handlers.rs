@@ -15,9 +15,11 @@ impl ChatPresenter {
     ) {
         match event {
             ChatEvent::StreamStarted {
-                conversation_id, ..
+                conversation_id,
+                model_id,
+                ..
             } => {
-                Self::handle_stream_started(view_tx, conversation_id).await;
+                Self::handle_stream_started(view_tx, conversation_id, model_id).await;
             }
             ChatEvent::TextDelta {
                 conversation_id,
@@ -85,9 +87,16 @@ impl ChatPresenter {
         }
     }
 
-    async fn handle_stream_started(view_tx: &mut mpsc::Sender<ViewCommand>, conversation_id: Uuid) {
+    async fn handle_stream_started(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        model_id: String,
+    ) {
         let _ = view_tx
-            .send(ViewCommand::ShowThinking { conversation_id })
+            .send(ViewCommand::ShowThinking {
+                conversation_id,
+                model_id,
+            })
             .await;
     }
 

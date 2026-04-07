@@ -76,6 +76,7 @@ fn begin_selection_preserves_background_active_target_and_clears_visible_streami
         },
         ViewCommand::ShowThinking {
             conversation_id: conversation_a,
+            model_id: "test".to_string(),
         },
         ViewCommand::AppendThinking {
             conversation_id: conversation_a,

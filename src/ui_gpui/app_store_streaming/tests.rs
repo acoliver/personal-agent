@@ -74,6 +74,7 @@ fn background_streaming_state(
     let started_stream = store.reduce_batch(vec![
         ViewCommand::ShowThinking {
             conversation_id: streaming_conversation_id,
+            model_id: "test".to_string(),
         },
         ViewCommand::AppendThinking {
             conversation_id: streaming_conversation_id,

@@ -16,6 +16,7 @@ pub(super) fn clear_streaming_visible_state(inner: &mut AppStoreInner) {
     inner.snapshot.chat.streaming.thinking_buffer.clear();
     inner.snapshot.chat.streaming.thinking_visible = false;
     inner.snapshot.chat.streaming.last_error = None;
+    inner.snapshot.chat.streaming.model_id = None;
 }
 
 pub(super) fn resolve_nil_or_explicit_target(
@@ -147,7 +148,7 @@ pub(super) fn finalize_stream_if_target_matches_selected_or_nil(
             content: inner.snapshot.chat.streaming.stream_buffer.clone(),
             thinking_content: non_empty_or_none(&inner.snapshot.chat.streaming.thinking_buffer),
             timestamp: None,
-            model_id: None,
+            model_id: inner.snapshot.chat.streaming.model_id.clone(),
         };
         inner.snapshot.chat.transcript.push(assistant_payload);
         inner.last_finalized_stream_guard = Some(FinalizedStreamGuard {

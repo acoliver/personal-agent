@@ -384,7 +384,8 @@ mod begin_selection_behavior {
         begin_and_ready(&store, first, Vec::new());
         assert!(store.reduce_batch(vec![
             ViewCommand::ShowThinking {
-                conversation_id: first
+                conversation_id: first,
+                model_id: "test".to_string()
             },
             ViewCommand::AppendThinking {
                 conversation_id: first,
@@ -636,6 +637,7 @@ mod reduce_batch_streaming_and_thinking_commands {
 
         let changed = store.reduce_batch(vec![ViewCommand::ShowThinking {
             conversation_id: id,
+            model_id: "test".to_string(),
         }]);
 
         assert!(changed);
@@ -650,7 +652,8 @@ mod reduce_batch_streaming_and_thinking_commands {
         let store = make_store_with_conversation(id, "Chat");
         begin_and_ready(&store, id, Vec::new());
         assert!(store.reduce_batch(vec![ViewCommand::ShowThinking {
-            conversation_id: id
+            conversation_id: id,
+            model_id: "test".to_string()
         }]));
 
         let changed = store.reduce_batch(vec![ViewCommand::HideThinking {
@@ -743,6 +746,7 @@ mod reduce_batch_streaming_and_thinking_commands {
             conversation_id: id,
             role: MessageRole::Assistant,
             content: "answer".to_string(),
+            model_id: None,
         }]);
         assert!(!deduped);
         assert_eq!(current_snapshot(&store).chat.transcript.len(), 1);
@@ -755,7 +759,8 @@ mod reduce_batch_streaming_and_thinking_commands {
         let store = make_store_with_conversation(id, "Chat");
         begin_and_ready(&store, id, Vec::new());
         assert!(store.reduce_batch(vec![ViewCommand::ShowThinking {
-            conversation_id: id
+            conversation_id: id,
+            model_id: "test".to_string()
         }]));
 
         let changed = store.reduce_batch(vec![ViewCommand::FinalizeStream {
@@ -838,6 +843,7 @@ mod reduce_batch_streaming_and_thinking_commands {
         let changed = store.reduce_batch(vec![
             ViewCommand::ShowThinking {
                 conversation_id: wrong,
+                model_id: "test".to_string(),
             },
             ViewCommand::AppendThinking {
                 conversation_id: wrong,
@@ -876,7 +882,8 @@ mod reduce_batch_streaming_and_thinking_commands {
         begin_and_ready(&store, id, Vec::new());
         assert!(store.reduce_batch(vec![
             ViewCommand::ShowThinking {
-                conversation_id: id
+                conversation_id: id,
+                model_id: "test".to_string()
             },
             ViewCommand::AppendThinking {
                 conversation_id: Uuid::nil(),
@@ -915,6 +922,7 @@ mod reduce_batch_message_append {
             conversation_id: id,
             role: MessageRole::User,
             content: "hello".to_string(),
+            model_id: None,
         }]);
 
         assert!(changed);
@@ -935,6 +943,7 @@ mod reduce_batch_message_append {
             conversation_id: wrong,
             role: MessageRole::Assistant,
             content: "ignored".to_string(),
+            model_id: None,
         }]);
 
         assert!(!changed);
@@ -961,6 +970,7 @@ mod reduce_batch_message_append {
             conversation_id: id,
             role: MessageRole::Assistant,
             content: "same".to_string(),
+            model_id: None,
         }]);
 
         assert!(!changed);
@@ -1256,6 +1266,7 @@ mod subscription_and_revision_behavior {
             conversation_id: id,
             role: MessageRole::User,
             content: "hello".to_string(),
+            model_id: None,
         }]);
 
         assert!(changed);
@@ -1277,6 +1288,7 @@ mod subscription_and_revision_behavior {
             conversation_id: wrong,
             role: MessageRole::User,
             content: "ignored".to_string(),
+            model_id: None,
         }]);
 
         assert!(!changed);
@@ -1428,6 +1440,7 @@ mod is_store_managed_covers_all_reduced_variants {
             conversation_id: id(),
             role: personal_agent::presentation::view_command::MessageRole::User,
             content: "hi".to_string(),
+            model_id: None,
         }));
     }
 
@@ -1435,6 +1448,7 @@ mod is_store_managed_covers_all_reduced_variants {
     fn show_thinking_is_store_managed() {
         assert!(is_store_managed(&ViewCommand::ShowThinking {
             conversation_id: id(),
+            model_id: "test".to_string(),
         }));
     }
 
