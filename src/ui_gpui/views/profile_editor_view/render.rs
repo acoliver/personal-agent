@@ -358,7 +358,10 @@ impl ProfileEditorView {
             .flex()
             .flex_col()
             .child(Self::render_label("API KEY"))
-            .child(Self::render_key_dropdown_and_manage_button(current_label, cx))
+            .child(Self::render_key_dropdown_and_manage_button(
+                current_label,
+                cx,
+            ))
             .into_any_element()
     }
 
