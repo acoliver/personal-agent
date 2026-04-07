@@ -120,8 +120,8 @@ impl ChatView {
                 self.state.show_thinking = !self.state.show_thinking;
                 cx.notify();
             }
-            ViewCommand::ToggleEmojiFilterVisibility => {
-                self.state.filter_emoji = !self.state.filter_emoji;
+            ViewCommand::SetEmojiFilterVisibility { enabled } => {
+                self.state.filter_emoji = enabled;
                 cx.notify();
             }
             ViewCommand::ShowConversationExportFormat { format } => {

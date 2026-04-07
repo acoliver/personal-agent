@@ -155,6 +155,10 @@ impl SettingsView {
                 self.state.export_dir_input = path;
                 true
             }
+            ViewCommand::SetEmojiFilterVisibility { enabled } => {
+                self.state.filter_emoji = enabled;
+                true
+            }
             ViewCommand::ShowNotification { message } => {
                 self.state.status_message = Some(message);
                 self.state.status_is_error = false;

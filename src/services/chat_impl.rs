@@ -318,12 +318,17 @@ impl ChatServiceImpl {
         }
 
         // If emoji filter is enabled, append emoji avoidance instruction
-        let filter_emoji = self
-            .app_settings_service
-            .get_filter_emoji()
-            .await
-            .unwrap_or(None)
-            .unwrap_or(false);
+        let filter_emoji = match self.app_settings_service.get_filter_emoji().await {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to read emoji filter setting; defaulting to disabled"
+                );
+                false
+            }
+        };
         if filter_emoji {
             if !system_prompt.trim().is_empty() {
                 system_prompt.push_str("\n\n");

@@ -72,6 +72,7 @@ impl ChatPresenter {
             &self.view_tx,
         )
         .await;
+        Self::emit_initial_emoji_filter(&self.app_settings_service, &self.view_tx).await;
         Self::restore_startup_conversation(&self.conversation_service, &self.view_tx).await;
         self.spawn_event_loop();
 
@@ -593,7 +594,9 @@ impl ChatPresenter {
             return;
         }
 
-        let _ = view_tx.send(ViewCommand::ToggleEmojiFilterVisibility).await;
+        let _ = view_tx
+            .send(ViewCommand::SetEmojiFilterVisibility { enabled: !current })
+            .await;
     }
 
     /// Handle `ConfirmRenameConversation` user event
@@ -938,12 +941,26 @@ impl ChatPresenter {
 
         Err("No default profile configured".to_string())
     }
+
+    async fn emit_initial_emoji_filter(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &mpsc::Sender<ViewCommand>,
+    ) {
+        let view_tx = view_tx.clone();
+        let enabled = match app_settings_service.get_filter_emoji().await {
+            Ok(Some(value)) => value,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!("Failed to read emoji filter setting at startup: {error}");
+                false
+            }
+        };
+        let _ = view_tx
+            .send(ViewCommand::SetEmojiFilterVisibility { enabled })
+            .await;
+    }
 }
 
-// Implement Presenter trait
-//
-// @plan PLAN-20250125-REFACTOR.P12
-// @requirement REQ-027.1
 impl Presenter for ChatPresenter {
     fn start(&mut self) -> Result<(), PresenterError> {
         // Note: This is a sync wrapper - in real usage, call async start() directly

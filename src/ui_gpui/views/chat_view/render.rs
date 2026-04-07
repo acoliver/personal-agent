@@ -38,7 +38,6 @@ const fn is_emoji(c: char) -> bool {
         '\u{1F900}'..='\u{1F9FF}' |  // Supplemental Symbols and Pictographs
         '\u{1FA00}'..='\u{1FA6F}' |  // Chess Symbols
         '\u{1FA70}'..='\u{1FAFF}' |  // Symbols and Pictographs Extended-A
-        '\u{2300}'..='\u{23FF}'   |  // Miscellaneous Technical (includes media control, watch, etc.)
         '\u{2B50}'                |  // Star
         '\u{2B55}'                |  // Circle
         '\u{25AA}'..='\u{25AB}'   |  // Small squares
@@ -51,7 +50,7 @@ const fn is_emoji(c: char) -> bool {
         '\u{303D}'                |  // Part alternation mark
         '\u{3297}'                |  // Circled ideograph congratulation
         '\u{3299}'                |  // Circled ideograph secret
-        '\u{200D}'                |  // Zero-width joiner (for emoji sequences)
+        '\u{FE0F}'                |  // Variation Selector-16
         '\u{20E3}'                |  // Combining enclosing keycap
         '\u{E0020}'..='\u{E007F}' // Tags for emoji sequences
     )
