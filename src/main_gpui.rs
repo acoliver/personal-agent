@@ -17,6 +17,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fs, path::PathBuf};
 
 use gpui::*;
 use tracing::{info, Level};
@@ -146,6 +147,51 @@ fn emit_mcp_snapshot_to_flume(tx: &flume::Sender<personal_agent::presentation::V
         "emit_mcp_snapshot_to_flume: sent {} MCP entries on popup reopen",
         config.mcps.len()
     );
+}
+
+/// Re-emit backup settings snapshot directly into the flume channel.
+///
+/// Called from `open_popup` so that a newly-created `MainPanel` (and its
+/// fresh `SettingsView`) receives the current backup settings.  The one-shot
+/// broadcast emission at startup was already consumed by the previous
+/// (now-closed) window.
+fn emit_backup_snapshot_to_flume(tx: &flume::Sender<personal_agent::presentation::ViewCommand>) {
+    use personal_agent::backup::DatabaseBackupSettings;
+    use personal_agent::presentation::view_command::ViewCommand;
+
+    // Get backup settings from app_settings.json
+    let settings_path = dirs::data_local_dir()
+        .map(|d| d.join("PersonalAgent").join("app_settings.json"))
+        .unwrap_or_else(|| PathBuf::from("app_settings.json"));
+
+    let settings = if settings_path.exists() {
+        fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|storage| storage.get("extra_settings")?.as_object().cloned())
+            .map_or_else(DatabaseBackupSettings::default, |extra| {
+                extra
+                    .get("database_backup_settings")
+                    .and_then(|v| serde_json::from_value::<DatabaseBackupSettings>(v.clone()).ok())
+                    .unwrap_or_default()
+            })
+    } else {
+        DatabaseBackupSettings::default()
+    };
+
+    // List backups from directory
+    let backup_dir = settings.effective_backup_directory();
+    let backups = backup_dir.map_or_else(Vec::new, |dir| {
+        personal_agent::services::BackupServiceImpl::list_backups_in_dir(&dir).unwrap_or_default()
+    });
+
+    let _ = tx.send(ViewCommand::BackupSettingsLoaded {
+        settings,
+        backups,
+        last_backup_time: None, // We don't have easy access to this here
+    });
+
+    tracing::info!("emit_backup_snapshot_to_flume: sent backup settings on popup reopen");
 }
 
 fn spawn_mpsc_to_flume_view_command_bridge(

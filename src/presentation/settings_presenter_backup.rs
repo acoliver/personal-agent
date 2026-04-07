@@ -47,9 +47,14 @@ impl SettingsPresenter {
         backup_service: &Arc<dyn BackupService>,
         view_tx: &broadcast::Sender<ViewCommand>,
     ) {
+        tracing::info!("emit_backup_settings_snapshot: starting");
+
         // Get current settings
         let settings = match backup_service.get_settings().await {
-            Ok(s) => s,
+            Ok(s) => {
+                tracing::info!("emit_backup_settings_snapshot: got settings {:?}", s);
+                s
+            }
             Err(e) => {
                 tracing::warn!("Failed to load backup settings: {}", e);
                 crate::backup::DatabaseBackupSettings::default()
@@ -58,7 +63,13 @@ impl SettingsPresenter {
 
         // Get list of backups
         let backups = match backup_service.list_backups().await {
-            Ok(b) => b,
+            Ok(b) => {
+                tracing::info!("emit_backup_settings_snapshot: listed {} backups", b.len());
+                for backup in &b {
+                    tracing::info!("  backup: {:?}", backup);
+                }
+                b
+            }
             Err(e) => {
                 tracing::warn!("Failed to list backups: {}", e);
                 Vec::new()
@@ -67,13 +78,20 @@ impl SettingsPresenter {
 
         // Get last backup time
         let last_backup_time = match backup_service.get_last_backup_time().await {
-            Ok(t) => t,
+            Ok(t) => {
+                tracing::info!("emit_backup_settings_snapshot: last_backup_time = {:?}", t);
+                t
+            }
             Err(e) => {
                 tracing::warn!("Failed to get last backup time: {}", e);
                 None
             }
         };
 
+        tracing::info!(
+            "emit_backup_settings_snapshot: sending BackupSettingsLoaded with {} backups",
+            backups.len()
+        );
         let _ = view_tx.send(ViewCommand::BackupSettingsLoaded {
             settings,
             backups,

@@ -306,6 +306,10 @@ impl SettingsView {
                 backups,
                 last_backup_time,
             } => {
+                tracing::info!(
+                    "SettingsView: BackupSettingsLoaded received - {} backups",
+                    backups.len()
+                );
                 self.state.backup_settings = Some(settings.clone());
                 self.state.backups.clone_from(backups);
                 self.state.last_backup_time = *last_backup_time;
@@ -313,6 +317,7 @@ impl SettingsView {
                 true
             }
             ViewCommand::BackupCompleted { result } => {
+                tracing::info!("SettingsView: BackupCompleted received - {:?}", result);
                 self.state.backup_in_progress = false;
                 self.state.backup_status = Some(result.message());
                 if result.is_success() {
@@ -321,12 +326,25 @@ impl SettingsView {
                 true
             }
             ViewCommand::BackupListRefreshed { backups } => {
+                tracing::info!(
+                    "SettingsView: BackupListRefreshed received - {} backups",
+                    backups.len()
+                );
                 self.state.backups.clone_from(backups);
                 true
             }
             ViewCommand::RestoreCompleted { result } => {
+                tracing::info!("SettingsView: RestoreCompleted received - {:?}", result);
                 self.state.backup_status = Some(result.message());
                 self.state.backup_in_progress = false;
+                // Clear selection so user can select a different backup
+                self.state.selected_backup_id = None;
+                if result.is_success() {
+                    // Show restart prompt
+                    self.state.backup_status = Some(
+                        "Database restored successfully. Please restart the app for changes to take effect.".to_string()
+                    );
+                }
                 true
             }
             _ => false,

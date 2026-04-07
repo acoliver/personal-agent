@@ -587,20 +587,31 @@ impl SettingsView {
             .px(px(16.0))
             .py(px(8.0))
             .rounded(px(4.0))
-            .cursor_pointer()
-            .when(can_restore, |d| d.hover(|s| s.bg(Theme::danger())))
-            .bg(Theme::danger())
+            .when(can_restore, |d| {
+                d.cursor_pointer()
+                    .hover(|s| s.bg(Theme::danger()))
+                    .bg(Theme::error())
+            })
+            .when(!can_restore, |d| {
+                d.bg(Theme::border()).text_color(Theme::text_muted())
+            })
             .text_size(px(Theme::font_size_ui()))
-            .text_color(Theme::selection_fg())
+            .when(can_restore, |d| d.text_color(Theme::selection_fg()))
             .child("Restore Selected Backup")
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _window, _cx| {
-                    if let Some(path) = restore_path.clone() {
-                        this.emit_restore_backup(path);
-                    }
-                }),
-            )
+            .when(can_restore, move |d| {
+                d.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _window, cx| {
+                        if let Some(path) = restore_path.clone() {
+                            // Mark restore as in progress
+                            this.state.backup_in_progress = true;
+                            this.state.backup_status = Some("Restoring backup...".to_string());
+                            cx.notify();
+                            this.emit_restore_backup(path);
+                        }
+                    }),
+                )
+            })
     }
 
     /// Helper: render a checkbox indicator (checked/unchecked box).

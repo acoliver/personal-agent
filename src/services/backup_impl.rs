@@ -48,6 +48,44 @@ impl BackupServiceImpl {
         }
     }
 
+    /// List backups in a directory (static helper for popup re-open)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be read.
+    pub fn list_backups_in_dir(dir: &Path) -> ServiceResult<Vec<BackupInfo>> {
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut backups = Vec::new();
+
+        let entries = fs::read_dir(dir)
+            .map_err(|e| ServiceError::Io(format!("Failed to read backup directory: {e}")))?;
+
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| ServiceError::Io(format!("Failed to read directory entry: {e}")))?;
+            let path = entry.path();
+
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(timestamp) = Self::parse_backup_filename(filename) {
+                    let metadata = entry.metadata().map_err(|e| {
+                        ServiceError::Io(format!("Failed to read file metadata: {e}"))
+                    })?;
+
+                    let size = metadata.len();
+                    backups.push(BackupInfo::new(path, timestamp, size));
+                }
+            }
+        }
+
+        // Sort by timestamp (newest first)
+        backups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        Ok(backups)
+    }
+
     /// Get the backup directory path
     async fn backup_dir(&self) -> ServiceResult<PathBuf> {
         let settings = self.load_settings().await?;

@@ -103,6 +103,18 @@ impl MainPanel {
             | ApiKeyStored { .. }
             | ApiKeyDeleted { .. } => self.handle_notification_api_command(cmd, cx),
 
+            // ── backup commands (forward to settings view) ──────────────
+            BackupSettingsLoaded { .. }
+            | BackupCompleted { .. }
+            | BackupListRefreshed { .. }
+            | RestoreCompleted { .. } => {
+                tracing::info!(
+                    "MainPanel: forwarding backup command {:?}",
+                    std::mem::discriminant(&cmd)
+                );
+                self.forward_to_settings(cmd, cx);
+            }
+
             other => {
                 tracing::debug!("MainPanel: command {:?} not forwarded to child view", other);
             }

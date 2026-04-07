@@ -25,6 +25,7 @@ impl SettingsView {
     }
 
     pub(super) fn emit_restore_backup(&self, path: String) {
+        // Mark restore as in progress
         self.emit(&UserEvent::RestoreBackup { path });
     }
 
