@@ -757,92 +757,6 @@ impl SettingsView {
     fn render_mcp_tools_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         self.render_mcp_section(cx)
     }
-
-    /// Render backdrop for theme dropdown (click to dismiss).
-    #[allow(clippy::unused_self)]
-    fn render_theme_dropdown_backdrop(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .id("theme-dropdown-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _window, cx| {
-                    this.close_theme_dropdown();
-                    cx.notify();
-                }),
-            )
-    }
-
-    /// Render the theme dropdown menu overlay.
-    fn render_theme_dropdown_menu(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let themes = &self.state.available_themes;
-
-        div()
-            .id("theme-dropdown-menu")
-            .absolute()
-            // Position below the top bar (44px) + sidebar item + some padding
-            .top(px(120.0))
-            .left(px(140.0))
-            .w(px(200.0))
-            .max_h(px(200.0))
-            .bg(Theme::bg_dark())
-            .border_1()
-            .border_color(Theme::accent())
-            .rounded(px(4.0))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .children(themes.iter().map(|t| self.render_theme_row(t, cx)))
-            .when(themes.is_empty(), |d| {
-                d.items_center().justify_center().child(
-                    div()
-                        .text_size(px(Theme::font_size_mono()))
-                        .text_color(Theme::text_muted())
-                        .child("No themes available"),
-                )
-            })
-    }
-
-    /// Render a single row in the theme dropdown list.
-    fn render_theme_row(
-        &self,
-        option: &super::ThemeOption,
-        cx: &mut gpui::Context<Self>,
-    ) -> gpui::AnyElement {
-        let slug = option.slug.clone();
-        let name = option.name.clone();
-        let is_selected = self.state.selected_theme_slug == slug;
-
-        div()
-            .id(gpui::SharedString::from(format!("theme-{slug}")))
-            .w_full()
-            .h(px(24.0))
-            .px(px(8.0))
-            .flex()
-            .items_center()
-            .cursor_pointer()
-            .when(is_selected, |d| {
-                d.bg(Theme::selection_bg())
-                    .text_color(Theme::selection_fg())
-            })
-            .when(!is_selected, |d| {
-                d.hover(|s| s.bg(Theme::bg_dark()))
-                    .text_color(Theme::text_primary())
-            })
-            .text_size(px(Theme::font_size_mono()))
-            .child(name)
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    tracing::info!("Theme selected: {}", slug);
-                    this.select_theme_from_dropdown(slug.clone(), cx);
-                }),
-            )
-            .into_any_element()
-    }
 }
 
 impl gpui::Focusable for SettingsView {
@@ -857,8 +771,6 @@ impl gpui::Render for SettingsView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        let dropdown_open = self.state.theme_dropdown_open;
-
         div()
             .id("settings-view")
             .flex()
@@ -911,10 +823,5 @@ impl gpui::Render for SettingsView {
             )
             // Bottom bar with back button
             .child(Self::render_bottom_bar(cx))
-            // Theme dropdown overlay (rendered at root level for z-ordering)
-            .when(dropdown_open, |d| {
-                d.child(self.render_theme_dropdown_backdrop(cx))
-                    .child(self.render_theme_dropdown_menu(cx))
-            })
     }
 }

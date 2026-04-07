@@ -685,8 +685,8 @@ impl ChatView {
     /// Render the main chat content column (title bar + chat area + input bar).
     fn render_main_content(
         &self,
-        app_mode: AppMode,
-        window: &mut gpui::Window,
+        _app_mode: AppMode,
+        _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         div()
@@ -704,15 +704,8 @@ impl ChatView {
             .child(self.render_chat_area(cx))
             // Input bar (50px)
             .child(self.render_input_bar(cx))
-            // Overlay dropdowns (popup mode, or popout when sidebar hidden)
-            .when(
-                self.state.conversation_dropdown_open
-                    && (app_mode == AppMode::Popup || !self.state.sidebar_visible),
-                |d| d.child(self.render_conversation_dropdown(cx)),
-            )
-            .when(self.state.profile_dropdown_open, |d| {
-                d.child(self.render_profile_dropdown(window, cx))
-            })
+        // Note: Dropdown overlays are now rendered at root level in render()
+        // to avoid being clipped by the flex container
     }
 }
 
@@ -768,5 +761,14 @@ impl gpui::Render for ChatView {
                     // Main content column
                     .child(self.render_main_content(app_mode, window, cx))
             )
+            // Dropdown overlays - rendered at root level so they don't get clipped by flex containers
+            .when(
+                self.state.conversation_dropdown_open
+                    && (app_mode == AppMode::Popup || !self.state.sidebar_visible),
+                |d| d.child(self.render_conversation_dropdown(cx)),
+            )
+            .when(self.state.profile_dropdown_open, |d| {
+                d.child(self.render_profile_dropdown(window, cx))
+            })
     }
 }

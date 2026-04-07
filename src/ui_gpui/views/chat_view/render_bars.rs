@@ -14,6 +14,15 @@ use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
 
+/// Height of the top bar.
+const TOP_BAR_HEIGHT: f32 = 44.0;
+
+/// Height of the title bar where selectors live.
+const TITLE_BAR_HEIGHT: f32 = 32.0;
+
+/// Gap below bars before dropdown appears (negative = move up).
+const DROPDOWN_GAP: f32 = -1.0;
+
 macro_rules! icon_btn {
     ($id:expr, $label:expr, $active:expr, $handler:expr) => {
         div()
@@ -47,7 +56,7 @@ impl ChatView {
         div()
             .id("chat-top-bar")
             .flex_shrink_0()
-            .h(px(44.0))
+            .h(px(44.0 * Theme::ui_scale()))
             .w_full()
             .bg(Theme::bg_darker())
             .border_b_1()
@@ -327,7 +336,7 @@ impl ChatView {
         div()
             .id("chat-title-bar")
             .flex_shrink_0()
-            .h(px(32.0))
+            .h(px(32.0 * Theme::ui_scale()))
             .w_full()
             .bg(Theme::bg_darker())
             .px(px(12.0))
@@ -636,11 +645,13 @@ impl ChatView {
                 div()
                     .id("chat-conversation-dropdown-menu")
                     .absolute()
-                    .top(px(74.0 * Theme::ui_scale()))
+                    .top(px(
+                        (TOP_BAR_HEIGHT + TITLE_BAR_HEIGHT + DROPDOWN_GAP) * Theme::ui_scale()
+                    ))
                     .left(px(12.0 + sidebar_toggle_offset))
-                    .min_w(px(320.0))
-                    .max_w(px(520.0 * Theme::ui_scale()))
-                    .max_h(px(220.0 * Theme::ui_scale()))
+                    .min_w(px(220.0))
+                    .max_w(px(520.0))
+                    .max_h(px(220.0))
                     .overflow_y_scroll()
                     .bg(Theme::bg_dark())
                     .border_1()
@@ -755,7 +766,9 @@ impl ChatView {
                 div()
                     .id("chat-profile-dropdown-menu")
                     .absolute()
-                    .top(px(74.0 * Theme::ui_scale()))
+                    .top(px(
+                        (TOP_BAR_HEIGHT + TITLE_BAR_HEIGHT + DROPDOWN_GAP) * Theme::ui_scale()
+                    ))
                     .left(Self::compute_profile_dropdown_left(
                         window.bounds().size.width,
                         Self::sidebar_toggle_offset(cx),
