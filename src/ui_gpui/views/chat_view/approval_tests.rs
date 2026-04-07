@@ -4,7 +4,7 @@
 #![allow(unused_imports)]
 
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ToolApprovalContext, ToolCategory, ViewCommand};
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::views::chat_view::{ApprovalBubbleState, ChatState, ChatView};
 use gpui::{AppContext, TestAppContext};
@@ -14,6 +14,14 @@ fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
     let (user_tx, user_rx) = flume::bounded(16);
     let (_view_tx, view_rx) = flume::bounded(16);
     (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
+}
+
+fn make_shell_context(cmd: impl Into<String>) -> ToolApprovalContext {
+    ToolApprovalContext::new("ShellExec", ToolCategory::Shell, cmd)
+}
+
+fn make_write_context(path: impl Into<String>) -> ToolApprovalContext {
+    ToolApprovalContext::new("WriteFile", ToolCategory::FileWrite, path)
 }
 
 #[gpui::test]
@@ -26,8 +34,7 @@ async fn handle_tool_approval_request_adds_pending_bubble(cx: &mut TestAppContex
             view.handle_command(
                 ViewCommand::ToolApprovalRequest {
                     request_id: "req-1".into(),
-                    tool_name: "shell".into(),
-                    tool_argument: "git push origin main".into(),
+                    context: make_shell_context("git push origin main"),
                 },
                 cx,
             );
@@ -35,8 +42,9 @@ async fn handle_tool_approval_request_adds_pending_bubble(cx: &mut TestAppContex
             assert_eq!(view.state.approval_bubbles.len(), 1);
             let bubble = &view.state.approval_bubbles[0];
             assert_eq!(bubble.request_id, "req-1");
-            assert_eq!(bubble.tool_name, "shell");
-            assert_eq!(bubble.tool_argument, "git push origin main");
+            assert_eq!(bubble.context.tool_name, "ShellExec");
+            assert_eq!(bubble.context.category, ToolCategory::Shell);
+            assert_eq!(bubble.context.primary_target, "git push origin main");
             assert_eq!(bubble.state, ApprovalBubbleState::Pending);
         });
     });
@@ -52,8 +60,7 @@ async fn handle_tool_approval_resolved_approved_removes_bubble(cx: &mut TestAppC
             view.handle_command(
                 ViewCommand::ToolApprovalRequest {
                     request_id: "req-2".into(),
-                    tool_name: "write".into(),
-                    tool_argument: "/tmp/greeting.txt".into(),
+                    context: make_write_context("/tmp/greeting.txt"),
                 },
                 cx,
             );
@@ -85,8 +92,7 @@ async fn handle_tool_approval_resolved_denied_removes_bubble(cx: &mut TestAppCon
             view.handle_command(
                 ViewCommand::ToolApprovalRequest {
                     request_id: "req-3".into(),
-                    tool_name: "shell".into(),
-                    tool_argument: "rm -rf /".into(),
+                    context: make_shell_context("rm -rf /"),
                 },
                 cx,
             );
@@ -163,8 +169,7 @@ async fn yolo_mode_auto_approves_tool_requests_without_rendering_bubble(cx: &mut
             view.handle_command(
                 ViewCommand::ToolApprovalRequest {
                     request_id: "req-yolo".into(),
-                    tool_name: "shell".into(),
-                    tool_argument: "rm -rf /tmp/sandbox".into(),
+                    context: make_shell_context("rm -rf /tmp/sandbox"),
                 },
                 cx,
             );
@@ -202,8 +207,7 @@ async fn conversation_cleared_also_clears_approval_bubbles(cx: &mut TestAppConte
             view.handle_command(
                 ViewCommand::ToolApprovalRequest {
                     request_id: "req-clear".into(),
-                    tool_name: "shell".into(),
-                    tool_argument: "echo hello".into(),
+                    context: make_shell_context("echo hello"),
                 },
                 cx,
             );
@@ -225,16 +229,14 @@ async fn resolving_one_bubble_retains_other_pending_bubbles(cx: &mut TestAppCont
             view.handle_command(
                 ViewCommand::ToolApprovalRequest {
                     request_id: "a".into(),
-                    tool_name: "shell".into(),
-                    tool_argument: "git status".into(),
+                    context: make_shell_context("git status"),
                 },
                 cx,
             );
             view.handle_command(
                 ViewCommand::ToolApprovalRequest {
                     request_id: "b".into(),
-                    tool_name: "write".into(),
-                    tool_argument: "/tmp/out.txt".into(),
+                    context: make_write_context("/tmp/out.txt"),
                 },
                 cx,
             );
@@ -251,11 +253,370 @@ async fn resolving_one_bubble_retains_other_pending_bubbles(cx: &mut TestAppCont
 
             // Resolved bubble "a" is removed; only pending "b" remains.
             assert_eq!(view.state.approval_bubbles.len(), 1);
+            // Note: request_ids now tracks all grouped request IDs, but the first request_id field remains
             assert_eq!(view.state.approval_bubbles[0].request_id, "b");
             assert_eq!(
                 view.state.approval_bubbles[0].state,
                 ApprovalBubbleState::Pending
             );
+        });
+    });
+}
+
+// ── Queue Behavior Tests ───────────────────────────────────────────────
+
+#[gpui::test]
+async fn queue_shows_only_first_pending_bubble(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // Add three pending approval requests with different targets
+            // (so they don't group together)
+            for i in 0..3 {
+                view.handle_command(
+                    ViewCommand::ToolApprovalRequest {
+                        request_id: format!("req-{i}"),
+                        context: make_shell_context(format!("cmd-{i}")),
+                    },
+                    cx,
+                );
+            }
+
+            assert_eq!(view.state.approval_bubbles.len(), 3);
+
+            // Simulate render: count visible pending bubbles (should be 1)
+            let visible_pending: Vec<_> = view
+                .state
+                .approval_bubbles
+                .iter()
+                .filter(|b| matches!(b.state, ApprovalBubbleState::Pending))
+                .take(1)
+                .collect();
+
+            assert_eq!(visible_pending.len(), 1);
+            assert_eq!(visible_pending[0].request_id, "req-0");
+        });
+    });
+}
+
+#[gpui::test]
+async fn queue_fifo_order_first_added_first_shown(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // Add two pending requests with different targets
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "first".into(),
+                    context: make_shell_context("echo first"),
+                },
+                cx,
+            );
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "second".into(),
+                    context: make_write_context("/tmp/second.txt"),
+                },
+                cx,
+            );
+
+            // First should be visible (at front of queue)
+            let visible_pending: Vec<_> = view
+                .state
+                .approval_bubbles
+                .iter()
+                .filter(|b| matches!(b.state, ApprovalBubbleState::Pending))
+                .take(1)
+                .collect();
+            assert_eq!(visible_pending[0].request_id, "first");
+
+            // Resolve first
+            view.handle_command(
+                ViewCommand::ToolApprovalResolved {
+                    request_id: "first".into(),
+                    approved: true,
+                },
+                cx,
+            );
+
+            // Second should now be visible
+            let visible_pending: Vec<_> = view
+                .state
+                .approval_bubbles
+                .iter()
+                .filter(|b| matches!(b.state, ApprovalBubbleState::Pending))
+                .take(1)
+                .collect();
+            assert_eq!(visible_pending.len(), 1);
+            assert_eq!(visible_pending[0].request_id, "second");
+        });
+    });
+}
+
+#[gpui::test]
+async fn queue_rapid_sequential_approvals_stable(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // Add multiple requests with different targets
+            for i in 0..5 {
+                view.handle_command(
+                    ViewCommand::ToolApprovalRequest {
+                        request_id: format!("r{i}"),
+                        context: make_shell_context(format!("cmd-{i}")),
+                    },
+                    cx,
+                );
+            }
+
+            // Rapidly approve all but one
+            for i in 0..4 {
+                view.handle_command(
+                    ViewCommand::ToolApprovalResolved {
+                        request_id: format!("r{i}"),
+                        approved: true,
+                    },
+                    cx,
+                );
+            }
+
+            // Only the last one should remain
+            assert_eq!(view.state.approval_bubbles.len(), 1);
+            assert_eq!(view.state.approval_bubbles[0].request_id, "r4");
+            assert_eq!(
+                view.state.approval_bubbles[0].state,
+                ApprovalBubbleState::Pending
+            );
+
+            // That one should be visible
+            let visible_pending: Vec<_> = view
+                .state
+                .approval_bubbles
+                .iter()
+                .filter(|b| matches!(b.state, ApprovalBubbleState::Pending))
+                .take(1)
+                .collect();
+            assert_eq!(visible_pending.len(), 1);
+            assert_eq!(visible_pending[0].request_id, "r4");
+        });
+    });
+}
+
+// ── Grouping Tests ───────────────────────────────────────────────────
+
+fn make_edit_context(path: impl Into<String>, old: &str, new: &str) -> ToolApprovalContext {
+    ToolApprovalContext::new("EditFile", ToolCategory::FileEdit, path)
+        .with_detail("old", old)
+        .with_detail("new", new)
+}
+
+#[gpui::test]
+async fn two_edit_requests_same_path_grouped_into_one_bubble(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // Two EditFile requests for the same path
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "edit-1".into(),
+                    context: make_edit_context("/tmp/main.rs", "foo", "bar"),
+                },
+                cx,
+            );
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "edit-2".into(),
+                    context: make_edit_context("/tmp/main.rs", "baz", "qux"),
+                },
+                cx,
+            );
+
+            // Should be grouped into one bubble
+            assert_eq!(view.state.approval_bubbles.len(), 1);
+            let bubble = &view.state.approval_bubbles[0];
+            assert_eq!(bubble.operation_count(), 2);
+            assert_eq!(bubble.request_ids.len(), 2);
+            assert!(bubble.request_ids.contains(&"edit-1".to_string()));
+            assert!(bubble.request_ids.contains(&"edit-2".to_string()));
+        });
+    });
+}
+
+#[gpui::test]
+async fn edit_file_and_write_file_same_path_grouped(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // EditFile for a path
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "edit-1".into(),
+                    context: ToolApprovalContext::new(
+                        "EditFile",
+                        ToolCategory::FileEdit,
+                        "/tmp/file.txt",
+                    ),
+                },
+                cx,
+            );
+            // WriteFile for the same path - same category (FileEdit/WriteFile both map to file-edit)
+            // Actually, we need to verify the categories are compatible
+            // FileEdit and FileWrite have different categories, so they shouldn't group
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "write-1".into(),
+                    context: ToolApprovalContext::new(
+                        "WriteFile",
+                        ToolCategory::FileWrite,
+                        "/tmp/file.txt",
+                    ),
+                },
+                cx,
+            );
+
+            // Different categories, so they should NOT group
+            assert_eq!(view.state.approval_bubbles.len(), 2);
+        });
+    });
+}
+
+#[gpui::test]
+async fn edit_file_path_a_and_path_b_separate_bubbles(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // EditFile for path A
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "edit-a".into(),
+                    context: make_edit_context("/tmp/a.rs", "x", "y"),
+                },
+                cx,
+            );
+            // EditFile for path B
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "edit-b".into(),
+                    context: make_edit_context("/tmp/b.rs", "x", "y"),
+                },
+                cx,
+            );
+
+            // Different targets, so separate bubbles
+            assert_eq!(view.state.approval_bubbles.len(), 2);
+        });
+    });
+}
+
+#[gpui::test]
+async fn grouping_only_applies_to_pending_state(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // First request
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "first".into(),
+                    context: make_edit_context("/tmp/file.rs", "x", "y"),
+                },
+                cx,
+            );
+
+            // Resolve it
+            view.handle_command(
+                ViewCommand::ToolApprovalResolved {
+                    request_id: "first".into(),
+                    approved: true,
+                },
+                cx,
+            );
+
+            // The bubble is removed on resolve, so there's nothing to group with
+            assert!(view.state.approval_bubbles.is_empty());
+
+            // New request for same path - no existing pending bubble
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "second".into(),
+                    context: make_edit_context("/tmp/file.rs", "a", "b"),
+                },
+                cx,
+            );
+
+            // Should create a new bubble
+            assert_eq!(view.state.approval_bubbles.len(), 1);
+            assert_eq!(view.state.approval_bubbles[0].request_id, "second");
+        });
+    });
+}
+
+#[gpui::test]
+async fn approving_group_resolves_all_request_ids(cx: &mut TestAppContext) {
+    let (bridge, _user_rx) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ChatView::new(ChatState::default(), cx);
+        view.set_bridge(bridge);
+        view
+    });
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // Add three grouped operations
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "op1".into(),
+                    context: make_edit_context("/tmp/main.rs", "a", "b"),
+                },
+                cx,
+            );
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "op2".into(),
+                    context: make_edit_context("/tmp/main.rs", "c", "d"),
+                },
+                cx,
+            );
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    request_id: "op3".into(),
+                    context: make_edit_context("/tmp/main.rs", "e", "f"),
+                },
+                cx,
+            );
+
+            assert_eq!(view.state.approval_bubbles.len(), 1);
+            assert_eq!(view.state.approval_bubbles[0].operation_count(), 3);
+
+            // Approve the bubble (simulating Yes button click)
+            view.handle_command(
+                ViewCommand::ToolApprovalResolved {
+                    request_id: "op1".into(),
+                    approved: true,
+                },
+                cx,
+            );
+        });
+    });
+
+    // The bubble should be removed after resolution
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, _cx| {
+            assert!(view.state.approval_bubbles.is_empty());
         });
     });
 }

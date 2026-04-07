@@ -1,5 +1,5 @@
 //! Agent-based LLM client with MCP tool integration for `PersonalAgent`.
-use crate::agent::tool_approval_policy::{ToolApprovalDecision, ToolApprovalPolicy};
+use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::llm::error::debug_error_message;
 use crate::llm::{LlmError, Message, Role, StreamEvent};
 use crate::presentation::view_command::ViewCommand;
@@ -10,8 +10,7 @@ use serdes_ai::core::messages::{
 };
 use serdes_ai::UserContent;
 use serdes_ai_agent::prelude::*;
-use serdes_ai_agent::ToolExecutor;
-use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
+use serdes_ai_tools::ToolDefinition;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
@@ -257,95 +256,6 @@ fn register_native_tools(
     builder
 }
 
-/// Executor that bridges Agent tools to MCP
-struct McpToolExecutor {
-    tool_name: String,
-}
-
-#[async_trait::async_trait]
-impl ToolExecutor<McpToolContext> for McpToolExecutor {
-    async fn execute(
-        &self,
-        args: serde_json::Value,
-        ctx: &RunContext<McpToolContext>,
-    ) -> Result<ToolReturn, ToolError> {
-        let provider = {
-            let service_arc = crate::mcp::McpService::global();
-            let provider = service_arc
-                .lock()
-                .await
-                .find_tool_provider_metadata(&self.tool_name)
-                .ok_or_else(|| {
-                    ToolError::execution_failed(format!(
-                        "No MCP provider found for tool {}",
-                        self.tool_name
-                    ))
-                })?;
-            provider
-        };
-
-        let (tool_identifier, decision) = {
-            let policy = ctx.deps().policy.lock().await;
-            let tool_identifier = policy.mcp_tool_identifier(&provider.mcp_name, &self.tool_name);
-            let decision = policy.evaluate(&tool_identifier);
-            drop(policy);
-            (tool_identifier, decision)
-        };
-
-        match decision {
-            ToolApprovalDecision::Allow => {}
-            ToolApprovalDecision::Deny => {
-                return Err(ToolError::execution_failed(
-                    "Tool execution denied by policy",
-                ));
-            }
-            ToolApprovalDecision::AskUser => {
-                let request_id = uuid::Uuid::new_v4().to_string();
-                let waiter = ctx
-                    .deps()
-                    .approval_gate
-                    .wait_for_approval(request_id.clone(), tool_identifier.clone());
-
-                if ctx
-                    .deps()
-                    .view_tx
-                    .try_send(ViewCommand::ToolApprovalRequest {
-                        request_id: request_id.clone(),
-                        tool_name: self.tool_name.clone(),
-                        tool_argument: args.to_string(),
-                    })
-                    .is_err()
-                {
-                    let _ = ctx.deps().approval_gate.resolve(&request_id, false);
-                    return Err(ToolError::execution_failed(
-                        "Failed to send approval request to UI (channel full or closed)",
-                    ));
-                }
-
-                let approved = waiter.wait().await.unwrap_or(false);
-                if !approved {
-                    return Err(ToolError::execution_failed("Tool execution denied by user"));
-                }
-            }
-        }
-
-        // Get the global MCP service and call the tool
-        let service_arc = crate::mcp::McpService::global();
-        let result = service_arc
-            .lock()
-            .await
-            .call_tool(&self.tool_name, args.clone())
-            .await
-            .map_err(|e| {
-                ToolError::execution_failed(format!("MCP tool {} failed: {}", self.tool_name, e))
-            })?;
-
-        // Convert the JSON result to a ToolReturn
-        Ok(ToolReturn::text(result.to_string()))
-    }
-}
-
-/// Agent client extensions for `LlmClient`
 pub trait AgentClientExt {
     /// Run an agent with streaming
     fn run_agent_stream<F>(
@@ -602,7 +512,8 @@ impl crate::llm::LlmClient {
         let mut builder = AgentBuilder::from_arc(model)
             .temperature(self.profile.parameters.temperature)
             .top_p(self.profile.parameters.top_p)
-            .max_tokens(u64::from(self.profile.parameters.max_tokens));
+            .max_tokens(u64::from(self.profile.parameters.max_tokens))
+            .parallel_tool_calls(true);
 
         if !system_prompt.is_empty() {
             builder = builder.system_prompt(system_prompt);
@@ -619,7 +530,7 @@ impl crate::llm::LlmClient {
             let tool_name = tool.name.clone();
             let tool_def = ToolDefinition::new(&tool_name, &tool.description)
                 .with_parameters(tool.input_schema.clone());
-            let executor = McpToolExecutor { tool_name };
+            let executor = crate::llm::mcp_tool_executor::McpToolExecutor::new(&tool_name);
             builder = builder.tool_with_executor(tool_def, executor);
         }
         builder

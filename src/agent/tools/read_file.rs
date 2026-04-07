@@ -5,7 +5,7 @@
 
 use crate::agent::tool_approval_policy::ToolApprovalDecision;
 use crate::llm::client_agent::McpToolContext;
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ToolApprovalContext, ToolCategory, ViewCommand};
 use serdes_ai_agent::prelude::*;
 use serdes_ai_agent::ToolExecutor;
 use serdes_ai_tools::{ToolDefinition, ToolError, ToolReturn};
@@ -146,12 +146,14 @@ async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(),
                 .approval_gate
                 .wait_for_approval(request_id.clone(), "ReadFile".to_string());
 
+            // Build rich context for approval UI
+            let context = ToolApprovalContext::new("ReadFile", ToolCategory::FileRead, path);
+
             if tool_context
                 .view_tx
                 .try_send(ViewCommand::ToolApprovalRequest {
                     request_id: request_id.clone(),
-                    tool_name: "ReadFile".to_string(),
-                    tool_argument: path.to_string(),
+                    context,
                 })
                 .is_err()
             {
@@ -631,11 +633,11 @@ line2
         let request_id = match request {
             ViewCommand::ToolApprovalRequest {
                 request_id,
-                tool_name,
-                tool_argument,
+                context,
             } => {
-                assert_eq!(tool_name, "ReadFile");
-                assert_eq!(tool_argument, path);
+                assert_eq!(context.tool_name, "ReadFile");
+                assert_eq!(context.category, ToolCategory::FileRead);
+                assert_eq!(context.primary_target, path);
                 request_id
             }
             other => panic!("expected ToolApprovalRequest, got {other:?}"),
