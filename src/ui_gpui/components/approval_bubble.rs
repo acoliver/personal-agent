@@ -3,9 +3,11 @@
 //! Renders approval requests in the conversation stream with support for
 //! grouping related operations (same category + same primary target):
 //!
-//!     [tool icon] EditFile: /tmp/main.rs
-//!     (3 operations) [expand/collapse toggle]
-//!     [Yes] [Session] [Always] [No]
+//! ```text
+//! [tool icon] EditFile: /tmp/main.rs
+//! (3 operations) [expand/collapse toggle]
+//! [Yes] [Session] [Always] [No]
+//! ```
 //!
 //! When expanded, shows the list of grouped operations.
 

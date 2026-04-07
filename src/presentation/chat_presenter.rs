@@ -226,7 +226,7 @@ impl ChatPresenter {
                 )
                 .await;
             }
-            UserEvent::RefreshHistory => {
+            UserEvent::RefreshHistory | UserEvent::RefreshConversations => {
                 let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
             }
             UserEvent::SelectConversationExportFormat { format } => {

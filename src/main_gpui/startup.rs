@@ -2,9 +2,16 @@
 //!
 //! Resolves runtime paths, builds initial `StartupInputs`, and migrates
 //! legacy data from `~/.llxprt` to platform-standard directories.
+//!
+//! Recovery support: Provides `RecoveryResult` type and `scan_backup_directory()`
+//! for detecting database failures and offering automatic backup restoration.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
+use flate2::read::GzDecoder;
+use personal_agent::backup::BackupInfo;
 use personal_agent::db::spawn_db_thread;
 use personal_agent::services::{
     AppSettingsService, AppSettingsServiceImpl, ConversationService, ProfileService,
@@ -348,6 +355,372 @@ async fn load_startup_transcript(
             StartupTranscriptResult::Failure(format!(
                 "Failed to load startup conversation messages for bootstrap: {e}"
             ))
+        })
+}
+
+// ============================================================================
+// Database startup recovery support
+// ============================================================================
+
+/// Result of database startup check
+///
+/// Used to determine if the application should show the recovery view
+/// or proceed with normal startup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecoveryResult {
+    /// Database loaded successfully, no recovery needed
+    Success,
+    /// Database failed to load, recovery is required
+    Required {
+        /// Error message explaining why the database could not be loaded
+        error: String,
+        /// Available backups for recovery
+        available_backups: Vec<BackupInfo>,
+    },
+}
+
+/// Check database health at startup and scan for available backups
+///
+/// This function attempts to validate the database file and returns
+/// a `RecoveryResult` indicating whether recovery is needed.
+///
+/// # Arguments
+/// * `runtime_paths` - Runtime paths containing the database location
+///
+/// # Returns
+/// * `RecoveryResult::Success` - Database is healthy, proceed with normal startup
+/// * `RecoveryResult::Required` - Database is corrupted/missing, show recovery view
+///
+/// # Example
+/// ```rust
+/// use personal_agent::main_gpui::startup::{resolve_runtime_paths, check_database_health};
+///
+/// let paths = resolve_runtime_paths().expect("resolve paths");
+/// match check_database_health(&paths) {
+///     RecoveryResult::Success => println!("Database healthy, starting normally"),
+///     RecoveryResult::Required { error, available_backups } => {
+///         println!("Database error: {}", error);
+///         println!("Available backups: {}", available_backups.len());
+///     }
+/// }
+/// ```
+pub fn check_database_health(runtime_paths: &RuntimePaths) -> RecoveryResult {
+    let db_path = runtime_paths.base_dir.join("personalagent.db");
+
+    // First, try to open the database to check if it's valid
+    match validate_database(&db_path) {
+        Ok(()) => {
+            tracing::info!("Database validated successfully at: {}", db_path.display());
+            RecoveryResult::Success
+        }
+        Err(error) => {
+            tracing::error!(
+                "Database validation failed at {}: {}",
+                db_path.display(),
+                error
+            );
+
+            // Scan for available backups
+            let available_backups = scan_backup_directory(runtime_paths);
+
+            RecoveryResult::Required {
+                error,
+                available_backups,
+            }
+        }
+    }
+}
+
+/// Validate a SQLite database file
+///
+/// Attempts to open the database and run a quick validation check.
+/// Returns Ok if the database is valid, Err with description if not.
+fn validate_database(db_path: &Path) -> Result<(), String> {
+    // Check if the file exists
+    if !db_path.exists() {
+        return Err(format!("Database file not found at: {}", db_path.display()));
+    }
+
+    // Check if it's a file (not a directory)
+    if !db_path.is_file() {
+        return Err(format!(
+            "Database path is not a file: {}",
+            db_path.display()
+        ));
+    }
+
+    // Try to open and validate using SQLite
+    match rusqlite::Connection::open(db_path) {
+        Ok(conn) => {
+            // Run PRAGMA quick_check to validate the database integrity
+            let result: Result<String, rusqlite::Error> =
+                conn.query_row("PRAGMA quick_check", [], |row| row.get(0));
+
+            match result {
+                Ok(check_result) => {
+                    if check_result == "ok" {
+                        Ok(())
+                    } else {
+                        Err(format!("Database integrity check failed: {}", check_result))
+                    }
+                }
+                Err(e) => Err(format!("Failed to run integrity check: {}", e)),
+            }
+        }
+        Err(e) => Err(format!("Failed to open database: {}", e)),
+    }
+}
+
+/// Scan the backup directory for available backups
+///
+/// Searches for `personalagent-*.db.gz` files in the backup directory,
+/// parses timestamps from filenames, and returns a sorted list of
+/// `BackupInfo` structs (newest first).
+///
+/// # Arguments
+/// * `runtime_paths` - Runtime paths for determining backup directory location
+///
+/// # Returns
+/// A vector of `BackupInfo` structs sorted by timestamp (newest first)
+pub fn scan_backup_directory(runtime_paths: &RuntimePaths) -> Vec<BackupInfo> {
+    let backup_dir = get_backup_directory(runtime_paths);
+
+    tracing::info!("Scanning for backups in: {}", backup_dir.display());
+
+    let mut backups = Vec::new();
+
+    if !backup_dir.exists() {
+        tracing::warn!("Backup directory does not exist: {}", backup_dir.display());
+        return backups;
+    }
+
+    let entries = match std::fs::read_dir(&backup_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::error!("Failed to read backup directory: {}", e);
+            return backups;
+        }
+    };
+
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+
+        // Check if it's a file with the expected pattern
+        if !path.is_file() {
+            continue;
+        }
+
+        if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+            if let Some(backup_info) = parse_backup_filename(&path, filename) {
+                backups.push(backup_info);
+            }
+        }
+    }
+
+    // Sort by timestamp, newest first
+    backups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+    tracing::info!(
+        "Found {} backup(s) in {}",
+        backups.len(),
+        backup_dir.display()
+    );
+
+    backups
+}
+
+/// Get the backup directory path
+///
+/// Returns the default backup directory location based on the runtime paths.
+fn get_backup_directory(runtime_paths: &RuntimePaths) -> PathBuf {
+    runtime_paths.base_dir.join("backups")
+}
+
+/// Parse a backup filename and extract metadata
+///
+/// Expected format: `personalagent-YYYY-MM-DDTHH-MM-SSZ.db.gz`
+///
+/// # Arguments
+/// * `path` - Full path to the backup file
+/// * `filename` - The filename component
+///
+/// # Returns
+/// `Some(BackupInfo)` if the filename matches the expected pattern, `None` otherwise
+fn parse_backup_filename(path: &Path, filename: &str) -> Option<BackupInfo> {
+    // Check if it matches the expected pattern: personalagent-*.db.gz
+    if !filename.starts_with("personalagent-") || !filename.ends_with(".db.gz") {
+        return None;
+    }
+
+    // Extract the timestamp portion: personalagent-YYYY-MM-DDTHH-MM-SSZ.db.gz
+    let timestamp_part = filename
+        .strip_prefix("personalagent-")?
+        .strip_suffix(".db.gz")?;
+
+    // Parse the timestamp: YYYY-MM-DDTHH-MM-SSZ
+    let timestamp = parse_backup_timestamp(timestamp_part)?;
+
+    // Get file size
+    let size_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+    Some(BackupInfo::new(path.to_path_buf(), timestamp, size_bytes))
+}
+
+/// Parse a backup timestamp string
+///
+/// Expected format: `YYYY-MM-DDTHH-MM-SSZ`
+fn parse_backup_timestamp(s: &str) -> Option<DateTime<Utc>> {
+    // Try to parse the timestamp
+    // Format: YYYY-MM-DDTHH-MM-SSZ (with dashes instead of colons for time)
+    // We replace dashes with colons in the time portion for parsing
+
+    if s.len() != 20 {
+        return None;
+    }
+
+    // Format: YYYY-MM-DDTHH-MM-SSZ
+    //         01234567890123456789
+    //                   ^T at 10
+    //                          ^Z at 19
+
+    if &s[10..11] != "T" || &s[19..20] != "Z" {
+        return None;
+    }
+
+    let date_part = &s[0..10];
+    let time_part = &s[11..19];
+
+    // Parse date: YYYY-MM-DD
+    let year: i32 = date_part[0..4].parse().ok()?;
+    let month: u32 = date_part[5..7].parse().ok()?;
+    let day: u32 = date_part[8..10].parse().ok()?;
+
+    // Parse time: HH-MM-SS (with dashes instead of colons)
+    let hour: u32 = time_part[0..2].parse().ok()?;
+    let minute: u32 = time_part[3..5].parse().ok()?;
+    let second: u32 = time_part[6..8].parse().ok()?;
+
+    chrono::DateTime::from_timestamp(
+        chrono::NaiveDate::from_ymd_opt(year, month, day)?
+            .and_hms_opt(hour, minute, second)?
+            .and_utc()
+            .timestamp(),
+        0,
+    )
+}
+
+/// Decompress and restore a backup to the database location
+///
+/// This function decompresses a gzip-compressed backup file and writes
+/// it to the database path.
+///
+/// # Arguments
+/// * `backup_path` - Path to the `.db.gz` backup file
+/// * `db_path` - Destination path for the restored database
+///
+/// # Returns
+/// * `Ok(())` - Restore completed successfully
+/// * `Err(String)` - Restore failed with error message
+///
+/// # Example
+/// ```rust
+/// use std::path::Path;
+/// use personal_agent::main_gpui::startup::restore_backup_to_db;
+///
+/// # async fn example() -> Result<(), String> {
+/// let backup_path = Path::new("/backups/personalagent-2026-04-05.db.gz");
+/// let db_path = Path::new("/data/personalagent.db");
+/// restore_backup_to_db(backup_path, db_path).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn restore_backup_to_db(backup_path: &Path, db_path: &Path) -> Result<(), String> {
+    use tokio::fs::File;
+    use tokio::io::AsyncWriteExt;
+
+    tracing::info!(
+        "Starting restore from {} to {}",
+        backup_path.display(),
+        db_path.display()
+    );
+
+    // Verify the backup file exists
+    if !backup_path.exists() {
+        return Err(format!("Backup file not found: {}", backup_path.display()));
+    }
+
+    // Create parent directory if needed
+    if let Some(parent) = db_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create database directory: {}", e))?;
+    }
+
+    // Decompress the backup file
+    let decompressed_data = decompress_backup_file(backup_path).await?;
+
+    // Write to the database location
+    let mut file = File::create(db_path)
+        .await
+        .map_err(|e| format!("Failed to create database file: {}", e))?;
+
+    file.write_all(&decompressed_data)
+        .await
+        .map_err(|e| format!("Failed to write database file: {}", e))?;
+
+    file.flush()
+        .await
+        .map_err(|e| format!("Failed to flush database file: {}", e))?;
+
+    // Drop the file to ensure it's closed
+    drop(file);
+
+    // Verify the restored database is valid
+    validate_database(db_path)?;
+
+    tracing::info!(
+        "Restore completed successfully: {} bytes written to {}",
+        decompressed_data.len(),
+        db_path.display()
+    );
+
+    Ok(())
+}
+
+/// Decompress a gzip backup file
+///
+/// # Arguments
+/// * `backup_path` - Path to the `.db.gz` file
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Decompressed data
+/// * `Err(String)` - Decompression failed
+async fn decompress_backup_file(backup_path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(backup_path)
+        .map_err(|e| format!("Failed to open backup file: {}", e))?;
+
+    let mut decoder = GzDecoder::new(file);
+    let mut decompressed = Vec::new();
+
+    decoder
+        .read_to_end(&mut decompressed)
+        .map_err(|e| format!("Failed to decompress backup file: {}", e))?;
+
+    Ok(decompressed)
+}
+
+/// Async wrapper for database health check
+///
+/// This allows the health check to be run in an async context.
+pub async fn check_database_health_async(runtime_paths: &RuntimePaths) -> RecoveryResult {
+    let runtime_paths = runtime_paths.clone();
+    tokio::task::spawn_blocking(move || check_database_health(&runtime_paths))
+        .await
+        .unwrap_or_else(|e| RecoveryResult::Required {
+            error: format!("Database check panicked: {}", e),
+            available_backups: Vec::new(),
         })
 }
 

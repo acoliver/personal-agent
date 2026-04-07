@@ -17,7 +17,8 @@ use super::view_command::{ProfileSummary, SkillSummary, ThemeSummary};
 use super::{Presenter, PresenterError, ViewCommand};
 
 use crate::events::{types::UserEvent, AppEvent, EventBus};
-use crate::services::{AppSettingsService, ProfileService, SkillsService};
+use crate::services::{AppSettingsService, BackupService, ProfileService, SkillsService};
+
 use crate::ui_gpui::theme::{
     active_mono_font_family, active_mono_ligatures, available_theme_options, is_valid_theme_slug,
     set_active_font_size, set_active_mono_font_family, set_active_mono_ligatures,
@@ -41,6 +42,8 @@ pub struct SettingsPresenter {
     /// Reference to app settings service
     app_settings_service: Arc<dyn AppSettingsService>,
 
+    /// Reference to backup service
+    backup_service: Arc<dyn BackupService>,
     /// Reference to skills service
     skills_service: Arc<dyn SkillsService>,
 
@@ -62,6 +65,7 @@ impl SettingsPresenter {
     pub fn new(
         profile_service: Arc<dyn ProfileService>,
         app_settings_service: Arc<dyn AppSettingsService>,
+        backup_service: Arc<dyn BackupService>,
         skills_service: Arc<dyn SkillsService>,
         event_bus: &broadcast::Sender<AppEvent>,
         view_tx: broadcast::Sender<ViewCommand>,
@@ -71,6 +75,7 @@ impl SettingsPresenter {
             rx,
             profile_service,
             app_settings_service,
+            backup_service,
             skills_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -98,6 +103,7 @@ impl SettingsPresenter {
     pub fn new_with_event_bus(
         profile_service: Arc<dyn ProfileService>,
         app_settings_service: Arc<dyn AppSettingsService>,
+        backup_service: Arc<dyn BackupService>,
         skills_service: Arc<dyn SkillsService>,
         event_bus: &Arc<EventBus>,
         view_tx: broadcast::Sender<ViewCommand>,
@@ -107,6 +113,7 @@ impl SettingsPresenter {
             rx,
             profile_service,
             app_settings_service,
+            backup_service,
             skills_service,
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -143,11 +150,15 @@ impl SettingsPresenter {
         Self::emit_skills_snapshot(&self.skills_service, &self.view_tx).await;
 
         let mut rx = self.rx.resubscribe();
+        Self::emit_backup_settings_snapshot(&self.backup_service, &self.view_tx).await;
+
         let running = self.running.clone();
         let profile_service = self.profile_service.clone();
         let app_settings_service = self.app_settings_service.clone();
         let skills_service = self.skills_service.clone();
         let view_tx = self.view_tx.clone();
+        let backup_service = self.backup_service.clone();
+
         let config_path = self.config_path_override.clone();
 
         tokio::spawn(async move {
@@ -157,6 +168,7 @@ impl SettingsPresenter {
                         Self::handle_event(
                             &profile_service,
                             &app_settings_service,
+                            &backup_service,
                             &skills_service,
                             &view_tx,
                             event,
@@ -202,13 +214,11 @@ impl SettingsPresenter {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Handle events from `EventBus`
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-025.4
+    #[allow(clippy::too_many_arguments)]
     async fn handle_event(
         profile_service: &Arc<dyn ProfileService>,
         app_settings_service: &Arc<dyn AppSettingsService>,
+        backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
@@ -219,6 +229,7 @@ impl SettingsPresenter {
                 Self::handle_user_event(
                     profile_service,
                     app_settings_service,
+                    backup_service,
                     skills_service,
                     view_tx,
                     user_evt,
@@ -245,13 +256,11 @@ impl SettingsPresenter {
         }
     }
 
-    /// Handle user events
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-025.4
+    #[allow(clippy::too_many_arguments)]
     async fn handle_user_event(
         profile_service: &Arc<dyn ProfileService>,
         app_settings_service: &Arc<dyn AppSettingsService>,
+        backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
@@ -284,6 +293,10 @@ impl SettingsPresenter {
         }
 
         if Self::handle_mcp_user_event(view_tx, config_path, &event).await {
+            return;
+        }
+
+        if Self::handle_backup_user_event_wrapper(backup_service, view_tx, &event).await {
             return;
         }
 
@@ -451,6 +464,26 @@ impl SettingsPresenter {
             }
             UserEvent::DeleteMcp { id } | UserEvent::ConfirmDeleteMcp { id } => {
                 Self::on_delete_mcp(view_tx, *id, config_path).await;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    async fn handle_backup_user_event_wrapper(
+        backup_service: &Arc<dyn BackupService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        event: &UserEvent,
+    ) -> bool {
+        match event {
+            UserEvent::TriggerBackupNow
+            | UserEvent::SetBackupDirectory { .. }
+            | UserEvent::RestoreBackup { .. }
+            | UserEvent::RefreshBackupList
+            | UserEvent::SetBackupEnabled { .. }
+            | UserEvent::SetBackupIntervalHours { .. }
+            | UserEvent::SetBackupMaxCopies { .. } => {
+                Self::handle_backup_user_event(backup_service, view_tx, event.clone()).await;
                 true
             }
             _ => false,

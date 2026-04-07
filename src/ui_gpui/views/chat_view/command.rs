@@ -100,7 +100,7 @@ impl ChatView {
     #[allow(clippy::too_many_lines)]
     pub fn handle_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
-            ViewCommand::ConversationCleared => {
+            ViewCommand::ConversationCleared | ViewCommand::ClearActiveConversation => {
                 self.state.messages.clear();
                 self.state.streaming = super::state::StreamingState::Idle;
                 self.state.thinking_content = None;

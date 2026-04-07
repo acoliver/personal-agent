@@ -63,6 +63,9 @@ pub enum UserEvent {
     /// User toggled thinking display
     ToggleThinking,
 
+    /// User refreshed conversation list (e.g., after restore)
+    RefreshConversations,
+
     /// User requested conversation export with the currently selected format.
     SaveConversation,
 
@@ -266,6 +269,34 @@ pub enum UserEvent {
 
     /// User removed a denylist prefix for persistent tool approvals.
     RemoveToolApprovalDenylistPrefix { prefix: String },
+
+    // ===== Database Backup Actions =====
+    /// User requested a manual backup now
+    TriggerBackupNow,
+
+    /// User changed the backup directory path
+    SetBackupDirectory { path: Option<String> },
+
+    /// User requested to restore from a backup
+    RestoreBackup { path: String },
+
+    /// User requested to refresh the backup list
+    RefreshBackupList,
+
+    /// User toggled automatic backups
+    SetBackupEnabled { enabled: bool },
+
+    /// User changed backup interval (hours)
+    SetBackupIntervalHours { hours: u32 },
+
+    /// User changed max backup copies to retain
+    SetBackupMaxCopies { copies: u32 },
+
+    /// User requested to restore a database from a backup file (recovery flow)
+    RestoreDatabaseBackup { backup_path: std::path::PathBuf },
+
+    /// User requested to quit the application
+    QuitApplication,
 
     // ===== Navigation =====
     /// User clicked to navigate to a view

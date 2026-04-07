@@ -17,6 +17,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fs, path::PathBuf};
 
 use gpui::*;
 use tracing::{info, Level};
@@ -33,10 +34,11 @@ use personal_agent::presentation::{
     ViewCommand,
 };
 use personal_agent::services::{
-    AppSettingsService, AppSettingsServiceImpl, ChatService, ChatServiceImpl, ConversationService,
-    McpRegistryService, McpRegistryServiceImpl, McpService, McpServiceImpl, ModelsRegistryService,
-    ModelsRegistryServiceImpl, ProfileService, ProfileServiceImpl, SecretsService,
-    SecretsServiceImpl, SkillsService, SkillsServiceImpl, SqliteConversationService,
+    AppSettingsService, AppSettingsServiceImpl, BackupService, BackupServiceImpl, ChatService,
+    ChatServiceImpl, ConversationService, McpRegistryService, McpRegistryServiceImpl, McpService,
+    McpServiceImpl, ModelsRegistryService, ModelsRegistryServiceImpl, ProfileService,
+    ProfileServiceImpl, SecretsService, SecretsServiceImpl, SkillsService, SkillsServiceImpl,
+    SqliteConversationService,
 };
 use personal_agent::ui_gpui::app_store::{
     BeginSelectionMode, BeginSelectionResult, StartupInputs, StartupMode,
@@ -146,6 +148,51 @@ fn emit_mcp_snapshot_to_flume(tx: &flume::Sender<personal_agent::presentation::V
         "emit_mcp_snapshot_to_flume: sent {} MCP entries on popup reopen",
         config.mcps.len()
     );
+}
+
+/// Re-emit backup settings snapshot directly into the flume channel.
+///
+/// Called from `open_popup` so that a newly-created `MainPanel` (and its
+/// fresh `SettingsView`) receives the current backup settings.  The one-shot
+/// broadcast emission at startup was already consumed by the previous
+/// (now-closed) window.
+fn emit_backup_snapshot_to_flume(tx: &flume::Sender<personal_agent::presentation::ViewCommand>) {
+    use personal_agent::backup::DatabaseBackupSettings;
+    use personal_agent::presentation::view_command::ViewCommand;
+
+    // Get backup settings from app_settings.json
+    let settings_path = dirs::data_local_dir()
+        .map(|d| d.join("PersonalAgent").join("app_settings.json"))
+        .unwrap_or_else(|| PathBuf::from("app_settings.json"));
+
+    let settings = if settings_path.exists() {
+        fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|storage| storage.get("extra_settings")?.as_object().cloned())
+            .map_or_else(DatabaseBackupSettings::default, |extra| {
+                extra
+                    .get("database_backup_settings")
+                    .and_then(|v| serde_json::from_value::<DatabaseBackupSettings>(v.clone()).ok())
+                    .unwrap_or_default()
+            })
+    } else {
+        DatabaseBackupSettings::default()
+    };
+
+    // List backups from directory
+    let backup_dir = settings.effective_backup_directory();
+    let backups = backup_dir.map_or_else(Vec::new, |dir| {
+        personal_agent::services::BackupServiceImpl::list_backups_in_dir(&dir).unwrap_or_default()
+    });
+
+    let _ = tx.send(ViewCommand::BackupSettingsLoaded {
+        settings,
+        backups,
+        last_backup_time: None, // We don't have easy access to this here
+    });
+
+    tracing::info!("emit_backup_snapshot_to_flume: sent backup settings on popup reopen");
 }
 
 fn spawn_mpsc_to_flume_view_command_bridge(
@@ -447,6 +494,50 @@ fn run_gpui_app(cx: &mut App) {
 
 /// Boot all services and presenters inside the background tokio runtime,
 /// then keep the runtime alive indefinitely.
+fn log_runtime_paths(runtime_paths: &RuntimePaths) {
+    tracing::info!(
+        data_dir = %runtime_paths.base_dir.display(),
+        config_dir = %runtime_paths.profiles_dir.parent().unwrap_or(&runtime_paths.profiles_dir).display(),
+        profiles_dir = %runtime_paths.profiles_dir.display(),
+        conversations_dir = %runtime_paths.conversations_dir.display(),
+        mcp_configs_dir = %runtime_paths.mcp_configs_dir.display(),
+        "Using platform-standard runtime directories"
+    );
+}
+
+fn ensure_runtime_directories(runtime_paths: &RuntimePaths) {
+    let _ = std::fs::create_dir_all(&runtime_paths.profiles_dir);
+    let _ = std::fs::create_dir_all(&runtime_paths.secrets_dir);
+    let _ = std::fs::create_dir_all(&runtime_paths.conversations_dir);
+    let _ = std::fs::create_dir_all(&runtime_paths.mcp_configs_dir);
+}
+
+async fn initialize_global_mcp_runtime() {
+    info!("Initializing global MCP runtime...");
+    let global = personal_agent::mcp::McpService::global();
+    let mut svc = global.lock().await;
+    if let Err(e) = svc.initialize().await {
+        tracing::error!("Global MCP initialization failed: {e}");
+    } else {
+        info!("Global MCP runtime initialized");
+    }
+}
+
+fn start_backup_scheduler(
+    backup_service: Arc<dyn personal_agent::services::BackupService>,
+) -> tokio::task::JoinHandle<()> {
+    info!("Starting backup scheduler...");
+    let (backup_scheduler_handle, _backup_shutdown_tx) =
+        personal_agent::backup::spawn_backup_scheduler(backup_service);
+    backup_scheduler_handle
+}
+
+async fn runtime_keepalive_loop() {
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+    }
+}
+
 async fn run_tokio_runtime(
     event_bus: Arc<EventBus>,
     view_cmd_tx: flume::Sender<personal_agent::presentation::ViewCommand>,
@@ -458,20 +549,8 @@ async fn run_tokio_runtime(
     let runtime_paths =
         resolve_runtime_paths().expect("Could not resolve runtime paths from platform directories");
 
-    tracing::info!(
-        data_dir = %runtime_paths.base_dir.display(),
-        config_dir = %runtime_paths.profiles_dir.parent().unwrap_or(&runtime_paths.profiles_dir).display(),
-        profiles_dir = %runtime_paths.profiles_dir.display(),
-        conversations_dir = %runtime_paths.conversations_dir.display(),
-        mcp_configs_dir = %runtime_paths.mcp_configs_dir.display(),
-        "Using platform-standard runtime directories"
-    );
-
-    // Create directories
-    let _ = std::fs::create_dir_all(&runtime_paths.profiles_dir);
-    let _ = std::fs::create_dir_all(&runtime_paths.secrets_dir);
-    let _ = std::fs::create_dir_all(&runtime_paths.conversations_dir);
-    let _ = std::fs::create_dir_all(&runtime_paths.mcp_configs_dir);
+    log_runtime_paths(&runtime_paths);
+    ensure_runtime_directories(&runtime_paths);
 
     if let Err(e) = bootstrap_legacy_runtime_data(&runtime_paths) {
         tracing::warn!("Legacy bootstrap copy failed: {}", e);
@@ -493,25 +572,16 @@ async fn run_tokio_runtime(
         &settings_view_tx_for_snapshot,
     );
 
-    // Initialize global MCP runtime so chat can discover tools
-    info!("Initializing global MCP runtime...");
-    {
-        let global = personal_agent::mcp::McpService::global();
-        let mut svc = global.lock().await;
-        if let Err(e) = svc.initialize().await {
-            tracing::error!("Global MCP initialization failed: {e}");
-        } else {
-            info!("Global MCP runtime initialized");
-        }
-    }
+    initialize_global_mcp_runtime().await;
+    let backup_scheduler_handle = start_backup_scheduler(services.backup.clone());
 
     // Prevent handles in `presenter_bridges` from being dropped (which would close the channels)
     let _keep_alive = presenter_bridges;
 
-    // Keep runtime alive
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-    }
+    // Keep the backup scheduler handle alive
+    let _backup_handle = backup_scheduler_handle;
+
+    runtime_keepalive_loop().await;
 }
 
 struct Services {
@@ -524,6 +594,7 @@ struct Services {
     models_registry: Arc<dyn ModelsRegistryService>,
     mcp_registry: Arc<dyn McpRegistryService>,
     chat: Arc<dyn ChatService>,
+    backup: Arc<dyn personal_agent::services::BackupService>,
 }
 
 async fn create_services(
@@ -539,11 +610,25 @@ async fn create_services(
             .expect("Failed to create AppSettingsService"),
     );
     let db_path = runtime_paths.base_dir.join("personalagent.db");
+    let db_path_for_backup = db_path.clone();
     let db = tokio::task::spawn_blocking(move || spawn_db_thread(&db_path))
         .await
         .expect("spawn_blocking join failed")
         .expect("Failed to spawn DB thread");
+
+    // Clone the DbHandle for the backup service (DbHandle is cheap to clone)
+    let db_for_backup = db.clone();
+
     let conversation: Arc<dyn ConversationService> = Arc::new(SqliteConversationService::new(db));
+
+    // Create backup service
+    let backup: Arc<dyn personal_agent::services::BackupService> =
+        Arc::new(personal_agent::services::BackupServiceImpl::new(
+            db_for_backup,
+            app_settings.clone(),
+            db_path_for_backup,
+        ));
+
     let profile_impl = ProfileServiceImpl::new(runtime_paths.profiles_dir.clone())
         .expect("Failed to create ProfileService");
     profile_impl
@@ -591,6 +676,7 @@ async fn create_services(
         models_registry,
         mcp_registry,
         chat,
+        backup,
     }
 }
 
@@ -719,6 +805,7 @@ async fn start_all_presenters(
     let mut settings = SettingsPresenter::new_with_event_bus(
         services.profile.clone(),
         services.app_settings.clone(),
+        services.backup.clone(),
         services.skills.clone(),
         event_bus,
         settings_view_tx,

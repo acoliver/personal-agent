@@ -4,12 +4,15 @@
 //! @requirement REQ-UI-ST
 
 mod actions;
+mod backup_actions;
 mod command;
-mod input;
+mod input_handler;
 mod render;
 mod render_appearance;
+mod render_backup_panel;
 mod render_skills;
 mod render_tool_approval;
+mod types;
 
 use gpui::FocusHandle;
 
@@ -18,176 +21,13 @@ use uuid::Uuid;
 
 use crate::agent::McpApprovalMode;
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::{ProfileSummary, SkillSummary, ThemeSummary};
+use crate::presentation::view_command::{ProfileSummary, ThemeSummary};
 use crate::ui_gpui::bridge::GpuiBridge;
 
-/// Represents a profile in the settings list
-/// @plan PLAN-20250130-GPUIREDUX.P06
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProfileItem {
-    pub id: Uuid,
-    pub name: String,
-    pub provider: String,
-    pub model: String,
-    pub is_default: bool,
-}
-
-impl ProfileItem {
-    #[must_use]
-    pub fn new(id: Uuid, name: impl Into<String>) -> Self {
-        Self {
-            id,
-            name: name.into(),
-            provider: String::new(),
-            model: String::new(),
-            is_default: false,
-        }
-    }
-
-    #[must_use]
-    pub fn with_model(mut self, provider: impl Into<String>, model: impl Into<String>) -> Self {
-        self.provider = provider.into();
-        self.model = model.into();
-        self
-    }
-
-    #[must_use]
-    pub const fn with_default(mut self, is_default: bool) -> Self {
-        self.is_default = is_default;
-        self
-    }
-
-    #[must_use]
-    pub fn display_text(&self) -> String {
-        if self.provider.is_empty() && self.model.is_empty() {
-            self.name.clone()
-        } else {
-            format!("{} ({}:{})", self.name, self.provider, self.model)
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SkillItem {
-    pub name: String,
-    pub description: String,
-    pub source: crate::models::SkillSource,
-    pub enabled: bool,
-    pub path: String,
-}
-
-impl From<SkillSummary> for SkillItem {
-    fn from(value: SkillSummary) -> Self {
-        Self {
-            name: value.name,
-            description: value.description,
-            source: value.source,
-            enabled: value.enabled,
-            path: value.path,
-        }
-    }
-}
-
-/// Status of an MCP server in the settings view
-/// @plan PLAN-20250130-GPUIREDUX.P06
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum McpStatus {
-    Running,
-    #[default]
-    Stopped,
-    Error,
-}
-
-/// Represents an MCP server in the settings list
-/// @plan PLAN-20250130-GPUIREDUX.P06
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct McpItem {
-    pub id: Uuid,
-    pub name: String,
-    pub enabled: bool,
-    pub status: McpStatus,
-}
-
-impl McpItem {
-    #[must_use]
-    pub fn new(id: Uuid, name: impl Into<String>) -> Self {
-        Self {
-            id,
-            name: name.into(),
-            enabled: false,
-            status: McpStatus::Stopped,
-        }
-    }
-
-    #[must_use]
-    pub const fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self.status = if enabled {
-            McpStatus::Running
-        } else {
-            McpStatus::Stopped
-        };
-        self
-    }
-
-    #[must_use]
-    pub fn with_status(mut self, status: McpStatus) -> Self {
-        self.status = status;
-        if status == McpStatus::Error {
-            self.enabled = false;
-        }
-        self
-    }
-}
-
-/// A theme option as presented in the settings dropdown.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ThemeOption {
-    pub name: String,
-    pub slug: String,
-}
-
-/// Which font dropdown is currently open in the Appearance panel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FontDropdownTarget {
-    UiFont,
-    MonoFont,
-}
-
-/// Categories shown in the settings sidebar.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SettingsCategory {
-    #[default]
-    General,
-    Appearance,
-    Models,
-    Skills,
-    Security,
-    McpTools,
-}
-
-impl SettingsCategory {
-    pub const ALL: [Self; 6] = [
-        Self::General,
-        Self::Appearance,
-        Self::Models,
-        Self::Skills,
-        Self::Security,
-        Self::McpTools,
-    ];
-
-    #[must_use]
-    pub const fn display_name(&self) -> &'static str {
-        match self {
-            Self::General => "General",
-            Self::Appearance => "Appearance",
-            Self::Models => "Models",
-            Self::Skills => "Skills",
-            Self::Security => "Security",
-            Self::McpTools => "MCP Tools",
-        }
-    }
-}
+// Re-export types for convenience
+pub use types::{
+    FontDropdownTarget, McpItem, McpStatus, ProfileItem, SettingsCategory, SkillItem, ThemeOption,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -235,6 +75,19 @@ pub struct SettingsState {
     pub mono_font_family: String,
     pub mono_ligatures: bool,
     pub font_dropdown_open_for: Option<FontDropdownTarget>,
+    // Backup settings (Backup panel)
+    /// Current backup configuration settings
+    pub backup_settings: Option<crate::backup::DatabaseBackupSettings>,
+    /// List of available backups for restore
+    pub backups: Vec<crate::backup::BackupInfo>,
+    /// Timestamp of last successful backup
+    pub last_backup_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Current backup status message
+    pub backup_status: Option<String>,
+    /// Whether a backup operation is currently in progress
+    pub backup_in_progress: bool,
+    /// Selected backup ID for restore
+    pub selected_backup_id: Option<usize>,
 }
 
 impl SettingsState {
@@ -277,6 +130,13 @@ impl Default for SettingsState {
             mono_font_family: crate::ui_gpui::theme::DEFAULT_MONO_FONT_FAMILY.to_string(),
             mono_ligatures: true,
             font_dropdown_open_for: None,
+            // Backup defaults
+            backup_settings: None,
+            backups: Vec::new(),
+            last_backup_time: None,
+            backup_status: None,
+            backup_in_progress: false,
+            selected_backup_id: None,
         }
     }
 }
@@ -288,6 +148,9 @@ pub struct SettingsView {
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) focus_handle: FocusHandle,
     pub(super) ime_marked_byte_count: usize,
+    /// Channel for backup restore confirmation dialog (for future use)
+    #[allow(dead_code)]
+    pub(super) backup_settings_tx: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
 impl SettingsView {
@@ -297,6 +160,7 @@ impl SettingsView {
             bridge: None,
             focus_handle: cx.focus_handle(),
             ime_marked_byte_count: 0,
+            backup_settings_tx: None,
         }
     }
 

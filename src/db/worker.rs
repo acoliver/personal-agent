@@ -6,7 +6,8 @@
 //!
 //! See spec §1.5 for the full threading model rationale and lifecycle contract.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::services::ServiceError;
 
@@ -20,7 +21,7 @@ use super::schema::initialize_schema;
 ///
 /// Each closure captures its own `tokio::sync::oneshot::Sender` internally so
 /// the job queue carries no generic type parameter.
-pub type DbJob = Box<dyn FnOnce(&rusqlite::Connection) + Send + 'static>;
+pub type DbJob = Box<dyn FnOnce(&mut Option<rusqlite::Connection>) + Send + 'static>;
 
 // ---------------------------------------------------------------------------
 // DbHandle
@@ -30,8 +31,14 @@ pub type DbJob = Box<dyn FnOnce(&rusqlite::Connection) + Send + 'static>;
 ///
 /// Dropping all clones causes `rx.recv()` on the worker to return `RecvError`,
 /// which exits the recv loop and drops the `Connection` (flushing the WAL).
+#[derive(Clone)]
 pub struct DbHandle {
+    inner: Arc<DbHandleInner>,
+}
+
+struct DbHandleInner {
     sender: std::sync::mpsc::Sender<DbJob>,
+    db_path: PathBuf,
 }
 
 impl DbHandle {
@@ -53,10 +60,17 @@ impl DbHandle {
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let job: DbJob = Box::new(move |conn| {
-            let result = f(conn);
-            let _ = tx.send(result);
+            if let Some(c) = conn {
+                let result = f(c);
+                let _ = tx.send(result);
+            } else {
+                let _ = tx.send(Err(rusqlite::Error::InvalidPath(
+                    "Database connection is closed".into(),
+                )));
+            }
         });
-        self.sender
+        self.inner
+            .sender
             .send(job)
             .map_err(|_| ServiceError::Storage("DB thread has shut down".into()))?;
         rx.await
@@ -68,13 +82,68 @@ impl DbHandle {
                 _ => ServiceError::Storage(format!("SQLite error: {e}")),
             })
     }
-}
 
-impl Clone for DbHandle {
-    fn clone(&self) -> Self {
-        Self {
-            sender: self.sender.clone(),
-        }
+    /// Close the database connection, allowing the file to be replaced.
+    ///
+    /// After calling this, the connection is closed. Use `reopen()` to
+    /// open a new connection to the same path.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ServiceError::Storage` if the DB thread has shut down.
+    pub async fn close(&self) -> Result<(), ServiceError> {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+        let job: DbJob = Box::new(move |conn| {
+            *conn = None;
+            let _ = tx.send(Ok(()));
+        });
+        self.inner
+            .sender
+            .send(job)
+            .map_err(|_| ServiceError::Storage("DB thread has shut down".into()))?;
+        rx.await
+            .map_err(|_| ServiceError::Storage("DB thread dropped response".into()))?
+            .map_err(ServiceError::Storage)
+    }
+
+    /// Reopen the database connection after it was closed.
+    ///
+    /// Opens a new connection to the same path and initializes the schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ServiceError::Storage` if the DB thread has shut down or
+    /// if opening the database fails.
+    pub async fn reopen(&self) -> Result<(), ServiceError> {
+        let path = self.inner.db_path.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+        let job: DbJob = Box::new(move |conn| match rusqlite::Connection::open(&path) {
+            Ok(c) => match initialize_schema(&c) {
+                Ok(()) => {
+                    *conn = Some(c);
+                    let _ = tx.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("failed to initialize schema: {e}")));
+                }
+            },
+            Err(e) => {
+                let _ = tx.send(Err(format!("failed to open database: {e}")));
+            }
+        });
+        self.inner
+            .sender
+            .send(job)
+            .map_err(|_| ServiceError::Storage("DB thread has shut down".into()))?;
+        rx.await
+            .map_err(|_| ServiceError::Storage("DB thread dropped response".into()))?
+            .map_err(ServiceError::Storage)
+    }
+
+    /// Get the database file path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.inner.db_path
     }
 }
 
@@ -113,24 +182,26 @@ pub fn spawn_db_thread(db_path: &Path) -> Result<DbHandle, ServiceError> {
     std::thread::Builder::new()
         .name("db-worker".into())
         .spawn(move || {
-            let conn = match rusqlite::Connection::open(&path) {
-                Ok(c) => c,
+            let mut conn: Option<rusqlite::Connection> = match rusqlite::Connection::open(&path) {
+                Ok(c) => Some(c),
                 Err(e) => {
                     let _ = init_tx.send(Err(format!("failed to open database: {e}")));
                     return;
                 }
             };
-            match initialize_schema(&conn) {
-                Ok(()) => {
-                    let _ = init_tx.send(Ok(()));
-                }
-                Err(e) => {
-                    let _ = init_tx.send(Err(format!("failed to initialize schema: {e}")));
-                    return;
+            if let Some(ref c) = conn {
+                match initialize_schema(c) {
+                    Ok(()) => {
+                        let _ = init_tx.send(Ok(()));
+                    }
+                    Err(e) => {
+                        let _ = init_tx.send(Err(format!("failed to initialize schema: {e}")));
+                        return;
+                    }
                 }
             }
             while let Ok(job) = rx.recv() {
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&conn)));
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut conn)));
                 // If job panicked, its captured oneshot tx was dropped → caller gets RecvError.
             }
             // Connection dropped here — SQLite flushes the WAL.
@@ -146,5 +217,10 @@ pub fn spawn_db_thread(db_path: &Path) -> Result<DbHandle, ServiceError> {
         .map_err(|_| ServiceError::Storage("DB thread died during init".into()))?
         .map_err(ServiceError::Storage)?;
 
-    Ok(DbHandle { sender: tx })
+    Ok(DbHandle {
+        inner: Arc::new(DbHandleInner {
+            sender: tx,
+            db_path: db_path.to_owned(),
+        }),
+    })
 }

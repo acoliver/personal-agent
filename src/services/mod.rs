@@ -15,6 +15,8 @@
 
 pub mod app_settings;
 pub mod app_settings_impl;
+pub mod backup;
+pub mod backup_impl;
 pub mod chat;
 pub mod chat_impl;
 pub mod skill_parser;
@@ -78,6 +80,7 @@ pub type ServiceResult<T> = std::result::Result<T, ServiceError>;
 
 // Re-export service traits
 pub use app_settings::AppSettingsService;
+pub use backup::BackupService;
 pub use chat::ChatService;
 pub use conversation::ConversationService;
 pub use mcp::McpService;
@@ -89,6 +92,7 @@ pub use template::{expand_system_prompt, TemplateContext};
 
 // Re-export service implementations
 pub use app_settings_impl::AppSettingsServiceImpl;
+pub use backup_impl::BackupServiceImpl;
 pub use chat_impl::ChatServiceImpl;
 pub use conversation_sqlite::SqliteConversationService;
 pub use skills::SkillsService;

@@ -781,6 +781,7 @@ impl SystemTray {
                 // that the new pump will drain.
                 if let Some(app_state) = cx.try_global::<AppState>().cloned() {
                     super::emit_mcp_snapshot_to_flume(&app_state.view_cmd_tx);
+                    super::emit_backup_snapshot_to_flume(&app_state.view_cmd_tx);
                 }
 
                 info!(x = origin_x, y = origin_y, "Popup opened");

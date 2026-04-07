@@ -12,6 +12,7 @@ pub mod mcp_add_view;
 pub mod mcp_configure_view;
 pub mod model_selector_view;
 pub mod profile_editor_view;
+pub mod recovery_view;
 pub mod settings_view;
 
 pub use api_key_manager_view::ApiKeyManagerView;
@@ -27,6 +28,7 @@ pub use model_selector_view::{ModelInfo, ModelSelectorState, ModelSelectorView, 
 pub use profile_editor_view::{
     ApiType, AuthMethod, ProfileEditorData, ProfileEditorState, ProfileEditorView,
 };
+pub use recovery_view::{RecoveryResult, RecoveryState, RecoveryView};
 pub use settings_view::{
     McpItem, McpStatus, ProfileItem, SettingsCategory, SettingsState, SettingsView, ThemeOption,
 };

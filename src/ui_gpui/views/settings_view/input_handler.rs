@@ -1,8 +1,12 @@
-//! Text input handling for `SettingsView`.
+//! GPUI `EntityInputHandler` implementation for `SettingsView`.
+//!
+//! Handles IME input for the settings view.
+
+use std::ops::Range;
+
+use gpui::{Bounds, Pixels, Window};
 
 use super::SettingsView;
-use gpui::{Bounds, Pixels, Window};
-use std::ops::Range;
 
 impl gpui::EntityInputHandler for SettingsView {
     fn text_for_range(

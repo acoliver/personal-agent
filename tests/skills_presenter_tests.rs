@@ -13,15 +13,68 @@ use wiremock::matchers::{method, path};
 #[cfg(test)]
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use personal_agent::backup::{BackupInfo, BackupResult, RestoreResult};
 use personal_agent::events::types::{AppEvent, UserEvent};
 use personal_agent::presentation::{
     settings_presenter::SettingsPresenter,
     view_command::{ErrorSeverity, ViewCommand},
 };
-use personal_agent::services::AppSettingsService;
+use personal_agent::services::{AppSettingsService, BackupService};
 
 const PROCESSING_DELAY: Duration = Duration::from_millis(30);
 const RECV_TIMEOUT: Duration = Duration::from_millis(500);
+
+// ---------------------------------------------------------------------------
+// Stub BackupService
+// ---------------------------------------------------------------------------
+
+/// Minimal stub that returns empty results for all backup operations.
+/// Skills tests don't need backup functionality.
+struct MockBackupService;
+
+#[async_trait::async_trait]
+impl BackupService for MockBackupService {
+    async fn create_backup(&self) -> personal_agent::services::ServiceResult<BackupResult> {
+        Ok(BackupResult::Skipped {
+            reason: "Test mode".to_string(),
+        })
+    }
+
+    async fn list_backups(&self) -> personal_agent::services::ServiceResult<Vec<BackupInfo>> {
+        Ok(vec![])
+    }
+
+    async fn restore_backup(
+        &self,
+        _path: &std::path::Path,
+    ) -> personal_agent::services::ServiceResult<RestoreResult> {
+        Ok(RestoreResult::Success)
+    }
+
+    async fn get_settings(
+        &self,
+    ) -> personal_agent::services::ServiceResult<personal_agent::backup::DatabaseBackupSettings>
+    {
+        Ok(personal_agent::backup::DatabaseBackupSettings::default())
+    }
+
+    async fn update_settings(
+        &self,
+        _settings: personal_agent::backup::DatabaseBackupSettings,
+    ) -> personal_agent::services::ServiceResult<()> {
+        Ok(())
+    }
+
+    async fn get_last_backup_time(
+        &self,
+    ) -> personal_agent::services::ServiceResult<Option<chrono::DateTime<chrono::Utc>>> {
+        Ok(None)
+    }
+
+    async fn should_backup(&self) -> personal_agent::services::ServiceResult<bool> {
+        Ok(false)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Stub ProfileService
@@ -130,6 +183,7 @@ fn setup() -> (
     let presenter = SettingsPresenter::new(
         Arc::new(MinimalProfileService),
         app_settings_service,
+        Arc::new(MockBackupService),
         skills_service.clone(),
         &event_tx,
         view_tx,

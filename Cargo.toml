@@ -50,9 +50,10 @@ bytes = "1"
 regex = "1"
 ignore = "0.4"
 glob = "0.3"
-rusqlite = { version = "0.33", features = ["bundled"] }
+rusqlite = { version = "0.33", features = ["bundled", "backup"] }
 serde_yaml = "0.9"
 tiktoken-rs = "0.9"
+flate2 = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
