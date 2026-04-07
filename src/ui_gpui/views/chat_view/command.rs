@@ -68,12 +68,13 @@ impl ChatView {
         self.state.yolo_mode = active;
         if active {
             // Retroactively auto-approve any bubbles that arrived before YOLO was confirmed
+            // Use flat_map to emit for all request_ids in grouped bubbles
             let pending_ids: Vec<String> = self
                 .state
                 .approval_bubbles
                 .iter()
                 .filter(|b| b.state == ApprovalBubbleState::Pending)
-                .map(|b| b.request_id.clone())
+                .flat_map(|b| b.request_ids.clone())
                 .collect();
 
             for request_id in pending_ids {
