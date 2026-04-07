@@ -11,6 +11,74 @@ use gpui::{
     TestAppContext, TouchPhase,
 };
 
+// ── messages_from_payload tests ──────────────────────────────────────────
+
+#[test]
+fn messages_from_payload_uses_model_id_when_present() {
+    let messages = vec![ConversationMessagePayload {
+        role: MessageRole::Assistant,
+        content: "Hello".to_string(),
+        thinking_content: None,
+        timestamp: None,
+        model_id: Some("gpt-4o".to_string()),
+    }];
+
+    let result = ChatView::messages_from_payload(messages);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].model_label.as_deref(), Some("gpt-4o"));
+}
+
+#[test]
+fn messages_from_payload_shows_unknown_when_model_id_missing() {
+    let messages = vec![ConversationMessagePayload {
+        role: MessageRole::Assistant,
+        content: "Hello".to_string(),
+        thinking_content: None,
+        timestamp: None,
+        model_id: None,
+    }];
+
+    let result = ChatView::messages_from_payload(messages);
+
+    assert_eq!(result.len(), 1);
+    // Should show "unknown" instead of the current profile
+    assert_eq!(result[0].model_label.as_deref(), Some("unknown"));
+}
+
+#[test]
+fn messages_from_payload_user_messages_have_no_model_label() {
+    let messages = vec![ConversationMessagePayload {
+        role: MessageRole::User,
+        content: "Hello".to_string(),
+        thinking_content: None,
+        timestamp: None,
+        model_id: Some("gpt-4o".to_string()), // Even with model_id, user messages don't show model
+    }];
+
+    let result = ChatView::messages_from_payload(messages);
+
+    assert_eq!(result.len(), 1);
+    assert!(result[0].model_label.is_none());
+}
+
+#[test]
+fn messages_from_payload_preserves_thinking_and_timestamp() {
+    let messages = vec![ConversationMessagePayload {
+        role: MessageRole::Assistant,
+        content: "Hello".to_string(),
+        thinking_content: Some("Let me think...".to_string()),
+        timestamp: Some(1_234_567_890),
+        model_id: Some("claude-3".to_string()),
+    }];
+
+    let result = ChatView::messages_from_payload(messages);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].thinking.as_deref(), Some("Let me think..."));
+    assert_eq!(result[0].timestamp, Some(1_234_567_890));
+}
+
 fn chat_key_event(key: &str) -> KeyDownEvent {
     KeyDownEvent {
         keystroke: Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),

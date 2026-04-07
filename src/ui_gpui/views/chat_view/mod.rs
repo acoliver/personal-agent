@@ -127,7 +127,6 @@ impl ChatView {
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
     pub(super) fn messages_from_payload(
         messages: Vec<ConversationMessagePayload>,
-        current_model: &str,
     ) -> Vec<ChatMessage> {
         messages
             .into_iter()
@@ -137,10 +136,9 @@ impl ChatView {
                         ChatMessage::user(message.content)
                     }
                     crate::presentation::view_command::MessageRole::Assistant => {
-                        // Use the per-message model_id if available, otherwise fall back to current_model
-                        let model_label = message
-                            .model_id
-                            .unwrap_or_else(|| current_model.to_string());
+                        // Use the per-message model_id if available, otherwise show 'unknown'
+                        // to avoid misleading users about which model generated old responses
+                        let model_label = message.model_id.unwrap_or_else(|| "unknown".to_string());
                         ChatMessage::assistant(message.content, model_label)
                     }
                     crate::presentation::view_command::MessageRole::System
@@ -260,8 +258,7 @@ impl ChatView {
 
         match &load_state {
             ConversationLoadState::Ready { .. } => {
-                let current_model = self.state.current_model.clone();
-                self.state.messages = Self::messages_from_payload(transcript, &current_model);
+                self.state.messages = Self::messages_from_payload(transcript);
             }
             ConversationLoadState::Loading { .. } | ConversationLoadState::Error { .. } => {}
             ConversationLoadState::Idle => {

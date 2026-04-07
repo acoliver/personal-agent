@@ -136,7 +136,7 @@ async fn apply_store_and_settings_snapshots_seed_visible_chat_state(cx: &mut Tes
         assert_eq!(view.state.messages[1].timestamp, Some(200));
         assert_eq!(
             view.state.messages[1].model_label.as_deref(),
-            Some("Default")
+            Some("unknown")
         );
         assert_eq!(
             view.state.streaming,
@@ -495,7 +495,7 @@ async fn apply_store_snapshot_renders_active_transcript_ignoring_inactive_conver
         assert_eq!(view.state.messages[2].content, "follow-up");
         assert_eq!(
             view.state.messages[2].model_label.as_deref(),
-            Some("Default")
+            Some("unknown")
         );
         assert_eq!(view.state.streaming, StreamingState::Idle);
         assert_eq!(view.state.thinking_content, None);
