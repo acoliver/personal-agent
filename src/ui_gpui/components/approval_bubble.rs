@@ -119,7 +119,6 @@ impl ApprovalBubble {
             .rounded(px(Theme::RADIUS_SM))
             .text_size(px(Theme::font_size_ui()))
             .cursor_pointer()
-            .hover(|s| s.opacity(0.8))
             .child(label.to_string());
 
         if let Some(callback) = handler {
