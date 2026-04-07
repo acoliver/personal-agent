@@ -415,6 +415,23 @@ mod tests {
     }
 
     #[test]
+    fn streaming_state_streaming_variant() {
+        let state = StreamingState::Streaming {
+            content: "test".to_string(),
+            done: true,
+        };
+        assert!(matches!(state, StreamingState::Streaming { .. }));
+    }
+
+    #[test]
+    fn chat_state_set_thinking() {
+        let mut state = ChatState::new();
+        state.set_thinking(true, Some("thinking content".to_string()));
+        assert!(state.show_thinking);
+        assert_eq!(state.thinking_content, Some("thinking content".to_string()));
+    }
+
+    #[test]
     fn selected_profile_prefers_explicit_then_default() {
         let p1 = ProfileSummary {
             id: Uuid::new_v4(),
