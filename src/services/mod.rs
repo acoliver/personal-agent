@@ -19,6 +19,10 @@ pub mod backup;
 pub mod backup_impl;
 pub mod chat;
 pub mod chat_impl;
+pub mod skill_parser;
+pub mod skills;
+pub mod skills_impl;
+
 pub mod conversation;
 pub mod conversation_sqlite;
 pub mod mcp;
@@ -91,6 +95,8 @@ pub use app_settings_impl::AppSettingsServiceImpl;
 pub use backup_impl::BackupServiceImpl;
 pub use chat_impl::ChatServiceImpl;
 pub use conversation_sqlite::SqliteConversationService;
+pub use skills::SkillsService;
+
 pub use mcp_impl::McpServiceImpl;
 pub use mcp_registry_impl::McpRegistryServiceImpl;
 pub use models_registry_impl::ModelsRegistryServiceImpl;
@@ -99,5 +105,7 @@ pub use secrets_impl::SecretsServiceImpl;
 
 // Re-export types used by service traits
 pub use chat::ChatStreamEvent;
+pub use skills_impl::SkillsServiceImpl;
+
 pub use mcp::{McpServerStatus, McpTool};
 pub use mcp_registry::McpRegistryEntry;

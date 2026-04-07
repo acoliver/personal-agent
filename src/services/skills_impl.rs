@@ -1,0 +1,512 @@
+use async_trait::async_trait;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use crate::models::{Skill, SkillSource};
+
+use super::skill_parser::{parse_skill_content, parse_skill_file};
+use super::{AppSettingsService, ServiceError, ServiceResult, SkillsService};
+
+const DISABLED_SKILLS_SETTING_KEY: &str = "skills.disabled";
+const WATCHED_SKILLS_DIRECTORIES_SETTING_KEY: &str = "skills.watched_directories";
+
+pub struct SkillsServiceImpl {
+    app_settings_service: Arc<dyn AppSettingsService>,
+    bundled_skills_dir: PathBuf,
+    user_skills_dir: PathBuf,
+    skills: RwLock<Vec<Skill>>,
+}
+
+impl SkillsServiceImpl {
+    /// # Errors
+    ///
+    /// Returns `ServiceError::Configuration` if the user skills directory cannot
+    /// be determined or `ServiceError::Io` if required directories cannot be created.
+    pub fn new(app_settings_service: Arc<dyn AppSettingsService>) -> ServiceResult<Self> {
+        let bundled_skills_dir = std::env::current_exe()
+            .map_err(|error| {
+                ServiceError::Configuration(format!(
+                    "Failed to determine current executable: {error}"
+                ))
+            })?
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                ServiceError::Configuration(
+                    "Failed to resolve executable directory for bundled skills".to_string(),
+                )
+            })?
+            .join("resources")
+            .join("skills");
+
+        let user_base_dir = dirs::data_local_dir().ok_or_else(|| {
+            ServiceError::Configuration(
+                "Could not determine data_local_dir for user skills".to_string(),
+            )
+        })?;
+        let user_skills_dir = user_base_dir.join("PersonalAgent").join("skills");
+        std::fs::create_dir_all(&user_skills_dir).map_err(|error| {
+            ServiceError::Io(format!(
+                "Failed to create user skills directory {}: {error}",
+                user_skills_dir.display()
+            ))
+        })?;
+
+        Ok(Self {
+            app_settings_service,
+            bundled_skills_dir,
+            user_skills_dir,
+            skills: RwLock::new(Vec::new()),
+        })
+    }
+
+    /// Create a test-scoped skills service with explicit bundled and user directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the user skills directory cannot be created.
+    pub fn new_for_tests(
+        app_settings_service: Arc<dyn AppSettingsService>,
+        bundled_skills_dir: PathBuf,
+        user_skills_dir: PathBuf,
+    ) -> ServiceResult<Self> {
+        std::fs::create_dir_all(&user_skills_dir).map_err(|error| {
+            ServiceError::Io(format!(
+                "Failed to create user skills directory {}: {error}",
+                user_skills_dir.display()
+            ))
+        })?;
+
+        Ok(Self {
+            app_settings_service,
+            bundled_skills_dir,
+            user_skills_dir,
+            skills: RwLock::new(Vec::new()),
+        })
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error when skill discovery or persisted setting reads fail.
+    pub async fn discover_skills(&self) -> ServiceResult<()> {
+        let disabled_names = self.load_disabled_skill_names().await?;
+        let mut discovered = Self::discover_from_directory(
+            &self.bundled_skills_dir,
+            SkillSource::Bundled,
+            &disabled_names,
+        )?;
+
+        for (name, user_skill) in Self::discover_from_directory(
+            &self.user_skills_dir,
+            SkillSource::User,
+            &disabled_names,
+        )? {
+            discovered.insert(name, user_skill);
+        }
+
+        for watched_dir in self.load_watched_directories().await? {
+            for (name, watched_skill) in
+                Self::discover_from_directory(&watched_dir, SkillSource::User, &disabled_names)?
+            {
+                discovered.insert(name, watched_skill);
+            }
+        }
+
+        let mut skills = discovered.into_values().collect::<Vec<_>>();
+        skills.sort_by(|left, right| left.name.cmp(&right.name));
+        *self.skills.write().await = skills;
+        Ok(())
+    }
+
+    fn discover_from_directory(
+        base_dir: &Path,
+        source: SkillSource,
+        disabled_names: &HashSet<String>,
+    ) -> ServiceResult<HashMap<String, Skill>> {
+        let mut discovered = HashMap::new();
+        if !base_dir.exists() {
+            return Ok(discovered);
+        }
+
+        Self::discover_from_directory_recursive(base_dir, source, disabled_names, &mut discovered)?;
+        Ok(discovered)
+    }
+
+    fn discover_from_directory_recursive(
+        base_dir: &Path,
+        source: SkillSource,
+        disabled_names: &HashSet<String>,
+        discovered: &mut HashMap<String, Skill>,
+    ) -> ServiceResult<()> {
+        let entries = std::fs::read_dir(base_dir).map_err(|error| {
+            ServiceError::Io(format!(
+                "Failed to read skills directory {}: {error}",
+                base_dir.display()
+            ))
+        })?;
+
+        for entry_result in entries {
+            let entry = entry_result.map_err(|error| {
+                ServiceError::Io(format!(
+                    "Failed to read skill entry in {}: {error}",
+                    base_dir.display()
+                ))
+            })?;
+            let file_type = entry.file_type().map_err(|error| {
+                ServiceError::Io(format!(
+                    "Failed to read skill entry type in {}: {error}",
+                    base_dir.display()
+                ))
+            })?;
+            if file_type.is_symlink() || !file_type.is_dir() {
+                continue;
+            }
+
+            let path = entry.path();
+            let skill_file = path.join("SKILL.md");
+            if skill_file.is_file() {
+                let (metadata, _body) = parse_skill_file(&skill_file)?;
+                let enabled = !disabled_names.contains(&metadata.name);
+                let skill = Skill::new(
+                    metadata.name.clone(),
+                    metadata.description,
+                    skill_file,
+                    source,
+                    enabled,
+                );
+                discovered.insert(metadata.name, skill);
+                continue;
+            }
+
+            Self::discover_from_directory_recursive(&path, source, disabled_names, discovered)?;
+        }
+
+        Ok(())
+    }
+
+    async fn load_disabled_skill_names(&self) -> ServiceResult<HashSet<String>> {
+        let raw = self
+            .app_settings_service
+            .get_setting(DISABLED_SKILLS_SETTING_KEY)
+            .await?;
+
+        let Some(raw) = raw else {
+            return Ok(HashSet::new());
+        };
+
+        serde_json::from_str::<Vec<String>>(&raw)
+            .map(|items| items.into_iter().collect())
+            .map_err(|error| {
+                ServiceError::Validation(format!(
+                    "Failed to parse disabled skills setting {DISABLED_SKILLS_SETTING_KEY}: {error}"
+                ))
+            })
+    }
+
+    fn serialize_disabled_skill_names(disabled_names: &[String]) -> ServiceResult<String> {
+        serde_json::to_string(disabled_names)
+            .map_err(|error| ServiceError::Serialization(error.to_string()))
+    }
+
+    async fn load_watched_directories(&self) -> ServiceResult<Vec<PathBuf>> {
+        let raw = self
+            .app_settings_service
+            .get_setting(WATCHED_SKILLS_DIRECTORIES_SETTING_KEY)
+            .await?;
+
+        let Some(raw) = raw else {
+            return Ok(Vec::new());
+        };
+
+        let mut directories = serde_json::from_str::<Vec<String>>(&raw)
+            .map_err(|error| {
+                ServiceError::Validation(format!(
+                    "Failed to parse watched skills directories setting {WATCHED_SKILLS_DIRECTORIES_SETTING_KEY}: {error}"
+                ))
+            })?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        directories.sort();
+        directories.dedup();
+        Ok(directories)
+    }
+
+    async fn persist_watched_directories(&self, directories: &[PathBuf]) -> ServiceResult<()> {
+        let mut values = directories
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        values.sort();
+        values.dedup();
+        let serialized = serde_json::to_string(&values)
+            .map_err(|error| ServiceError::Serialization(error.to_string()))?;
+        self.app_settings_service
+            .set_setting(WATCHED_SKILLS_DIRECTORIES_SETTING_KEY, serialized)
+            .await
+    }
+
+    fn normalize_directory(path: &Path) -> ServiceResult<PathBuf> {
+        let trimmed = path.to_string_lossy().trim().to_string();
+        if trimmed.is_empty() {
+            return Err(ServiceError::Validation(
+                "Skills directory path cannot be empty".to_string(),
+            ));
+        }
+
+        let expanded = if let Some(stripped) = trimmed.strip_prefix("~/") {
+            dirs::home_dir()
+                .ok_or_else(|| {
+                    ServiceError::Configuration(
+                        "Could not determine home directory for skills path".to_string(),
+                    )
+                })?
+                .join(stripped)
+        } else {
+            PathBuf::from(trimmed)
+        };
+
+        if expanded.is_absolute() {
+            Ok(expanded)
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(expanded))
+                .map_err(|error| {
+                    ServiceError::Io(format!("Failed to resolve relative skills path: {error}"))
+                })
+        }
+    }
+
+    fn sanitize_skill_slug(input: &str) -> String {
+        let mut slug = String::new();
+        let mut previous_was_dash = false;
+        for ch in input.chars() {
+            let lower = ch.to_ascii_lowercase();
+            if lower.is_ascii_alphanumeric() {
+                slug.push(lower);
+                previous_was_dash = false;
+            } else if !previous_was_dash {
+                slug.push('-');
+                previous_was_dash = true;
+            }
+        }
+        slug.trim_matches('-').to_string()
+    }
+
+    fn install_dir_name_for_url(url: &str, metadata_name: &str) -> String {
+        let metadata_slug = Self::sanitize_skill_slug(metadata_name);
+        if !metadata_slug.is_empty() {
+            return metadata_slug;
+        }
+
+        url::Url::parse(url)
+            .ok()
+            .and_then(|parsed| {
+                parsed
+                    .path_segments()
+                    .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+                    .map(Self::sanitize_skill_slug)
+            })
+            .filter(|slug| !slug.is_empty())
+            .unwrap_or_else(|| "imported-skill".to_string())
+    }
+
+    /// Convert GitHub blob/tree URLs to raw.githubusercontent.com URLs so we
+    /// fetch the actual markdown content rather than the HTML page wrapper.
+    fn normalize_github_url(url: &str) -> String {
+        let trimmed = url.trim();
+        if let Some(rest) = trimmed.strip_prefix("https://github.com/") {
+            // github.com/<owner>/<repo>/blob/<branch>/path → raw.githubusercontent.com/<owner>/<repo>/<branch>/path
+            if let Some(after_blob) = rest.strip_prefix(
+                rest.splitn(3, '/').collect::<Vec<_>>()[..2]
+                    .join("/")
+                    .as_str(),
+            ) {
+                if let Some(raw_path) = after_blob.strip_prefix("/blob/") {
+                    let owner_repo = &rest[..rest.len() - after_blob.len()];
+                    return format!("https://raw.githubusercontent.com/{owner_repo}/{raw_path}");
+                }
+            }
+        }
+        trimmed.to_string()
+    }
+}
+
+#[async_trait]
+impl SkillsService for SkillsServiceImpl {
+    async fn list_skills(&self) -> ServiceResult<Vec<Skill>> {
+        Ok(self.skills.read().await.clone())
+    }
+
+    async fn get_skill(&self, name: &str) -> ServiceResult<Option<Skill>> {
+        Ok(self
+            .skills
+            .read()
+            .await
+            .iter()
+            .find(|skill| skill.name == name)
+            .cloned())
+    }
+
+    async fn get_skill_body(&self, name: &str) -> ServiceResult<Option<String>> {
+        let skill = self.get_skill(name).await?;
+        let Some(skill) = skill else {
+            return Ok(None);
+        };
+
+        let path = skill.path.clone();
+        let body_result =
+            tokio::task::spawn_blocking(move || parse_skill_file(&path).map(|(_, body)| body))
+                .await
+                .map_err(|error| {
+                    ServiceError::Io(format!("Failed to join skill body task: {error}"))
+                })?;
+        let body = body_result?;
+        Ok(Some(body))
+    }
+
+    async fn set_skill_enabled(&self, name: &str, enabled: bool) -> ServiceResult<()> {
+        let toggle_result = {
+            let mut skills = self.skills.write().await;
+
+            let Some(skill) = skills.iter_mut().find(|skill| skill.name == name) else {
+                return Err(ServiceError::NotFound(format!("Skill not found: {name}")));
+            };
+
+            let previous_enabled = skill.enabled;
+            skill.enabled = enabled;
+
+            let mut disabled_names = skills
+                .iter()
+                .filter(|skill| !skill.enabled)
+                .map(|skill| skill.name.clone())
+                .collect::<Vec<_>>();
+            disabled_names.sort();
+            disabled_names.dedup();
+
+            let serialized = Self::serialize_disabled_skill_names(&disabled_names)?;
+            drop(skills);
+
+            (previous_enabled, serialized)
+        };
+
+        let (previous_enabled, serialized) = toggle_result;
+        if let Err(error) = self
+            .app_settings_service
+            .set_setting(DISABLED_SKILLS_SETTING_KEY, serialized)
+            .await
+        {
+            if let Some(skill) = self
+                .skills
+                .write()
+                .await
+                .iter_mut()
+                .find(|skill| skill.name == name)
+            {
+                skill.enabled = previous_enabled;
+            }
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
+    async fn get_enabled_skills(&self) -> ServiceResult<Vec<Skill>> {
+        Ok(self
+            .skills
+            .read()
+            .await
+            .iter()
+            .filter(|skill| skill.enabled)
+            .cloned()
+            .collect())
+    }
+    async fn refresh(&self) -> ServiceResult<()> {
+        self.discover_skills().await
+    }
+
+    async fn watched_directories(&self) -> ServiceResult<Vec<PathBuf>> {
+        self.load_watched_directories().await
+    }
+
+    async fn add_watched_directory(&self, path: PathBuf) -> ServiceResult<()> {
+        let normalized = Self::normalize_directory(&path)?;
+        std::fs::create_dir_all(&normalized).map_err(|error| {
+            ServiceError::Io(format!(
+                "Failed to create watched skills directory {}: {error}",
+                normalized.display()
+            ))
+        })?;
+
+        let mut directories = self.load_watched_directories().await?;
+        if !directories.iter().any(|existing| existing == &normalized) {
+            directories.push(normalized);
+            self.persist_watched_directories(&directories).await?;
+        }
+
+        self.discover_skills().await
+    }
+
+    async fn remove_watched_directory(&self, path: &Path) -> ServiceResult<()> {
+        let normalized = Self::normalize_directory(path)?;
+        let mut directories = self.load_watched_directories().await?;
+        directories.retain(|existing| existing != &normalized);
+        self.persist_watched_directories(&directories).await?;
+        self.discover_skills().await
+    }
+
+    fn default_user_skills_dir(&self) -> PathBuf {
+        self.user_skills_dir.clone()
+    }
+
+    async fn install_skill_from_url(&self, url: &str) -> ServiceResult<Skill> {
+        let fetch_url = Self::normalize_github_url(url);
+        let response = reqwest::get(&fetch_url)
+            .await
+            .map_err(|error| ServiceError::Network(format!("Failed to download skill: {error}")))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ServiceError::Network(format!(
+                "Failed to download skill: HTTP {status}"
+            )));
+        }
+
+        let body = response.text().await.map_err(|error| {
+            ServiceError::Network(format!("Failed to read skill body: {error}"))
+        })?;
+        let (metadata, _) = parse_skill_content(&body)?;
+
+        let skill_dir = self
+            .user_skills_dir
+            .join(Self::install_dir_name_for_url(url, &metadata.name));
+        std::fs::create_dir_all(&skill_dir).map_err(|error| {
+            ServiceError::Io(format!(
+                "Failed to create installed skill directory {}: {error}",
+                skill_dir.display()
+            ))
+        })?;
+
+        let skill_file = skill_dir.join("SKILL.md");
+        std::fs::write(&skill_file, body).map_err(|error| {
+            ServiceError::Io(format!(
+                "Failed to write installed skill {}: {error}",
+                skill_file.display()
+            ))
+        })?;
+
+        self.discover_skills().await?;
+        self.get_skill(&metadata.name).await?.ok_or_else(|| {
+            ServiceError::NotFound(format!(
+                "Installed skill not found after refresh: {}",
+                metadata.name
+            ))
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "skills_impl_tests.rs"]
+mod tests;

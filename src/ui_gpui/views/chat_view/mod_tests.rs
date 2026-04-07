@@ -1,15 +1,87 @@
 #![allow(clippy::future_not_send)]
 
 use super::*;
+use crate::events::types::UserEvent;
 use crate::presentation::view_command::{
-    ConversationMessagePayload, ConversationSummary, MessageRole,
+    ConversationMessagePayload, ConversationSummary, MessageRole, ViewCommand,
 };
 use crate::ui_gpui::app_store::StreamingStoreSnapshot;
+use crate::ui_gpui::bridge::GpuiBridge;
 use chrono::Utc;
 use gpui::{
     point, AppContext, KeyDownEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
     TestAppContext, TouchPhase,
 };
+use std::sync::Arc;
+
+// ── messages_from_payload tests ──────────────────────────────────────────
+
+#[test]
+fn messages_from_payload_uses_model_id_when_present() {
+    // Verify that assistant messages with a stored model_id display the correct model name
+    let messages = vec![ConversationMessagePayload {
+        role: MessageRole::Assistant,
+        content: "Hello".to_string(),
+        thinking_content: None,
+        timestamp: None,
+        model_id: Some("gpt-4o".to_string()),
+    }];
+
+    let result = ChatView::messages_from_payload(messages);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].model_label.as_deref(), Some("gpt-4o"));
+}
+
+#[test]
+fn messages_from_payload_shows_unknown_when_model_id_missing() {
+    let messages = vec![ConversationMessagePayload {
+        role: MessageRole::Assistant,
+        content: "Hello".to_string(),
+        thinking_content: None,
+        timestamp: None,
+        model_id: None,
+    }];
+
+    let result = ChatView::messages_from_payload(messages);
+
+    assert_eq!(result.len(), 1);
+    // Should show "unknown" instead of the current profile
+    assert_eq!(result[0].model_label.as_deref(), Some("unknown"));
+}
+
+#[test]
+fn messages_from_payload_user_messages_have_no_model_label() {
+    let messages = vec![ConversationMessagePayload {
+        role: MessageRole::User,
+        content: "Hello".to_string(),
+        thinking_content: None,
+        timestamp: None,
+        model_id: Some("gpt-4o".to_string()), // Even with model_id, user messages don't show model
+    }];
+
+    let result = ChatView::messages_from_payload(messages);
+
+    assert_eq!(result.len(), 1);
+    assert!(result[0].model_label.is_none());
+}
+
+#[test]
+fn messages_from_payload_preserves_thinking_and_timestamp() {
+    let messages = vec![ConversationMessagePayload {
+        role: MessageRole::Assistant,
+        content: "Hello".to_string(),
+        thinking_content: Some("Let me think...".to_string()),
+        timestamp: Some(1_234_567_890),
+        model_id: Some("claude-3".to_string()),
+    }];
+
+    let result = ChatView::messages_from_payload(messages);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].thinking.as_deref(), Some("Let me think..."));
+    assert_eq!(result[0].timestamp, Some(1_234_567_890));
+}
 
 fn chat_key_event(key: &str) -> KeyDownEvent {
     KeyDownEvent {
@@ -17,6 +89,73 @@ fn chat_key_event(key: &str) -> KeyDownEvent {
         is_held: false,
         prefer_character_input: false,
     }
+}
+
+fn make_chat_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
+    let (user_tx, user_rx) = flume::bounded(8);
+    let (_view_tx, view_rx) = flume::bounded(8);
+    (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
+}
+
+#[gpui::test]
+async fn sidebar_helpers_toggle_visibility_and_emit_search_events(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+    let (bridge, user_rx) = make_chat_bridge();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.set_bridge(bridge.clone());
+            assert!(view.state.sidebar_visible);
+            view.toggle_sidebar(cx);
+            assert!(!view.state.sidebar_visible);
+
+            view.state.sidebar_search_query = "  skills  ".to_string();
+            view.trigger_sidebar_search(cx);
+            assert_eq!(
+                user_rx.try_recv().ok(),
+                Some(UserEvent::SearchConversations {
+                    query: "  skills  ".to_string(),
+                })
+            );
+
+            view.state.sidebar_search_query = "   ".to_string();
+            view.state.sidebar_search_results = Some(Vec::new());
+            view.trigger_sidebar_search(cx);
+            assert!(view.state.sidebar_search_results.is_none());
+            assert!(user_rx.try_recv().is_err());
+        });
+    });
+}
+
+#[gpui::test]
+async fn conversation_search_results_command_respects_empty_query_behavior(
+    cx: &mut TestAppContext,
+) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.state.sidebar_search_query.clear();
+            view.handle_command(
+                ViewCommand::ConversationSearchResults {
+                    results: Vec::new(),
+                },
+                cx,
+            );
+            assert!(view.state.sidebar_search_results.is_none());
+
+            view.state.sidebar_search_query = "skills".to_string();
+            view.handle_command(
+                ViewCommand::ConversationSearchResults {
+                    results: Vec::new(),
+                },
+                cx,
+            );
+            assert_eq!(view.state.sidebar_search_results, Some(Vec::new()));
+        });
+    });
 }
 
 #[gpui::test]

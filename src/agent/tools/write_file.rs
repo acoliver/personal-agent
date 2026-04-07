@@ -206,6 +206,7 @@ mod tests {
             view_tx,
             approval_gate,
             policy,
+            ..Default::default()
         };
 
         let executor = WriteFileExecutor;
@@ -257,6 +258,7 @@ mod tests {
             view_tx,
             approval_gate,
             policy,
+            ..Default::default()
         };
 
         let executor = WriteFileExecutor;
@@ -295,6 +297,7 @@ mod tests {
             view_tx,
             approval_gate,
             policy,
+            ..Default::default()
         };
 
         let executor = WriteFileExecutor;
@@ -326,6 +329,7 @@ mod tests {
             view_tx,
             approval_gate,
             policy,
+            ..Default::default()
         };
         let run_ctx = RunContext::new(context, "test-model");
 
@@ -349,6 +353,7 @@ mod tests {
             view_tx,
             approval_gate,
             policy,
+            ..Default::default()
         };
         let run_ctx = RunContext::new(context, "test-model");
 
@@ -376,6 +381,7 @@ mod tests {
             view_tx,
             approval_gate,
             policy,
+            ..Default::default()
         };
         let run_ctx = RunContext::new(context, "test-model");
 

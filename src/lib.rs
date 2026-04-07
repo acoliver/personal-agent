@@ -30,11 +30,15 @@ pub use config::{CompressionConfig, Config, ContextManagement};
 pub use error::{AppError, Result};
 pub use events::{emit, subscribe, AppEvent, EventBus, EventBusError};
 pub use llm::{LlmClient, LlmError, Message as LlmMessage, Role as LlmRole, StreamEvent};
-pub use models::{AuthConfig, Conversation, Message, MessageRole, ModelParameters, ModelProfile};
+pub use models::{
+    AuthConfig, Conversation, Message, MessageRole, ModelParameters, ModelProfile, Skill,
+    SkillMetadata, SkillSource,
+};
 pub use registry::{ModelInfo, ModelRegistry, RegistryManager};
 pub use services::{
     AppSettingsService, ChatService, ConversationService, McpRegistryService, McpService,
     ModelsRegistryService, ProfileService, SecretsService, ServiceError, ServiceResult,
+    SkillsService,
 };
 
 // @plan PLAN-20250125-REFACTOR.P04

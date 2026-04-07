@@ -85,10 +85,15 @@ async fn prepare_message_context_uses_persisted_compression_config() {
 
     let (view_tx, _view_rx) = tokio::sync::mpsc::channel(8);
     let approval_gate = Arc::new(ApprovalGate::new());
+    let skills_service = Arc::new(
+        crate::services::SkillsServiceImpl::new(app_settings.clone())
+            .expect("skills service should initialize"),
+    ) as Arc<dyn crate::services::SkillsService>;
     let service = ChatServiceImpl::new(
         conversation_service,
         profile_service,
         app_settings,
+        skills_service,
         view_tx,
         approval_gate,
         Arc::new(AsyncMutex::new(ToolApprovalPolicy::default())),

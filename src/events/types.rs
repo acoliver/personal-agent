@@ -225,6 +225,21 @@ pub enum UserEvent {
     /// User requested a fresh tool approval policy snapshot.
     RefreshToolApprovalPolicy,
 
+    /// User requested a fresh skills snapshot.
+    RefreshSkills,
+
+    /// User toggled an individual skill's enabled state.
+    SetSkillEnabled { name: String, enabled: bool },
+
+    /// User requested adding a watched skills directory.
+    AddSkillsDirectory { path: String },
+
+    /// User requested removing a watched skills directory.
+    RemoveSkillsDirectory { path: String },
+
+    /// User requested installing a skill from a direct SKILL.md URL.
+    InstallSkillFromUrl { url: String },
+
     /// User responded to a tool approval request.
     ToolApprovalResponse {
         request_id: String,
@@ -236,6 +251,9 @@ pub enum UserEvent {
 
     /// User toggled automatic approval for read-only tools.
     SetToolApprovalAutoApproveReads { enabled: bool },
+
+    /// User toggled automatic approval for skill activation.
+    SetToolApprovalSkillsAutoApprove { enabled: bool },
 
     /// User selected MCP approval granularity.
     SetToolApprovalMcpApprovalMode { mode: crate::agent::McpApprovalMode },
@@ -589,6 +607,8 @@ pub enum SystemEvent {
 pub enum ModelProfileAuth {
     /// API key stored in OS keychain, referenced by label.
     Keychain { label: String },
+    /// No authentication required (for local/offline models).
+    None,
 }
 
 /// Lightweight profile parameters payload for GPUI save flow

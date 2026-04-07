@@ -1,4 +1,4 @@
-name: Release (Homebrew arm64)
+name: Release (macOS arm64 + Linux x86_64 + Windows x86_64)
 
 on:
   push:
@@ -18,7 +18,7 @@ env:
 
 jobs:
   release:
-    name: Build + sign + publish + update tap
+    name: Build + sign + publish + update tap (macOS)
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -108,3 +108,228 @@ jobs:
             "${{ steps.tag.outputs.release_tag }}" \
             "${{ steps.meta.outputs.asset_name }}" \
             "${{ steps.meta.outputs.sha256 }}"
+
+  # Linux release job - builds .deb, .rpm, and .zip artifacts
+  # No additional secrets required - uploads go to GitHub Releases using GITHUB_TOKEN
+  linux-release:
+    name: Build + package (Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            cmake \
+            curl \
+            gcc \
+            g++ \
+            git \
+            jq \
+            libdbus-1-dev \
+            libasound2-dev \
+            libfontconfig-dev \
+            libgit2-dev \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            libva-dev \
+            libvulkan1 \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxkbcommon-x11-dev \
+            libzstd-dev \
+            llvm \
+            lld \
+            make \
+            pkg-config \
+            pipewire \
+            xdg-desktop-portal
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            release_tag="${{ inputs.release_tag }}"
+          else
+            release_tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must look like vX.Y.Z (received: ${release_tag})"
+            exit 1
+          fi
+
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and package Linux artifacts
+        run: scripts/release/package_linux_x86_64.sh "${{ steps.tag.outputs.release_tag }}"
+
+      - name: Gather artifact metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          artifact_dir="artifacts/release"
+
+          deb_name="$(cat "${artifact_dir}/deb_name.txt")"
+          deb_path="$(cat "${artifact_dir}/deb_path.txt")"
+          deb_sha="$(cat "${artifact_dir}/deb_sha256.txt")"
+
+          rpm_name="$(cat "${artifact_dir}/rpm_name.txt")"
+          rpm_path="$(cat "${artifact_dir}/rpm_path.txt")"
+          rpm_sha="$(cat "${artifact_dir}/rpm_sha256.txt")"
+
+          zip_name="$(cat "${artifact_dir}/zip_name.txt")"
+          zip_path="$(cat "${artifact_dir}/zip_path.txt")"
+          zip_sha="$(cat "${artifact_dir}/zip_sha256.txt")"
+
+          echo "deb_name=${deb_name}" >> "$GITHUB_OUTPUT"
+          echo "deb_path=${deb_path}" >> "$GITHUB_OUTPUT"
+          echo "deb_sha=${deb_sha}" >> "$GITHUB_OUTPUT"
+
+          echo "rpm_name=${rpm_name}" >> "$GITHUB_OUTPUT"
+          echo "rpm_path=${rpm_path}" >> "$GITHUB_OUTPUT"
+          echo "rpm_sha=${rpm_sha}" >> "$GITHUB_OUTPUT"
+
+          echo "zip_name=${zip_name}" >> "$GITHUB_OUTPUT"
+          echo "zip_path=${zip_path}" >> "$GITHUB_OUTPUT"
+          echo "zip_sha=${zip_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Linux artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.tag.outputs.release_tag }}"
+
+          # Wait for release to exist (macOS job creates it, or create if needed)
+          for i in {1..30}; do
+            if gh release view "${release_tag}" >/dev/null 2>&1; then
+              echo "Release ${release_tag} found"
+              break
+            fi
+            echo "Waiting for release ${release_tag} to be created..."
+            sleep 10
+          done
+
+          # Upload all Linux artifacts
+          gh release upload "${release_tag}" \
+            "${{ steps.meta.outputs.deb_path }}" \
+            "${{ steps.meta.outputs.rpm_path }}" \
+            "${{ steps.meta.outputs.zip_path }}" \
+            artifacts/release/SHA256SUMS.txt \
+            --clobber || {
+              # If release doesn't exist yet, create it
+              gh release create "${release_tag}" \
+                --verify-tag \
+                "${{ steps.meta.outputs.deb_path }}" \
+                "${{ steps.meta.outputs.rpm_path }}" \
+                "${{ steps.meta.outputs.zip_path }}" \
+                artifacts/release/SHA256SUMS.txt \
+                --title "${release_tag}" \
+                --generate-notes
+            }
+
+  # Windows release job - builds .zip artifact for Windows
+  # No additional secrets required - uploads go to GitHub Releases using GITHUB_TOKEN
+  windows-release:
+    name: Build + package (Windows x86_64)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Resolve release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $releaseTag = '${{ inputs.release_tag }}'
+          } else {
+            $releaseTag = $env:GITHUB_REF_NAME
+          }
+
+          if ($releaseTag -notmatch '^v\d+\.\d+\.\d+$') {
+            Write-Error "Release tag must look like vX.Y.Z (received: $releaseTag)"
+            exit 1
+          }
+
+          echo "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
+
+      - name: Build and package Windows artifacts
+        shell: pwsh
+        run: scripts/release/package_windows_x86_64.ps1 "${{ steps.tag.outputs.release_tag }}"
+
+      - name: Gather artifact metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifactDir = "artifacts/release"
+
+          $zipName = Get-Content "$artifactDir/zip_name.txt" -Raw
+          $zipPath = Get-Content "$artifactDir/zip_path.txt" -Raw
+          $zipSha = Get-Content "$artifactDir/zip_sha256.txt" -Raw
+
+          echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          echo "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          echo "zip_sha=$zipSha" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Windows artifact to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseTag = '${{ steps.tag.outputs.release_tag }}'
+
+          # Wait for release to exist (macOS job creates it, or create if needed)
+          $maxAttempts = 30
+          for ($i = 1; $i -le $maxAttempts; $i++) {
+            if (gh release view $releaseTag 2>$null) {
+              Write-Host "Release $releaseTag found"
+              break
+            }
+            Write-Host "Waiting for release $releaseTag to be created..."
+            Start-Sleep -Seconds 10
+          }
+
+          # Upload Windows artifact
+          gh release upload $releaseTag `
+            '${{ steps.meta.outputs.zip_path }}' `
+            artifacts/release/SHA256SUMS.txt `
+            --clobber
+
+          if ($LASTEXITCODE -ne 0) {
+            # If release doesn't exist yet, create it
+            gh release create $releaseTag `
+              --verify-tag `
+              '${{ steps.meta.outputs.zip_path }}' `
+              artifacts/release/SHA256SUMS.txt `
+              --title $releaseTag `
+              --generate-notes
+          }

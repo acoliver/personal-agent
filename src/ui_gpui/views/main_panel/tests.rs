@@ -1,276 +1,21 @@
 #![allow(clippy::future_not_send)]
 
 use super::*;
-use chrono::Utc;
-use flume;
-use gpui::{AppContext, TestAppContext};
+use crate::events::types::UserEvent;
+use crate::models::ConversationExportFormat;
+use crate::presentation::view_command::{MessageRole, ViewCommand};
+use crate::ui_gpui::app_store::{BeginSelectionMode, BeginSelectionResult};
+use gpui::TestAppContext;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::events::types::UserEvent;
-use crate::models::ConversationExportFormat;
-use crate::presentation::view_command::{
-    ConversationMessagePayload, ConversationSummary, MessageRole, ProfileSummary, ThemeSummary,
-    ViewCommand,
-};
-use crate::ui_gpui::app_store::{
-    BeginSelectionMode, BeginSelectionResult, StartupInputs, StartupMode,
-    StartupSelectedConversation, StartupTranscriptResult,
-};
-use crate::ui_gpui::bridge::GpuiBridge;
-use crate::ui_gpui::GpuiAppStore;
+#[path = "support.rs"]
+mod main_panel_test_support;
 
-pub fn assert_route_count(
-    cmd: ViewCommand,
-    expected: usize,
-    read_count: impl Fn(&CommandTargets) -> usize,
-) {
-    let mut targets = CommandTargets::default();
-    route_view_command(cmd, &mut targets);
-    assert_eq!(read_count(&targets), expected);
-}
-
-fn assert_mcp_and_chat_error_counts(cmd: ViewCommand, expected_mcp: usize, expected_chat: usize) {
-    let mut targets = CommandTargets::default();
-    route_view_command(cmd, &mut targets);
-    assert_eq!(targets.mcp_error_commands_count, expected_mcp);
-    assert_eq!(targets.chat_error_commands, expected_chat);
-}
-
-fn assert_settings_and_chat_notification_counts(
-    cmd: ViewCommand,
-    expected_settings: usize,
-    expected_chat: usize,
-) {
-    let mut targets = CommandTargets::default();
-    route_view_command(cmd, &mut targets);
-    assert_eq!(targets.settings_notifications_count, expected_settings);
-    assert_eq!(targets.chat_notification_commands, expected_chat);
-}
-
-fn assert_profile_forwarding_via_store(
-    store: &Arc<GpuiAppStore>,
-    panel: &mut MainPanel,
-    profile_id: Uuid,
-    cx: &mut gpui::Context<MainPanel>,
-) {
-    store.reduce_batch(vec![ViewCommand::ChatProfilesUpdated {
-        profiles: vec![profile_summary(
-            profile_id,
-            "Workspace Default",
-            "openai",
-            "gpt-4.1",
-            true,
-        )],
-        selected_profile_id: Some(profile_id),
-    }]);
-    let snapshot = store.current_snapshot();
-    panel.apply_store_snapshot(snapshot, cx);
-
-    let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
-    chat_view.read_with(cx, |view, _| {
-        assert_eq!(view.state.profiles.len(), 1);
-        assert_eq!(view.state.selected_profile_id, Some(profile_id));
-        assert_eq!(view.state.current_model, "Workspace Default");
-    });
-}
-
-fn assert_mcp_routing_targets(saved_mcp_id: Uuid) {
-    assert_route_count(
-        ViewCommand::McpConfigureDraftLoaded {
-            id: saved_mcp_id.to_string(),
-            name: "Workspace MCP".to_string(),
-            package: "@example/workspace-mcp".to_string(),
-            package_type: crate::mcp::McpPackageType::Npm,
-            runtime_hint: Some("npx".to_string()),
-            env_var_name: "WORKSPACE_TOKEN".to_string(),
-            command: "npx".to_string(),
-            args: vec!["-y".to_string(), "@example/workspace-mcp".to_string()],
-            env: Some(vec![("WORKSPACE_TOKEN".to_string(), String::new())]),
-            url: None,
-        },
-        1,
-        |targets| targets.mcp_configure_draft_loaded_count,
-    );
-
-    assert_mcp_and_chat_error_counts(
-        ViewCommand::ShowError {
-            title: "MCP auth failed".to_string(),
-            message: "token expired".to_string(),
-            severity: crate::presentation::view_command::ErrorSeverity::Error,
-        },
-        1,
-        0,
-    );
-
-    assert_mcp_and_chat_error_counts(
-        ViewCommand::ShowError {
-            title: "Save Conversation".to_string(),
-            message: "disk unavailable".to_string(),
-            severity: crate::presentation::view_command::ErrorSeverity::Error,
-        },
-        1,
-        1,
-    );
-
-    assert_settings_and_chat_notification_counts(
-        ViewCommand::ShowNotification {
-            message: "connected-user".to_string(),
-        },
-        1,
-        0,
-    );
-
-    assert_settings_and_chat_notification_counts(
-        ViewCommand::ShowNotification {
-            message: "Conversation saved as /tmp/chat.md (MD)".to_string(),
-        },
-        1,
-        1,
-    );
-
-    assert_route_count(
-        ViewCommand::ShowConversationExportFormat {
-            format: ConversationExportFormat::Md,
-        },
-        1,
-        |targets| targets.chat_export_format_commands,
-    );
-
-    assert_route_count(
-        ViewCommand::ExportCompleted {
-            path: "/tmp/chat.md".to_string(),
-            format_label: "Markdown".to_string(),
-        },
-        1,
-        |targets| targets.chat_export_completed_commands,
-    );
-
-    assert_route_count(
-        ViewCommand::McpConfigSaved {
-            id: saved_mcp_id,
-            name: Some("Workspace MCP Saved".to_string()),
-        },
-        1,
-        |targets| targets.mcp_config_saved_count,
-    );
-
-    assert_route_count(
-        ViewCommand::ErrorLogExportCompleted {
-            path: "/tmp/error-log.txt".to_string(),
-        },
-        1,
-        |targets| targets.error_log_export_completed_commands,
-    );
-}
-
-fn assert_settings_theme_routing_targets() {
-    assert_route_count(
-        ViewCommand::ShowSettingsTheme {
-            options: vec![theme_summary("Midnight Nebula", "default")],
-            selected_slug: "default".to_string(),
-        },
-        1,
-        |targets| targets.settings_theme_commands,
-    );
-}
-
-fn conversation_summary(id: Uuid, title: &str, message_count: usize) -> ConversationSummary {
-    ConversationSummary {
-        id,
-        title: title.to_string(),
-        updated_at: Utc::now(),
-        message_count,
-        preview: None,
-    }
-}
-fn profile_summary(
-    id: Uuid,
-    name: &str,
-    provider: &str,
-    model: &str,
-    is_default: bool,
-) -> ProfileSummary {
-    ProfileSummary {
-        id,
-        name: name.to_string(),
-        provider_id: provider.to_string(),
-        model_id: model.to_string(),
-        is_default,
-    }
-}
-fn theme_summary(name: &str, slug: &str) -> ThemeSummary {
-    ThemeSummary {
-        name: name.to_string(),
-        slug: slug.to_string(),
-    }
-}
-fn transcript_message(role: MessageRole, content: &str) -> ConversationMessagePayload {
-    ConversationMessagePayload {
-        role,
-        content: content.to_string(),
-        thinking_content: None,
-        timestamp: None,
-        model_id: None,
-    }
-}
-
-pub fn build_app_state() -> (
-    MainPanelAppState,
-    flume::Receiver<UserEvent>,
-    Uuid,
-    Uuid,
-    Uuid,
-) {
-    let first_conversation_id = Uuid::new_v4();
-    let second_conversation_id = Uuid::new_v4();
-    let selected_profile_id = Uuid::new_v4();
-    let startup_transcript = vec![
-        transcript_message(MessageRole::User, "startup user"),
-        transcript_message(MessageRole::Assistant, "startup assistant"),
-    ];
-
-    let store = Arc::new(GpuiAppStore::from_startup_inputs(StartupInputs {
-        profiles: vec![
-            profile_summary(selected_profile_id, "Default", "openai", "gpt-4o", true),
-            profile_summary(Uuid::new_v4(), "Secondary", "anthropic", "claude", false),
-        ],
-        selected_profile_id: Some(selected_profile_id),
-        conversations: vec![
-            conversation_summary(
-                first_conversation_id,
-                "Startup Conversation",
-                startup_transcript.len(),
-            ),
-            conversation_summary(second_conversation_id, "Later Conversation", 0),
-        ],
-        selected_conversation: Some(StartupSelectedConversation {
-            conversation_id: first_conversation_id,
-            mode: StartupMode::ModeA {
-                transcript_result: StartupTranscriptResult::Success(startup_transcript),
-            },
-        }),
-    }));
-
-    let (user_tx, user_rx) = flume::bounded(32);
-    let (_view_tx, view_rx) = flume::bounded(32);
-    let bridge = Arc::new(GpuiBridge::new(user_tx, view_rx));
-
-    (
-        MainPanelAppState {
-            gpui_bridge: bridge,
-            popup_window: None,
-            app_store: store,
-            app_mode: crate::presentation::view_command::AppMode::Popup,
-        },
-        user_rx,
-        first_conversation_id,
-        second_conversation_id,
-        selected_profile_id,
-    )
-}
+use main_panel_test_support::*;
 
 #[gpui::test]
+
 async fn init_and_startup_state_seed_child_views_from_store(cx: &mut TestAppContext) {
     let (app_state, _user_rx, first_conversation_id, _second_conversation_id, _selected_profile_id) =
         build_app_state();
@@ -858,4 +603,187 @@ async fn handle_command_does_not_forward_non_export_feedback_to_chat_view(cx: &m
     });
 }
 
+#[gpui::test]
+async fn route_yolo_mode_changed_increments_counter(cx: &mut TestAppContext) {
+    let _ = cx;
+    assert_route_count(
+        ViewCommand::YoloModeChanged { active: true },
+        1,
+        |targets| targets.yolo_mode_changed_count,
+    );
+}
+
+#[gpui::test]
+async fn route_skills_loaded_increments_counter(cx: &mut TestAppContext) {
+    let _ = cx;
+    assert_route_count(
+        ViewCommand::SkillsLoaded {
+            skills: vec![],
+            watched_directories: vec![],
+            default_directory: String::new(),
+        },
+        1,
+        |targets| targets.skills_loaded_count,
+    );
+}
+
+#[gpui::test]
+async fn handle_command_forwards_tool_approval_policy_to_settings_view(cx: &mut TestAppContext) {
+    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+    cx.set_global(app_state);
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+
+        panel.handle_command(
+            ViewCommand::ToolApprovalPolicyUpdated {
+                yolo_mode: true,
+                auto_approve_reads: true,
+                skills_auto_approve: false,
+                mcp_approval_mode: crate::agent::McpApprovalMode::PerServer,
+                persistent_allowlist: vec!["git".to_string(), "ls".to_string()],
+                persistent_denylist: vec!["rm".to_string()],
+            },
+            cx,
+        );
+
+        let settings_view = panel
+            .settings_view
+            .as_ref()
+            .expect("settings view initialized");
+        settings_view.read_with(cx, |view, _| {
+            let state = view.get_state();
+            assert!(state.yolo_mode);
+            assert!(state.auto_approve_reads);
+            assert_eq!(
+                state.mcp_approval_mode,
+                crate::agent::McpApprovalMode::PerServer
+            );
+            assert_eq!(state.persistent_allowlist, vec!["git", "ls"]);
+            assert_eq!(state.persistent_denylist, vec!["rm"]);
+        });
+    });
+}
+
+#[gpui::test]
+async fn handle_command_forwards_yolo_mode_changed_to_settings_and_chat(cx: &mut TestAppContext) {
+    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+    cx.set_global(app_state);
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+
+        panel.handle_command(ViewCommand::YoloModeChanged { active: true }, cx);
+
+        let settings_view = panel
+            .settings_view
+            .as_ref()
+            .expect("settings view initialized");
+        settings_view.read_with(cx, |view, _| {
+            assert!(view.get_state().yolo_mode);
+        });
+
+        let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
+        chat_view.read_with(cx, |view, _| {
+            assert!(view.state.yolo_mode);
+        });
+    });
+}
+
+#[gpui::test]
+async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestAppContext) {
+    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+    cx.set_global(app_state);
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+
+        panel.handle_command(
+            ViewCommand::ToolApprovalRequest {
+                request_id: "req-1".to_string(),
+                context: crate::presentation::view_command::ToolApprovalContext::new(
+                    "WriteFile",
+                    crate::presentation::view_command::ToolCategory::FileWrite,
+                    "/tmp/example.txt",
+                ),
+            },
+            cx,
+        );
+
+        let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
+        chat_view.read_with(cx, |view, _| {
+            assert_eq!(view.state.approval_bubbles.len(), 1);
+            assert_eq!(view.state.approval_bubbles[0].request_id, "req-1");
+            assert_eq!(
+                view.state.approval_bubbles[0].context.tool_name,
+                "WriteFile"
+            );
+            assert_eq!(
+                view.state.approval_bubbles[0].context.primary_target,
+                "/tmp/example.txt"
+            );
+            assert_eq!(
+                view.state.approval_bubbles[0].state,
+                crate::ui_gpui::views::chat_view::ApprovalBubbleState::Pending
+            );
+        });
+
+        panel.handle_command(
+            ViewCommand::ToolApprovalResolved {
+                request_id: "req-1".to_string(),
+                approved: false,
+            },
+            cx,
+        );
+
+        let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
+        chat_view.read_with(cx, |view, _| {
+            assert!(
+                view.state.approval_bubbles.is_empty(),
+                "resolved approval bubble should be removed"
+            );
+        });
+    });
+}
+
+#[gpui::test]
+async fn handle_command_forwards_skills_loaded_to_settings_view(cx: &mut TestAppContext) {
+    let (app_state, _user_rx, _first_id, _second_id, _selected_profile_id) = build_app_state();
+    cx.set_global(app_state);
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+
+        panel.handle_command(
+            ViewCommand::SkillsLoaded {
+                skills: vec![crate::presentation::view_command::SkillSummary {
+                    name: "test-skill".to_string(),
+                    description: "A test skill".to_string(),
+                    source: crate::models::SkillSource::User,
+                    enabled: true,
+                    path: "/tmp/test-skill".to_string(),
+                }],
+                watched_directories: vec!["/tmp/skills".to_string()],
+                default_directory: "/tmp/default-skills".to_string(),
+            },
+            cx,
+        );
+
+        let settings_view = panel
+            .settings_view
+            .as_ref()
+            .expect("settings view initialized");
+        settings_view.read_with(cx, |view, _| {
+            let state = view.get_state();
+            assert_eq!(state.skills.len(), 1);
+            assert_eq!(state.skills[0].name, "test-skill");
+            assert_eq!(state.watched_skill_directories, vec!["/tmp/skills"]);
+            assert_eq!(state.default_skill_directory, "/tmp/default-skills");
+        });
+    });
+}
 mod tool_approval;

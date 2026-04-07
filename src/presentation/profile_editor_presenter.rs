@@ -252,6 +252,7 @@ impl ProfileEditorPresenter {
     fn profile_auth_from_payload(profile: &crate::events::types::ModelProfile) -> AuthConfig {
         match profile.auth.clone() {
             Some(ModelProfileAuth::Keychain { label }) => AuthConfig::Keychain { label },
+            Some(ModelProfileAuth::None) => AuthConfig::None,
             None => AuthConfig::Keychain {
                 label: String::new(),
             },

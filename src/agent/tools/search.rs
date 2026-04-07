@@ -563,6 +563,7 @@ mod tests {
                 view_tx,
                 approval_gate,
                 policy,
+                ..Default::default()
             },
             "test-model",
         )
@@ -833,6 +834,7 @@ mod tests {
                 view_tx,
                 approval_gate: approval_gate.clone(),
                 policy,
+                ..Default::default()
             },
             "test-model",
         );

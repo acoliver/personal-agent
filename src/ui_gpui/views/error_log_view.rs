@@ -96,8 +96,10 @@ impl ErrorLogView {
         let _ = std::process::Command::new("xdg-open").arg(path).spawn();
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    fn open_path(_path: &str) {}
+    #[cfg(target_os = "windows")]
+    fn open_path(path: &str) {
+        let _ = std::process::Command::new("explorer").arg(path).spawn();
+    }
 
     fn render_export_feedback_bar(&self) -> Option<gpui::AnyElement> {
         let _ = self.export_feedback_message.as_ref()?;

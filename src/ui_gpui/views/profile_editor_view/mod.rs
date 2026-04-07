@@ -39,6 +39,7 @@ pub enum ApiType {
     #[default]
     Anthropic,
     OpenAI,
+    Local,
     Custom(String),
 }
 
@@ -48,6 +49,7 @@ impl ApiType {
         match self {
             Self::Anthropic => "Anthropic".to_string(),
             Self::OpenAI => "OpenAI".to_string(),
+            Self::Local => "Local Model".to_string(),
             Self::Custom(provider) => provider.clone(),
         }
     }
@@ -56,7 +58,17 @@ impl ApiType {
         match self {
             Self::Anthropic => "anthropic".to_string(),
             Self::OpenAI => "openai".to_string(),
+            Self::Local => "local".to_string(),
             Self::Custom(provider) => provider.clone(),
+        }
+    }
+
+    /// Returns `true` if this API type requires an API key.
+    #[must_use]
+    pub const fn requires_api_key(&self) -> bool {
+        match self {
+            Self::Anthropic | Self::OpenAI | Self::Custom(_) => true,
+            Self::Local => false,
         }
     }
 }
@@ -120,7 +132,11 @@ impl ProfileEditorData {
         if self.base_url.trim().is_empty() {
             return false;
         }
-        !self.key_label.trim().is_empty()
+        // Only require key_label for API types that need authentication
+        if self.api_type.requires_api_key() && self.key_label.trim().is_empty() {
+            return false;
+        }
+        true
     }
 }
 
@@ -382,9 +398,13 @@ impl ProfileEditorView {
 
         let provider_id = Some(self.state.data.api_type.provider_id());
 
-        let auth = Some(ModelProfileAuth::Keychain {
-            label: self.state.data.key_label.clone(),
-        });
+        let auth = if self.state.data.api_type.requires_api_key() {
+            Some(ModelProfileAuth::Keychain {
+                label: self.state.data.key_label.clone(),
+            })
+        } else {
+            Some(ModelProfileAuth::None)
+        };
 
         let parameters = Some(ModelProfileParameters {
             temperature: Some(f64::from(self.state.data.temperature)),
@@ -892,6 +912,81 @@ mod tests {
                 view.cycle_active_field();
                 assert_eq!(view.state.active_field, Some(ActiveField::Name));
             });
+        });
+    }
+
+    #[gpui::test]
+    async fn local_api_type_requires_no_key_and_can_be_saved(cx: &mut TestAppContext) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(ProfileEditorView::new);
+
+        view.update(cx, |view: &mut ProfileEditorView, _cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.state.data.name = "Local Profile".to_string();
+            view.state.data.model_id = "qwen-3.5-4b".to_string();
+            view.state.data.base_url = "http://localhost:8080/v1".to_string();
+            view.state.data.api_type = ApiType::Local;
+
+            // Local provider should not require API key
+            assert!(!view.state.data.api_type.requires_api_key());
+            assert!(view.state.data.key_label.is_empty());
+
+            // Can save without key_label for Local provider
+            assert!(view.state.data.can_save());
+
+            view.emit_save_profile();
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("refresh api keys event"),
+            UserEvent::RefreshApiKeys
+        );
+        match user_rx.recv().expect("save profile event") {
+            UserEvent::SaveProfile { profile } => {
+                assert_eq!(profile.name, "Local Profile");
+                assert_eq!(profile.provider_id.as_deref(), Some("local"));
+                assert_eq!(profile.model_id.as_deref(), Some("qwen-3.5-4b"));
+                // Should emit None auth for Local provider
+                assert!(matches!(profile.auth, Some(ModelProfileAuth::None)));
+            }
+            other => panic!("expected SaveProfile event, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn api_type_cycles_through_anthropic_openai_local_anthropic(cx: &mut TestAppContext) {
+        let view = cx.new(ProfileEditorView::new);
+
+        view.update(cx, |view: &mut ProfileEditorView, _cx| {
+            view.state.data.api_type = ApiType::Anthropic;
+            assert_eq!(view.state.data.api_type.display(), "Anthropic");
+            assert!(view.state.data.api_type.requires_api_key());
+
+            // Cycle to OpenAI
+            view.state.data.api_type = match view.state.data.api_type {
+                ApiType::Anthropic => ApiType::OpenAI,
+                ApiType::OpenAI => ApiType::Local,
+                ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
+            };
+            assert_eq!(view.state.data.api_type.display(), "OpenAI");
+            assert!(view.state.data.api_type.requires_api_key());
+
+            // Cycle to Local
+            view.state.data.api_type = match view.state.data.api_type {
+                ApiType::Anthropic => ApiType::OpenAI,
+                ApiType::OpenAI => ApiType::Local,
+                ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
+            };
+            assert_eq!(view.state.data.api_type.display(), "Local Model");
+            assert!(!view.state.data.api_type.requires_api_key());
+
+            // Cycle back to Anthropic
+            view.state.data.api_type = match view.state.data.api_type {
+                ApiType::Anthropic => ApiType::OpenAI,
+                ApiType::OpenAI => ApiType::Local,
+                ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
+            };
+            assert_eq!(view.state.data.api_type.display(), "Anthropic");
         });
     }
 }

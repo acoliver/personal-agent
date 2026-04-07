@@ -179,6 +179,7 @@ impl ApiKeyManagerPresenter {
         tracing::info!(label_count = labels.len(), labels = ?labels, "ApiKeyManagerPresenter: loaded key labels from secure store");
 
         // Build profile cross-reference map: label → [profile names]
+        // Only process profiles that use Keychain auth (skip None auth profiles)
         let profiles = profile_service.list().await.unwrap_or_default();
         tracing::info!(
             profile_count = profiles.len(),
@@ -187,13 +188,15 @@ impl ApiKeyManagerPresenter {
         let mut used_by_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for p in &profiles {
-            let AuthConfig::Keychain { ref label } = p.auth;
-            if !label.is_empty() {
-                used_by_map
-                    .entry(label.clone())
-                    .or_default()
-                    .push(p.name.clone());
+            if let AuthConfig::Keychain { ref label } = p.auth {
+                if !label.is_empty() {
+                    used_by_map
+                        .entry(label.clone())
+                        .or_default()
+                        .push(p.name.clone());
+                }
             }
+            // Skip AuthConfig::None profiles - they don't reference any key
         }
 
         for label in used_by_map.keys() {

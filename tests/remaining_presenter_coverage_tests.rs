@@ -1035,7 +1035,17 @@ async fn mcp_configure_presenter_surfaces_load_and_save_errors() {
     let (view_tx, mut view_rx) = broadcast::channel(128);
 
     let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx)
-        .with_config_path(std::path::PathBuf::from("/nonexistent/dir/config.json"));
+        .with_config_path({
+            // Use a platform-appropriate non-existent path
+            #[cfg(not(windows))]
+            {
+                std::path::PathBuf::from("/nonexistent/dir/config.json")
+            }
+            #[cfg(windows)]
+            {
+                std::path::PathBuf::from(r"invalid:path\config.json")
+            }
+        });
     presenter.start().await.expect("start presenter");
     let _ = collect_broadcast_commands(&mut view_rx).await;
 

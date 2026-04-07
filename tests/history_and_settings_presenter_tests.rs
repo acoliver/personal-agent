@@ -529,8 +529,8 @@ async fn recv_broadcast_command(rx: &mut broadcast::Receiver<ViewCommand>) -> Vi
             .await
             .expect("timed out waiting for broadcast command");
         match result {
+            Ok(ViewCommand::SkillsLoaded { .. }) | Err(broadcast::error::RecvError::Lagged(_)) => {}
             Ok(command) => return command,
-            Err(broadcast::error::RecvError::Lagged(_)) => {}
             Err(broadcast::error::RecvError::Closed) => {
                 panic!("broadcast channel closed unexpectedly")
             }
@@ -539,8 +539,25 @@ async fn recv_broadcast_command(rx: &mut broadcast::Receiver<ViewCommand>) -> Vi
 }
 
 async fn assert_broadcast_no_command(rx: &mut broadcast::Receiver<ViewCommand>) {
-    let result = timeout(Duration::from_millis(50), rx.recv()).await;
-    assert!(result.is_err(), "expected no additional broadcast command");
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(50);
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return;
+        }
+
+        let result = timeout(deadline.saturating_duration_since(now), rx.recv()).await;
+        match result {
+            Err(_) => return,
+            Ok(
+                Ok(ViewCommand::SkillsLoaded { .. }) | Err(broadcast::error::RecvError::Lagged(_)),
+            ) => {}
+            Ok(Ok(command)) => panic!("expected no additional broadcast command, got {command:?}"),
+            Ok(Err(broadcast::error::RecvError::Closed)) => {
+                panic!("broadcast channel closed unexpectedly")
+            }
+        }
+    }
 }
 
 mod history_presenter_tests {
@@ -745,10 +762,22 @@ mod settings_presenter_tests {
     ) {
         let (event_tx, _) = broadcast::channel(64);
         let (view_tx, view_rx) = broadcast::channel(128);
+        let skills_service = Arc::new(
+            personal_agent::services::SkillsServiceImpl::new_for_tests(
+                Arc::new(app_settings_service.clone()),
+                std::path::PathBuf::from("/tmp/nonexistent-bundled-skills"),
+                std::env::temp_dir().join(format!(
+                    "settings-presenter-test-skills-{}",
+                    uuid::Uuid::new_v4()
+                )),
+            )
+            .expect("skills service should initialize for tests"),
+        );
         let presenter = SettingsPresenter::new(
             Arc::new(profile_service.clone()),
             Arc::new(app_settings_service.clone()),
             Arc::new(MockBackupService),
+            skills_service,
             &event_tx,
             view_tx,
         );
@@ -774,10 +803,22 @@ mod settings_presenter_tests {
     ) {
         let (event_tx, _) = broadcast::channel(64);
         let (view_tx, view_rx) = broadcast::channel(128);
+        let skills_service = Arc::new(
+            personal_agent::services::SkillsServiceImpl::new_for_tests(
+                Arc::new(app_settings_service.clone()),
+                std::path::PathBuf::from("/tmp/nonexistent-bundled-skills"),
+                std::env::temp_dir().join(format!(
+                    "settings-presenter-config-test-skills-{}",
+                    uuid::Uuid::new_v4()
+                )),
+            )
+            .expect("skills service should initialize for tests"),
+        );
         let presenter = SettingsPresenter::new(
             Arc::new(profile_service.clone()),
             Arc::new(app_settings_service.clone()),
             Arc::new(MockBackupService),
+            skills_service,
             &event_tx,
             view_tx,
         )

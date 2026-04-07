@@ -585,3 +585,76 @@ fn clear_session_allowlist_removes_all_entries() {
 
     assert!(policy.session_allowlist.is_empty());
 }
+
+#[test]
+fn skills_auto_approve_allows_activate_skill_tool() {
+    let policy = ToolApprovalPolicy {
+        skills_auto_approve: true,
+        ..ToolApprovalPolicy::default()
+    };
+
+    assert_eq!(
+        policy.evaluate("activate_skill"),
+        ToolApprovalDecision::Allow
+    );
+}
+
+#[test]
+fn skills_auto_approve_false_asks_user_for_activate_skill() {
+    let policy = ToolApprovalPolicy {
+        skills_auto_approve: false,
+        ..ToolApprovalPolicy::default()
+    };
+
+    assert_eq!(
+        policy.evaluate("activate_skill"),
+        ToolApprovalDecision::AskUser
+    );
+}
+
+#[test]
+fn skills_auto_approve_does_not_affect_other_tools() {
+    let policy = ToolApprovalPolicy {
+        skills_auto_approve: true,
+        ..ToolApprovalPolicy::default()
+    };
+
+    // Other tools should still ask user
+    assert_eq!(policy.evaluate("shell_exec"), ToolApprovalDecision::AskUser);
+}
+
+#[test]
+fn yolo_mode_overrides_skills_auto_approve_for_deny() {
+    // yolo_mode is Allow-everything, but denylist takes precedence
+    let policy = ToolApprovalPolicy {
+        yolo_mode: true,
+        skills_auto_approve: false,
+        persistent_denylist: vec!["activate_skill".to_string()],
+        ..ToolApprovalPolicy::default()
+    };
+
+    assert_eq!(
+        policy.evaluate("activate_skill"),
+        ToolApprovalDecision::Deny
+    );
+}
+
+#[tokio::test]
+async fn skills_auto_approve_persists_via_settings() {
+    let (service, _temp_dir) = create_settings_service();
+    let policy = ToolApprovalPolicy {
+        skills_auto_approve: true,
+        ..ToolApprovalPolicy::default()
+    };
+
+    policy
+        .save_to_settings(&service)
+        .await
+        .expect("save should succeed");
+
+    let loaded = ToolApprovalPolicy::load_from_settings(&service)
+        .await
+        .expect("load should succeed");
+
+    assert!(loaded.skills_auto_approve);
+}

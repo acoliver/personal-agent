@@ -1,20 +1,34 @@
 # PersonalAgent
 
-A native macOS menu bar application for conversational AI. PersonalAgent lives in your system tray and provides quick access to various LLM providers through a clean, minimal interface.
+A native desktop application for conversational AI. PersonalAgent lives in your system tray and provides quick access to various LLM providers through a clean, minimal interface.
 
 ## Features
 
-- **Menu Bar App** - Click the icon in your macOS menu bar to open a chat panel
+- **System Tray App** - Click the icon in your menu bar (macOS), system tray (Windows), or StatusNotifierItem area (Linux) to open a chat panel
 - **Multiple Providers** - Support for OpenAI, Anthropic, and OpenAI-compatible APIs (like Synthetic, GLM, etc.)
 - **Model Profiles** - Create and switch between different model configurations
 - **Streaming Responses** - Real-time streaming of AI responses
 - **Thinking/Reasoning** - Display model thinking content for supported models (Claude, GLM-4, etc.)
 - **Conversation History** - Persistent storage of chat conversations
-- **Dark Theme** - Native dark mode UI that fits with macOS
+- **Dark Theme** - Native dark mode UI that fits with your desktop environment
+- **Cross-Platform** - Native support for macOS, Windows, and Linux
 
 ## Installation
 
-### From Source
+### macOS
+
+#### From Release (Recommended)
+
+Download the latest release from [GitHub Releases](https://github.com/acoliver/personal-agent/releases) and extract the `.app` bundle.
+
+#### From Homebrew
+
+```bash
+brew tap acoliver/tap
+brew install personal-agent
+```
+
+#### From Source
 
 ```bash
 git clone https://github.com/acoliver/personal-agent.git
@@ -24,9 +38,39 @@ cargo build --release
 
 The binary will be at `target/release/personal_agent_gpui`.
 
-### Linux prerequisites
+### Windows
 
-PersonalAgent supports Linux builds (Wayland-first) with an SNI tray integration.
+#### From Release (Recommended)
+
+Download the latest ZIP archive from [GitHub Releases](https://github.com/acoliver/personal-agent/releases):
+1. Download `personal-agent-vX.Y.Z-x86_64-pc-windows-msvc.zip`
+2. Extract the archive to your preferred location
+3. Run `personal-agent.exe`
+
+> **Note:** Windows Defender may show a SmartScreen warning for unsigned binaries. Click "More info" and "Run anyway" to proceed.
+
+#### From Source
+
+```powershell
+git clone https://github.com/acoliver/personal-agent.git
+cd personal-agent
+cargo build --release --bin personal_agent_gpui
+```
+
+The executable will be at `target\release\personal_agent_gpui.exe`.
+
+### Linux
+
+#### From Release
+
+Download the appropriate package from [GitHub Releases](https://github.com/acoliver/personal-agent/releases):
+- `.deb` for Debian/Ubuntu
+- `.rpm` for Fedora/RHEL
+- `.zip` portable archive for any distribution
+
+#### From Source
+
+PersonalAgent supports Linux builds (Wayland-first) with SNI tray integration.
 Before building on Debian/Ubuntu-based distributions, install the required packages:
 
 ```bash
@@ -64,14 +108,15 @@ sudo apt-get install -y \
 The Linux tray uses the StatusNotifierItem protocol. KDE Plasma supports this out-of-the-box.
 On GNOME, install/enable an AppIndicator/SNI extension to make tray icons visible.
 
-### Running
+## Running
 
 ```bash
 ./target/release/personal_agent_gpui
 ```
 
-On macOS, look for "PA" in your menu bar. Click to open the chat panel.
-On Linux, look for the PersonalAgent tray icon in your desktop environment's StatusNotifierItem/AppIndicator area.
+- **macOS**: Look for the PA icon in your menu bar. Click to open the chat panel.
+- **Windows**: Look for the PersonalAgent icon in the system tray (notification area). Click to open the chat panel, or right-click for a context menu.
+- **Linux**: Look for the PersonalAgent tray icon in your desktop environment's StatusNotifierItem/AppIndicator area.
 
 ## Configuration
 
@@ -79,13 +124,17 @@ On Linux, look for the PersonalAgent tray icon in your desktop environment's Sta
 
 Configuration is stored at `~/Library/Application Support/PersonalAgent/config.json`.
 
+### Windows
+
+Configuration is stored at `%LOCALAPPDATA%\PersonalAgent\config.json`.
+
 ### Linux
 
 Configuration is stored at `${XDG_CONFIG_HOME:-~/.config}/personal-agent/config.json`.
 
 ### Setting Up a Profile
 
-1. Click the gear icon () to open settings
+1. Click the gear icon to open settings
 2. Click "+" to add a new profile
 3. Select a provider and model from the models.dev registry, or configure manually
 4. Enter your API key
@@ -94,21 +143,24 @@ Configuration is stored at `${XDG_CONFIG_HOME:-~/.config}/personal-agent/config.
 
 ### API Keys
 
-API keys are read from the profile configuration. For security, you can also use keyfiles or environment variables depending on the provider.
+API keys are securely stored in your OS credential store:
+- **macOS**: Keychain Services
+- **Windows**: Credential Manager
+- **Linux**: Secret Service (GNOME Keyring / KDE Wallet)
 
 ## Usage
 
-1. Click the PA icon in your menu bar
+1. Click the PersonalAgent icon in your system tray/menu bar
 2. Select a profile from the dropdown (or use the default)
 3. Type your message and press Enter or click Send
 4. View streaming responses in real-time
 
 ### Keyboard Shortcuts
 
-- `Cmd+V` - Paste text
-- `Cmd+C` - Copy text
-- `Cmd+A` - Select all
-- `Cmd+Q` - Quit (from Edit menu)
+- `Ctrl/Cmd+V` - Paste text
+- `Ctrl/Cmd+C` - Copy text
+- `Ctrl/Cmd+A` - Select all
+- `Ctrl/Cmd+Q` - Quit (from Edit menu)
 
 ### Thinking Mode
 
@@ -199,8 +251,9 @@ Coverage reports still write build artifacts under `target/llvm-cov-target`, whi
 
 ### Debug Logging
 
-- macOS: `~/Library/Application Support/PersonalAgent/debug.log`
-- Linux: `${XDG_CONFIG_HOME:-~/.config}/personal-agent/debug.log`
+- **macOS**: `~/Library/Application Support/PersonalAgent/debug.log`
+- **Windows**: `%LOCALAPPDATA%\PersonalAgent\debug.log`
+- **Linux**: `${XDG_CONFIG_HOME:-~/.config}/personal-agent/debug.log`
 
 ## License
 

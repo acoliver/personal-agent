@@ -1,7 +1,3 @@
-//! Chat service implementation
-
-/// @plan PLAN-20250127-REMEDIATE.P02, PLAN-20250127-REMEDIATE.P03
-/// @requirement REM-001, REM-002, REM-003, REM-004, REM-005, REM-006, REM-007
 use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
 use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::compression::pipeline::{CompressionPipeline, CompressionResult};
@@ -10,14 +6,13 @@ use crate::config::CompressionConfig;
 use crate::events::types::{ChatEvent, ToolApprovalResponseAction};
 use crate::events::{emit, AppEvent};
 use crate::llm::client_agent::ApprovalGate;
-use crate::llm::error::debug_error_message;
 use crate::llm::AgentClientExt;
-use crate::llm::{LlmClient, Message as LlmMessage, StreamEvent as LlmStreamEvent};
+use crate::llm::{LlmClient, Message as LlmMessage};
 use crate::mcp::McpService;
-use crate::models::{ContextState, Message, MessageRole};
+use crate::models::{Message, MessageRole};
 use crate::presentation::view_command::ViewCommand;
-use crate::services::template::{expand_system_prompt, TemplateContext};
-use crate::services::ConversationService;
+use crate::services::template::{build_skills_prompt_block, expand_system_prompt, TemplateContext};
+use crate::services::{ConversationService, SkillsService};
 use futures::{stream, Stream};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,14 +21,20 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-const STREAM_ERROR_MESSAGE: &str = "An error interrupted the chat stream.";
-const COMPRESSION_SETTINGS_KEY: &str = "compression";
+mod streaming;
 
-/// Minimal implementation of `ChatService`
+use streaming::{clear_streaming_state, emit_stream_error, run_stream_task, STREAM_ERROR_MESSAGE};
+
+// Re-export for tests
+#[cfg(test)]
+use streaming::persist_context_state;
+
+const COMPRESSION_SETTINGS_KEY: &str = "compression";
 pub struct ChatServiceImpl {
     conversation_service: Arc<dyn ConversationService>,
     profile_service: Arc<dyn super::ProfileService>,
     app_settings_service: Arc<dyn super::AppSettingsService>,
+    skills_service: Arc<dyn SkillsService>,
     is_streaming: Arc<AtomicBool>,
     current_conversation_id: Arc<StdMutex<Option<Uuid>>>,
     stream_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
@@ -48,10 +49,12 @@ pub struct ChatServiceImpl {
 impl ChatServiceImpl {
     /// Create a new `ChatServiceImpl`
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         conversation_service: Arc<dyn ConversationService>,
         profile_service: Arc<dyn super::ProfileService>,
         app_settings_service: Arc<dyn super::AppSettingsService>,
+        skills_service: Arc<dyn SkillsService>,
         view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
         approval_gate: Arc<ApprovalGate>,
         policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
@@ -60,6 +63,7 @@ impl ChatServiceImpl {
             conversation_service,
             profile_service,
             app_settings_service,
+            skills_service,
             is_streaming: Arc::new(AtomicBool::new(false)),
             current_conversation_id: Arc::new(StdMutex::new(None)),
             stream_task: Arc::new(StdMutex::new(None)),
@@ -74,6 +78,7 @@ impl ChatServiceImpl {
         conversation_service: Arc<dyn ConversationService>,
         profile_service: Arc<dyn super::ProfileService>,
         app_settings_service: Arc<dyn super::AppSettingsService>,
+        skills_service: Arc<dyn SkillsService>,
         view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
         approval_gate: Arc<ApprovalGate>,
     ) -> Self {
@@ -85,6 +90,7 @@ impl ChatServiceImpl {
             conversation_service,
             profile_service,
             app_settings_service,
+            skills_service,
             view_tx,
             approval_gate,
             Arc::new(AsyncMutex::new(policy)),
@@ -107,13 +113,20 @@ impl ChatServiceImpl {
             uuid::Uuid::new_v4()
         ));
 
+        let app_settings = Arc::new(
+            super::AppSettingsServiceImpl::new(settings_path)
+                .expect("failed to create test app settings service"),
+        ) as Arc<dyn super::AppSettingsService>;
+        let skills_service = Arc::new(
+            super::SkillsServiceImpl::new(app_settings.clone())
+                .expect("failed to create test skills service"),
+        ) as Arc<dyn SkillsService>;
+
         Self::new(
             conversation_service,
             profile_service,
-            Arc::new(
-                super::AppSettingsServiceImpl::new(settings_path)
-                    .expect("failed to create test app settings service"),
-            ) as Arc<dyn super::AppSettingsService>,
+            app_settings,
+            skills_service,
             view_tx,
             approval_gate,
             Arc::new(AsyncMutex::new(ToolApprovalPolicy::default())),
@@ -285,13 +298,31 @@ impl ChatServiceImpl {
         // Expand template variables in the system prompt
         let template_ctx =
             TemplateContext::new(conversation.created_at, &profile.name, &profile.model_id);
-        let system_prompt = expand_system_prompt(&raw_system_prompt, &template_ctx);
+        let mut system_prompt = expand_system_prompt(&raw_system_prompt, &template_ctx);
+        let enabled_skills = match self.skills_service.get_enabled_skills().await {
+            Ok(skills) => skills,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to fetch enabled skills; continuing without skills prompt block"
+                );
+                Vec::new()
+            }
+        };
+        let skills_prompt_block = build_skills_prompt_block(&enabled_skills);
+        if !skills_prompt_block.is_empty() {
+            if !system_prompt.trim().is_empty() {
+                system_prompt.push_str("\n\n");
+            }
+            system_prompt.push_str(&skills_prompt_block);
+        }
 
         Ok(PreparedMessageContext {
             profile,
             client,
             messages: compression_result.messages.clone(),
             system_prompt,
+            skills_service: self.skills_service.clone(),
             compression_result,
         })
     }
@@ -510,6 +541,7 @@ impl ChatServiceImpl {
                 .try_send(ViewCommand::ToolApprovalPolicyUpdated {
                     yolo_mode: policy.yolo_mode,
                     auto_approve_reads: policy.auto_approve_reads,
+                    skills_auto_approve: policy.skills_auto_approve,
                     mcp_approval_mode: policy.mcp_approval_mode,
                     persistent_allowlist: policy.persistent_allowlist,
                     persistent_denylist: policy.persistent_denylist,
@@ -528,6 +560,7 @@ struct PreparedMessageContext {
     client: LlmClient,
     messages: Vec<LlmMessage>,
     system_prompt: String,
+    skills_service: Arc<dyn SkillsService>,
     compression_result: CompressionResult,
 }
 
@@ -536,13 +569,16 @@ fn build_stream_context(
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     approval_gate: Arc<ApprovalGate>,
     policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
+    skills_service: Arc<dyn SkillsService>,
 ) -> crate::llm::client_agent::McpToolContext {
     crate::llm::client_agent::McpToolContext {
         view_tx,
         approval_gate,
         policy,
+        skills_service,
     }
 }
+
 #[allow(clippy::too_many_arguments)]
 async fn create_stream_agent(
     client: &LlmClient,
@@ -565,314 +601,6 @@ async fn create_stream_agent(
             clear_streaming_state(is_streaming, current_conversation_id, conversation_id);
             None
         }
-    }
-}
-#[allow(clippy::too_many_arguments)]
-async fn run_stream_task(
-    prepared: PreparedMessageContext,
-    mcp_tools: Vec<crate::llm::tools::Tool>,
-    tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
-    is_streaming: Arc<AtomicBool>,
-    current_conversation_id: Arc<StdMutex<Option<Uuid>>>,
-    conversation_service: Arc<dyn ConversationService>,
-    conversation_id: Uuid,
-    view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
-    approval_gate: Arc<ApprovalGate>,
-    policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
-) {
-    let PreparedMessageContext {
-        profile,
-        client,
-        messages,
-        system_prompt,
-        compression_result,
-    } = prepared;
-    let mut response_text = String::new();
-    let mut thinking_text = String::new();
-    let mut tool_calls: Vec<crate::llm::tools::ToolUse> = Vec::new();
-    let mut tool_results: Vec<crate::llm::tools::ToolResult> = Vec::new();
-    let mut input_tokens = None;
-    let mut output_tokens = None;
-
-    let Some(agent) = create_stream_agent(
-        &client,
-        mcp_tools,
-        &system_prompt,
-        conversation_id,
-        &tx,
-        &is_streaming,
-        &current_conversation_id,
-    )
-    .await
-    else {
-        return;
-    };
-
-    let context = build_stream_context(view_tx.clone(), approval_gate.clone(), policy.clone());
-
-    if let Err(e) = client
-        .run_agent_stream(&agent, &messages, context, |event| {
-            handle_llm_stream_event(
-                event,
-                conversation_id,
-                &tx,
-                &mut response_text,
-                &mut thinking_text,
-                &mut tool_calls,
-                &mut tool_results,
-                &mut input_tokens,
-                &mut output_tokens,
-            );
-        })
-        .await
-    {
-        let err_msg = debug_error_message(&e);
-        tracing::error!(
-            conversation_id = %conversation_id,
-            error = %err_msg,
-            response_chars = response_text.len(),
-            thinking_chars = thinking_text.len(),
-            "LLM stream task failed"
-        );
-        emit_stream_error(
-            conversation_id,
-            STREAM_ERROR_MESSAGE.to_string(),
-            false,
-            &tx,
-        );
-    }
-
-    persist_assistant_response(
-        &conversation_service,
-        conversation_id,
-        &response_text,
-        &thinking_text,
-        &tool_calls,
-        &tool_results,
-        &profile.name,
-    )
-    .await;
-    persist_context_state(
-        &conversation_service,
-        conversation_id,
-        compression_result,
-        input_tokens,
-        output_tokens,
-    )
-    .await;
-
-    let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
-        conversation_id,
-        message_id: Uuid::new_v4(),
-        total_tokens: input_tokens.and_then(|input| output_tokens.map(|output| input + output)),
-    }));
-    clear_streaming_state(&is_streaming, &current_conversation_id, conversation_id);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn handle_llm_stream_event(
-    event: LlmStreamEvent,
-    conversation_id: Uuid,
-    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
-    response_text: &mut String,
-    thinking_text: &mut String,
-    tool_calls: &mut Vec<crate::llm::tools::ToolUse>,
-    tool_results: &mut Vec<crate::llm::tools::ToolResult>,
-    input_tokens: &mut Option<u32>,
-    output_tokens: &mut Option<u32>,
-) {
-    match event {
-        LlmStreamEvent::TextDelta(text) => {
-            tracing::info!("ChatService emitting TextDelta: '{}'", text);
-            let _ = emit(AppEvent::Chat(ChatEvent::TextDelta {
-                conversation_id,
-                text: text.clone(),
-            }));
-            let _ = tx.send(ChatStreamEvent::Token(text.clone()));
-            response_text.push_str(&text);
-        }
-        LlmStreamEvent::ThinkingDelta(text) => {
-            let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
-                conversation_id,
-                text: text.clone(),
-            }));
-            thinking_text.push_str(&text);
-        }
-        LlmStreamEvent::ToolCallStarted { tool_name, call_id } => {
-            let _ = emit(AppEvent::Chat(ChatEvent::ToolCallStarted {
-                conversation_id,
-                tool_call_id: call_id,
-                tool_name,
-            }));
-        }
-        LlmStreamEvent::ToolCallCompleted {
-            tool_name,
-            call_id,
-            success,
-            result,
-            error,
-        } => {
-            let payload = result.or(error).unwrap_or_default();
-            let _ = emit(AppEvent::Chat(ChatEvent::ToolCallCompleted {
-                conversation_id,
-                tool_call_id: call_id,
-                tool_name,
-                success,
-                result: payload,
-                duration_ms: 0,
-            }));
-        }
-        LlmStreamEvent::ToolTranscript {
-            tool_calls: completed_tool_calls,
-            tool_results: completed_tool_results,
-        } => {
-            *tool_calls = completed_tool_calls;
-            *tool_results = completed_tool_results;
-        }
-        LlmStreamEvent::Complete {
-            input_tokens: completed_input_tokens,
-            output_tokens: completed_output_tokens,
-        } => {
-            *input_tokens = completed_input_tokens;
-            *output_tokens = completed_output_tokens;
-            let _ = tx.send(ChatStreamEvent::Complete {
-                input_tokens: completed_input_tokens,
-                output_tokens: completed_output_tokens,
-            });
-        }
-        LlmStreamEvent::Error(err) => {
-            tracing::error!(
-                conversation_id = %conversation_id,
-                error = %err,
-                response_chars = response_text.len(),
-                thinking_chars = thinking_text.len(),
-                "LLM stream event error"
-            );
-            emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
-        }
-        LlmStreamEvent::ToolUse(_tool_use) => {}
-    }
-}
-
-fn emit_stream_error(
-    conversation_id: Uuid,
-    error: String,
-    recoverable: bool,
-    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
-) {
-    let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
-        conversation_id,
-        error: error.clone(),
-        recoverable,
-    }));
-    let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(error)));
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn persist_assistant_response(
-    conversation_service: &Arc<dyn ConversationService>,
-    conversation_id: Uuid,
-    response_text: &str,
-    thinking_text: &str,
-    tool_calls: &[crate::llm::tools::ToolUse],
-    tool_results: &[crate::llm::tools::ToolResult],
-    model_label: &str,
-) {
-    if response_text.is_empty()
-        && thinking_text.is_empty()
-        && tool_calls.is_empty()
-        && tool_results.is_empty()
-    {
-        return;
-    }
-
-    let mut msg = if thinking_text.is_empty() {
-        Message::assistant(response_text.to_string())
-    } else {
-        Message::assistant_with_thinking(response_text.to_string(), thinking_text.to_string())
-    };
-
-    // Set the model_id to preserve which profile generated this response
-    msg.model_id = Some(model_label.to_string());
-
-    if !tool_calls.is_empty() {
-        msg.tool_calls = Some(serde_json::to_string(tool_calls).unwrap_or_else(|error| {
-            tracing::warn!("Failed to serialize tool calls: {error}");
-            "[]".to_string()
-        }));
-    }
-
-    if !tool_results.is_empty() {
-        msg.tool_results = Some(serde_json::to_string(tool_results).unwrap_or_else(|error| {
-            tracing::warn!("Failed to serialize tool results: {error}");
-            "[]".to_string()
-        }));
-    }
-
-    let _ = conversation_service.add_message(conversation_id, msg).await;
-}
-
-fn clear_streaming_state(
-    is_streaming: &Arc<AtomicBool>,
-    current_conversation_id: &Arc<StdMutex<Option<Uuid>>>,
-    conversation_id: Uuid,
-) {
-    is_streaming.store(false, Ordering::Release);
-    let mut current = current_conversation_id
-        .lock()
-        .expect("current conversation mutex poisoned");
-    if *current == Some(conversation_id) {
-        *current = None;
-    }
-}
-
-async fn persist_context_state(
-    conversation_service: &Arc<dyn ConversationService>,
-    conversation_id: Uuid,
-    compression_result: CompressionResult,
-    input_tokens: Option<u32>,
-    output_tokens: Option<u32>,
-) {
-    let mut state = match conversation_service
-        .get_context_state(conversation_id)
-        .await
-    {
-        Ok(Some(existing_state)) => existing_state,
-        Ok(None) => ContextState::default(),
-        Err(error) => {
-            tracing::warn!(
-                conversation_id = %conversation_id,
-                error = %error,
-                "Failed to load existing compression context state; creating a new state"
-            );
-            ContextState::default()
-        }
-    };
-
-    state.compression_phase = Some(compression_result.phase);
-    state.masked_tool_seqs = compression_result.masked_tool_seqs;
-    state.summary_range = compression_result.summary_range;
-    state.compressed_at = Some(chrono::Utc::now());
-    state.preserved_facts = compression_result.preserved_facts;
-    state.last_input_tokens = input_tokens;
-    state.last_output_tokens = output_tokens;
-
-    tracing::debug!(
-        conversation_id = %conversation_id,
-        ?state.compression_phase,
-        estimated_tokens = compression_result.estimated_tokens,
-        "Persisting compression context state"
-    );
-
-    if let Err(error) = conversation_service
-        .update_context_state(conversation_id, &state)
-        .await
-    {
-        tracing::warn!(
-            conversation_id = %conversation_id,
-            error = %error,
-            "Failed to persist compression context state"
-        );
     }
 }
 

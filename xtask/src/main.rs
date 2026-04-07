@@ -303,6 +303,7 @@ fn coverage_ignore_regex() -> String {
         r"/render_tool_approval\.rs$",
         r"/render_appearance\.rs$",
         r"/render_backup_panel\.rs$",
+        r"/render_skills\.rs$",
         r"/ime\.rs$",
         // Standalone GPUI views (require live GPUI window context)
         r"/history_view\.rs$",

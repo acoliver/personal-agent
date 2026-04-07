@@ -61,13 +61,17 @@ pub async fn send_message_stream(
 ) -> LlmResult<Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>>> {
     let profile = &client.profile;
 
-    // Get API key from OS keychain
-    let AuthConfig::Keychain { label } = &profile.auth;
-    let api_key = crate::services::secure_store::api_keys::get(label.trim())
-        .map_err(|e| LlmError::Auth(format!("Keychain lookup failed: {e}")))?
-        .ok_or_else(|| LlmError::Auth(format!("No API key found for label '{label}'")))?
-        .trim()
-        .to_string();
+    // Get API key from OS keychain (or empty string for local models)
+    let api_key = match &profile.auth {
+        AuthConfig::None => String::new(),
+        AuthConfig::Keychain { label } => {
+            crate::services::secure_store::api_keys::get(label.trim())
+                .map_err(|e| LlmError::Auth(format!("Keychain lookup failed: {e}")))?
+                .ok_or_else(|| LlmError::Auth(format!("No API key found for label '{label}'")))?
+                .trim()
+                .to_string()
+        }
+    };
 
     // Build model spec string (e.g., "openai:gpt-4o")
     let model_spec = client.model_spec();

@@ -51,6 +51,7 @@ regex = "1"
 ignore = "0.4"
 glob = "0.3"
 rusqlite = { version = "0.33", features = ["bundled", "backup"] }
+serde_yaml = "0.9"
 tiktoken-rs = "0.9"
 flate2 = "1"
 
@@ -100,6 +101,10 @@ objc = "0.2"
 keyring = { version = "3", features = ["linux-native"] }
 ksni = { version = "0.3", features = ["blocking"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+tray-icon = "0.21"
+muda = "0.17"
+
 [target.'cfg(not(any(target_os = "macos", target_os = "linux")))'.dependencies]
 keyring = "3"
 
@@ -127,3 +132,18 @@ incremental = false
 
 [profile.test]
 incremental = false
+
+# Linux packaging metadata for cargo-deb and cargo-generate-rpm
+[package.metadata.deb]
+maintainer = "Andrew C. Oliver <acoliver@apache.org>"
+section = "utils"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/personal_agent_gpui", "usr/bin/personal-agent", "755"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/personal_agent_gpui", dest = "/usr/bin/personal-agent", mode = "755" },
+]

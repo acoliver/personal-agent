@@ -835,10 +835,22 @@ async fn edit_profile_emits_profile_editor_load_with_existing_data() {
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(64);
 
     let backup_service = Arc::new(MockBackupService) as Arc<dyn BackupService>;
+    let skills_service = Arc::new(
+        personal_agent::services::SkillsServiceImpl::new_for_tests(
+            app_settings.clone(),
+            std::path::PathBuf::from("/tmp/nonexistent-bundled-skills"),
+            std::env::temp_dir().join(format!(
+                "presenter-selection-settings-skills-{}",
+                uuid::Uuid::new_v4()
+            )),
+        )
+        .expect("skills service should initialize for tests"),
+    ) as Arc<dyn personal_agent::services::SkillsService>;
     let mut presenter = SettingsPresenter::new(
         profile_service,
         app_settings,
         backup_service,
+        skills_service,
         &event_tx,
         view_tx,
     );
@@ -909,10 +921,22 @@ async fn delete_profile_emits_profile_deleted_command() {
     let (view_tx, mut view_rx) = broadcast::channel::<ViewCommand>(64);
 
     let backup_service = Arc::new(MockBackupService) as Arc<dyn BackupService>;
+    let skills_service = Arc::new(
+        personal_agent::services::SkillsServiceImpl::new_for_tests(
+            app_settings.clone(),
+            std::path::PathBuf::from("/tmp/nonexistent-bundled-skills"),
+            std::env::temp_dir().join(format!(
+                "presenter-selection-settings-skills-{}",
+                uuid::Uuid::new_v4()
+            )),
+        )
+        .expect("skills service should initialize for tests"),
+    ) as Arc<dyn personal_agent::services::SkillsService>;
     let mut presenter = SettingsPresenter::new(
         profile_service,
         app_settings,
         backup_service,
+        skills_service,
         &event_tx,
         view_tx,
     );

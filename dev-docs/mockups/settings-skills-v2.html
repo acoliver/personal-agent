@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - Skills Settings Mockup V2</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #1a3318; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: #6a9955; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #7ab966; }
+  .nebula ::-webkit-scrollbar-track { background: #2a2a3a; }
+  .nebula ::-webkit-scrollbar-thumb { background: #89B4FA; }
+  .nebula ::-webkit-scrollbar-thumb:hover { background: #a3c5fb; }
+
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .section-label {
+    font-size: 13px;
+    color: #6a9955;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .annotation {
+    font-size: 11px;
+    color: #6a9955;
+    font-style: italic;
+    margin-top: 8px;
+    max-width: 620px;
+    line-height: 1.6;
+  }
+  .mockup-wrapper { display: flex; flex-direction: column; align-items: center; }
+  .divider { width: 80%; height: 1px; background: #444; margin: 10px 0; }
+
+  .popup-frame {
+    width: 400px;
+    height: 520px;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .top-bar {
+    height: 44px;
+    background: #000;
+    border-bottom: 1px solid #6a9955;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    flex-shrink: 0;
+  }
+  .top-bar-left { display: flex; align-items: center; gap: 8px; }
+  .back-btn {
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #6a9955; background: transparent;
+    cursor: pointer; border: none;
+  }
+  .back-btn:hover { background: #1a3318; }
+  .top-title { font-size: 14px; font-weight: 700; color: #6a9955; }
+
+  .settings-body { flex: 1; display: flex; overflow: hidden; }
+  .cat-sidebar {
+    width: 120px;
+    background: #000;
+    border-right: 1px solid #1a3318;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 0;
+    flex-shrink: 0;
+  }
+  .cat-item {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #6a9955;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: all 0.1s;
+  }
+  .cat-item:hover { background: #0a1a0a; }
+  .cat-item.selected {
+    background: #0a1a0a;
+    border-left-color: #6a9955;
+    color: #6a9955;
+    font-weight: 600;
+  }
+
+  .content-panel {
+    flex: 1;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .section-hdr { font-size: 11px; color: #6a9955; letter-spacing: 0.5px; }
+  .inline-count { font-size: 10px; color: #3b7a3b; }
+  .help-text { font-size: 10px; color: #3b7a3b; line-height: 1.45; }
+  .control-group { display: flex; flex-direction: column; gap: 4px; }
+  .control-label { font-size: 11px; color: #6a9955; letter-spacing: 0.4px; }
+
+  .toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .tb-btn,
+  .chip-btn,
+  .small-btn,
+  .mode-btn,
+  .browse-btn,
+  .add-btn,
+  .row-btn {
+    background: #000;
+    border: 1px solid #6a9955;
+    color: #6a9955;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .tb-btn:hover,
+  .chip-btn:hover,
+  .small-btn:hover,
+  .mode-btn:hover,
+  .browse-btn:hover,
+  .add-btn:hover,
+  .row-btn:hover { background: #0a1a0a; }
+  .tb-btn { width: 28px; height: 28px; font-size: 14px; }
+  .chip-btn { padding: 3px 8px; font-size: 10px; }
+  .chip-btn.active { background: #6a9955; color: #000; }
+  .small-btn { padding: 4px 10px; font-size: 11px; }
+  .row-btn { padding: 2px 8px; font-size: 10px; }
+  .row-btn.secondary { color: #3b7a3b; border-color: #3b7a3b; }
+  .mode-row { display: flex; align-items: center; gap: 8px; }
+  .mode-label { font-size: 12px; color: #6a9955; }
+  .mode-btn { padding: 2px 8px; font-size: 11px; }
+  .mode-btn.active { background: #6a9955; color: #000; }
+
+  .path-row,
+  .input-add-row,
+  .save-reset-row { display: flex; align-items: center; gap: 6px; }
+  .path-input,
+  .text-input,
+  .url-input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    padding: 0 8px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #6a9955;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .path-input.muted,
+  .text-input.muted,
+  .url-input.muted { color: #3b7a3b; }
+  .browse-btn,
+  .add-btn { height: 28px; padding: 0 10px; font-size: 11px; flex-shrink: 0; }
+  .link-btn {
+    padding: 3px 8px;
+    border: none;
+    background: transparent;
+    font-size: 11px;
+    color: #6a9955;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .link-btn:hover { background: #0a1a0a; }
+  .link-btn.secondary { color: #3b7a3b; }
+
+  .list-box {
+    flex: 1;
+    min-height: 0;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .list-count { padding: 2px 8px; font-size: 10px; color: #3b7a3b; }
+
+  .skill-list-row {
+    min-height: 34px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #6a9955;
+    cursor: pointer;
+    border-bottom: 1px solid #0d1a0d;
+    flex-shrink: 0;
+  }
+  .skill-list-row:hover { background: #0a1a0a; }
+  .skill-list-row.selected { background: #6a9955; color: #000; }
+  .skill-list-row.selected .source-badge,
+  .skill-list-row.selected .row-meta,
+  .skill-list-row.selected .row-desc,
+  .skill-list-row.selected .row-status { color: #000; border-color: rgba(0,0,0,0.35); }
+
+  .source-badge {
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid #3b7a3b;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+    color: #3b7a3b;
+  }
+  .source-badge.user { border-color: #6a9955; color: #6a9955; }
+  .row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .row-title {
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row-desc,
+  .row-meta,
+  .row-status { font-size: 10px; color: #3b7a3b; }
+  .row-meta { white-space: nowrap; }
+  .row-status {
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid #3b7a3b;
+    flex-shrink: 0;
+  }
+  .row-status.enabled { color: #6a9955; border-color: #6a9955; }
+
+  .detail-panel {
+    border: 1px solid #1a3318;
+    border-radius: 4px;
+    background: #050a05;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .detail-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .detail-title { font-size: 12px; color: #6a9955; font-weight: 600; }
+  .detail-subtitle { font-size: 10px; color: #3b7a3b; line-height: 1.5; }
+  .kv-grid {
+    display: grid;
+    grid-template-columns: 68px 1fr;
+    gap: 6px 8px;
+    font-size: 10px;
+  }
+  .kv-label { color: #3b7a3b; text-transform: uppercase; letter-spacing: 0.4px; }
+  .kv-value {
+    color: #6a9955;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .code-box {
+    background: #0a1a0a;
+    border: 1px solid #1a3318;
+    border-radius: 4px;
+    padding: 8px;
+    font-family: "Menlo", "SF Mono", monospace;
+    font-size: 10px;
+    color: #7ab966;
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+
+  .toggle-row { display: flex; align-items: center; gap: 8px; }
+  .checkbox {
+    width: 14px; height: 14px;
+    border: 1px solid #6a9955;
+    border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; flex-shrink: 0;
+  }
+  .checkbox.checked { background: #6a9955; color: #000; }
+  .toggle-label { font-size: 12px; color: #6a9955; }
+  .toggle-warning {
+    padding-left: 22px;
+    font-size: 10px;
+    color: #6a9955;
+    font-style: italic;
+    line-height: 1.5;
+  }
+
+  .editable-list {
+    min-height: 32px;
+    max-height: 64px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .editable-row {
+    height: 24px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #6a9955;
+  }
+  .editable-row:hover { background: #0a1a0a; }
+  .editable-empty {
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: #3b7a3b;
+  }
+  .remove-x {
+    width: 18px; height: 18px; border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #3b7a3b; cursor: pointer;
+    background: transparent; border: none;
+  }
+  .remove-x:hover { background: #4a2a2a; color: #ff6b6b; }
+
+  .callout-box {
+    border: 1px solid #6a9955;
+    border-radius: 6px;
+    padding: 12px;
+    background: #081108;
+    max-width: 640px;
+    color: #6a9955;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .callout-box code {
+    background: #1a3318;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+
+  .nebula .section-label { color: #89B4FA; }
+  .nebula .annotation { color: #89B4FA; }
+  .nebula .popup-frame { background: #1E1E2E; }
+  .nebula .top-bar { background: #1E1E2E; border-bottom-color: #6C7086; }
+  .nebula .back-btn { color: #6C7086; }
+  .nebula .back-btn:hover { background: #2a2a3a; }
+  .nebula .top-title { color: #e5e7eb; }
+  .nebula .cat-sidebar { background: #161628; border-right-color: #2a2a3a; }
+  .nebula .cat-item { color: #6C7086; }
+  .nebula .cat-item:hover { background: #2a2a3a; }
+  .nebula .cat-item.selected { background: #2a2a3a; border-left-color: #89B4FA; color: #e5e7eb; }
+  .nebula .section-hdr,
+  .nebula .control-label,
+  .nebula .detail-title,
+  .nebula .toggle-label,
+  .nebula .mode-label,
+  .nebula .kv-value { color: #e5e7eb; }
+  .nebula .inline-count,
+  .nebula .help-text,
+  .nebula .row-desc,
+  .nebula .row-meta,
+  .nebula .detail-subtitle,
+  .nebula .kv-label,
+  .nebula .toggle-warning,
+  .nebula .editable-empty { color: #6C7086; }
+  .nebula .tb-btn,
+  .nebula .chip-btn,
+  .nebula .small-btn,
+  .nebula .mode-btn,
+  .nebula .browse-btn,
+  .nebula .add-btn,
+  .nebula .row-btn {
+    background: #161628;
+    border-color: #6C7086;
+    color: #e5e7eb;
+  }
+  .nebula .tb-btn:hover,
+  .nebula .chip-btn:hover,
+  .nebula .small-btn:hover,
+  .nebula .mode-btn:hover,
+  .nebula .browse-btn:hover,
+  .nebula .add-btn:hover,
+  .nebula .row-btn:hover { background: #2a2a3a; }
+  .nebula .chip-btn.active,
+  .nebula .mode-btn.active { background: #89B4FA; color: #0f172a; border-color: #89B4FA; }
+  .nebula .row-btn.secondary { color: #6C7086; border-color: #45475A; }
+  .nebula .path-input,
+  .nebula .text-input,
+  .nebula .url-input,
+  .nebula .editable-list,
+  .nebula .list-box,
+  .nebula .detail-panel { background: #161628; border-color: #6C7086; color: #e5e7eb; }
+  .nebula .path-input.muted,
+  .nebula .text-input.muted,
+  .nebula .url-input.muted { color: #6C7086; }
+  .nebula .link-btn { color: #e5e7eb; }
+  .nebula .link-btn.secondary { color: #6C7086; }
+  .nebula .link-btn:hover { background: #2a2a3a; }
+  .nebula .skill-list-row { color: #e5e7eb; border-bottom-color: #2a2a3a; }
+  .nebula .skill-list-row:hover { background: #2a2a3a; }
+  .nebula .skill-list-row.selected { background: #89B4FA; color: #0f172a; }
+  .nebula .skill-list-row.selected .row-desc,
+  .nebula .skill-list-row.selected .row-meta,
+  .nebula .skill-list-row.selected .row-status,
+  .nebula .skill-list-row.selected .source-badge { color: #0f172a; border-color: rgba(15,23,42,0.3); }
+  .nebula .source-badge { color: #6C7086; border-color: #6C7086; }
+  .nebula .source-badge.user { color: #89B4FA; border-color: #89B4FA; }
+  .nebula .row-status { color: #6C7086; border-color: #6C7086; }
+  .nebula .row-status.enabled { color: #89B4FA; border-color: #89B4FA; }
+  .nebula .code-box { background: #2a2a3a; border-color: #45475A; color: #89B4FA; }
+  .nebula .checkbox { border-color: #6C7086; }
+  .nebula .checkbox.checked { background: #89B4FA; color: #0f172a; border-color: #89B4FA; }
+  .nebula .editable-row { color: #e5e7eb; }
+  .nebula .editable-row:hover { background: #2a2a3a; }
+  .nebula .remove-x { color: #6C7086; }
+  .nebula .remove-x:hover { background: #4a2a2a; color: #F38BA8; }
+  .nebula .callout-box { background: #161628; border-color: #89B4FA; color: #e5e7eb; }
+  .nebula .callout-box code { background: #2a2a3a; color: #e5e7eb; }
+</style>
+</head>
+<body>
+
+<h1>PersonalAgent - Skills Settings</h1>
+<h2>V2: MCP-style Skills List with Selected-Item Details</h2>
+
+<div class="mockup-wrapper">
+  <div class="section-label">1. Skills Category — Compact List, Green Screen</div>
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item">Appearance</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item selected">Skills</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+      <div class="content-panel">
+        <div class="panel-header">
+          <div class="section-hdr">SKILLS</div>
+          <div class="inline-count">9 discovered</div>
+        </div>
+
+        <div class="toolbar">
+          <button class="chip-btn active">All</button>
+          <button class="chip-btn">Enabled</button>
+          <button class="chip-btn">User</button>
+          <button class="chip-btn">Bundled</button>
+          <button class="small-btn">Refresh</button>
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">SKILL DIRECTORIES</div>
+          <div class="path-row">
+            <div class="path-input">~/Library/Application Support/PersonalAgent/skills</div>
+            <button class="browse-btn">Browse…</button>
+          </div>
+          <div class="input-add-row">
+            <div class="text-input muted">Add another watched directory…</div>
+            <button class="add-btn">Add</button>
+          </div>
+          <div class="save-reset-row">
+            <button class="link-btn">Open Folder</button>
+            <button class="link-btn secondary">Save Paths</button>
+            <span class="help-text">Later user paths override same-name bundled skills.</span>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">INSTALL FROM URL</div>
+          <div class="input-add-row">
+            <div class="url-input">https://github.com/example/skills/archive/refs/heads/main.zip</div>
+            <button class="add-btn">Fetch</button>
+          </div>
+          <div class="help-text">Downloaded bundles install into the active user skills directory and refresh the list automatically.</div>
+        </div>
+
+        <div class="list-box">
+          <div class="skill-list-row selected">
+            <span class="source-badge user">user</span>
+            <div class="row-main">
+              <div class="row-title">configure-skill</div>
+              <div class="row-desc">Project config assistant and environment setup workflow</div>
+            </div>
+            <span class="row-status enabled">ON</span>
+          </div>
+          <div class="skill-list-row">
+            <span class="source-badge user">user</span>
+            <div class="row-main">
+              <div class="row-title">docs-writer</div>
+              <div class="row-desc">Structured documentation drafting and review</div>
+            </div>
+            <span class="row-status enabled">ON</span>
+          </div>
+          <div class="skill-list-row">
+            <span class="source-badge bundle">bundle</span>
+            <div class="row-main">
+              <div class="row-title">troubleshooting</div>
+              <div class="row-desc">Debugging checklist for bug reports and repros</div>
+            </div>
+            <span class="row-status enabled">ON</span>
+          </div>
+          <div class="skill-list-row">
+            <span class="source-badge bundle">bundle</span>
+            <div class="row-main">
+              <div class="row-title">release-notes</div>
+              <div class="row-desc">Release note generation from commits and issues</div>
+            </div>
+            <span class="row-status">OFF</span>
+          </div>
+          <div class="skill-list-row">
+            <span class="source-badge user">user</span>
+            <div class="row-main">
+              <div class="row-title">incident-review</div>
+              <div class="row-desc">Postmortem and outage-review facilitation</div>
+            </div>
+            <span class="row-status enabled">ON</span>
+          </div>
+          <div class="skill-list-row">
+            <span class="source-badge user">user</span>
+            <div class="row-main">
+              <div class="row-title">meeting-notes</div>
+              <div class="row-desc">Fast capture and structured follow-up summary</div>
+            </div>
+            <span class="row-status enabled">ON</span>
+          </div>
+          <div class="skill-list-row">
+            <span class="source-badge bundle">bundle</span>
+            <div class="row-main">
+              <div class="row-title">prompt-audit</div>
+              <div class="row-desc">Review prompts for hidden assumptions and gaps</div>
+            </div>
+            <span class="row-status">OFF</span>
+          </div>
+          <div class="list-count">Compact rows scale better once the list gets long.</div>
+        </div>
+
+        <div class="detail-panel">
+          <div class="detail-title-row">
+            <div class="detail-title">configure-skill</div>
+            <div style="display:flex; gap:6px;">
+              <button class="row-btn">Disable</button>
+              <button class="row-btn secondary">Open Folder</button>
+            </div>
+          </div>
+          <div class="detail-subtitle">Only the selected skill expands into detail. This keeps the list dense like the MCP screen while still giving room for metadata and actions.</div>
+          <div class="kv-grid">
+            <div class="kv-label">Source</div><div class="kv-value">User directory</div>
+            <div class="kv-label">Path</div><div class="kv-value">~/Library/Application Support/PersonalAgent/skills/configure-skill</div>
+            <div class="kv-label">URL</div><div class="kv-value">github.com/example/skills/configure-skill</div>
+            <div class="kv-label">Files</div><div class="kv-value">SKILL.md, examples/, templates/</div>
+          </div>
+          <div class="code-box">name: configure-skill
+description: Environment setup helper for config-heavy tasks.
+metadata:
+  install: url
+  source: github
+  imported_at: 2026-04-06T15:04:00Z</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">
+    This revision makes the list behave more like MCP Tools: compact rows first, details only for the selected skill. It stays usable even once the skill count climbs past five.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper nebula">
+  <div class="section-label">2. Skills Category — Compact List, Midnight Nebula</div>
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item">Appearance</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item">Security</div>
+        <div class="cat-item selected">Skills</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+      <div class="content-panel">
+        <div class="panel-header">
+          <div class="section-hdr">SKILLS</div>
+          <div class="inline-count">6 discovered</div>
+        </div>
+        <div class="toolbar">
+          <button class="chip-btn active">All</button>
+          <button class="chip-btn">Enabled</button>
+          <button class="chip-btn">User</button>
+          <button class="small-btn">Refresh</button>
+        </div>
+        <div class="control-group">
+          <div class="control-label">SKILL DIRECTORIES</div>
+          <div class="path-row">
+            <div class="path-input">~/Library/Application Support/PersonalAgent/skills</div>
+            <button class="browse-btn">Browse…</button>
+          </div>
+          <div class="input-add-row">
+            <div class="text-input">/Volumes/Shared/team-skills</div>
+            <button class="add-btn">Add</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <div class="control-label">INSTALL FROM URL</div>
+          <div class="input-add-row">
+            <div class="url-input">https://github.com/acme/skills/archive/refs/tags/v1.4.0.zip</div>
+            <button class="add-btn">Fetch</button>
+          </div>
+        </div>
+        <div class="list-box">
+          <div class="skill-list-row selected">
+            <span class="source-badge user">user</span>
+            <div class="row-main">
+              <div class="row-title">release-notes</div>
+              <div class="row-desc">Generate changelog drafts from merged work</div>
+            </div>
+            <span class="row-status enabled">ON</span>
+          </div>
+          <div class="skill-list-row">
+            <span class="source-badge bundle">bundle</span>
+            <div class="row-main">
+              <div class="row-title">bug-triage</div>
+              <div class="row-desc">Issue severity framing and repro checklists</div>
+            </div>
+            <span class="row-status enabled">ON</span>
+          </div>
+          <div class="skill-list-row">
+            <span class="source-badge user">user</span>
+            <div class="row-main">
+              <div class="row-title">meeting-notes</div>
+              <div class="row-desc">Meeting capture and action-item cleanup</div>
+            </div>
+            <span class="row-status">OFF</span>
+          </div>
+          <div class="list-count">Selected row uses theme accent; detail panel below inherits the same theme tokens.</div>
+        </div>
+        <div class="detail-panel">
+          <div class="detail-title-row">
+            <div class="detail-title">release-notes</div>
+            <div style="display:flex; gap:6px;">
+              <button class="row-btn">Disable</button>
+              <button class="row-btn secondary">Open Folder</button>
+            </div>
+          </div>
+          <div class="detail-subtitle">Same structure as the green-screen version, just using Midnight Nebula tokens so it still looks like a native PersonalAgent settings panel.</div>
+          <div class="kv-grid">
+            <div class="kv-label">Installed</div><div class="kv-value">From URL</div>
+            <div class="kv-label">Updated</div><div class="kv-value">2026-04-06 15:04</div>
+            <div class="kv-label">Target</div><div class="kv-value">~/Library/Application Support/PersonalAgent/skills</div>
+            <div class="kv-label">Trust</div><div class="kv-value">Prompt-only files, no executable hooks</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">
+    The compact-row version still works cleanly in Midnight Nebula and matches the list-plus-detail rhythm already used elsewhere in the mockups.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper">
+  <div class="section-label">3. Security Category — Full Panel Preserved</div>
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-bar-left">
+        <button class="back-btn">&lt;</button>
+        <span class="top-title">Settings</span>
+      </div>
+    </div>
+    <div class="settings-body">
+      <div class="cat-sidebar">
+        <div class="cat-item">General</div>
+        <div class="cat-item">Appearance</div>
+        <div class="cat-item">Models</div>
+        <div class="cat-item selected">Security</div>
+        <div class="cat-item">Skills</div>
+        <div class="cat-item">MCP Tools</div>
+      </div>
+      <div class="content-panel">
+        <div class="section-hdr">TOOL APPROVAL</div>
+
+        <div class="toggle-row">
+          <div class="checkbox checked">v</div>
+          <span class="toggle-label">YOLO mode</span>
+        </div>
+        <div class="toggle-warning">Auto-approves all tool calls except denylisted commands.</div>
+
+        <div class="toggle-row">
+          <div class="checkbox"></div>
+          <span class="toggle-label">Auto-approve read-only tools</span>
+        </div>
+
+        <div class="toggle-row">
+          <div class="checkbox"></div>
+          <span class="toggle-label">Auto-approve skill activation</span>
+        </div>
+
+        <div class="mode-row">
+          <span class="mode-label">MCP approval:</span>
+          <button class="mode-btn active">Per Tool</button>
+          <button class="mode-btn">Per Server</button>
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">ALLOWLIST</div>
+          <div class="editable-list">
+            <div class="editable-row"><span>git</span><button class="remove-x">x</button></div>
+            <div class="editable-row"><span>ls</span><button class="remove-x">x</button></div>
+            <div class="editable-row"><span>cat</span><button class="remove-x">x</button></div>
+          </div>
+          <div class="input-add-row">
+            <div class="text-input muted">e.g. grep, find</div>
+            <button class="add-btn">Add</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">DENYLIST</div>
+          <div class="editable-list">
+            <div class="editable-row"><span>rm</span><button class="remove-x">x</button></div>
+            <div class="editable-row"><span>sudo</span><button class="remove-x">x</button></div>
+          </div>
+          <div class="input-add-row">
+            <div class="text-input muted">e.g. shutdown, reboot</div>
+            <button class="add-btn">Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">
+    Yes — this is only demonstrating that the skill auto-approve checkbox stays in Security. It does <strong>not</strong> delete the rest of the tool approval panel. Allowlist, denylist, YOLO mode, MCP approval mode, and related controls remain intact.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper">
+  <div class="section-label">4. Direction Summary</div>
+  <div class="callout-box">
+    <div><strong>Skills category:</strong> compact MCP-style list, selected-item details, watched directories, URL install, refresh.</div>
+    <div><strong>Security category:</strong> preserve the full existing tool-approval panel and keep only the <code>Auto-approve skill activation</code> toggle added there.</div>
+    <div><strong>Reasoning:</strong> this keeps Skills scalable and visible without blowing up the Security screen or removing established safety controls.</div>
+  </div>
+</div>
+
+</body>
+</html>
