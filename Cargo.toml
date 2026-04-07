@@ -126,3 +126,18 @@ incremental = false
 
 [profile.test]
 incremental = false
+
+# Linux packaging metadata for cargo-deb and cargo-generate-rpm
+[package.metadata.deb]
+maintainer = "Andrew C. Oliver <acoliver@apache.org>"
+section = "utils"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/personal_agent_gpui", "usr/bin/personal-agent", "755"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/personal_agent_gpui", dest = "/usr/bin/personal-agent", mode = "755" },
+]
