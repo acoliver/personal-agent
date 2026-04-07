@@ -757,7 +757,8 @@ impl ProfileEditorView {
                     .rounded(px(4.0))
                     .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
-                    .overflow_hidden()
+                    .overflow_y_scroll()
+                    .cursor_text()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {
@@ -765,14 +766,40 @@ impl ProfileEditorView {
                             cx.notify();
                         }),
                     )
-                    .child(if self.state.data.system_prompt.is_empty() {
-                        div()
-                            .text_color(Theme::text_muted())
-                            .child("You are a helpful assistant.")
-                    } else {
-                        div().child(self.state.data.system_prompt.clone())
-                    }),
+                    .child(Self::render_system_prompt_content(
+                        active,
+                        &self.state.data.system_prompt,
+                    )),
             )
+    }
+
+    /// Render system prompt content with cursor visibility when active
+    /// Shows placeholder when empty, cursor when focused, and scrollable content.
+    fn render_system_prompt_content(active: bool, system_prompt: &str) -> impl IntoElement {
+        if system_prompt.is_empty() {
+            // Show placeholder when empty
+            div()
+                .text_color(Theme::text_muted())
+                .child("You are a helpful assistant.")
+        } else if active {
+            // Show cursor at end when field is active
+            let cursor_pos = system_prompt.len();
+            let before = &system_prompt[..cursor_pos];
+            let text_content = format!("{before}|");
+
+            div()
+                .w_full()
+                .text_color(Theme::text_primary())
+                .whitespace_normal()
+                .child(text_content)
+        } else {
+            // Show plain text when not active
+            div()
+                .w_full()
+                .text_color(Theme::text_primary())
+                .whitespace_normal()
+                .child(system_prompt.to_string())
+        }
     }
 
     /// Render the content area
