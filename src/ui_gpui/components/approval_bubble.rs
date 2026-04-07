@@ -406,4 +406,48 @@ mod tests {
         let bubble = ApprovalBubble::new("req-6", context, ApprovalBubbleState::Pending);
         assert_eq!(bubble.context.details.len(), 2);
     }
+
+    #[test]
+    fn approval_bubble_operation_count() {
+        let context = ToolApprovalContext::new("write", ToolCategory::FileWrite, "/tmp/f.txt");
+        let bubble =
+            ApprovalBubble::new("req-7", context, ApprovalBubbleState::Pending).operation_count(3);
+        assert_eq!(bubble.operation_count, 3);
+    }
+
+    #[test]
+    fn approval_bubble_expanded() {
+        let context = ToolApprovalContext::new("write", ToolCategory::FileWrite, "/tmp/f.txt");
+        let bubble =
+            ApprovalBubble::new("req-8", context, ApprovalBubbleState::Pending).expanded(true);
+        assert!(bubble.expanded);
+    }
+
+    #[test]
+    fn approval_bubble_grouped_operations() {
+        let context = ToolApprovalContext::new("edit", ToolCategory::FileEdit, "/tmp/f.txt");
+        let ops = vec![
+            GroupedOperation {
+                request_id: "op-1".to_string(),
+                details: vec![("line".to_string(), "10".to_string())],
+            },
+            GroupedOperation {
+                request_id: "op-2".to_string(),
+                details: vec![("line".to_string(), "20".to_string())],
+            },
+        ];
+        let bubble = ApprovalBubble::new("req-9", context, ApprovalBubbleState::Pending)
+            .grouped_operations(ops);
+        assert_eq!(bubble.grouped_operations.len(), 2);
+    }
+
+    #[test]
+    fn approval_bubble_icon_for_category() {
+        assert!(!ApprovalBubble::icon_for_category(ToolCategory::FileEdit).is_empty());
+        assert!(!ApprovalBubble::icon_for_category(ToolCategory::FileWrite).is_empty());
+        assert!(!ApprovalBubble::icon_for_category(ToolCategory::FileRead).is_empty());
+        assert!(!ApprovalBubble::icon_for_category(ToolCategory::Search).is_empty());
+        assert!(!ApprovalBubble::icon_for_category(ToolCategory::Shell).is_empty());
+        assert!(!ApprovalBubble::icon_for_category(ToolCategory::Mcp).is_empty());
+    }
 }
