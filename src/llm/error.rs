@@ -49,6 +49,18 @@ pub enum LlmError {
     /// No API key configured
     #[error("No API key configured for profile")]
     NoApiKey,
+
+    /// Local model error
+    #[error("Local model error: {0}")]
+    LocalModel(String),
+
+    /// Local model not downloaded
+    #[error("Local model not downloaded")]
+    LocalModelNotDownloaded,
+
+    /// Insufficient memory for local model
+    #[error("Insufficient memory: need {needed_gb:.1}GB, have {available_gb:.1}GB")]
+    InsufficientMemory { needed_gb: f64, available_gb: f64 },
 }
 
 /// Result type for LLM operations

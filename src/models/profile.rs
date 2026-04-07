@@ -34,6 +34,8 @@ const fn default_context_window_size() -> usize {
 pub enum AuthConfig {
     /// API key stored in the OS keychain, referenced by label.
     Keychain { label: String },
+    /// In-process local model (no authentication required).
+    InProcess,
 }
 
 impl<'de> serde::Deserialize<'de> for AuthConfig {
@@ -53,6 +55,7 @@ impl<'de> serde::Deserialize<'de> for AuthConfig {
                     .to_string();
                 Ok(Self::Keychain { label })
             }
+            Some("inprocess" | "in_process") => Ok(Self::InProcess),
             // Legacy and unknown formats map to empty keychain labels so the secret
             // must be re-stored before use.
             _ => Ok(Self::Keychain {
@@ -66,6 +69,7 @@ impl std::fmt::Debug for AuthConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Keychain { label } => f.debug_struct("Keychain").field("label", label).finish(),
+            Self::InProcess => f.write_str("InProcess"),
         }
     }
 }
@@ -154,5 +158,27 @@ impl ModelProfile {
     /// Update the parameters
     pub const fn set_parameters(&mut self, parameters: ModelParameters) {
         self.parameters = parameters;
+    }
+
+    /// Create a local model profile (in-process inference).
+    #[must_use]
+    pub fn new_local(name: String, model_id: String, context_window_size: usize) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name,
+            provider_id: "local".to_string(),
+            model_id,
+            base_url: String::new(),
+            auth: AuthConfig::InProcess,
+            parameters: ModelParameters::default(),
+            system_prompt: default_system_prompt(),
+            context_window_size,
+        }
+    }
+
+    /// Check if this is a local (in-process) profile.
+    #[must_use]
+    pub const fn is_local(&self) -> bool {
+        matches!(self.auth, AuthConfig::InProcess)
     }
 }

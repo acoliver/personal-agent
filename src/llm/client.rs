@@ -119,7 +119,16 @@ impl LlmClient {
             }
         }
 
-        let AuthConfig::Keychain { label } = &profile.auth;
+        // Local models don't need API keys
+        if matches!(&profile.auth, AuthConfig::InProcess) {
+            return Err(LlmError::LocalModel(
+                "Use LocalProvider for local models".to_string(),
+            ));
+        }
+
+        let AuthConfig::Keychain { label } = &profile.auth else {
+            return Err(LlmError::NoApiKey);
+        };
         let trimmed = label.trim();
         if trimmed.is_empty() {
             return Err(LlmError::NoApiKey);

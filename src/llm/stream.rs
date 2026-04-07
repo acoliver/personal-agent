@@ -61,8 +61,19 @@ pub async fn send_message_stream(
 ) -> LlmResult<Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>>> {
     let profile = &client.profile;
 
+    // Check if this is a local (in-process) provider
+    if profile.is_local() {
+        return Err(LlmError::LocalModel(
+            "Use LocalProvider for local models".to_string(),
+        ));
+    }
+
     // Get API key from OS keychain
-    let AuthConfig::Keychain { label } = &profile.auth;
+    let AuthConfig::Keychain { label } = &profile.auth else {
+        return Err(LlmError::Auth(
+            "No API key configured for cloud provider".to_string(),
+        ));
+    };
     let api_key = crate::services::secure_store::api_keys::get(label.trim())
         .map_err(|e| LlmError::Auth(format!("Keychain lookup failed: {e}")))?
         .ok_or_else(|| LlmError::Auth(format!("No API key found for label '{label}'")))?

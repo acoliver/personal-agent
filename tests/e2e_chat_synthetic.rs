@@ -30,7 +30,9 @@ async fn test_real_chat_with_synthetic_api() {
     );
     println!("Base URL: {}", profile.base_url);
 
-    let AuthConfig::Keychain { ref label } = profile.auth;
+    let AuthConfig::Keychain { ref label } = profile.auth else {
+        panic!("Expected Keychain auth config for E2E test");
+    };
     assert!(!label.is_empty(), "Key label must not be empty");
     println!("Key label: {label} [OK]");
 

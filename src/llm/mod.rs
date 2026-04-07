@@ -2,11 +2,14 @@
 //!
 //! This module provides the bridge between `PersonalAgent`'s config/profile system
 //! and the `SerdesAI` library for making LLM requests.
+//!
+//! For local inference support, see the `local` submodule.
 
 mod client;
 pub mod client_agent;
 pub mod error;
 pub mod events;
+pub mod local;
 pub mod mcp_tool_executor;
 mod normalizing_model;
 mod provider_quirks;

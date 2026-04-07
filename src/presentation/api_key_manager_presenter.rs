@@ -187,13 +187,15 @@ impl ApiKeyManagerPresenter {
         let mut used_by_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for p in &profiles {
-            let AuthConfig::Keychain { ref label } = p.auth;
-            if !label.is_empty() {
-                used_by_map
-                    .entry(label.clone())
-                    .or_default()
-                    .push(p.name.clone());
+            if let AuthConfig::Keychain { ref label } = p.auth {
+                if !label.is_empty() {
+                    used_by_map
+                        .entry(label.clone())
+                        .or_default()
+                        .push(p.name.clone());
+                }
             }
+            // InProcess profiles don't have API keys, skip them
         }
 
         for label in used_by_map.keys() {
