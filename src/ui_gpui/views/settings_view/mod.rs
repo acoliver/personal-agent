@@ -12,8 +12,7 @@ mod render_appearance;
 mod render_backup_panel;
 mod render_tool_approval;
 
-
-use gpui::{FocusHandle};
+use gpui::FocusHandle;
 use std::sync::Arc;
 use uuid::Uuid;
 
