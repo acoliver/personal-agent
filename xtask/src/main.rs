@@ -307,6 +307,7 @@ fn coverage_ignore_regex() -> String {
         // Standalone GPUI views (require live GPUI window context)
         r"/history_view\.rs$",
         r"/error_log_view\.rs$",
+        r"/recovery_view\.rs$",
     ]
     .join("|")
 }
