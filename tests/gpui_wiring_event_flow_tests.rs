@@ -41,11 +41,11 @@ fn broken_config_path() -> std::path::PathBuf {
     {
         std::path::PathBuf::from("/nonexistent/dir/config.json")
     }
-    // On Windows, use a UNC path to a non-existent server - this will fail immediately
-    // when trying to access the network share, causing the save to fail
+    // On Windows, use a path with an invalid colon (colons only allowed after drive letter)
+    // This will cause file creation to fail
     #[cfg(windows)]
     {
-        std::path::PathBuf::from(r"\nonexistent-server-12345\share\config.json")
+        std::path::PathBuf::from("invalid:path\\config.json")
     }
 }
 
