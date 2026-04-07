@@ -30,21 +30,29 @@ async fn test_real_chat_with_synthetic_api() {
     );
     println!("Base URL: {}", profile.base_url);
 
-    let AuthConfig::Keychain { ref label } = profile.auth;
-    assert!(!label.is_empty(), "Key label must not be empty");
-    println!("Key label: {label} [OK]");
+    match &profile.auth {
+        AuthConfig::Keychain { label } => {
+            assert!(!label.is_empty(), "Key label must not be empty");
+            println!("Key label: {label} [OK]");
+        }
+        AuthConfig::None => {
+            println!("No API key required (local model)");
+        }
+    }
 
     let api_key_override_present = std::env::var("PA_E2E_API_KEY")
         .ok()
         .is_some_and(|value| !value.trim().is_empty());
 
     if !api_key_override_present {
-        let key_exists = personal_agent::services::secure_store::api_keys::exists(label)
-            .expect("Keychain lookup should not fail");
-        assert!(
-            key_exists,
-            "Expected configured PA_E2E key label to exist in secure store when PA_E2E_API_KEY is unset"
-        );
+        if let AuthConfig::Keychain { label } = &profile.auth {
+            let key_exists = personal_agent::services::secure_store::api_keys::exists(label)
+                .expect("Keychain lookup should not fail");
+            assert!(
+                key_exists,
+                "Expected configured PA_E2E key label to exist in secure store when PA_E2E_API_KEY is unset"
+            );
+        }
     }
 
     let client =

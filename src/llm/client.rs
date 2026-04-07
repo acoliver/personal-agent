@@ -119,18 +119,25 @@ impl LlmClient {
             }
         }
 
-        let AuthConfig::Keychain { label } = &profile.auth;
-        let trimmed = label.trim();
-        if trimmed.is_empty() {
-            return Err(LlmError::NoApiKey);
+        match &profile.auth {
+            AuthConfig::None => {
+                // Local models don't require API keys
+                Ok(String::new())
+            }
+            AuthConfig::Keychain { label } => {
+                let trimmed = label.trim();
+                if trimmed.is_empty() {
+                    return Err(LlmError::NoApiKey);
+                }
+                let key = crate::services::secure_store::api_keys::get(trimmed)
+                    .map_err(|e| LlmError::Auth(format!("Keychain lookup failed: {e}")))?
+                    .ok_or(LlmError::NoApiKey)?;
+                if key.trim().is_empty() {
+                    return Err(LlmError::NoApiKey);
+                }
+                Ok(key.trim().to_string())
+            }
         }
-        let key = crate::services::secure_store::api_keys::get(trimmed)
-            .map_err(|e| LlmError::Auth(format!("Keychain lookup failed: {e}")))?
-            .ok_or(LlmError::NoApiKey)?;
-        if key.trim().is_empty() {
-            return Err(LlmError::NoApiKey);
-        }
-        Ok(key.trim().to_string())
     }
 
     /// Get the model spec string for `SerdesAI` (e.g., "openai:gpt-4o")

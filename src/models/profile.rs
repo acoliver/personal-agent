@@ -34,6 +34,8 @@ const fn default_context_window_size() -> usize {
 pub enum AuthConfig {
     /// API key stored in the OS keychain, referenced by label.
     Keychain { label: String },
+    /// No authentication required (for local/offline models).
+    None,
 }
 
 impl<'de> serde::Deserialize<'de> for AuthConfig {
@@ -53,6 +55,7 @@ impl<'de> serde::Deserialize<'de> for AuthConfig {
                     .to_string();
                 Ok(Self::Keychain { label })
             }
+            Some("none") => Ok(Self::None),
             // Legacy and unknown formats map to empty keychain labels so the secret
             // must be re-stored before use.
             _ => Ok(Self::Keychain {
@@ -66,6 +69,18 @@ impl std::fmt::Debug for AuthConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Keychain { label } => f.debug_struct("Keychain").field("label", label).finish(),
+            Self::None => f.debug_struct("None").finish(),
+        }
+    }
+}
+
+impl AuthConfig {
+    /// Returns `true` if this auth config requires an API key.
+    #[must_use]
+    pub const fn requires_api_key(&self) -> bool {
+        match self {
+            Self::Keychain { .. } => true,
+            Self::None => false,
         }
     }
 }
@@ -154,5 +169,46 @@ impl ModelProfile {
     /// Update the parameters
     pub const fn set_parameters(&mut self, parameters: ModelParameters) {
         self.parameters = parameters;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_config_requires_api_key_returns_correct_value() {
+        assert!(AuthConfig::Keychain {
+            label: "test".to_string()
+        }
+        .requires_api_key());
+        assert!(AuthConfig::Keychain {
+            label: String::new()
+        }
+        .requires_api_key());
+        assert!(!AuthConfig::None.requires_api_key());
+    }
+
+    #[test]
+    fn auth_config_none_serializes_correctly() {
+        let auth = AuthConfig::None;
+        let json = serde_json::to_string(&auth).expect("serialize None");
+        assert_eq!(json, r#"{"type":"none"}"#);
+    }
+
+    #[test]
+    fn auth_config_none_deserializes_correctly() {
+        let json = r#"{"type":"none"}"#;
+        let auth: AuthConfig = serde_json::from_str(json).expect("deserialize None");
+        assert_eq!(auth, AuthConfig::None);
+    }
+
+    #[test]
+    fn auth_config_keychain_serializes_correctly() {
+        let auth = AuthConfig::Keychain {
+            label: "my-key".to_string(),
+        };
+        let json = serde_json::to_string(&auth).expect("serialize Keychain");
+        assert_eq!(json, r#"{"type":"keychain","label":"my-key"}"#);
     }
 }

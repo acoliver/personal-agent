@@ -290,6 +290,7 @@ impl ProfileServiceImpl {
                             match &p.auth {
                                 AuthConfig::Keychain { label } if label.is_empty() => "none",
                                 AuthConfig::Keychain { label } => label.as_str(),
+                                AuthConfig::None => "none",
                             }
                         );
                         p
