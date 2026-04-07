@@ -49,8 +49,25 @@ impl SettingsPresenter {
     ) {
         tracing::info!("emit_backup_settings_snapshot: starting");
 
-        // Get current settings
-        let settings = match backup_service.get_settings().await {
+        let settings = Self::get_backup_settings_or_default(backup_service).await;
+        let backups = Self::list_backups_or_empty(backup_service).await;
+        let last_backup_time = Self::get_last_backup_time_or_none(backup_service).await;
+
+        tracing::info!(
+            "emit_backup_settings_snapshot: sending BackupSettingsLoaded with {} backups",
+            backups.len()
+        );
+        let _ = view_tx.send(ViewCommand::BackupSettingsLoaded {
+            settings,
+            backups,
+            last_backup_time,
+        });
+    }
+
+    async fn get_backup_settings_or_default(
+        backup_service: &Arc<dyn BackupService>,
+    ) -> crate::backup::DatabaseBackupSettings {
+        match backup_service.get_settings().await {
             Ok(s) => {
                 tracing::info!("emit_backup_settings_snapshot: got settings {:?}", s);
                 s
@@ -59,10 +76,13 @@ impl SettingsPresenter {
                 tracing::warn!("Failed to load backup settings: {}", e);
                 crate::backup::DatabaseBackupSettings::default()
             }
-        };
+        }
+    }
 
-        // Get list of backups
-        let backups = match backup_service.list_backups().await {
+    async fn list_backups_or_empty(
+        backup_service: &Arc<dyn BackupService>,
+    ) -> Vec<crate::backup::BackupInfo> {
+        match backup_service.list_backups().await {
             Ok(b) => {
                 tracing::info!("emit_backup_settings_snapshot: listed {} backups", b.len());
                 for backup in &b {
@@ -74,10 +94,13 @@ impl SettingsPresenter {
                 tracing::warn!("Failed to list backups: {}", e);
                 Vec::new()
             }
-        };
+        }
+    }
 
-        // Get last backup time
-        let last_backup_time = match backup_service.get_last_backup_time().await {
+    async fn get_last_backup_time_or_none(
+        backup_service: &Arc<dyn BackupService>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        match backup_service.get_last_backup_time().await {
             Ok(t) => {
                 tracing::info!("emit_backup_settings_snapshot: last_backup_time = {:?}", t);
                 t
@@ -86,17 +109,7 @@ impl SettingsPresenter {
                 tracing::warn!("Failed to get last backup time: {}", e);
                 None
             }
-        };
-
-        tracing::info!(
-            "emit_backup_settings_snapshot: sending BackupSettingsLoaded with {} backups",
-            backups.len()
-        );
-        let _ = view_tx.send(ViewCommand::BackupSettingsLoaded {
-            settings,
-            backups,
-            last_backup_time,
-        });
+        }
     }
 
     /// Handle `TriggerBackupNow` user event
@@ -137,40 +150,21 @@ impl SettingsPresenter {
     ) {
         tracing::info!("Setting backup directory: {:?}", path);
 
-        // Get current settings first
-        let mut settings = match backup_service.get_settings().await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("Failed to load backup settings: {}", e);
-                crate::backup::DatabaseBackupSettings::default()
-            }
-        };
+        let error = Self::update_backup_setting(backup_service, |s| {
+            s.backup_directory = path.clone().map(std::path::PathBuf::from);
+        })
+        .await;
 
-        // Update the backup directory
-        settings.backup_directory = path.map(std::path::PathBuf::from);
-
-        // Validate and save
-        if let Err(e) = settings.validate() {
-            tracing::warn!("Invalid backup settings: {}", e);
+        if let Some(e) = error {
+            tracing::warn!("Failed to set backup directory: {}", e);
             let _ = view_tx.send(ViewCommand::ShowError {
                 title: "Backup Settings".to_string(),
-                message: format!("Invalid settings: {e}"),
+                message: e,
                 severity: super::view_command::ErrorSeverity::Warning,
             });
             return;
         }
 
-        if let Err(e) = backup_service.update_settings(settings.clone()).await {
-            tracing::warn!("Failed to update backup settings: {}", e);
-            let _ = view_tx.send(ViewCommand::ShowError {
-                title: "Backup Settings".to_string(),
-                message: format!("Failed to save settings: {e}"),
-                severity: super::view_command::ErrorSeverity::Warning,
-            });
-            return;
-        }
-
-        // Refresh the backup settings display
         Self::emit_backup_settings_snapshot(backup_service, view_tx).await;
     }
 
@@ -238,23 +232,9 @@ impl SettingsPresenter {
     ) {
         tracing::info!("Setting backup enabled: {}", enabled);
 
-        let mut settings = match backup_service.get_settings().await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("Failed to load backup settings: {}", e);
-                crate::backup::DatabaseBackupSettings::default()
-            }
-        };
-
-        settings.enabled = enabled;
-
-        if let Err(e) = backup_service.update_settings(settings).await {
-            tracing::warn!("Failed to update backup settings: {}", e);
-            let _ = view_tx.send(ViewCommand::ShowError {
-                title: "Backup Settings".to_string(),
-                message: format!("Failed to save settings: {e}"),
-                severity: super::view_command::ErrorSeverity::Warning,
-            });
+        let result = Self::update_backup_setting(backup_service, |s| s.enabled = enabled).await;
+        if let Some(e) = result {
+            Self::emit_settings_error(view_tx, e);
             return;
         }
 
@@ -269,23 +249,10 @@ impl SettingsPresenter {
     ) {
         tracing::info!("Setting backup interval: {} hours", hours);
 
-        let mut settings = match backup_service.get_settings().await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("Failed to load backup settings: {}", e);
-                crate::backup::DatabaseBackupSettings::default()
-            }
-        };
-
-        settings.interval_hours = hours.max(1); // Ensure at least 1 hour
-
-        if let Err(e) = backup_service.update_settings(settings).await {
-            tracing::warn!("Failed to update backup settings: {}", e);
-            let _ = view_tx.send(ViewCommand::ShowError {
-                title: "Backup Settings".to_string(),
-                message: format!("Failed to save settings: {e}"),
-                severity: super::view_command::ErrorSeverity::Warning,
-            });
+        let result =
+            Self::update_backup_setting(backup_service, |s| s.interval_hours = hours.max(1)).await;
+        if let Some(e) = result {
+            Self::emit_settings_error(view_tx, e);
             return;
         }
 
@@ -300,26 +267,46 @@ impl SettingsPresenter {
     ) {
         tracing::info!("Setting backup max copies: {}", copies);
 
-        let mut settings = match backup_service.get_settings().await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("Failed to load backup settings: {}", e);
-                crate::backup::DatabaseBackupSettings::default()
-            }
-        };
-
-        settings.max_copies = copies.clamp(1, 100); // Clamp between 1 and 100
-
-        if let Err(e) = backup_service.update_settings(settings).await {
-            tracing::warn!("Failed to update backup settings: {}", e);
-            let _ = view_tx.send(ViewCommand::ShowError {
-                title: "Backup Settings".to_string(),
-                message: format!("Failed to save settings: {e}"),
-                severity: super::view_command::ErrorSeverity::Warning,
-            });
+        let result = Self::update_backup_setting(backup_service, |s| {
+            s.max_copies = copies.clamp(1, 100);
+        })
+        .await;
+        if let Some(e) = result {
+            Self::emit_settings_error(view_tx, e);
             return;
         }
 
         Self::emit_backup_settings_snapshot(backup_service, view_tx).await;
+    }
+
+    /// Helper to update a backup setting with error handling.
+    /// Returns Some(error) if the update failed.
+    async fn update_backup_setting<F>(
+        backup_service: &Arc<dyn BackupService>,
+        modifier: F,
+    ) -> Option<String>
+    where
+        F: FnOnce(&mut crate::backup::DatabaseBackupSettings),
+    {
+        let mut settings = match backup_service.get_settings().await {
+            Ok(s) => s,
+            Err(e) => return Some(format!("Failed to load settings: {e}")),
+        };
+
+        modifier(&mut settings);
+
+        if let Err(e) = backup_service.update_settings(settings).await {
+            return Some(format!("Failed to save settings: {e}"));
+        }
+
+        None
+    }
+
+    fn emit_settings_error(view_tx: &broadcast::Sender<ViewCommand>, error: String) {
+        let _ = view_tx.send(ViewCommand::ShowError {
+            title: "Backup Settings".to_string(),
+            message: error,
+            severity: super::view_command::ErrorSeverity::Warning,
+        });
     }
 }
