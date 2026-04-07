@@ -10,6 +10,7 @@
 //! When expanded, shows the list of grouped operations.
 
 use gpui::{div, prelude::*, px, IntoElement, MouseButton, SharedString};
+use std::sync::Arc;
 
 use crate::presentation::view_command::ToolApprovalContext;
 use crate::ui_gpui::theme::Theme;
@@ -23,10 +24,10 @@ pub struct ApprovalBubble {
     operation_count: usize,
     expanded: bool,
     grouped_operations: Vec<GroupedOperation>,
-    on_yes: Option<Box<dyn Fn() + Send + Sync + 'static>>,
-    on_session: Option<Box<dyn Fn() + Send + Sync + 'static>>,
-    on_always: Option<Box<dyn Fn() + Send + Sync + 'static>>,
-    on_no: Option<Box<dyn Fn() + Send + Sync + 'static>>,
+    on_yes: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+    on_session: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+    on_always: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+    on_no: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
 }
 
 impl ApprovalBubble {
@@ -69,25 +70,25 @@ impl ApprovalBubble {
 
     #[must_use]
     pub fn on_yes(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
-        self.on_yes = Some(Box::new(f));
+        self.on_yes = Some(Arc::new(f));
         self
     }
 
     #[must_use]
     pub fn on_session(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
-        self.on_session = Some(Box::new(f));
+        self.on_session = Some(Arc::new(f));
         self
     }
 
     #[must_use]
     pub fn on_always(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
-        self.on_always = Some(Box::new(f));
+        self.on_always = Some(Arc::new(f));
         self
     }
 
     #[must_use]
     pub fn on_no(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
-        self.on_no = Some(Box::new(f));
+        self.on_no = Some(Arc::new(f));
         self
     }
 
@@ -109,7 +110,7 @@ impl ApprovalBubble {
         id: &str,
         label: &str,
         button: gpui::Div,
-        handler: Option<Box<dyn Fn() + Send + Sync + 'static>>,
+        handler: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
     ) -> gpui::Stateful<gpui::Div> {
         let btn = button
             .id(SharedString::from(id.to_string()))
@@ -131,10 +132,180 @@ impl ApprovalBubble {
     }
 }
 
+impl ApprovalBubble {
+    fn render_header(&self, icon: &str) -> impl IntoElement {
+        let header_text = self.context.server_name.as_ref().map_or_else(
+            || format!("{} {} ", icon, self.context.tool_name),
+            |server| format!("{} {} (via {}) ", icon, self.context.tool_name, server),
+        );
+
+        div()
+            .w_full()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_size(px(Theme::font_size_ui()))
+            .child(header_text)
+    }
+
+    fn render_primary_target(&self) -> impl IntoElement {
+        div()
+            .w_full()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_size(px(Theme::font_size_mono()))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .child(self.context.primary_target.clone())
+    }
+
+    fn render_details(&self) -> Option<impl IntoElement> {
+        if self.context.details.is_empty() {
+            return None;
+        }
+        let details_text = self
+            .context
+            .details
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+
+        Some(
+            div()
+                .w_full()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(px(Theme::font_size_small()))
+                .text_color(Theme::text_muted())
+                .child(details_text),
+        )
+    }
+
+    fn render_grouped_ops(&self) -> Option<impl IntoElement> {
+        if self.operation_count <= 1 {
+            return None;
+        }
+        let badge_text = format!("({} operations)", self.operation_count);
+        let expand_text = if self.expanded {
+            "\u{25BC} Hide details"
+        } else {
+            "\u{25B6} Show details"
+        };
+
+        let mut container = div()
+            .flex()
+            .gap(px(Theme::SPACING_SM))
+            .child(
+                div()
+                    .px(px(Theme::SPACING_SM))
+                    .py(px(2.0))
+                    .rounded(px(Theme::RADIUS_SM))
+                    .bg(Theme::bg_dark())
+                    .text_size(px(Theme::font_size_small()))
+                    .text_color(Theme::text_secondary())
+                    .child(badge_text),
+            )
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_small()))
+                    .text_color(Theme::text_muted())
+                    .child(expand_text),
+            );
+
+        if self.expanded && !self.grouped_operations.is_empty() {
+            let mut ops_list = div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .pl(px(Theme::SPACING_MD))
+                .border_l_1()
+                .border_color(Theme::bg_dark());
+
+            for op in &self.grouped_operations {
+                let op_text = if op.details.is_empty() {
+                    format!(
+                        "\u{2022} Operation {}",
+                        &op.request_id[..8.min(op.request_id.len())]
+                    )
+                } else {
+                    let details = op
+                        .details
+                        .iter()
+                        .map(|(k, v)| format!("{k}: {v}"))
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    format!("\u{2022} {details}")
+                };
+
+                ops_list = ops_list.child(
+                    div()
+                        .text_size(px(Theme::font_size_small()))
+                        .text_color(Theme::text_muted())
+                        .child(op_text),
+                );
+            }
+            container = container.child(ops_list);
+        }
+
+        Some(container)
+    }
+
+    fn render_action_buttons(&self) -> impl IntoElement {
+        let yes_id = format!("approval-yes-{}", self.request_id);
+        let session_id = format!("approval-session-{}", self.request_id);
+        let always_id = format!("approval-always-{}", self.request_id);
+        let no_id = format!("approval-no-{}", self.request_id);
+
+        div()
+            .flex()
+            .gap(px(Theme::SPACING_SM))
+            .child(Self::render_action_button(
+                &yes_id,
+                "Yes",
+                Theme::button_primary(div()),
+                self.on_yes.clone(),
+            ))
+            .child(Self::render_action_button(
+                &session_id,
+                "Session",
+                Theme::button_secondary(div()),
+                self.on_session.clone(),
+            ))
+            .child(Self::render_action_button(
+                &always_id,
+                "Always",
+                Theme::button_secondary(div()),
+                self.on_always.clone(),
+            ))
+            .child(Self::render_action_button(
+                &no_id,
+                "No",
+                Theme::button_danger(div()),
+                self.on_no.clone(),
+            ))
+    }
+
+    fn render_state_indicator(state: &ApprovalBubbleState) -> impl IntoElement {
+        match state {
+            ApprovalBubbleState::Approved => div()
+                .text_size(px(Theme::font_size_ui()))
+                .text_color(Theme::success())
+                .child("\u{2713} Approved"),
+            ApprovalBubbleState::Denied => div()
+                .text_size(px(Theme::font_size_ui()))
+                .text_color(Theme::error())
+                .child("\u{2717} Denied"),
+            ApprovalBubbleState::Pending => div(),
+        }
+    }
+}
+
 impl IntoElement for ApprovalBubble {
     type Element = gpui::Stateful<gpui::Div>;
 
-    #[allow(clippy::too_many_lines)]
     fn into_element(self) -> Self::Element {
         let bubble_id = SharedString::from(format!("approval-bubble-{}", self.request_id));
         let icon = Self::icon_for_category(self.context.category);
@@ -152,179 +323,23 @@ impl IntoElement for ApprovalBubble {
                 .gap(px(Theme::SPACING_SM)),
         );
 
-        // Header row: icon + tool_name (+ server_name for MCP)
-        let header_text = if let Some(ref server) = self.context.server_name {
-            format!("{} {} (via {}) ", icon, self.context.tool_name, server)
-        } else {
-            format!("{} {} ", icon, self.context.tool_name)
-        };
+        container = container.child(self.render_header(icon));
+        container = container.child(self.render_primary_target());
 
-        container = container.child(
-            div()
-                .w_full()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(px(Theme::font_size_ui()))
-                .child(header_text),
-        );
-
-        // Primary target row (prominent)
-        container = container.child(
-            div()
-                .w_full()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(px(Theme::font_size_mono()))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(self.context.primary_target.clone()),
-        );
-
-        // Details section (if any) for primary operation
-        if !self.context.details.is_empty() {
-            let details_text = self
-                .context
-                .details
-                .iter()
-                .map(|(k, v)| format!("{k}: {v}"))
-                .collect::<Vec<_>>()
-                .join(" | ");
-
-            container = container.child(
-                div()
-                    .w_full()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(px(Theme::font_size_small()))
-                    .text_color(Theme::text_muted())
-                    .child(details_text),
-            );
+        if let Some(details) = self.render_details() {
+            container = container.child(details);
         }
 
-        // Grouped operations badge and expand/collapse (if more than 1)
-        if self.operation_count > 1 {
-            let badge_text = format!("({} operations)", self.operation_count);
-            let expand_text = if self.expanded {
-                "\u{25BC} Hide details"
-            } else {
-                "\u{25B6} Show details"
-            };
-
-            container = container.child(
-                div()
-                    .flex()
-                    .gap(px(Theme::SPACING_SM))
-                    .child(
-                        div()
-                            .px(px(Theme::SPACING_SM))
-                            .py(px(2.0))
-                            .rounded(px(Theme::RADIUS_SM))
-                            .bg(Theme::bg_dark())
-                            .text_size(px(Theme::font_size_small()))
-                            .text_color(Theme::text_secondary())
-                            .child(badge_text),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(Theme::font_size_small()))
-                            .text_color(Theme::text_muted())
-                            .child(expand_text),
-                    ),
-            );
-
-            // Expanded grouped operations list
-            if self.expanded && !self.grouped_operations.is_empty() {
-                let mut ops_list = div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.0))
-                    .pl(px(Theme::SPACING_MD))
-                    .border_l_1()
-                    .border_color(Theme::bg_dark());
-
-                for op in &self.grouped_operations {
-                    let op_text = if op.details.is_empty() {
-                        format!(
-                            "\u{2022} Operation {}",
-                            &op.request_id[..8.min(op.request_id.len())]
-                        )
-                    } else {
-                        let details = op
-                            .details
-                            .iter()
-                            .map(|(k, v)| format!("{k}: {v}"))
-                            .collect::<Vec<_>>()
-                            .join(" | ");
-                        format!("\u{2022} {details}")
-                    };
-
-                    ops_list = ops_list.child(
-                        div()
-                            .text_size(px(Theme::font_size_small()))
-                            .text_color(Theme::text_muted())
-                            .child(op_text),
-                    );
-                }
-
-                container = container.child(ops_list);
-            }
+        if let Some(grouped) = self.render_grouped_ops() {
+            container = container.child(grouped);
         }
 
-        match self.state {
+        match &self.state {
             ApprovalBubbleState::Pending => {
-                let yes_id = format!("approval-yes-{}", self.request_id);
-                let session_id = format!("approval-session-{}", self.request_id);
-                let always_id = format!("approval-always-{}", self.request_id);
-                let no_id = format!("approval-no-{}", self.request_id);
-
-                container = container.child(
-                    div()
-                        .flex()
-                        .gap(px(Theme::SPACING_SM))
-                        .child(Self::render_action_button(
-                            &yes_id,
-                            "Yes",
-                            Theme::button_primary(div()),
-                            self.on_yes,
-                        ))
-                        .child(Self::render_action_button(
-                            &session_id,
-                            "Session",
-                            Theme::button_secondary(div()),
-                            self.on_session,
-                        ))
-                        .child(Self::render_action_button(
-                            &always_id,
-                            "Always",
-                            Theme::button_secondary(div()),
-                            self.on_always,
-                        ))
-                        .child(Self::render_action_button(
-                            &no_id,
-                            "No",
-                            Theme::button_danger(div()),
-                            self.on_no,
-                        )),
-                );
+                container = container.child(self.render_action_buttons());
             }
-            ApprovalBubbleState::Approved => {
-                container = container.child(
-                    div()
-                        .text_size(px(Theme::font_size_ui()))
-                        .text_color(Theme::success())
-                        .child("\u{2713} Approved"),
-                );
-            }
-            ApprovalBubbleState::Denied => {
-                container = container.child(
-                    div()
-                        .text_size(px(Theme::font_size_ui()))
-                        .text_color(Theme::error())
-                        .child("\u{2717} Denied"),
-                );
+            state => {
+                container = container.child(Self::render_state_indicator(state));
             }
         }
 
