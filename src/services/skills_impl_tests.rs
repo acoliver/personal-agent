@@ -528,3 +528,225 @@ fn install_dir_name_for_url_uses_metadata_slug_when_sanitized() {
         "my-cool-skill"
     );
 }
+
+#[test]
+fn normalize_directory_rejects_empty_path() {
+    let error = SkillsServiceImpl::normalize_directory(std::path::Path::new(""))
+        .expect_err("empty path should fail");
+    assert!(error.to_string().contains("cannot be empty"));
+}
+
+#[test]
+fn normalize_directory_expands_tilde_prefix() {
+    let result =
+        SkillsServiceImpl::normalize_directory(std::path::Path::new("~/my-skills")).unwrap();
+    assert!(
+        result.is_absolute(),
+        "tilde expansion should produce absolute path: {result:?}"
+    );
+    assert!(
+        result.to_string_lossy().ends_with("my-skills"),
+        "should end with user-supplied segment: {result:?}"
+    );
+}
+
+#[test]
+fn normalize_directory_absolute_path_unchanged() {
+    let result =
+        SkillsServiceImpl::normalize_directory(std::path::Path::new("/usr/local/skills")).unwrap();
+    assert_eq!(
+        result,
+        std::path::PathBuf::from("/usr/local/skills"),
+        "absolute path should pass through unchanged"
+    );
+}
+
+#[test]
+fn normalize_directory_relative_path_resolved_against_cwd() {
+    let result =
+        SkillsServiceImpl::normalize_directory(std::path::Path::new("relative/skills")).unwrap();
+    assert!(
+        result.is_absolute(),
+        "relative path should be resolved to absolute: {result:?}"
+    );
+    assert!(
+        result.to_string_lossy().ends_with("relative/skills"),
+        "should end with user-supplied relative segment: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn add_watched_directory_rejects_empty_path() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+
+    let error = service
+        .add_watched_directory(std::path::PathBuf::from(""))
+        .await
+        .expect_err("empty path should be rejected");
+    assert!(
+        error.to_string().contains("cannot be empty"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn get_skill_returns_none_for_missing_name() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+    service.discover_skills().await.expect("discovery ok");
+
+    let result = service
+        .get_skill("no-such-skill")
+        .await
+        .expect("get_skill should succeed");
+    assert!(result.is_none(), "missing skill should return None");
+}
+
+#[tokio::test]
+async fn get_skill_body_returns_none_for_missing_name() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+    service.discover_skills().await.expect("discovery ok");
+
+    let result = service
+        .get_skill_body("no-such-skill")
+        .await
+        .expect("get_skill_body should succeed");
+    assert!(result.is_none(), "missing skill body should return None");
+}
+
+#[tokio::test]
+async fn set_skill_enabled_unknown_name_returns_error() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+    service.discover_skills().await.expect("discovery ok");
+
+    let error = service
+        .set_skill_enabled("no-such-skill", false)
+        .await
+        .expect_err("should fail for unknown skill");
+    assert!(
+        error.to_string().contains("no-such-skill"),
+        "error should mention the skill name: {error}"
+    );
+}
+
+#[tokio::test]
+async fn list_skills_returns_sorted_by_name() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    write_skill(
+        &temp_dir.path().join("bundled"),
+        "zebra",
+        "zebra-skill",
+        "Z",
+        "Z\n",
+    );
+    write_skill(
+        &temp_dir.path().join("bundled"),
+        "alpha",
+        "alpha-skill",
+        "A",
+        "A\n",
+    );
+    let service = create_service(&temp_dir);
+    service.discover_skills().await.expect("discovery ok");
+
+    let skills = service.list_skills().await.expect("list ok");
+    assert_eq!(skills.len(), 2);
+    assert_eq!(skills[0].name, "alpha-skill");
+    assert_eq!(skills[1].name, "zebra-skill");
+}
+
+#[tokio::test]
+async fn set_skill_enabled_toggle_on_after_off_removes_from_disabled_list() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    write_skill(
+        &temp_dir.path().join("bundled"),
+        "writer",
+        "docs-writer",
+        "Write docs",
+        "Body\n",
+    );
+    let service = create_service(&temp_dir);
+    service.discover_skills().await.expect("discovery ok");
+
+    service
+        .set_skill_enabled("docs-writer", false)
+        .await
+        .expect("disable ok");
+    let skill = service.get_skill("docs-writer").await.expect("ok").unwrap();
+    assert!(!skill.enabled);
+
+    service
+        .set_skill_enabled("docs-writer", true)
+        .await
+        .expect("re-enable ok");
+    let skill = service.get_skill("docs-writer").await.expect("ok").unwrap();
+    assert!(skill.enabled, "skill should be enabled again");
+
+    let disabled_setting = service
+        .app_settings_service
+        .get_setting(DISABLED_SKILLS_SETTING_KEY)
+        .await
+        .expect("settings read ok");
+    match disabled_setting {
+        None => {} // fine — empty list was removed
+        Some(raw) => {
+            assert!(
+                !raw.contains("docs-writer"),
+                "disabled list should not contain re-enabled skill: {raw}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn load_watched_directories_rejects_invalid_json() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+    service
+        .app_settings_service
+        .set_setting(
+            super::WATCHED_SKILLS_DIRECTORIES_SETTING_KEY,
+            "not-json-array".to_string(),
+        )
+        .await
+        .expect("write ok");
+
+    let error = service
+        .watched_directories()
+        .await
+        .expect_err("invalid JSON should fail");
+    assert!(
+        error.to_string().contains("Failed to parse"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn persist_and_load_watched_directories_deduplicates() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let service = create_service(&temp_dir);
+
+    let dir_a = temp_dir.path().join("dir_a");
+    let dir_b = temp_dir.path().join("dir_b");
+    std::fs::create_dir_all(&dir_a).expect("create dir_a");
+    std::fs::create_dir_all(&dir_b).expect("create dir_b");
+
+    service
+        .add_watched_directory(dir_a.clone())
+        .await
+        .expect("add a");
+    service
+        .add_watched_directory(dir_b.clone())
+        .await
+        .expect("add b");
+    service
+        .add_watched_directory(dir_a.clone())
+        .await
+        .expect("add a duplicate");
+
+    let watched = service.watched_directories().await.expect("load ok");
+    assert_eq!(watched.len(), 2, "should have deduplicated: {watched:?}");
+}

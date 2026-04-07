@@ -310,3 +310,177 @@ fn handle_command_skills_loaded_updates_watched_directories(cx: &mut TestAppCont
 
     clear_navigation_requests();
 }
+
+#[gpui::test]
+fn handle_command_show_notification_sets_status_message(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+
+    view.update(cx, |view, cx| {
+        view.handle_command(
+            ViewCommand::ShowNotification {
+                message: "Installed skill successfully".to_string(),
+            },
+            cx,
+        );
+
+        assert_eq!(
+            view.state.status_message.as_deref(),
+            Some("Installed skill successfully")
+        );
+        assert!(!view.state.status_is_error);
+    });
+
+    clear_navigation_requests();
+}
+
+#[gpui::test]
+fn handle_command_show_error_sets_status_as_error(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+
+    view.update(cx, |view, cx| {
+        view.handle_command(
+            ViewCommand::ShowError {
+                title: "Skills".to_string(),
+                message: "Failed to install".to_string(),
+                severity: crate::presentation::view_command::ErrorSeverity::Warning,
+            },
+            cx,
+        );
+
+        assert_eq!(
+            view.state.status_message.as_deref(),
+            Some("Skills: Failed to install")
+        );
+        assert!(view.state.status_is_error);
+    });
+
+    clear_navigation_requests();
+}
+
+#[gpui::test]
+fn skill_item_from_summary_maps_all_fields(cx: &mut TestAppContext) {
+    let _ = cx;
+    let summary = crate::presentation::view_command::SkillSummary {
+        name: "my-skill".to_string(),
+        description: "A test skill".to_string(),
+        source: crate::models::SkillSource::User,
+        enabled: false,
+        path: "/path/to/skill".to_string(),
+    };
+
+    let item: SkillItem = summary.into();
+    assert_eq!(item.name, "my-skill");
+    assert_eq!(item.description, "A test skill");
+    assert_eq!(item.source, crate::models::SkillSource::User);
+    assert!(!item.enabled);
+    assert_eq!(item.path, "/path/to/skill");
+}
+
+#[gpui::test]
+fn settings_category_skills_display_name(cx: &mut TestAppContext) {
+    let _ = cx;
+    assert_eq!(SettingsCategory::Skills.display_name(), "Skills");
+}
+
+#[gpui::test]
+fn settings_category_all_includes_skills(cx: &mut TestAppContext) {
+    let _ = cx;
+    assert!(
+        SettingsCategory::ALL.contains(&SettingsCategory::Skills),
+        "ALL should include Skills category"
+    );
+}
+
+#[gpui::test]
+fn handle_command_skills_loaded_with_empty_list_clears_state(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+
+    // First load some skills
+    view.update(cx, |view, cx| {
+        view.handle_command(
+            ViewCommand::SkillsLoaded {
+                skills: vec![crate::presentation::view_command::SkillSummary {
+                    name: "docx".to_string(),
+                    description: "Word".to_string(),
+                    source: crate::models::SkillSource::Bundled,
+                    enabled: true,
+                    path: "/skills/docx".to_string(),
+                }],
+                watched_directories: vec!["/home/skills".to_string()],
+                default_directory: "/default/skills".to_string(),
+            },
+            cx,
+        );
+        assert_eq!(view.state.skills.len(), 1);
+        assert!(view.state.selected_skill_name.is_some());
+    });
+
+    // Then load empty list
+    view.update(cx, |view, cx| {
+        view.handle_command(
+            ViewCommand::SkillsLoaded {
+                skills: vec![],
+                watched_directories: vec![],
+                default_directory: "/default/skills".to_string(),
+            },
+            cx,
+        );
+        assert!(view.state.skills.is_empty());
+        assert!(
+            view.state.selected_skill_name.is_none(),
+            "selection should be cleared when skills list becomes empty"
+        );
+        assert!(view.state.watched_skill_directories.is_empty());
+    });
+
+    clear_navigation_requests();
+}
+
+#[gpui::test]
+fn install_skill_url_input_clear(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+
+    view.update(cx, |view, _cx| {
+        view.state.active_field = Some(ActiveField::InstallSkillUrlInput);
+        view.state
+            .install_skill_url_input
+            .push_str("https://example.com/SKILL.md");
+
+        // Simulate clearing via backspace
+        while !view.state.install_skill_url_input.is_empty() {
+            view.state.install_skill_url_input.pop();
+        }
+
+        assert!(view.state.install_skill_url_input.is_empty());
+    });
+
+    clear_navigation_requests();
+}
+
+#[gpui::test]
+fn default_skill_directory_set_by_skills_loaded(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+
+    view.update(cx, |view, cx| {
+        assert!(
+            view.state.default_skill_directory.is_empty(),
+            "initially empty"
+        );
+
+        view.handle_command(
+            ViewCommand::SkillsLoaded {
+                skills: vec![],
+                watched_directories: vec![],
+                default_directory: "/home/user/.config/skills".to_string(),
+            },
+            cx,
+        );
+
+        assert_eq!(
+            view.state.default_skill_directory,
+            "/home/user/.config/skills"
+        );
+    });
+
+    clear_navigation_requests();
+}
