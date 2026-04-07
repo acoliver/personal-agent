@@ -522,7 +522,6 @@ async fn install_skill_from_valid_url_creates_skill_and_emits_notification() {
 // ---------------------------------------------------------------------------
 // BEHAVIORAL TESTS: Skill installation URL normalization
 // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 
 /// Installing from a GitHub blob URL should automatically convert to raw URL.
 #[tokio::test]
