@@ -334,4 +334,32 @@ mod tests {
         let result = xml_escape(input);
         assert_eq!(result, "normal text 123");
     }
+
+    #[test]
+    fn test_default_system_prompt_contains_template_variables() {
+        // Verify the default system prompt contains all expected template variables
+        use crate::models::profile::DEFAULT_SYSTEM_PROMPT;
+
+        assert!(DEFAULT_SYSTEM_PROMPT.contains("{{session_datetime}}"));
+        assert!(DEFAULT_SYSTEM_PROMPT.contains("{{day_of_week}}"));
+        assert!(DEFAULT_SYSTEM_PROMPT.contains("{{model_id}}"));
+        assert!(DEFAULT_SYSTEM_PROMPT.contains("{{os}}"));
+    }
+
+    #[test]
+    fn test_default_system_prompt_expansion() {
+        // Verify the default system prompt expands correctly with all variables
+        use crate::models::profile::DEFAULT_SYSTEM_PROMPT;
+
+        let ctx = fixed_context();
+        let expanded = expand_system_prompt(DEFAULT_SYSTEM_PROMPT, &ctx);
+
+        // Should contain expanded values, not template variables
+        assert!(!expanded.contains("{{"));
+        assert!(expanded.contains("2026-03-30")); // session_date part
+        assert!(expanded.contains("Monday")); // day_of_week
+        assert!(expanded.contains("claude-sonnet-4-20250514")); // model_id
+                                                                // os value depends on platform
+        assert!(expanded.contains(std::env::consts::OS));
+    }
 }
