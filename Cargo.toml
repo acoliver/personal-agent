@@ -100,6 +100,10 @@ objc = "0.2"
 keyring = { version = "3", features = ["linux-native"] }
 ksni = { version = "0.3", features = ["blocking"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+tray-icon = "0.21"
+muda = "0.16"
+
 [target.'cfg(not(any(target_os = "macos", target_os = "linux")))'.dependencies]
 keyring = "3"
 

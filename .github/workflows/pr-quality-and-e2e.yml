@@ -75,6 +75,27 @@ jobs:
       - name: Run library and integration tests
         run: cargo test --lib --tests
 
+  windows-build:
+    name: Windows build/tests
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo check
+        run: cargo check --release --bin personal_agent_gpui
+
+      - name: Run library and integration tests
+        run: cargo test --lib --tests
+
   fmt:
     name: Format (rustfmt)
     runs-on: macos-14
