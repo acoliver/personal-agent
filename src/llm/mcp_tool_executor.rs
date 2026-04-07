@@ -176,3 +176,95 @@ fn truncate_value(value: &serde_json::Value, max_len: usize) -> String {
         s
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_primary_target_finds_first_string_value() {
+        let args = serde_json::json!({
+            "path": "/tmp/test.txt",
+            "content": "hello world"
+        });
+        let result = extract_primary_target(&args, "write_file");
+        // Should find the first string value
+        assert_eq!(result, "/tmp/test.txt");
+    }
+
+    #[test]
+    fn extract_primary_target_uses_first_key_when_no_strings() {
+        let args = serde_json::json!({
+            "count": 42,
+            "enabled": true
+        });
+        let result = extract_primary_target(&args, "count_tool");
+        // Should use first key when no string values
+        assert_eq!(result, "count");
+    }
+
+    #[test]
+    fn extract_primary_target_fallback_to_tool_name() {
+        let args = serde_json::json!({});
+        let result = extract_primary_target(&args, "my_tool");
+        // Should fallback to tool name when no args
+        assert_eq!(result, "my_tool");
+    }
+
+    #[test]
+    fn extract_primary_target_handles_non_object_args() {
+        let args = serde_json::json!("just a string");
+        let result = extract_primary_target(&args, "string_tool");
+        // Should fallback to tool name for non-object args
+        assert_eq!(result, "string_tool");
+    }
+
+    #[test]
+    fn extract_primary_target_skips_empty_strings() {
+        let args = serde_json::json!({
+            "empty": "",
+            "path": "/valid/path"
+        });
+        let result = extract_primary_target(&args, "test_tool");
+        // Should skip empty strings and find the next valid one
+        assert_eq!(result, "/valid/path");
+    }
+
+    #[test]
+    fn truncate_value_leaves_short_strings_unchanged() {
+        let value = serde_json::Value::String("short".to_string());
+        let result = truncate_value(&value, 50);
+        assert_eq!(result, "short");
+    }
+
+    #[test]
+    fn truncate_value_truncates_long_strings() {
+        let long_string = "a".repeat(100);
+        let value = serde_json::Value::String(long_string.clone());
+        let result = truncate_value(&value, 50);
+        assert_eq!(result, format!("{}...", &long_string[..50]));
+    }
+
+    #[test]
+    fn truncate_value_handles_non_string_values() {
+        let value = serde_json::json!({"key": "value"});
+        let result = truncate_value(&value, 50);
+        // Should convert to string representation
+        assert!(result.contains("key"));
+        assert!(result.contains("value"));
+    }
+
+    #[test]
+    fn truncate_value_truncates_non_string_values() {
+        let value = serde_json::json!({"a": "b"});
+        let result = truncate_value(&value, 5);
+        // JSON representation is {"a":"b"} which is 13 chars, should be truncated
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn mcp_tool_executor_new_sets_tool_name() {
+        let executor = McpToolExecutor::new("test_tool");
+        assert_eq!(executor.tool_name, "test_tool");
+    }
+}
