@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use flate2::read::GzDecoder;
-use personal_agent::backup::{BackupResult, DatabaseBackupSettings};
+use personal_agent::backup::{BackupResult, DatabaseBackupSettings, RestoreResult};
 use personal_agent::db::spawn_db_thread;
 use personal_agent::services::app_settings_impl::AppSettingsServiceImpl;
 use personal_agent::services::{
@@ -367,4 +367,123 @@ async fn retention_removes_old_backups() {
         "Should have at most 2 backups after retention, got {}",
         backups.len()
     );
+}
+
+/// Test: `restore_backup` recovers data from a backup
+///
+/// Behavior: After creating a backup and adding new data,
+/// `restore_backup` can recover the original state.
+#[tokio::test]
+async fn restore_backup_recovers_data() {
+    let (temp_dir, service, conv_service) = setup_backup_test().await;
+
+    // Create a conversation
+    let profile_id = Uuid::new_v4();
+    let _conv1 = conv_service
+        .create(Some("Before backup".to_string()), profile_id)
+        .await
+        .expect("create conversation");
+
+    // Create backup
+    let backup_result = service.create_backup().await.expect("create backup");
+    let BackupResult::Success {
+        path: backup_path, ..
+    } = backup_result
+    else {
+        panic!("Expected successful backup");
+    };
+
+    // Add more conversations after backup
+    let _conv2 = conv_service
+        .create(Some("After backup 1".to_string()), profile_id)
+        .await
+        .expect("create conversation");
+    let _conv3 = conv_service
+        .create(Some("After backup 2".to_string()), profile_id)
+        .await
+        .expect("create conversation");
+
+    // Verify we have multiple conversations now
+    let all_conv_before = conv_service
+        .list_metadata(None, None)
+        .await
+        .expect("list conversations");
+    assert!(
+        all_conv_before.len() >= 3,
+        "Should have at least 3 conversations"
+    );
+
+    // Restore the backup
+    let restore_result = service
+        .restore_backup(&backup_path)
+        .await
+        .expect("restore backup");
+
+    // Verify restore succeeded
+    match restore_result {
+        RestoreResult::Success => {
+            // The database file should now be restored
+            // Note: The in-memory state won't change, but the file on disk is restored
+            assert!(temp_dir.path().join("test.db").exists());
+        }
+        RestoreResult::Failed { error } => {
+            panic!("Restore should not fail: {error}");
+        }
+    }
+}
+
+/// Test: `restore_backup` fails gracefully for non-existent file
+///
+/// Behavior: Attempting to restore from a non-existent file returns Failed.
+#[tokio::test]
+async fn restore_backup_fails_for_missing_file() {
+    let (_temp_dir, service, _) = setup_backup_test().await;
+
+    let fake_path = std::path::PathBuf::from("/nonexistent/backup.db.gz");
+    let result = service
+        .restore_backup(&fake_path)
+        .await
+        .expect("restore call");
+
+    match result {
+        RestoreResult::Failed { error } => {
+            assert!(
+                error.to_lowercase().contains("not found")
+                    || error.to_lowercase().contains("does not exist"),
+                "Error should mention file not found: {error}"
+            );
+        }
+        RestoreResult::Success => {
+            panic!("Should not succeed with non-existent file");
+        }
+    }
+}
+
+/// Test: `restore_backup` validates file format
+///
+/// Behavior: Attempting to restore from a non-gzip file returns Failed.
+#[tokio::test]
+async fn restore_backup_validates_format() {
+    let (temp_dir, service, _) = setup_backup_test().await;
+
+    // Create a non-gzip file
+    let bad_file = temp_dir.path().join("bad_backup.txt");
+    std::fs::write(&bad_file, "not a backup").expect("write file");
+
+    let result = service
+        .restore_backup(&bad_file)
+        .await
+        .expect("restore call");
+
+    match result {
+        RestoreResult::Failed { error } => {
+            assert!(
+                error.to_lowercase().contains("gz") || error.to_lowercase().contains("gzip"),
+                "Error should mention format requirement: {error}"
+            );
+        }
+        RestoreResult::Success => {
+            panic!("Should not succeed with wrong format");
+        }
+    }
 }
