@@ -99,9 +99,49 @@ impl ChatView {
             .child("YOLO")
     }
 
-    /// Right-side toolbar: [T][Y][R][H (popup only)][MD/TXT/JSON][Save][Popout/Popin][Settings][Exit]
+    /// Emoji filter toggle button with smiley icon.
+    fn render_emoji_filter_button(
+        filter_emoji: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("btn-emoji-filter")
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when(filter_emoji, |d| d.bg(Theme::bg_dark()))
+            .when(!filter_emoji, |d| {
+                d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+            })
+            .child(if filter_emoji {
+                crate::ui_gpui::components::emoji_filter_icon::smile_icon(16.0)
+                    .text_color(Theme::text_primary())
+            } else {
+                crate::ui_gpui::components::emoji_filter_icon::smile_x_icon(16.0)
+                    .text_color(Theme::text_primary())
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    let current = this.state.filter_emoji;
+                    tracing::info!(
+                        "Emoji filter button CLICKED! Current state: {}, will toggle to: {}",
+                        current,
+                        !current
+                    );
+                    this.emit(UserEvent::ToggleEmojiFilter);
+                    cx.notify();
+                }),
+            )
+    }
+
+    /// Right-side toolbar: [T][E][Y][R][H (popup only)][MD/TXT/JSON][Save][Popout/Popin][Settings][Exit]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
+        let filter_emoji = self.state.filter_emoji;
         let yolo_active = self.state.yolo_mode;
         let app_mode = cx
             .try_global::<MainPanelAppState>()
@@ -124,6 +164,7 @@ impl ChatView {
                     this.emit(UserEvent::ToggleThinking);
                 })
             ))
+            .child(Self::render_emoji_filter_button(filter_emoji, cx))
             .child(icon_btn!(
                 "btn-yolo",
                 "Y",

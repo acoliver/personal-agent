@@ -1,4 +1,4 @@
-use super::{ChatService, ChatStreamEvent, ServiceError, ServiceResult};
+use super::{AppSettingsService, ChatService, ChatStreamEvent, ServiceError, ServiceResult};
 use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::compression::pipeline::{CompressionPipeline, CompressionResult};
 use crate::compression::thinking_stripper::strip_thinking_from_previous_turns;
@@ -317,6 +317,21 @@ impl ChatServiceImpl {
             system_prompt.push_str(&skills_prompt_block);
         }
 
+        Self::append_emoji_avoidance(&self.app_settings_service, &mut system_prompt).await;
+
+        // Get filter_emoji setting for tool output filtering
+        let filter_emoji = match self.app_settings_service.get_filter_emoji().await {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to read emoji filter setting; defaulting to disabled"
+                );
+                false
+            }
+        };
+
         Ok(PreparedMessageContext {
             profile,
             client,
@@ -324,6 +339,7 @@ impl ChatServiceImpl {
             system_prompt,
             skills_service: self.skills_service.clone(),
             compression_result,
+            filter_emoji,
         })
     }
 
@@ -435,6 +451,33 @@ impl ChatServiceImpl {
             .map(|message| message.content.as_str())
             .filter(|prompt| !prompt.trim().is_empty())
             .unwrap_or(profile.system_prompt.as_str())
+    }
+
+    async fn append_emoji_avoidance(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        system_prompt: &mut String,
+    ) {
+        let filter_emoji = match app_settings_service.get_filter_emoji().await {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to read emoji filter setting; defaulting to disabled"
+                );
+                false
+            }
+        };
+        if filter_emoji {
+            if !system_prompt.trim().is_empty() {
+                system_prompt.push_str(
+                    "
+
+",
+                );
+            }
+            system_prompt.push_str("Please avoid using emojis in your responses.");
+        }
     }
 
     async fn load_mcp_tools(&self) -> Vec<crate::llm::tools::Tool> {
@@ -562,6 +605,7 @@ struct PreparedMessageContext {
     system_prompt: String,
     skills_service: Arc<dyn SkillsService>,
     compression_result: CompressionResult,
+    filter_emoji: bool,
 }
 
 #[allow(clippy::missing_const_for_fn)]
@@ -570,12 +614,14 @@ fn build_stream_context(
     approval_gate: Arc<ApprovalGate>,
     policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
     skills_service: Arc<dyn SkillsService>,
+    filter_emoji: bool,
 ) -> crate::llm::client_agent::McpToolContext {
     crate::llm::client_agent::McpToolContext {
         view_tx,
         approval_gate,
         policy,
         skills_service,
+        filter_emoji,
     }
 }
 

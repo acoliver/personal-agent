@@ -45,6 +45,12 @@ pub trait AppSettingsService: Send + Sync {
     /// * `theme` - Theme identifier (e.g., "dark", "light", "auto")
     async fn set_theme(&self, theme: String) -> ServiceResult<()>;
 
+    /// Get emoji filter preference
+    async fn get_filter_emoji(&self) -> ServiceResult<Option<bool>>;
+
+    /// Set emoji filter preference
+    async fn set_filter_emoji(&self, enabled: bool) -> ServiceResult<()>;
+
     /// Get a generic setting value
     async fn get_setting(&self, key: &str) -> ServiceResult<Option<String>>;
 

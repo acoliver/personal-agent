@@ -115,6 +115,9 @@ pub enum ViewCommand {
     /// Toggle thinking visibility
     ToggleThinkingVisibility,
 
+    /// Set emoji filter visibility
+    SetEmojiFilterVisibility { enabled: bool },
+
     /// Toggle between popup and popout window modes.
     ToggleWindowMode,
 

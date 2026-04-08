@@ -128,6 +128,7 @@ pub(super) async fn run_stream_task(
         system_prompt,
         skills_service,
         compression_result,
+        filter_emoji,
     } = prepared;
 
     let Some(agent) = create_stream_agent(
@@ -149,6 +150,7 @@ pub(super) async fn run_stream_task(
         approval_gate.clone(),
         policy.clone(),
         skills_service,
+        filter_emoji,
     );
 
     let transcript =

@@ -48,6 +48,14 @@ impl AppSettingsService for FailingSetSettingAppSettingsService {
         Ok(())
     }
 
+    async fn get_filter_emoji(&self) -> crate::services::ServiceResult<Option<bool>> {
+        Ok(None)
+    }
+
+    async fn set_filter_emoji(&self, _enabled: bool) -> crate::services::ServiceResult<()> {
+        Ok(())
+    }
+
     async fn get_setting(&self, _key: &str) -> crate::services::ServiceResult<Option<String>> {
         Ok(None)
     }

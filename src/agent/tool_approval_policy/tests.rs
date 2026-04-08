@@ -53,6 +53,14 @@ impl AppSettingsService for FailingAppSettingsService {
         Ok(())
     }
 
+    async fn get_filter_emoji(&self) -> ServiceResult<Option<bool>> {
+        Ok(None)
+    }
+
+    async fn set_filter_emoji(&self, _enabled: bool) -> ServiceResult<()> {
+        Ok(())
+    }
+
     async fn get_setting(&self, _key: &str) -> ServiceResult<Option<String>> {
         Ok(None)
     }

@@ -43,15 +43,59 @@ impl ToolExecutor<McpToolContext> for WriteFileExecutor {
         check_approval(ctx.deps(), &approval_path).await?;
 
         ensure_parent_dirs(&absolute_path).await?;
-        write_content(&absolute_path, &content).await?;
 
-        let line_count = content.lines().count();
+        // Filter emojis from output content if enabled
+        let filtered_content = if ctx.deps().filter_emoji {
+            strip_emojis(&content)
+        } else {
+            content
+        };
+
+        write_content(&absolute_path, &filtered_content).await?;
+
+        let line_count = filtered_content.lines().count();
         Ok(ToolReturn::text(format!(
             "Wrote {} lines to {}",
             line_count,
             absolute_path.display()
         )))
     }
+}
+
+/// Strip emojis from a string, replacing them with empty string.
+fn strip_emojis(text: &str) -> String {
+    text.chars().filter(|c| !is_emoji(*c)).collect()
+}
+
+/// Check if a character is an emoji.
+/// Uses Unicode ranges for emoji blocks.
+const fn is_emoji(c: char) -> bool {
+    matches!(c,
+        '\u{1F600}'..='\u{1F64F}' |  // Emoticons
+        '\u{1F300}'..='\u{1F5FF}' |  // Misc Symbols and Pictographs
+        '\u{1F680}'..='\u{1F6FF}' |  // Transport and Map
+        '\u{1F1E0}'..='\u{1F1FF}' |  // Flags
+        '\u{2600}'..='\u{26FF}'   |  // Misc symbols
+        '\u{2700}'..='\u{27BF}'   |  // Dingbats
+        '\u{1F900}'..='\u{1F9FF}' |  // Supplemental Symbols and Pictographs
+        '\u{1FA00}'..='\u{1FA6F}' |  // Chess Symbols
+        '\u{1FA70}'..='\u{1FAFF}' |  // Symbols and Pictographs Extended-A
+        '\u{2B50}'                |  // Star
+        '\u{2B55}'                |  // Circle
+        '\u{25AA}'..='\u{25AB}'   |  // Small squares
+        '\u{25B6}' | '\u{25C0}'   |  // Play buttons
+        '\u{25FB}'..='\u{25FE}'   |  // Medium squares
+        '\u{2934}'..='\u{2935}'   |  // Arrows
+        '\u{2B05}'..='\u{2B07}'   |  // Arrows
+        '\u{2B1B}'..='\u{2B1C}'   |  // Squares
+        '\u{3030}'                |  // Wavy dash
+        '\u{303D}'                |  // Part alternation mark
+        '\u{3297}'                |  // Circled ideograph congratulation
+        '\u{3299}'                |  // Circled ideograph secret
+        '\u{FE0F}'                |  // Variation Selector-16
+        '\u{20E3}'                |  // Combining enclosing keycap
+        '\u{E0020}'..='\u{E007F}'   // Tags for emoji sequences
+    )
 }
 
 /// Check tool approval policy and await user decision if required.

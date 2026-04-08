@@ -21,6 +21,9 @@ pub mod bug_icon;
 // Issue 57: Window mode icons (popout/popin/sidebar)
 pub mod window_icons;
 
+// Issue 139: Emoji filter toggle icons
+pub mod emoji_filter_icon;
+
 // Issue 62: Markdown Rendering (TDD Phase)
 pub(crate) mod markdown_content;
 

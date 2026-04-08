@@ -214,6 +214,9 @@ pub struct McpToolContext {
     pub policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
     /// Service for discovering and activating skills.
     pub skills_service: Arc<dyn crate::services::SkillsService>,
+    /// When true, strip emojis from tool outputs (e.g., file content written by `WriteFile`).
+    /// This does NOT affect tool inputs (e.g., `old_text` in `EditFile` must match exactly).
+    pub filter_emoji: bool,
 }
 
 impl Default for McpToolContext {
@@ -236,6 +239,7 @@ impl Default for McpToolContext {
             approval_gate: Arc::new(ApprovalGate::new()),
             policy: Arc::new(AsyncMutex::new(ToolApprovalPolicy::default())),
             skills_service,
+            filter_emoji: false,
         }
     }
 }

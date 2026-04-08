@@ -38,8 +38,6 @@ pub(super) enum ActiveField {
     InstallSkillUrlInput,
 }
 
-/// Settings view state
-/// @plan PLAN-20250130-GPUIREDUX.P06
 #[allow(clippy::struct_excessive_bools)]
 pub struct SettingsState {
     pub profiles: Vec<ProfileItem>,
@@ -88,6 +86,8 @@ pub struct SettingsState {
     pub backup_in_progress: bool,
     /// Selected backup ID for restore
     pub selected_backup_id: Option<usize>,
+    /// When true, emojis are stripped from assistant message display
+    pub filter_emoji: bool,
 }
 
 impl SettingsState {
@@ -137,12 +137,11 @@ impl Default for SettingsState {
             backup_status: None,
             backup_in_progress: false,
             selected_backup_id: None,
+            filter_emoji: false,
         }
     }
 }
 
-/// Settings view
-/// @plan PLAN-20250130-GPUIREDUX.P06
 pub struct SettingsView {
     pub(super) state: SettingsState,
     pub(super) bridge: Option<Arc<GpuiBridge>>,
@@ -164,8 +163,6 @@ impl SettingsView {
         }
     }
 
-    /// Set the event bridge
-    /// @plan PLAN-20250130-GPUIREDUX.P06
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
     }
@@ -844,8 +841,12 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// Emit a `UserEvent` through the bridge
-    /// @plan PLAN-20250130-GPUIREDUX.P06
+    pub(super) fn toggle_emoji_filter(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.filter_emoji = !self.state.filter_emoji;
+        self.emit(&UserEvent::ToggleEmojiFilter);
+        cx.notify();
+    }
+
     pub(super) fn emit(&self, event: &UserEvent) {
         if let Some(bridge) = &self.bridge {
             if !bridge.emit(event.clone()) {

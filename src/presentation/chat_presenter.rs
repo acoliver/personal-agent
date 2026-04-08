@@ -1,11 +1,4 @@
 //! `ChatPresenter` - handles user chat events and service coordination
-//!
-//! `ChatPresenter` subscribes to user chat events and chat domain events,
-//! coordinates with chat and conversation services, and emits view commands.
-//!
-//! @plan PLAN-20250125-REFACTOR.P12
-//! @requirement REQ-027.1
-//! @pseudocode presenters.md lines 20-251
 
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -26,43 +19,18 @@ use crate::services::{
     AppSettingsService, ChatService, ConversationService, ProfileService, ServiceError,
 };
 
-/// `ChatPresenter` - handles chat UI events and service coordination
-///
-/// @plan PLAN-20250125-REFACTOR.P12
-/// @requirement REQ-027.1
-/// @pseudocode presenters.md lines 20-25
 pub struct ChatPresenter {
-    /// Reference to event bus for subscribing to events
     event_bus: Arc<EventBus>,
-
-    /// Reference to conversation service
     conversation_service: Arc<dyn ConversationService>,
-
-    /// Reference to chat service
     chat_service: Arc<dyn ChatService>,
-
-    /// Reference to profile service
     profile_service: Arc<dyn ProfileService>,
-
-    /// Reference to app settings service
     app_settings_service: Arc<dyn AppSettingsService>,
-
-    /// View command sender (mpsc for reliable delivery)
     view_tx: mpsc::Sender<ViewCommand>,
-
-    /// Running flag for event loop
     running: Arc<std::sync::atomic::AtomicBool>,
-
-    /// In-session export format selection used for save operations.
     current_export_format: Arc<std::sync::Mutex<crate::models::ConversationExportFormat>>,
 }
 
 impl ChatPresenter {
-    /// Create a new `ChatPresenter`
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    /// @pseudocode presenters.md lines 31-42
     pub fn new(
         event_bus: Arc<EventBus>,
         conversation_service: Arc<dyn ConversationService>,
@@ -85,15 +53,10 @@ impl ChatPresenter {
         }
     }
 
-    /// Start the presenter event loop
+    /// Start the presenter event loop.
     ///
     /// # Errors
-    ///
-    /// Returns `PresenterError` if presenter startup becomes fallible in the future.
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    /// @pseudocode presenters.md lines 50-69
+    /// Returns `PresenterError` if the presenter fails to start.
     pub async fn start(&mut self) -> Result<(), PresenterError> {
         if self.running.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -109,39 +72,28 @@ impl ChatPresenter {
             &self.view_tx,
         )
         .await;
+        Self::emit_initial_emoji_filter(&self.app_settings_service, &self.view_tx).await;
         Self::restore_startup_conversation(&self.conversation_service, &self.view_tx).await;
         self.spawn_event_loop();
 
         Ok(())
     }
 
-    /// Stop the presenter event loop
+    /// Stop the presenter event loop.
     ///
     /// # Errors
-    ///
-    /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    /// @pseudocode presenters.md lines 250-253
+    /// Returns `PresenterError` if the presenter fails to stop.
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
             .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
-    /// Check if presenter is running
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Handle events from `EventBus`
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
     #[allow(clippy::too_many_arguments)]
     async fn handle_event(
         conversation_service: &Arc<dyn ConversationService>,
@@ -211,6 +163,9 @@ impl ChatPresenter {
             UserEvent::ToggleThinking => {
                 Self::handle_toggle_thinking(view_tx).await;
             }
+            UserEvent::ToggleEmojiFilter => {
+                Self::handle_toggle_emoji_filter(app_settings_service, view_tx).await;
+            }
             UserEvent::ConfirmRenameConversation { id, title } => {
                 Self::handle_rename_conversation(conversation_service, view_tx, id, title).await;
             }
@@ -260,18 +215,8 @@ impl ChatPresenter {
                 request_id,
                 decision,
             } => {
-                if let Err(error) = chat_service
-                    .resolve_tool_approval(request_id, decision)
-                    .await
-                {
-                    let _ = view_tx
-                        .send(ViewCommand::ShowError {
-                            title: "Tool Approval".to_string(),
-                            message: format!("Failed to resolve tool approval: {error}"),
-                            severity: ErrorSeverity::Error,
-                        })
-                        .await;
-                }
+                Self::handle_tool_approval_response(chat_service, view_tx, request_id, decision)
+                    .await;
             }
             UserEvent::ToggleWindowMode => {
                 let _ = view_tx.send(ViewCommand::ToggleWindowMode).await;
@@ -280,6 +225,26 @@ impl ChatPresenter {
                 Self::handle_search_conversations(conversation_service, view_tx, query).await;
             }
             _ => {} // Ignore other user events
+        }
+    }
+
+    async fn handle_tool_approval_response(
+        chat_service: &Arc<dyn ChatService>,
+        view_tx: &mpsc::Sender<ViewCommand>,
+        request_id: String,
+        decision: crate::events::types::ToolApprovalResponseAction,
+    ) {
+        if let Err(error) = chat_service
+            .resolve_tool_approval(request_id, decision)
+            .await
+        {
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Tool Approval".to_string(),
+                    message: format!("Failed to resolve tool approval: {error}"),
+                    severity: ErrorSeverity::Error,
+                })
+                .await;
         }
     }
 
@@ -941,10 +906,6 @@ impl ChatPresenter {
     }
 }
 
-// Implement Presenter trait
-//
-// @plan PLAN-20250125-REFACTOR.P12
-// @requirement REQ-027.1
 impl Presenter for ChatPresenter {
     fn start(&mut self) -> Result<(), PresenterError> {
         // Note: This is a sync wrapper - in real usage, call async start() directly
