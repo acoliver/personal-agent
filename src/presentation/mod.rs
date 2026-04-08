@@ -39,6 +39,7 @@
 // Presenter modules
 pub mod api_key_manager_presenter;
 pub mod chat_presenter;
+mod chat_presenter_emoji;
 mod chat_presenter_export;
 mod chat_presenter_handlers;
 mod conversation_export;
