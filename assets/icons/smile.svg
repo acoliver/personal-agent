@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor">
+  <!-- Smiley face circle -->
+  <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <!-- Left eye -->
+  <circle cx="5.5" cy="6" r="1"/>
+  <!-- Right eye -->
+  <circle cx="10.5" cy="6" r="1"/>
+  <!-- Smile -->
+  <path d="M 5 10 Q 8 13 11 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

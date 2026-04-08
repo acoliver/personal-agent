@@ -99,6 +99,39 @@ impl ChatView {
             .child("YOLO")
     }
 
+    /// Emoji filter toggle button with smiley icon.
+    fn render_emoji_filter_button(
+        filter_emoji: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("btn-emoji-filter")
+            .size(px(28.0))
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when(filter_emoji, |d| d.bg(Theme::bg_dark()))
+            .when(!filter_emoji, |d| {
+                d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+            })
+            .child(if filter_emoji {
+                crate::ui_gpui::components::emoji_filter_icon::smile_icon(16.0)
+                    .text_color(Theme::text_primary())
+            } else {
+                crate::ui_gpui::components::emoji_filter_icon::smile_x_icon(16.0)
+                    .text_color(Theme::text_primary())
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.emit(UserEvent::ToggleEmojiFilter);
+                    cx.notify();
+                }),
+            )
+    }
+
     /// Right-side toolbar: [T][E][Y][R][H (popup only)][MD/TXT/JSON][Save][Popout/Popin][Settings][Exit]
     fn render_toolbar_buttons(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let show_thinking = self.state.show_thinking;
@@ -125,19 +158,7 @@ impl ChatView {
                     this.emit(UserEvent::ToggleThinking);
                 })
             ))
-            .child(icon_btn!(
-                "btn-emoji-filter",
-                if filter_emoji {
-                    "\u{1F60A}"
-                } else {
-                    "\u{1F60A}\u{0338}"
-                },
-                filter_emoji,
-                cx.listener(|this, _, _window, cx| {
-                    this.emit(UserEvent::ToggleEmojiFilter);
-                    cx.notify();
-                })
-            ))
+            .child(Self::render_emoji_filter_button(filter_emoji, cx))
             .child(icon_btn!(
                 "btn-yolo",
                 "Y",
