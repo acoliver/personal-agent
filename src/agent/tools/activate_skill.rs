@@ -179,6 +179,7 @@ mod tests {
             approval_gate,
             policy,
             skills_service: skills_service.clone(),
+            filter_emoji: false,
         };
 
         (ctx, temp_dir, skills_service, view_rx)

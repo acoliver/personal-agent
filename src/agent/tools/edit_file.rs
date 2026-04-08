@@ -71,10 +71,18 @@ impl ToolExecutor<McpToolContext> for EditFileExecutor {
         let absolute_match_start = scope.start_byte + first_match;
         let absolute_match_end = absolute_match_start + old_text.len();
 
+        // Filter emojis from new_text (output) if enabled, but NOT from old_text
+        // (input must match file content exactly for find-and-replace to work)
+        let filtered_new_text = if ctx.deps().filter_emoji {
+            strip_emojis(&new_text)
+        } else {
+            new_text
+        };
+
         let mut updated_content =
-            String::with_capacity(content.len() - old_text.len() + new_text.len());
+            String::with_capacity(content.len() - old_text.len() + filtered_new_text.len());
         updated_content.push_str(&content[..absolute_match_start]);
-        updated_content.push_str(&new_text);
+        updated_content.push_str(&filtered_new_text);
         updated_content.push_str(&content[absolute_match_end..]);
 
         tokio::fs::write(&absolute_path, &updated_content)
@@ -87,6 +95,42 @@ impl ToolExecutor<McpToolContext> for EditFileExecutor {
             updated_content.len()
         )))
     }
+}
+
+/// Strip emojis from a string, replacing them with empty string.
+fn strip_emojis(text: &str) -> String {
+    text.chars().filter(|c| !is_emoji(*c)).collect()
+}
+
+/// Check if a character is an emoji.
+/// Uses Unicode ranges for emoji blocks.
+const fn is_emoji(c: char) -> bool {
+    matches!(c,
+        '\u{1F600}'..='\u{1F64F}' |  // Emoticons
+        '\u{1F300}'..='\u{1F5FF}' |  // Misc Symbols and Pictographs
+        '\u{1F680}'..='\u{1F6FF}' |  // Transport and Map
+        '\u{1F1E0}'..='\u{1F1FF}' |  // Flags
+        '\u{2600}'..='\u{26FF}'   |  // Misc symbols
+        '\u{2700}'..='\u{27BF}'   |  // Dingbats
+        '\u{1F900}'..='\u{1F9FF}' |  // Supplemental Symbols and Pictographs
+        '\u{1FA00}'..='\u{1FA6F}' |  // Chess Symbols
+        '\u{1FA70}'..='\u{1FAFF}' |  // Symbols and Pictographs Extended-A
+        '\u{2B50}'                |  // Star
+        '\u{2B55}'                |  // Circle
+        '\u{25AA}'..='\u{25AB}'   |  // Small squares
+        '\u{25B6}' | '\u{25C0}'   |  // Play buttons
+        '\u{25FB}'..='\u{25FE}'   |  // Medium squares
+        '\u{2934}'..='\u{2935}'   |  // Arrows
+        '\u{2B05}'..='\u{2B07}'   |  // Arrows
+        '\u{2B1B}'..='\u{2B1C}'   |  // Squares
+        '\u{3030}'                |  // Wavy dash
+        '\u{303D}'                |  // Part alternation mark
+        '\u{3297}'                |  // Circled ideograph congratulation
+        '\u{3299}'                |  // Circled ideograph secret
+        '\u{FE0F}'                |  // Variation Selector-16
+        '\u{20E3}'                |  // Combining enclosing keycap
+        '\u{E0020}'..='\u{E007F}'   // Tags for emoji sequences
+    )
 }
 
 /// Validate that the path is absolute and return it as a `PathBuf`.

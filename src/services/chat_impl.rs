@@ -319,6 +319,19 @@ impl ChatServiceImpl {
 
         Self::append_emoji_avoidance(&self.app_settings_service, &mut system_prompt).await;
 
+        // Get filter_emoji setting for tool output filtering
+        let filter_emoji = match self.app_settings_service.get_filter_emoji().await {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to read emoji filter setting; defaulting to disabled"
+                );
+                false
+            }
+        };
+
         Ok(PreparedMessageContext {
             profile,
             client,
@@ -326,6 +339,7 @@ impl ChatServiceImpl {
             system_prompt,
             skills_service: self.skills_service.clone(),
             compression_result,
+            filter_emoji,
         })
     }
 
@@ -591,6 +605,7 @@ struct PreparedMessageContext {
     system_prompt: String,
     skills_service: Arc<dyn SkillsService>,
     compression_result: CompressionResult,
+    filter_emoji: bool,
 }
 
 #[allow(clippy::missing_const_for_fn)]
@@ -599,12 +614,14 @@ fn build_stream_context(
     approval_gate: Arc<ApprovalGate>,
     policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
     skills_service: Arc<dyn SkillsService>,
+    filter_emoji: bool,
 ) -> crate::llm::client_agent::McpToolContext {
     crate::llm::client_agent::McpToolContext {
         view_tx,
         approval_gate,
         policy,
         skills_service,
+        filter_emoji,
     }
 }
 
