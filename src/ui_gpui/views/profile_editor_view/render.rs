@@ -759,6 +759,7 @@ impl ProfileEditorView {
                     .text_color(Theme::text_primary())
                     .overflow_y_scroll()
                     .cursor_text()
+                    .block_mouse_except_scroll()
                     // Stop scroll events from propagating to parent
                     .on_scroll_wheel(cx.listener(
                         |_this, _event: &ScrollWheelEvent, _window, cx| {
