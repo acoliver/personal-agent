@@ -783,9 +783,7 @@ impl ProfileEditorView {
                 .child("You are a helpful assistant.")
         } else if active {
             // Show cursor at end when field is active
-            let cursor_pos = system_prompt.len();
-            let before = &system_prompt[..cursor_pos];
-            let text_content = format!("{before}|");
+            let text_content = format!("{system_prompt}|");
 
             div()
                 .w_full()
