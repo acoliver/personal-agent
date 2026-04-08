@@ -5,7 +5,7 @@ use crate::config::default_api_base_url_for_provider;
 use crate::ui_gpui::theme::Theme;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
-    Pixels, SharedString, Stateful,
+    Pixels, ScrollWheelEvent, SharedString, Stateful,
 };
 
 impl ProfileEditorView {
@@ -759,6 +759,12 @@ impl ProfileEditorView {
                     .text_color(Theme::text_primary())
                     .overflow_y_scroll()
                     .cursor_text()
+                    // Stop scroll events from propagating to parent
+                    .on_scroll_wheel(cx.listener(
+                        |_this, _event: &ScrollWheelEvent, _window, cx| {
+                            cx.stop_propagation();
+                        },
+                    ))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {
