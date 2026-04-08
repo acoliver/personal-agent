@@ -126,6 +126,12 @@ impl ChatView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _window, cx| {
+                    let current = this.state.filter_emoji;
+                    tracing::info!(
+                        "Emoji filter button CLICKED! Current state: {}, will toggle to: {}",
+                        current,
+                        !current
+                    );
                     this.emit(UserEvent::ToggleEmojiFilter);
                     cx.notify();
                 }),

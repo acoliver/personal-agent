@@ -58,6 +58,7 @@ impl MainPanel {
             ConversationCleared
             | ClearActiveConversation
             | ToggleThinkingVisibility
+            | SetEmojiFilterVisibility { .. }
             | ShowConversationExportFormat { .. }
             | ExportCompleted { .. }
             | ToolApprovalRequest { .. }

@@ -566,9 +566,16 @@ impl ChatPresenter {
         app_settings_service: &Arc<dyn crate::services::AppSettingsService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
     ) {
+        tracing::info!("handle_toggle_emoji_filter called");
         let current = match app_settings_service.get_filter_emoji().await {
-            Ok(Some(value)) => value,
-            Ok(None) => false,
+            Ok(Some(value)) => {
+                tracing::info!("Current filter_emoji value from storage: {}", value);
+                value
+            }
+            Ok(None) => {
+                tracing::info!("No filter_emoji value in storage, defaulting to false");
+                false
+            }
             Err(error) => {
                 tracing::warn!("Failed to read emoji filter setting: {error}");
                 let _ = view_tx
@@ -582,6 +589,7 @@ impl ChatPresenter {
             }
         };
 
+        tracing::info!("Setting filter_emoji to: {}", !current);
         if let Err(error) = app_settings_service.set_filter_emoji(!current).await {
             tracing::warn!("Failed to persist emoji filter setting: {error}");
             let _ = view_tx
@@ -594,6 +602,7 @@ impl ChatPresenter {
             return;
         }
 
+        tracing::info!("Sending SetEmojiFilterVisibility with enabled={}", !current);
         let _ = view_tx
             .send(ViewCommand::SetEmojiFilterVisibility { enabled: !current })
             .await;
@@ -948,13 +957,25 @@ impl ChatPresenter {
     ) {
         let view_tx = view_tx.clone();
         let enabled = match app_settings_service.get_filter_emoji().await {
-            Ok(Some(value)) => value,
-            Ok(None) => false,
+            Ok(Some(value)) => {
+                tracing::info!("emit_initial_emoji_filter: loaded from storage: {}", value);
+                value
+            }
+            Ok(None) => {
+                tracing::info!(
+                    "emit_initial_emoji_filter: no value in storage, defaulting to false"
+                );
+                false
+            }
             Err(error) => {
                 tracing::warn!("Failed to read emoji filter setting at startup: {error}");
                 false
             }
         };
+        tracing::info!(
+            "emit_initial_emoji_filter: sending SetEmojiFilterVisibility with enabled={}",
+            enabled
+        );
         let _ = view_tx
             .send(ViewCommand::SetEmojiFilterVisibility { enabled })
             .await;

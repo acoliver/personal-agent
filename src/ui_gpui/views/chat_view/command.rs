@@ -121,6 +121,10 @@ impl ChatView {
                 cx.notify();
             }
             ViewCommand::SetEmojiFilterVisibility { enabled } => {
+                tracing::info!(
+                    "ChatView: SetEmojiFilterVisibility received, enabled={}",
+                    enabled
+                );
                 self.state.filter_emoji = enabled;
                 cx.notify();
             }
