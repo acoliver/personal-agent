@@ -567,10 +567,10 @@ impl ChatPresenter {
         view_tx: &mut mpsc::Sender<ViewCommand>,
     ) {
         tracing::info!("handle_toggle_emoji_filter called");
-        
+
         let current = Self::get_current_emoji_filter(app_settings_service, view_tx).await;
         let new_value = !current;
-        
+
         tracing::info!("Setting filter_emoji to: {}", new_value);
         if let Err(error) = app_settings_service.set_filter_emoji(new_value).await {
             tracing::warn!("Failed to persist emoji filter setting: {error}");
@@ -584,7 +584,10 @@ impl ChatPresenter {
             return;
         }
 
-        tracing::info!("Sending SetEmojiFilterVisibility with enabled={}", new_value);
+        tracing::info!(
+            "Sending SetEmojiFilterVisibility with enabled={}",
+            new_value
+        );
         let _ = view_tx
             .send(ViewCommand::SetEmojiFilterVisibility { enabled: new_value })
             .await;
