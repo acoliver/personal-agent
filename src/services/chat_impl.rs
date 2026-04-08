@@ -487,8 +487,12 @@ impl ChatServiceImpl {
 
         Self::emit_stream_started(conversation_id, profile.model_id.clone());
 
+        tracing::info!("Local model path: {}", model_path.display());
+        tracing::info!("Model exists: {}", model_path.exists());
+
         // Build messages for local inference
         let messages = Self::build_llm_messages(&conversation, &profile);
+        tracing::info!("Built {} messages for local inference", messages.len());
 
         // Create local provider
         let provider = LocalProvider::new(model_path, profile.context_window_size)
@@ -501,31 +505,74 @@ impl ChatServiceImpl {
 
         // Spawn local inference task
         let handle = tokio::spawn(async move {
+            tracing::info!("Local inference task started");
+
             // Run streaming inference
             let mut response_text = String::new();
             let mut thinking_text = String::new();
 
+            tracing::info!("Calling request_stream on local provider");
             let result = provider
-                .request_stream(&messages, &[], |event| match event {
-                    crate::llm::StreamEvent::TextDelta(text) => {
-                        response_text.push_str(&text);
-                        let _ = tx.send(ChatStreamEvent::Token(text));
+                .request_stream(&messages, &[], |event| {
+                    match event {
+                        crate::llm::StreamEvent::TextDelta(text) => {
+                            response_text.push_str(&text);
+                            let _ = tx.send(ChatStreamEvent::Token(text.clone()));
+                            // Emit ChatEvent for presenter to handle
+                            let _ = crate::events::global::get_event_bus_clone().publish(
+                                crate::events::types::AppEvent::Chat(
+                                    crate::events::types::ChatEvent::TextDelta {
+                                        conversation_id,
+                                        text,
+                                    },
+                                ),
+                            );
+                        }
+                        crate::llm::StreamEvent::ThinkingDelta(think) => {
+                            thinking_text.push_str(&think);
+                            // Emit thinking event
+                            let _ = crate::events::global::get_event_bus_clone().publish(
+                                crate::events::types::AppEvent::Chat(
+                                    crate::events::types::ChatEvent::ThinkingDelta {
+                                        conversation_id,
+                                        text: think,
+                                    },
+                                ),
+                            );
+                        }
+                        crate::llm::StreamEvent::Complete { output_tokens, .. } => {
+                            let _ = tx.send(ChatStreamEvent::Complete {
+                                input_tokens: None,
+                                output_tokens,
+                            });
+                            // Emit stream completed event
+                            let _ = crate::events::global::get_event_bus_clone().publish(
+                                crate::events::types::AppEvent::Chat(
+                                    crate::events::types::ChatEvent::StreamCompleted {
+                                        conversation_id,
+                                        message_id: Uuid::new_v4(),
+                                        total_tokens: output_tokens,
+                                    },
+                                ),
+                            );
+                        }
+                        crate::llm::StreamEvent::Error(e) => {
+                            tracing::error!("Local inference error: {e}");
+                            let _ =
+                                tx.send(ChatStreamEvent::Error(ServiceError::Internal(e.clone())));
+                            // Emit error event
+                            let _ = crate::events::global::get_event_bus_clone().publish(
+                                crate::events::types::AppEvent::Chat(
+                                    crate::events::types::ChatEvent::StreamError {
+                                        conversation_id,
+                                        error: e,
+                                        recoverable: false,
+                                    },
+                                ),
+                            );
+                        }
+                        _ => {}
                     }
-                    crate::llm::StreamEvent::ThinkingDelta(think) => {
-                        thinking_text.push_str(&think);
-                        // Thinking is stored but not streamed separately
-                    }
-                    crate::llm::StreamEvent::Complete { output_tokens, .. } => {
-                        let _ = tx.send(ChatStreamEvent::Complete {
-                            input_tokens: None,
-                            output_tokens,
-                        });
-                    }
-                    crate::llm::StreamEvent::Error(e) => {
-                        tracing::error!("Local inference error: {e}");
-                        let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(e)));
-                    }
-                    _ => {}
                 })
                 .await;
 
@@ -731,6 +778,11 @@ impl ChatService for ChatServiceImpl {
         self.begin_stream(conversation_id).await?;
         self.refresh_tool_approval_policy_from_settings().await;
 
+        // Add user message first (needed for both local and cloud paths)
+        self.conversation_service
+            .add_message(conversation_id, Message::user(content.clone()))
+            .await?;
+
         // Check if the profile is a local model and route accordingly
         let conversation = self
             .conversation_service
@@ -749,7 +801,14 @@ impl ChatService for ChatServiceImpl {
         };
 
         // Route local models to local inference path
+        tracing::info!(
+            profile_id = %profile.id,
+            profile_name = %profile.name,
+            is_local = profile.is_local(),
+            "send_message: checking if profile is local"
+        );
         if profile.is_local() {
+            tracing::info!("send_message: routing to send_local_message");
             return self
                 .send_local_message(conversation_id, conversation, profile, content)
                 .await;

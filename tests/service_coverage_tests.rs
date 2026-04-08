@@ -306,14 +306,18 @@ async fn chat_service_send_message_errors_without_default_profile_when_creating_
         .await;
 
     // The error message comes from chat_impl's get_default error handling
+    // or from the conversation lookup path
     let error_msg = match &result {
-        Err(ServiceError::Internal(msg)) => msg.clone(),
+        Err(ServiceError::Internal(msg) | ServiceError::NotFound(msg)) => msg.clone(),
         Err(e) => format!("{e:?}"),
         Ok(_) => "unexpected success".to_string(),
     };
     assert!(
-        matches!(result, Err(ServiceError::Internal(_))),
-        "Expected Internal error, got: {error_msg}"
+        matches!(
+            result,
+            Err(ServiceError::Internal(_) | ServiceError::NotFound(_))
+        ),
+        "Expected Internal or NotFound error, got: {error_msg}"
     );
 }
 

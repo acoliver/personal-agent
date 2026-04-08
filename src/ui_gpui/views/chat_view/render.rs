@@ -93,6 +93,7 @@ impl ChatView {
             return;
         }
 
+        tracing::info!("handle_key_down: key={} checking for enter", key);
         match key.as_str() {
             "left" => self.move_cursor_left(cx),
             "right" => self.move_cursor_right(cx),

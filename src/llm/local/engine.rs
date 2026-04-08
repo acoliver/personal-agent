@@ -9,7 +9,6 @@ use std::thread::{self, JoinHandle};
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::llm::local::capabilities::ModelCapabilities;
-use crate::llm::local::chat_template::QwenChatTemplate;
 use crate::llm::local::error::{LocalModelError, LocalModelResult};
 use crate::llm::{Message, StreamEvent, Tool};
 
@@ -276,8 +275,8 @@ impl Drop for LocalEngine {
 
 /// Inference thread state - holds the loaded engine.
 struct InferenceThreadState {
-    engine: llama_gguf::engine::Engine,
-    chat_template: QwenChatTemplate,
+    /// `ChatEngine` handles automatic chat template formatting from GGUF metadata.
+    chat_engine: llama_gguf::engine::ChatEngine,
     #[allow(dead_code)]
     context_window: usize,
 }
@@ -306,99 +305,147 @@ impl InferenceThreadState {
             kv_cache_type: llama_gguf::model::KVCacheType::default(),
         };
 
-        // Load the engine from GGUF file
+        // Load the base engine from GGUF file
         let engine = llama_gguf::engine::Engine::load(config)
             .map_err(|e| LocalModelError::LoadFailed(e.to_string()))?;
 
-        tracing::info!("Model loaded successfully");
+        // Create ChatEngine with default system prompt (it will use GGUF's chat template)
+        let chat_engine = llama_gguf::engine::ChatEngine::new(
+            engine,
+            Some("You are a helpful assistant. Respond clearly and concisely.".to_string()),
+        );
+
+        tracing::info!("Model loaded successfully with ChatEngine (auto chat template)");
 
         Ok(Self {
-            engine,
-            chat_template: QwenChatTemplate::new(),
+            chat_engine,
             context_window,
         })
     }
 
     /// Process a chat request.
     fn process_request(&mut self, request: &InferenceRequest) {
-        // Format messages using Qwen chat template
-        let prompt = self.format_prompt(request);
+        // Format messages into a single prompt string for ChatEngine
+        // ChatEngine handles the chat template automatically from GGUF metadata
+        let prompt = Self::format_prompt(request);
 
-        // Generate response with streaming - generate_streaming returns an iterator directly
-        let stream = self.engine.generate_streaming(&prompt, 4096);
+        // Use chat_streaming which handles the chat template properly
+        match self.chat_engine.chat_streaming(&prompt) {
+            Ok(stream) => {
+                let mut total_tokens = 0;
+                let mut accumulated = String::new();
 
-        let mut total_tokens = 0;
-        let mut accumulated = String::new();
+                for token_result in stream {
+                    match token_result {
+                        Ok(token) => {
+                            accumulated.push_str(&token);
+                            total_tokens += 1;
 
-        for token_result in stream {
-            match token_result {
-                Ok(token) => {
-                    accumulated.push_str(&token);
-                    total_tokens += 1;
+                            // Send content tokens
+                            if !token.is_empty() {
+                                let _ = request.event_tx.send(InferenceEvent::Token(token));
+                            }
 
-                    // Parse thinking tags and tool calls from accumulated
-                    let (thinking, _content, tool_calls) =
-                        self.chat_template.parse_response(&accumulated);
-
-                    // Send thinking content
-                    if let Some(think) = thinking {
-                        let _ = request.event_tx.send(InferenceEvent::Thinking(think));
-                    }
-
-                    // Send content tokens
-                    if !token.is_empty() {
-                        let _ = request.event_tx.send(InferenceEvent::Token(token));
-                    }
-
-                    // Send tool calls if detected
-                    for tc in tool_calls {
-                        let _ = request.event_tx.send(InferenceEvent::ToolCall {
-                            name: tc.name,
-                            arguments: tc.arguments,
-                        });
+                            // Check for tool calls in accumulated output
+                            if let Some(tool_call) = Self::parse_tool_call(&accumulated) {
+                                let _ = request.event_tx.send(tool_call);
+                            }
+                        }
+                        Err(e) => {
+                            let _ = request.event_tx.send(InferenceEvent::Error(e.to_string()));
+                            return;
+                        }
                     }
                 }
-                Err(e) => {
-                    let _ = request.event_tx.send(InferenceEvent::Error(e.to_string()));
-                    return;
-                }
+
+                let _ = request
+                    .event_tx
+                    .send(InferenceEvent::Complete { total_tokens });
+            }
+            Err(e) => {
+                let _ = request.event_tx.send(InferenceEvent::Error(e.to_string()));
+            }
+        }
+    }
+
+    /// Format messages into prompt for `ChatEngine`.
+    fn format_prompt(request: &InferenceRequest) -> String {
+        // For ChatEngine, we just send the user's message
+        // The engine handles the chat template from GGUF metadata
+        // Find the last user message
+        let mut prompt = String::new();
+
+        for msg in &request.messages {
+            if msg.role == crate::llm::client::Role::User {
+                prompt.clone_from(&msg.content);
+                break;
             }
         }
 
-        let _ = request
-            .event_tx
-            .send(InferenceEvent::Complete { total_tokens });
+        // If tools are provided, append tool info to the prompt
+        if let Some(ref tools) = request.tools {
+            let tools_section = Self::format_tools(tools);
+            prompt = format!("{prompt}\n\n{tools_section}");
+        }
+
+        prompt
     }
 
-    /// Format messages into prompt using Qwen template.
-    fn format_prompt(&self, request: &InferenceRequest) -> String {
-        let system = request
-            .system_prompt
-            .as_deref()
-            .unwrap_or("You are a helpful assistant. Respond concisely and accurately.");
+    /// Format tools for inclusion in prompt.
+    fn format_tools(tools: &[Tool]) -> String {
+        use std::fmt::Write;
+        let mut output = String::new();
+        output.push_str("Available tools (respond with JSON to use them):\n");
 
-        let mut messages: Vec<(&str, &str)> = vec![("system", system)];
-
-        for msg in &request.messages {
-            let role = match msg.role {
-                crate::llm::client::Role::User => "user",
-                crate::llm::client::Role::Assistant => "assistant",
-                crate::llm::client::Role::System => continue, // Skip, we already added system
-            };
-            messages.push((role, &msg.content));
+        for tool in tools {
+            let _ = writeln!(output, "- {}: {}", tool.name, tool.description);
         }
 
-        // If tools are provided, format them into the system prompt
-        if let Some(ref tools) = request.tools {
-            let tools_section = QwenChatTemplate::format_tools(tools);
-            let enhanced_system = format!("{system}\n\n# Available Tools\n\n{tools_section}");
-            messages[0] = (
-                "system",
-                Box::leak(enhanced_system.into_boxed_str()) as &str,
-            );
-        }
+        output.push_str(
+            "\nTo call a tool, respond with: {\"name\": \"tool_name\", \"arguments\": {...}}\n",
+        );
+        output
+    }
 
-        self.chat_template.format_messages(&messages)
+    /// Parse a tool call from accumulated output.
+    fn parse_tool_call(output: &str) -> Option<InferenceEvent> {
+        // Find JSON objects that look like tool calls
+        if let Some(start) = output.find("{\"name\":") {
+            if let Some(end) = Self::find_matching_brace(&output[start..]) {
+                let content = &output[start..=start + end];
+
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(content) {
+                    if let (Some(name), Some(args)) = (
+                        json.get("name").and_then(|n| n.as_str()),
+                        json.get("arguments"),
+                    ) {
+                        return Some(InferenceEvent::ToolCall {
+                            name: name.to_string(),
+                            arguments: args.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Find the index of the matching closing brace.
+    fn find_matching_brace(s: &str) -> Option<usize> {
+        let mut depth = 0;
+        for (i, c) in s.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 }
 

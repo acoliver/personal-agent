@@ -138,6 +138,7 @@ impl QwenChatTemplate {
     ///
     /// Tuple of (thinking, content, `ParsedToolCall` list).
     #[must_use]
+    #[allow(dead_code)]
     pub fn parse_response(&self, output: &str) -> (Option<String>, String, Vec<ParsedToolCall>) {
         let (thinking, content) = self.parse_thinking(output);
         let tool_calls = Self::parse_tool_calls(output);

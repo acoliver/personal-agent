@@ -520,6 +520,11 @@ impl ChatPresenter {
         view_tx: &mut mpsc::Sender<ViewCommand>,
         content: String,
     ) {
+        tracing::info!(
+            "ChatPresenter::handle_send_message called with content length {}",
+            content.len()
+        );
+
         // Validate non-empty
         let trimmed = content.trim();
         if trimmed.is_empty() {
