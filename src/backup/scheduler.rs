@@ -15,6 +15,11 @@ use tracing::{debug, error, info, warn};
 use crate::backup::DatabaseBackupSettings;
 use crate::services::BackupService;
 
+/// Minimum backoff time (in seconds) to prevent tight scheduling loops.
+/// When a backup is scheduled for "now" (no previous backup or stale),
+/// this ensures we wait at least this long before attempting again.
+const MINIMUM_BACKOFF_SECONDS: i64 = 60;
+
 /// Scheduler for automatic database backups
 ///
 /// Runs in the background and triggers backups at configured intervals.
@@ -41,24 +46,30 @@ impl BackupScheduler {
     /// Compute the next backup time based on last backup and interval
     ///
     /// Returns the next scheduled backup time. If no previous backup exists,
-    /// returns the current time (backup should run immediately).
+    /// returns the current time plus a minimum backoff to prevent tight loops.
     fn compute_next_backup_time(
         last_backup_time: Option<DateTime<Utc>>,
         interval_hours: u32,
     ) -> DateTime<Utc> {
         let now = Utc::now();
+        let min_backoff = TimeDelta::seconds(MINIMUM_BACKOFF_SECONDS);
 
-        last_backup_time.map_or(now, |last_time| {
-            let interval = TimeDelta::hours(i64::from(interval_hours));
-            let next_time = last_time + interval;
+        last_backup_time.map_or_else(
+            // No previous backup: schedule with minimum backoff
+            || now + min_backoff,
+            |last_time| {
+                let interval = TimeDelta::hours(i64::from(interval_hours));
+                let next_time = last_time + interval;
 
-            // If the next time is in the past (we missed a backup), schedule for now
-            if next_time <= now {
-                now
-            } else {
-                next_time
-            }
-        })
+                // If the next time is in the past (we missed a backup), schedule for now
+                // but apply minimum backoff to prevent tight loops
+                if next_time <= now {
+                    now + min_backoff
+                } else {
+                    next_time
+                }
+            },
+        )
     }
 
     /// Check and run backup on startup if stale
@@ -367,11 +378,15 @@ mod tests {
         let next = BackupScheduler::compute_next_backup_time(None, 12);
         let now = Utc::now();
 
-        // Should be approximately now (within a few seconds)
-        let diff = (next - now).num_seconds().abs();
+        // Should be at least MINIMUM_BACKOFF_SECONDS in the future
+        let diff = (next - now).num_seconds();
         assert!(
-            diff < 5,
-            "Expected next backup time to be near now, got diff of {diff} seconds"
+            diff >= MINIMUM_BACKOFF_SECONDS - 1, // Allow 1 second tolerance
+            "Expected next backup time to be at least {MINIMUM_BACKOFF_SECONDS} seconds in future, got {diff} seconds"
+        );
+        assert!(
+            diff < MINIMUM_BACKOFF_SECONDS + 5,
+            "Expected next backup time to be approximately {MINIMUM_BACKOFF_SECONDS} seconds in future, got {diff} seconds"
         );
     }
 
@@ -394,9 +409,16 @@ mod tests {
         let next = BackupScheduler::compute_next_backup_time(Some(last_backup), 12);
         let now = Utc::now();
 
-        // Should be now since we're stale
-        let diff = (next - now).num_seconds().abs();
-        assert!(diff < 5, "Expected stale backup to schedule immediately");
+        // Should be now + minimum backoff (not just "now")
+        let diff = (next - now).num_seconds();
+        assert!(
+            diff >= MINIMUM_BACKOFF_SECONDS - 1,
+            "Expected stale backup to schedule with minimum backoff ({MINIMUM_BACKOFF_SECONDS} seconds), got {diff} seconds"
+        );
+        assert!(
+            diff < MINIMUM_BACKOFF_SECONDS + 5,
+            "Expected stale backup to schedule with approximately {MINIMUM_BACKOFF_SECONDS} seconds backoff, got {diff} seconds"
+        );
     }
 
     #[test]
