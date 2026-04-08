@@ -92,29 +92,45 @@ impl ChatView {
         cx.notify();
     }
 
+    fn handle_conversation_cleared(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.messages.clear();
+        self.state.streaming = super::state::StreamingState::Idle;
+        self.state.thinking_content = None;
+        self.state.conversation_dropdown_open = false;
+        self.state.conversation_title_editing = false;
+        self.state.conversation_title_input.clear();
+        self.state.export_feedback_message = None;
+        self.state.export_feedback_is_error = false;
+        self.state.export_feedback_path = None;
+        self.state.approval_bubbles.clear();
+        self.state.chat_autoscroll_enabled = true;
+        self.chat_scroll_handle.scroll_to_bottom();
+        self.state.sync_conversation_title_from_active();
+        cx.notify();
+    }
+
+    fn handle_conversation_search_results(
+        &mut self,
+        results: Vec<crate::presentation::view_command::ConversationSearchResult>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if results.is_empty() && self.state.sidebar_search_query.is_empty() {
+            self.state.sidebar_search_results = None;
+        } else {
+            self.state.sidebar_search_results = Some(results);
+        }
+        cx.notify();
+    }
+
     /// Handle incoming `ViewCommands` that are NOT store-managed.
     ///
     /// All shared state commands arrive exclusively through
     /// `apply_store_snapshot` via the store subscription. This method
     /// only handles ephemeral / view-local commands.
-    #[allow(clippy::too_many_lines)]
     pub fn handle_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         match cmd {
             ViewCommand::ConversationCleared | ViewCommand::ClearActiveConversation => {
-                self.state.messages.clear();
-                self.state.streaming = super::state::StreamingState::Idle;
-                self.state.thinking_content = None;
-                self.state.conversation_dropdown_open = false;
-                self.state.conversation_title_editing = false;
-                self.state.conversation_title_input.clear();
-                self.state.export_feedback_message = None;
-                self.state.export_feedback_is_error = false;
-                self.state.export_feedback_path = None;
-                self.state.approval_bubbles.clear();
-                self.state.chat_autoscroll_enabled = true;
-                self.chat_scroll_handle.scroll_to_bottom();
-                self.state.sync_conversation_title_from_active();
-                cx.notify();
+                self.handle_conversation_cleared(cx);
             }
             ViewCommand::ToggleThinkingVisibility => {
                 self.state.show_thinking = !self.state.show_thinking;
@@ -192,12 +208,7 @@ impl ChatView {
                 self.handle_yolo_mode_changed(active, cx);
             }
             ViewCommand::ConversationSearchResults { results } => {
-                if results.is_empty() && self.state.sidebar_search_query.is_empty() {
-                    self.state.sidebar_search_results = None;
-                } else {
-                    self.state.sidebar_search_results = Some(results);
-                }
-                cx.notify();
+                self.handle_conversation_search_results(results, cx);
             }
             _ => {}
         }
