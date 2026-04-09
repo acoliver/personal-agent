@@ -85,10 +85,10 @@ impl ProfileServiceImpl {
     /// Parse legacy auth config JSON into the keychain-only `AuthConfig`.
     ///
     /// Legacy profiles stored inline keys or keyfile paths. Since we no longer
-    /// store secrets in config, legacy profiles get an empty keychain label —
-    /// the user must re-assign a keychain-stored key via the profile editor.
-    fn parse_auth_from_legacy(value: Option<&Value>, _keyfile_hint: Option<String>) -> AuthConfig {
-        // New-format profiles already have `{ "Keychain": { "label": "..." } }`.
+    /// store secrets in config and do not translate legacy secret references,
+    /// legacy profiles get an empty keychain label unless they already contain
+    /// the current `{ "Keychain": { "label": "..." } }` shape.
+    fn parse_auth_from_legacy(value: Option<&Value>) -> AuthConfig {
         if let Some(Value::Object(auth_obj)) = value {
             if let Some(Value::Object(inner)) = auth_obj.get("Keychain") {
                 if let Some(Value::String(label)) = inner.get("label") {
@@ -99,54 +99,9 @@ impl ProfileServiceImpl {
             }
         }
 
-        // Everything else (old key/keyfile/oauth) maps to an empty label.
         AuthConfig::Keychain {
             label: String::new(),
         }
-    }
-
-    fn resolve_key_name_to_path(key_name: &str) -> Option<String> {
-        let trimmed = key_name.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        let direct = Path::new(trimmed);
-        if direct.is_absolute() && direct.exists() {
-            return Some(trimmed.to_string());
-        }
-
-        if let Some(home) = dirs::home_dir() {
-            let normalized = trimmed.trim_end_matches(|c: char| c.is_ascii_digit());
-            let mut key_names = vec![trimmed.to_string()];
-            if !normalized.is_empty() && normalized != trimmed {
-                key_names.push(normalized.to_string());
-            }
-
-            for key_name in key_names {
-                let candidates = [
-                    home.join(".keys").join(format!(".{key_name}_key")),
-                    home.join(".keys").join(&key_name),
-                ];
-
-                for candidate in candidates {
-                    if candidate.exists() {
-                        return Some(candidate.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    fn parse_legacy_auth_key_name(ephemeral: Option<&Value>) -> Option<String> {
-        let key_name = ephemeral
-            .and_then(Value::as_object)
-            .and_then(|e| e.get("auth-key-name"))
-            .and_then(Value::as_str)?;
-
-        Self::resolve_key_name_to_path(key_name)
     }
 
     fn parse_parameters_from_legacy(
@@ -218,7 +173,6 @@ impl ProfileServiceImpl {
             value,
             path,
             Self::legacy_profile_id_for_path,
-            Self::parse_legacy_auth_key_name,
             Self::parse_auth_from_legacy,
             Self::parse_parameters_from_legacy,
         )
@@ -923,71 +877,5 @@ mod tests {
 
         // Should return Ok(()) for now
         service.test_connection(profile.id).await.unwrap();
-    }
-
-    #[test]
-    fn test_resolve_key_name_to_path_prefers_dot_keys() {
-        let home = dirs::home_dir().expect("home directory should exist for test");
-        let synthetic_path = home.join(".keys").join(".synthetic1_key");
-
-        if !synthetic_path.exists() {
-            // Environment-specific test; skip when key file is absent.
-            return;
-        }
-
-        let resolved = ProfileServiceImpl::resolve_key_name_to_path("synthetic1");
-        assert_eq!(resolved, Some(synthetic_path.to_string_lossy().to_string()));
-    }
-
-    #[test]
-    fn test_parse_legacy_auth_key_name_reads_ephemeral_setting() {
-        let payload = serde_json::json!({
-            "auth-key-name": "synthetic1"
-        });
-
-        let parsed = ProfileServiceImpl::parse_legacy_auth_key_name(Some(&payload));
-        if let Some(path) = parsed {
-            assert!(
-                std::path::Path::new(&path).exists(),
-                "resolved legacy auth key path should exist"
-            );
-        }
-    }
-
-    #[test]
-    fn test_resolve_key_name_to_path_does_not_fallback_to_llxprt() {
-        struct TestFileCleanup(Vec<std::path::PathBuf>);
-        impl Drop for TestFileCleanup {
-            fn drop(&mut self) {
-                for path in &self.0 {
-                    let _ = std::fs::remove_file(path);
-                }
-            }
-        }
-        fn key_candidate_paths(dir: &std::path::Path, key_name: &str) -> [std::path::PathBuf; 2] {
-            [dir.join(format!(".{key_name}_key")), dir.join(key_name)]
-        }
-        let home = dirs::home_dir().expect("home directory should exist for test");
-        let synthetic_key_name = format!("pa-test-no-llxprt-{}", Uuid::new_v4());
-        let normalized_key_name = synthetic_key_name.trim_end_matches(|c: char| c.is_ascii_digit());
-        let dot_keys_dir = home.join(".keys");
-        let llxprt_keys_dir = home.join(".llxprt").join("keys");
-        let cleanup_paths = key_candidate_paths(&dot_keys_dir, &synthetic_key_name)
-            .into_iter()
-            .chain(key_candidate_paths(&llxprt_keys_dir, &synthetic_key_name))
-            .chain(key_candidate_paths(&dot_keys_dir, normalized_key_name))
-            .chain(key_candidate_paths(&llxprt_keys_dir, normalized_key_name))
-            .collect::<Vec<_>>();
-        let _cleanup = TestFileCleanup(cleanup_paths.clone());
-        let _ = std::fs::create_dir_all(&dot_keys_dir);
-        let _ = std::fs::create_dir_all(&llxprt_keys_dir);
-        for path in &cleanup_paths {
-            let _ = std::fs::remove_file(path);
-        }
-        let llxprt_key_path = llxprt_keys_dir.join(format!(".{synthetic_key_name}_key"));
-        std::fs::write(&llxprt_key_path, "synthetic-test-key")
-            .expect("should create synthetic llxprt key file");
-        let resolved = ProfileServiceImpl::resolve_key_name_to_path(&synthetic_key_name);
-        assert_eq!(resolved, None);
     }
 }

@@ -56,6 +56,9 @@ rusqlite = { version = "0.33", features = ["bundled", "backup"] }
 serde_yaml = "0.9"
 tiktoken-rs = "0.9"
 flate2 = "1"
+aes-gcm = "0.10"
+sha2 = "0.10"
+
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
