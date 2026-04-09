@@ -677,7 +677,10 @@ fn render_image_fallback(alt: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
+mod autolink;
 mod markdown_parser;
+
+pub(crate) use autolink::apply_autolinks;
 pub(crate) use markdown_parser::parse_markdown_blocks;
 
 #[cfg(test)]
