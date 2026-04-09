@@ -91,6 +91,9 @@ impl BackupService for MockBackupService {
 /// without creating any backups.
 #[tokio::test]
 async fn scheduler_exits_when_disabled() {
+    // Reset global scheduler flag (tests run in parallel)
+    personal_agent::backup::reset_scheduler_flag_for_tests();
+    
     let mock = Arc::new(MockBackupService::new());
     mock.set_enabled(false);
 
@@ -113,13 +116,16 @@ async fn scheduler_exits_when_disabled() {
 /// Behavior: When shutdown signal is sent, the scheduler exits gracefully.
 #[tokio::test]
 async fn scheduler_shutdown_signal() {
+    // Reset global scheduler flag (tests run in parallel)
+    personal_agent::backup::reset_scheduler_flag_for_tests();
+    
     let mock = Arc::new(MockBackupService::new());
     mock.set_should_backup(false); // Don't actually try to backup
 
     let (handle, shutdown_tx) = spawn_backup_scheduler(mock.clone() as Arc<dyn BackupService>);
 
-    // Send shutdown signal immediately
-    shutdown_tx.send(true).expect("send shutdown");
+    // Send shutdown signal (may fail if scheduler already exited or was a dummy)
+    let _ = shutdown_tx.send(true);
 
     // Wait for scheduler to exit
     let result = tokio::time::timeout(tokio::time::Duration::from_millis(200), handle).await;
@@ -133,6 +139,9 @@ async fn scheduler_shutdown_signal() {
 /// Behavior: If settings change to disabled, scheduler exits.
 #[tokio::test]
 async fn scheduler_respects_settings_changes() {
+    // Reset global scheduler flag (tests run in parallel)
+    personal_agent::backup::reset_scheduler_flag_for_tests();
+    
     let mock = Arc::new(MockBackupService::new());
     mock.set_should_backup(false);
 

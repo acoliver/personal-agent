@@ -20,6 +20,7 @@ use std::time::Duration;
 use std::{fs, path::PathBuf};
 
 use gpui::*;
+use tokio::sync::watch;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -525,11 +526,9 @@ async fn initialize_global_mcp_runtime() {
 
 fn start_backup_scheduler(
     backup_service: Arc<dyn personal_agent::services::BackupService>,
-) -> tokio::task::JoinHandle<()> {
+) -> (tokio::task::JoinHandle<()>, watch::Sender<bool>) {
     info!("Starting backup scheduler...");
-    let (backup_scheduler_handle, _backup_shutdown_tx) =
-        personal_agent::backup::spawn_backup_scheduler(backup_service);
-    backup_scheduler_handle
+    personal_agent::backup::spawn_backup_scheduler(backup_service)
 }
 
 async fn runtime_keepalive_loop() {
@@ -573,7 +572,8 @@ async fn run_tokio_runtime(
     );
 
     initialize_global_mcp_runtime().await;
-    let backup_scheduler_handle = start_backup_scheduler(services.backup.clone());
+    let (backup_scheduler_handle, _backup_shutdown_tx) =
+        start_backup_scheduler(services.backup.clone());
 
     // Prevent handles in `presenter_bridges` from being dropped (which would close the channels)
     let _keep_alive = presenter_bridges;

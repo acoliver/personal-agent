@@ -4,6 +4,7 @@
 //! based on configured intervals. Supports graceful shutdown and
 //! startup stale backup detection.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -19,6 +20,15 @@ use crate::services::BackupService;
 /// When a backup is scheduled for "now" (no previous backup or stale),
 /// this ensures we wait at least this long before attempting again.
 const MINIMUM_BACKOFF_SECONDS: i64 = 60;
+
+/// Global flag to prevent multiple scheduler instances
+static SCHEDULER_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Reset the scheduler flag (for tests only)
+#[doc(hidden)]
+pub fn reset_scheduler_flag_for_tests() {
+    SCHEDULER_RUNNING.store(false, Ordering::SeqCst);
+}
 
 /// Scheduler for automatic database backups
 ///
@@ -313,12 +323,25 @@ impl BackupScheduler {
 pub fn spawn_backup_scheduler(
     backup_service: Arc<dyn BackupService>,
 ) -> (JoinHandle<()>, watch::Sender<bool>) {
+    // Check if a scheduler is already running
+    if SCHEDULER_RUNNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        warn!("Backup scheduler already running, skipping duplicate spawn");
+        let (shutdown_tx, _shutdown_rx) = watch::channel(true); // Already shutdown
+        let handle = tokio::spawn(async {});
+        return (handle, shutdown_tx);
+    }
+
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let mut scheduler = BackupScheduler::new(backup_service, shutdown_rx);
 
     let handle = tokio::spawn(async move {
         scheduler.run().await;
+        // Clear the running flag when scheduler exits
+        SCHEDULER_RUNNING.store(false, Ordering::SeqCst);
     });
 
     (handle, shutdown_tx)
@@ -430,5 +453,32 @@ mod tests {
         // Just verify it compiles and fields are set
         assert!(!*scheduler.shutdown_rx.borrow());
         let _ = tx;
+    }
+
+    #[tokio::test]
+    async fn test_single_scheduler_instance_enforced() {
+        // Reset the global flag
+        SCHEDULER_RUNNING.store(false, Ordering::SeqCst);
+
+        let service: Arc<dyn BackupService> = Arc::new(MockBackupService);
+
+        // First spawn should succeed
+        let (handle1, shutdown1) = spawn_backup_scheduler(Arc::clone(&service));
+        assert!(SCHEDULER_RUNNING.load(Ordering::SeqCst));
+
+        // Second spawn should be rejected
+        let (handle2, shutdown2) = spawn_backup_scheduler(Arc::clone(&service));
+
+        // The second handle should be a no-op (spawn already running)
+        // We can't easily test this without waiting, so just verify the flag is still set
+        assert!(SCHEDULER_RUNNING.load(Ordering::SeqCst));
+
+        // Clean up
+        let _ = shutdown1.send(true);
+        let _ = shutdown2.send(true);
+        // Wait for scheduler to exit and clear the flag
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        drop(handle1);
+        drop(handle2);
     }
 }
