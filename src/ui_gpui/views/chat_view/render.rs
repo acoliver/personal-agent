@@ -153,6 +153,7 @@ impl ChatView {
     }
 
     /// Handle Cmd+key shortcuts.
+    #[allow(clippy::too_many_lines)]
     fn handle_platform_key(&mut self, key: &str, cx: &mut gpui::Context<Self>) {
         match key {
             "h" => {
@@ -206,6 +207,18 @@ impl ChatView {
                 }
             }
             "c" => {
+                // Check for text selection first (Issue #151)
+                if let Some(ref selection) = self.state.text_selection {
+                    if let Some(msg) = self.state.messages.get(selection.message_index) {
+                        let range = selection.range.clone();
+                        if !range.is_empty() && range.end <= msg.content.len() {
+                            let selected_text = msg.content[range].to_string();
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected_text));
+                            return;
+                        }
+                    }
+                }
+                // Fall back to input text copy
                 let text = if self.state.sidebar_search_focused {
                     self.state.sidebar_search_query.clone()
                 } else if self.state.conversation_title_editing {
@@ -294,16 +307,22 @@ impl ChatView {
                     )
                 },
             )
-            // Messages
+            // Messages with selection support
+            // @plan PLAN-20260406-ISSUE151.P01
             .when(!messages.is_empty(), |d| {
+                let selection = self.state.text_selection.clone();
                 d.children(messages.into_iter().enumerate().map(|(i, msg)| {
                     let id = SharedString::from(format!("msg-{i}"));
-                    div()
-                        .id(id)
-                        .w_full()
-                        .flex()
-                        .justify_start()
-                        .child(Self::render_message(&msg, show_thinking, filter_emoji))
+                    let msg_selection = selection.as_ref().and_then(|s| {
+                        if s.message_index == i {
+                            Some(s.range.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    let element =
+                        Self::render_message(&msg, show_thinking, filter_emoji, i, msg_selection);
+                    div().id(id).w_full().flex().justify_start().child(element)
                 }))
             })
             // Approval bubbles (inline in message stream) - queue: only first pending
@@ -368,52 +387,46 @@ impl ChatView {
 
     /// Render a single message
     /// @plan PLAN-20250130-GPUIREDUX.P03
+    /// @plan PLAN-20260406-ISSUE151.P01 - added `_message_index` for selection
     pub(super) fn render_message(
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
-    ) -> impl IntoElement {
+        _message_index: usize,
+        selection: Option<std::ops::Range<usize>>,
+    ) -> gpui::AnyElement {
         match msg.role {
-            MessageRole::User => Self::render_user_message(&msg.content),
+            MessageRole::User => Self::render_user_message(&msg.content, selection),
             MessageRole::Assistant => {
-                Self::render_assistant_message(msg, show_thinking, filter_emoji)
+                Self::render_assistant_message(msg, show_thinking, filter_emoji, selection)
             }
         }
     }
 
     /// Render user message - right aligned, green bubble
-    pub(super) fn render_user_message(content: &str) -> gpui::AnyElement {
-        let content_owned = content.to_string();
+    /// @plan PLAN-20260406-ISSUE151.P01
+    pub(super) fn render_user_message(
+        content: &str,
+        selection: Option<std::ops::Range<usize>>,
+    ) -> gpui::AnyElement {
+        let bubble = crate::ui_gpui::components::UserBubble::new(content).selection(selection);
         div()
             .w_full()
             .flex()
             .justify_end()
-            .child({
-                let text = content_owned.clone();
-                Theme::user_bubble(
-                    div()
-                        .max_w(px(300.0))
-                        .px(px(10.0))
-                        .py(px(10.0))
-                        .rounded(px(12.0))
-                        .text_size(px(Theme::font_size_mono()))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
-                        })
-                        .child(content_owned),
-                )
-            })
+            .child(bubble)
             .into_any_element()
     }
 
     /// Render assistant message - left aligned, dark bubble with model label
     /// @plan:PLAN-20260402-MARKDOWN.P11
     /// @requirement:REQ-MD-INTEGRATE-010
+    /// @plan PLAN-20260406-ISSUE151.P01 - added selection parameter
     pub(super) fn render_assistant_message(
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
+        selection: Option<std::ops::Range<usize>>,
     ) -> gpui::AnyElement {
         let content = if filter_emoji {
             strip_emojis(&msg.content)
@@ -421,7 +434,7 @@ impl ChatView {
             msg.content.clone()
         };
 
-        let mut bubble = AssistantBubble::new(content);
+        let mut bubble = AssistantBubble::new(content).selection(selection);
 
         if let Some(ref model_label) = msg.model_label {
             bubble = bubble.model_id(model_label.clone());

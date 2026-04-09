@@ -13,6 +13,19 @@ use crate::presentation::view_command::{
 use std::ops::Range;
 use uuid::Uuid;
 
+/// Text selection within a message.
+///
+/// @plan PLAN-20260406-ISSUE151.P01
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextSelection {
+    /// Index of the message in the messages vector.
+    pub message_index: usize,
+    /// Byte range of selected text within the message content.
+    pub range: Range<usize>,
+    /// Whether this is from a drag operation (for mouse tracking).
+    pub is_dragging: bool,
+}
+
 /// Represents a single message in the chat (for UI display)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessage {
@@ -198,6 +211,9 @@ pub struct ChatState {
     pub delete_confirming_id: Option<Uuid>,
     /// When true, emojis are stripped from assistant message display.
     pub filter_emoji: bool,
+    /// Text selection within messages for copy/paste.
+    /// @plan PLAN-20260406-ISSUE151.P01
+    pub text_selection: Option<TextSelection>,
 }
 
 impl Default for ChatState {
@@ -236,6 +252,7 @@ impl Default for ChatState {
             export_feedback_is_error: false,
             export_feedback_path: None,
             filter_emoji: false,
+            text_selection: None,
         }
     }
 }

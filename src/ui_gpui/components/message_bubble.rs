@@ -6,17 +6,26 @@
 use crate::ui_gpui::components::markdown_content::{
     blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
 };
-use gpui::{div, prelude::*, px, IntoElement, MouseButton};
+use gpui::{div, prelude::*, px, IntoElement, MouseButton, StyledText};
+use std::ops::Range;
 
 pub struct UserBubble {
     content: String,
+    selection: Option<Range<usize>>,
 }
 
 impl UserBubble {
     pub fn new(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
+            selection: None,
         }
+    }
+
+    #[must_use]
+    pub const fn selection(mut self, range: Option<Range<usize>>) -> Self {
+        self.selection = range;
+        self
     }
 }
 
@@ -25,6 +34,12 @@ impl IntoElement for UserBubble {
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
+
+        let content = if let Some(ref range) = self.selection {
+            render_text_with_selection(&self.content, range.clone())
+        } else {
+            div().child(self.content)
+        };
 
         div()
             .flex()
@@ -36,9 +51,55 @@ impl IntoElement for UserBubble {
                     .px(px(Theme::SPACING_MD))
                     .py(px(Theme::SPACING_SM))
                     .rounded(px(Theme::RADIUS_LG))
-                    .child(self.content),
+                    .child(content),
             ))
     }
+}
+
+/// Render text with selection highlight.
+fn render_text_with_selection(text: &str, selection: Range<usize>) -> gpui::Div {
+    use crate::ui_gpui::theme::Theme;
+
+    if selection.is_empty() {
+        return div().child(text.to_string());
+    }
+
+    let start = selection.start.min(text.len());
+    let end = selection.end.min(text.len());
+
+    let before = &text[..start];
+    let selected = &text[start..end];
+    let after = &text[end..];
+
+    let mut parts = Vec::new();
+
+    if !before.is_empty() {
+        parts.push(gpui::TextRun {
+            len: before.len(),
+            color: Theme::text_primary(),
+            ..Default::default()
+        });
+    }
+
+    if !selected.is_empty() {
+        parts.push(gpui::TextRun {
+            len: selected.len(),
+            color: Theme::selection_fg(),
+            background_color: Some(Theme::selection_bg()),
+            ..Default::default()
+        });
+    }
+
+    if !after.is_empty() {
+        parts.push(gpui::TextRun {
+            len: after.len(),
+            color: Theme::text_primary(),
+            ..Default::default()
+        });
+    }
+
+    let full_text = format!("{before}{selected}{after}");
+    div().child(StyledText::new(full_text).with_runs(parts))
 }
 
 pub struct AssistantBubble {
@@ -47,6 +108,7 @@ pub struct AssistantBubble {
     thinking: Option<String>,
     show_thinking: bool,
     is_streaming: bool,
+    selection: Option<Range<usize>>,
 }
 
 impl AssistantBubble {
@@ -57,6 +119,7 @@ impl AssistantBubble {
             thinking: None,
             show_thinking: false,
             is_streaming: false,
+            selection: None,
         }
     }
 
@@ -81,6 +144,12 @@ impl AssistantBubble {
     #[must_use]
     pub const fn streaming(mut self, is_streaming: bool) -> Self {
         self.is_streaming = is_streaming;
+        self
+    }
+
+    #[must_use]
+    pub const fn selection(mut self, range: Option<Range<usize>>) -> Self {
+        self.selection = range;
         self
     }
 }
@@ -168,7 +237,14 @@ impl IntoElement for AssistantBubble {
                 .children(rendered),
         );
 
-        if should_enable_bubble_copy(&blocks, self.is_streaming) {
+        // If we have selection, render with selection highlight instead of click-to-copy
+        if let Some(ref range) = self.selection {
+            if !range.is_empty() {
+                // Selection mode - show highlighted text (copy handled by ChatView)
+                main_content = main_content.cursor_text();
+            }
+        } else if should_enable_bubble_copy(&blocks, self.is_streaming) {
+            // No selection - use click-to-copy (legacy behavior)
             let raw_markdown = self.content.clone();
             main_content =
                 main_content
