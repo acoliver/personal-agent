@@ -194,6 +194,53 @@ fn should_enable_bubble_copy(blocks: &[MarkdownBlock], is_streaming: bool) -> bo
     !is_streaming && !has_any_links(blocks)
 }
 
+/// Render text with selection highlight for assistant bubbles.
+///
+/// @plan PLAN-20260406-ISSUE151.P01
+fn render_selection_highlight(text: &str, range: &Range<usize>) -> Option<gpui::StyledText> {
+    use crate::ui_gpui::theme::Theme;
+
+    if range.is_empty() {
+        return None;
+    }
+
+    let start = range.start.min(text.len());
+    let end = range.end.min(text.len());
+
+    if start >= end {
+        return None;
+    }
+
+    let before = &text[..start];
+    let selected = &text[start..end];
+    let after = &text[end..];
+
+    let mut runs = Vec::with_capacity(3);
+    if !before.is_empty() {
+        runs.push(gpui::TextRun {
+            len: before.len(),
+            color: Theme::text_primary(),
+            ..Default::default()
+        });
+    }
+    runs.push(gpui::TextRun {
+        len: selected.len(),
+        color: Theme::selection_fg(),
+        background_color: Some(Theme::selection_bg()),
+        ..Default::default()
+    });
+    if !after.is_empty() {
+        runs.push(gpui::TextRun {
+            len: after.len(),
+            color: Theme::text_primary(),
+            ..Default::default()
+        });
+    }
+
+    let full_text = format!("{before}{selected}{after}");
+    Some(gpui::StyledText::new(full_text).with_runs(runs))
+}
+
 impl IntoElement for AssistantBubble {
     type Element = gpui::Div;
 
@@ -237,50 +284,13 @@ impl IntoElement for AssistantBubble {
                 .children(rendered),
         );
 
-        // If we have selection, render with selection highlight instead of click-to-copy
-        // The actual rendering happens in the markdown renderer, but we can't easily
-        // highlight partial markdown content. For selection display, we show cursor_text()
-        // and the copy is handled by ChatView's handle_copy method.
+        // Check for selection highlight or click-to-copy
+        // @plan PLAN-20260406-ISSUE151.P01
         if let Some(ref range) = self.selection {
-            if !range.is_empty() {
-                // Selection mode - show highlighted text (copy handled by ChatView)
-                // When selection is active, render as plain text with highlight
-                let text = &self.content;
-                let before = &text[..range.start];
-                let selected = &text[range.clone()];
-                let after = &text[range.end..];
-
-                let mut runs = Vec::new();
-                if !before.is_empty() {
-                    runs.push(gpui::TextRun {
-                        len: before.len(),
-                        color: Theme::text_primary(),
-                        ..Default::default()
-                    });
-                }
-                if !selected.is_empty() {
-                    runs.push(gpui::TextRun {
-                        len: selected.len(),
-                        color: Theme::selection_fg(),
-                        background_color: Some(Theme::selection_bg()),
-                        ..Default::default()
-                    });
-                }
-                if !after.is_empty() {
-                    runs.push(gpui::TextRun {
-                        len: after.len(),
-                        color: Theme::text_primary(),
-                        ..Default::default()
-                    });
-                }
-
-                let full_text = format!("{before}{selected}{after}");
-                let styled = gpui::StyledText::new(full_text).with_runs(runs);
-
+            if let Some(styled) = render_selection_highlight(&self.content, range) {
                 main_content = main_content.cursor_text().child(styled);
             }
         } else if should_enable_bubble_copy(&blocks, self.is_streaming) {
-            // No selection - use click-to-copy (legacy behavior)
             let raw_markdown = self.content.clone();
             main_content =
                 main_content
