@@ -956,25 +956,48 @@ mod tests {
 
     #[test]
     fn test_resolve_key_name_to_path_does_not_fallback_to_llxprt() {
+        struct TestFileCleanup {
+            paths: Vec<std::path::PathBuf>,
+        }
+
+        impl Drop for TestFileCleanup {
+            fn drop(&mut self) {
+                for path in &self.paths {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+
+        fn key_candidate_paths(dir: &std::path::Path, key_name: &str) -> [std::path::PathBuf; 2] {
+            [dir.join(format!(".{key_name}_key")), dir.join(key_name)]
+        }
+
         let home = dirs::home_dir().expect("home directory should exist for test");
         let synthetic_key_name = format!("pa-test-no-llxprt-{}", Uuid::new_v4());
+        let normalized_key_name = synthetic_key_name.trim_end_matches(|c: char| c.is_ascii_digit());
         let dot_keys_dir = home.join(".keys");
         let llxprt_keys_dir = home.join(".llxprt").join("keys");
-        let dot_keys_path = dot_keys_dir.join(format!(".{synthetic_key_name}_key"));
-        let llxprt_key_path = llxprt_keys_dir.join(format!(".{synthetic_key_name}_key"));
+        let cleanup_paths = key_candidate_paths(&dot_keys_dir, &synthetic_key_name)
+            .into_iter()
+            .chain(key_candidate_paths(&llxprt_keys_dir, &synthetic_key_name))
+            .chain(key_candidate_paths(&dot_keys_dir, normalized_key_name))
+            .chain(key_candidate_paths(&llxprt_keys_dir, normalized_key_name))
+            .collect::<Vec<_>>();
+        let _cleanup = TestFileCleanup {
+            paths: cleanup_paths.clone(),
+        };
 
+        let _ = std::fs::create_dir_all(&dot_keys_dir);
         let _ = std::fs::create_dir_all(&llxprt_keys_dir);
+        for path in &cleanup_paths {
+            let _ = std::fs::remove_file(path);
+        }
+
+        let llxprt_key_path = llxprt_keys_dir.join(format!(".{synthetic_key_name}_key"));
         std::fs::write(&llxprt_key_path, "synthetic-test-key")
             .expect("should create synthetic llxprt key file");
 
-        if dot_keys_path.exists() {
-            std::fs::remove_file(&dot_keys_path)
-                .expect("should remove conflicting .keys test file");
-        }
-
         let resolved = ProfileServiceImpl::resolve_key_name_to_path(&synthetic_key_name);
         assert_eq!(resolved, None);
-
-        let _ = std::fs::remove_file(&llxprt_key_path);
     }
 }

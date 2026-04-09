@@ -30,12 +30,14 @@ fn gpui_bin_path() -> PathBuf {
 }
 
 fn app_support_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_default().join("PersonalAgent")
+    dirs::config_dir()
+        .expect("platform config dir unavailable")
+        .join("PersonalAgent")
 }
 
 fn app_data_dir() -> PathBuf {
     dirs::data_local_dir()
-        .unwrap_or_default()
+        .expect("platform data dir unavailable")
         .join("PersonalAgent")
 }
 
