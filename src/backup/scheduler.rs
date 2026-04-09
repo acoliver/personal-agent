@@ -323,6 +323,14 @@ impl BackupScheduler {
 pub fn spawn_backup_scheduler(
     backup_service: Arc<dyn BackupService>,
 ) -> (JoinHandle<()>, watch::Sender<bool>) {
+    // Drop guard to ensure the flag is cleared even if scheduler.run() panics
+    struct SchedulerGuard;
+    impl Drop for SchedulerGuard {
+        fn drop(&mut self) {
+            SCHEDULER_RUNNING.store(false, Ordering::SeqCst);
+        }
+    }
+
     // Check if a scheduler is already running
     if SCHEDULER_RUNNING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -339,9 +347,8 @@ pub fn spawn_backup_scheduler(
     let mut scheduler = BackupScheduler::new(backup_service, shutdown_rx);
 
     let handle = tokio::spawn(async move {
+        let _guard = SchedulerGuard;
         scheduler.run().await;
-        // Clear the running flag when scheduler exits
-        SCHEDULER_RUNNING.store(false, Ordering::SeqCst);
     });
 
     (handle, shutdown_tx)
