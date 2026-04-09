@@ -127,10 +127,6 @@ impl ProfileServiceImpl {
                 let candidates = [
                     home.join(".keys").join(format!(".{key_name}_key")),
                     home.join(".keys").join(&key_name),
-                    home.join(".llxprt")
-                        .join("keys")
-                        .join(format!(".{key_name}_key")),
-                    home.join(".llxprt").join("keys").join(&key_name),
                 ];
 
                 for candidate in candidates {
@@ -956,5 +952,29 @@ mod tests {
                 "resolved legacy auth key path should exist"
             );
         }
+    }
+
+    #[test]
+    fn test_resolve_key_name_to_path_does_not_fallback_to_llxprt() {
+        let home = dirs::home_dir().expect("home directory should exist for test");
+        let synthetic_key_name = format!("pa-test-no-llxprt-{}", Uuid::new_v4());
+        let dot_keys_dir = home.join(".keys");
+        let llxprt_keys_dir = home.join(".llxprt").join("keys");
+        let dot_keys_path = dot_keys_dir.join(format!(".{synthetic_key_name}_key"));
+        let llxprt_key_path = llxprt_keys_dir.join(format!(".{synthetic_key_name}_key"));
+
+        let _ = std::fs::create_dir_all(&llxprt_keys_dir);
+        std::fs::write(&llxprt_key_path, "synthetic-test-key")
+            .expect("should create synthetic llxprt key file");
+
+        if dot_keys_path.exists() {
+            std::fs::remove_file(&dot_keys_path)
+                .expect("should remove conflicting .keys test file");
+        }
+
+        let resolved = ProfileServiceImpl::resolve_key_name_to_path(&synthetic_key_name);
+        assert_eq!(resolved, None);
+
+        let _ = std::fs::remove_file(&llxprt_key_path);
     }
 }

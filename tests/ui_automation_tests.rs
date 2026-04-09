@@ -29,10 +29,18 @@ fn gpui_bin_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_personal_agent_gpui"))
 }
 
-fn profiles_dir() -> PathBuf {
-    dirs::home_dir()
+fn app_support_dir() -> PathBuf {
+    dirs::config_dir().unwrap_or_default().join("PersonalAgent")
+}
+
+fn app_data_dir() -> PathBuf {
+    dirs::data_local_dir()
         .unwrap_or_default()
-        .join(".llxprt/profiles")
+        .join("PersonalAgent")
+}
+
+fn profiles_dir() -> PathBuf {
+    app_support_dir().join("profiles")
 }
 
 fn default_profile_path() -> PathBuf {
@@ -40,9 +48,7 @@ fn default_profile_path() -> PathBuf {
 }
 
 fn conversations_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".llxprt/conversations")
+    app_data_dir().join("conversations")
 }
 
 fn clear_log() {
