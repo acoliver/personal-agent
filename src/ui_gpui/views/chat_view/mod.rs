@@ -21,7 +21,7 @@ mod state;
 // see the same type paths as before extraction.
 pub use state::{
     ApprovalBubbleState, ChatMessage, ChatState, GroupedOperation, MessageRole, StreamingState,
-    ToolApprovalBubble,
+    TextSelection, ToolApprovalBubble,
 };
 
 use crate::events::types::UserEvent;
@@ -259,11 +259,15 @@ impl ChatView {
         match &load_state {
             ConversationLoadState::Ready { .. } => {
                 self.state.messages = Self::messages_from_payload(transcript);
+                // Clear text selection when messages change
+                self.state.text_selection = None;
             }
             ConversationLoadState::Loading { .. } | ConversationLoadState::Error { .. } => {}
             ConversationLoadState::Idle => {
                 if selected_conversation_id.is_none() {
                     self.state.messages.clear();
+                    // Clear text selection when messages are cleared
+                    self.state.text_selection = None;
                 }
             }
         }

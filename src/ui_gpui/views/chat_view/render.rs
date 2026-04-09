@@ -288,8 +288,14 @@ impl ChatView {
             )
             // Messages with selection support
             // @plan PLAN-20260406-ISSUE151.P01
+            // Note: Selection is not applied when filter_emoji is enabled because
+            // the displayed text differs from the source text, causing range drift.
             .when(!messages.is_empty(), |d| {
-                let selection = self.state.text_selection.clone();
+                let selection = if filter_emoji {
+                    None // Disable selection when emoji filtering is active
+                } else {
+                    self.state.text_selection.clone()
+                };
                 d.children(messages.into_iter().enumerate().map(|(i, msg)| {
                     let id = SharedString::from(format!("msg-{i}"));
                     let msg_selection = selection.as_ref().and_then(|s| {
@@ -366,7 +372,7 @@ impl ChatView {
 
     /// Render a single message
     /// @plan PLAN-20250130-GPUIREDUX.P03
-    /// @plan PLAN-20260406-ISSUE151.P01 - added `_message_index` for selection
+    /// @plan PLAN-20260406-ISSUE151.P01 - added `message_index` for selection
     pub(super) fn render_message(
         msg: &ChatMessage,
         show_thinking: bool,

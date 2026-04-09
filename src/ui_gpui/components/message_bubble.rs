@@ -238,10 +238,46 @@ impl IntoElement for AssistantBubble {
         );
 
         // If we have selection, render with selection highlight instead of click-to-copy
+        // The actual rendering happens in the markdown renderer, but we can't easily
+        // highlight partial markdown content. For selection display, we show cursor_text()
+        // and the copy is handled by ChatView's handle_copy method.
         if let Some(ref range) = self.selection {
             if !range.is_empty() {
                 // Selection mode - show highlighted text (copy handled by ChatView)
-                main_content = main_content.cursor_text();
+                // When selection is active, render as plain text with highlight
+                let text = &self.content;
+                let before = &text[..range.start];
+                let selected = &text[range.clone()];
+                let after = &text[range.end..];
+
+                let mut runs = Vec::new();
+                if !before.is_empty() {
+                    runs.push(gpui::TextRun {
+                        len: before.len(),
+                        color: Theme::text_primary(),
+                        ..Default::default()
+                    });
+                }
+                if !selected.is_empty() {
+                    runs.push(gpui::TextRun {
+                        len: selected.len(),
+                        color: Theme::selection_fg(),
+                        background_color: Some(Theme::selection_bg()),
+                        ..Default::default()
+                    });
+                }
+                if !after.is_empty() {
+                    runs.push(gpui::TextRun {
+                        len: after.len(),
+                        color: Theme::text_primary(),
+                        ..Default::default()
+                    });
+                }
+
+                let full_text = format!("{before}{selected}{after}");
+                let styled = gpui::StyledText::new(full_text).with_runs(runs);
+
+                main_content = main_content.cursor_text().child(styled);
             }
         } else if should_enable_bubble_copy(&blocks, self.is_streaming) {
             // No selection - use click-to-copy (legacy behavior)

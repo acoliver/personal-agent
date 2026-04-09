@@ -112,31 +112,62 @@ impl SelectionState {
 
 /// Find word boundaries around a position.
 ///
+/// Uses `char_indices()` to ensure all returned indices are valid UTF-8 char boundaries.
+///
 /// @plan PLAN-20260406-ISSUE151.P01
 pub fn find_word_boundaries(text: &str, position: usize) -> Range<usize> {
-    let bytes = text.as_bytes();
-    let len = bytes.len();
+    let len = text.len();
     let pos = position.min(len);
 
-    // If we're not at a word character, return empty range
-    if pos < len && !is_word_char(bytes[pos] as char) {
-        return pos..pos;
+    // Validate position is a char boundary
+    if !text.is_char_boundary(pos) {
+        // Find the nearest char boundary
+        let nearest = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= pos)
+            .last()
+            .unwrap_or(0);
+        if nearest == pos || !text.is_char_boundary(pos) {
+            return nearest..nearest;
+        }
     }
-    // If we're past the end, return empty range
-    if pos >= len {
+
+    // Find the character at position
+    let char_at_pos = text[pos..].chars().next();
+    if let Some(ch) = char_at_pos {
+        if !is_word_char(ch) {
+            return pos..pos;
+        }
+    } else if pos >= len {
         return pos..pos;
     }
 
-    // Find start of word
+    // Find start of word using char_indices for proper UTF-8 handling
     let mut start = pos;
-    while start > 0 && is_word_char(bytes[start - 1] as char) {
-        start -= 1;
+    for (i, ch) in text.char_indices().rev() {
+        if i >= pos {
+            continue;
+        }
+        if is_word_char(ch) {
+            start = i;
+        } else {
+            break;
+        }
     }
 
-    // Find end of word
+    // Find end of word using char_indices
     let mut end = pos;
-    while end < len && is_word_char(bytes[end] as char) {
-        end += 1;
+    for (i, ch) in text.char_indices() {
+        if i < pos {
+            continue;
+        }
+        if is_word_char(ch) {
+            // end should be the byte index after this character
+            end = i + ch.len_utf8();
+        } else {
+            break;
+        }
     }
 
     start..end
@@ -144,29 +175,38 @@ pub fn find_word_boundaries(text: &str, position: usize) -> Range<usize> {
 
 /// Find paragraph boundaries around a position.
 ///
+/// Uses `char_indices()` to ensure all returned indices are valid UTF-8 char boundaries.
+///
 /// @plan PLAN-20260406-ISSUE151.P01
 pub fn find_paragraph_boundaries(text: &str, position: usize) -> Range<usize> {
     let len = text.len();
     let pos = position.min(len);
 
     // Find start of paragraph (after newline or at beginning)
+    // Using char_indices for proper UTF-8 handling
     let mut start = pos;
-    while start > 0 {
-        let ch = text.as_bytes()[start - 1] as char;
+    for (i, ch) in text.char_indices().rev() {
+        if i >= pos {
+            continue;
+        }
         if ch == '\n' || ch == '\r' {
+            // Start after the newline
+            start = i + ch.len_utf8();
             break;
         }
-        start -= 1;
+        start = i;
     }
 
     // Find end of paragraph (before newline or at end)
     let mut end = pos;
-    while end < len {
-        let ch = text.as_bytes()[end] as char;
+    for (i, ch) in text.char_indices() {
+        if i < pos {
+            continue;
+        }
         if ch == '\n' || ch == '\r' {
             break;
         }
-        end += 1;
+        end = i + ch.len_utf8();
     }
 
     start..end
