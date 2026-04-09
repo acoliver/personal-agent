@@ -207,28 +207,7 @@ impl ChatView {
                 }
             }
             "c" => {
-                // Check for text selection first (Issue #151)
-                if let Some(ref selection) = self.state.text_selection {
-                    if let Some(msg) = self.state.messages.get(selection.message_index) {
-                        let range = selection.range.clone();
-                        if !range.is_empty() && range.end <= msg.content.len() {
-                            let selected_text = msg.content[range].to_string();
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected_text));
-                            return;
-                        }
-                    }
-                }
-                // Fall back to input text copy
-                let text = if self.state.sidebar_search_focused {
-                    self.state.sidebar_search_query.clone()
-                } else if self.state.conversation_title_editing {
-                    self.state.conversation_title_input.clone()
-                } else {
-                    self.state.input_text.clone()
-                };
-                if !text.is_empty() {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                }
+                self.handle_copy(cx);
             }
             "x" => {
                 if self.state.sidebar_search_focused {
