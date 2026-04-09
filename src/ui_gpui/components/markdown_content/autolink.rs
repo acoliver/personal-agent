@@ -125,19 +125,27 @@ fn apply_autolinks_to_block(block: &mut MarkdownBlock) {
 /// @plan PLAN-20260402-ISSUE153.P01
 /// @requirement REQ-MD-AUTOLINK-005
 fn apply_autolinks_to_spans(spans: &mut Vec<MarkdownInline>) -> Vec<(Range<usize>, String)> {
-    // First, collect all URLs and their positions in the combined text
+    let all_urls = collect_url_positions(spans);
+
+    if all_urls.is_empty() {
+        return Vec::new();
+    }
+
+    let (new_spans, new_links) = rebuild_spans_with_urls(spans);
+    *spans = new_spans;
+    new_links
+}
+
+/// Collect URL positions from all eligible spans.
+///
+/// @plan PLAN-20260402-ISSUE153.P01
+fn collect_url_positions(spans: &[MarkdownInline]) -> Vec<(Range<usize>, String)> {
     let mut all_urls: Vec<(Range<usize>, String)> = Vec::new();
     let mut byte_offset = 0;
 
-    for span in spans.iter() {
-        // Skip code spans - URLs in code should NOT be autolinked
-        if span.code {
-            byte_offset += span.text.len();
-            continue;
-        }
-
-        // Skip spans that are already part of a link
-        if span.link_url.is_some() {
+    for span in spans {
+        // Skip code spans and already-linked spans
+        if span.code || span.link_url.is_some() {
             byte_offset += span.text.len();
             continue;
         }
@@ -150,17 +158,20 @@ fn apply_autolinks_to_spans(spans: &mut Vec<MarkdownInline>) -> Vec<(Range<usize
         byte_offset += span.text.len();
     }
 
-    // If no URLs found, nothing to do
-    if all_urls.is_empty() {
-        return Vec::new();
-    }
+    all_urls
+}
 
-    // Now rebuild spans with URL splits
+/// Rebuild spans with URL splits.
+///
+/// @plan PLAN-20260402-ISSUE153.P01
+fn rebuild_spans_with_urls(
+    spans: &[MarkdownInline],
+) -> (Vec<MarkdownInline>, Vec<(Range<usize>, String)>) {
     let mut new_spans: Vec<MarkdownInline> = Vec::new();
     let mut new_links: Vec<(Range<usize>, String)> = Vec::new();
-    byte_offset = 0;
+    let mut byte_offset = 0;
 
-    for span in spans.iter() {
+    for span in spans {
         // Skip code spans - preserve as-is
         if span.code {
             new_spans.push(span.clone());
@@ -175,58 +186,66 @@ fn apply_autolinks_to_spans(spans: &mut Vec<MarkdownInline>) -> Vec<(Range<usize
             continue;
         }
 
-        // Find URLs in this span
         let detected = detect_bare_urls(&span.text);
 
         if detected.is_empty() {
-            // No URLs in this span
             new_spans.push(span.clone());
-            byte_offset += span.text.len();
         } else {
-            // Split span at URL boundaries
-            let mut last_end = 0;
-            for (local_range, url) in detected {
-                // Text before URL
-                if local_range.start > last_end {
-                    let before = &span.text[last_end..local_range.start];
-                    if !before.is_empty() {
-                        let mut new_span = span.clone();
-                        new_span.text = before.to_string();
-                        new_spans.push(new_span);
-                    }
-                }
-
-                // URL as a link span
-                let url_text = &span.text[local_range.clone()];
-                let mut url_span = span.clone();
-                url_span.text = url_text.to_string();
-                url_span.link_url = Some(url.clone());
-                new_spans.push(url_span);
-
-                // Record the link range in the new combined text
-                let link_start = byte_offset + last_end;
-                let link_end = link_start + url_text.len();
-                new_links.push((link_start..link_end, url));
-
-                last_end = local_range.end;
-            }
-
-            // Text after last URL
-            if last_end < span.text.len() {
-                let after = &span.text[last_end..];
-                if !after.is_empty() {
-                    let mut new_span = span.clone();
-                    new_span.text = after.to_string();
-                    new_spans.push(new_span);
-                }
-            }
+            split_span_at_urls(span, &detected, &mut new_spans, &mut new_links, byte_offset);
         }
-
         byte_offset += span.text.len();
     }
 
-    *spans = new_spans;
-    new_links
+    (new_spans, new_links)
+}
+
+/// Split a span at URL boundaries.
+///
+/// @plan PLAN-20260402-ISSUE153.P01
+fn split_span_at_urls(
+    span: &MarkdownInline,
+    detected: &[(Range<usize>, String)],
+    new_spans: &mut Vec<MarkdownInline>,
+    new_links: &mut Vec<(Range<usize>, String)>,
+    byte_offset: usize,
+) {
+    let mut last_end = 0;
+
+    for (local_range, url) in detected {
+        // Text before URL
+        if local_range.start > last_end {
+            let before = &span.text[last_end..local_range.start];
+            if !before.is_empty() {
+                let mut new_span = span.clone();
+                new_span.text = before.to_string();
+                new_spans.push(new_span);
+            }
+        }
+
+        // URL as a link span
+        let url_text = &span.text[local_range.clone()];
+        let mut url_span = span.clone();
+        url_span.text = url_text.to_string();
+        url_span.link_url = Some(url.clone());
+        new_spans.push(url_span);
+
+        // Record the link range in the new combined text
+        let link_start = byte_offset + last_end;
+        let link_end = link_start + url_text.len();
+        new_links.push((link_start..link_end, url.clone()));
+
+        last_end = local_range.end;
+    }
+
+    // Text after last URL
+    if last_end < span.text.len() {
+        let after = &span.text[last_end..];
+        if !after.is_empty() {
+            let mut new_span = span.clone();
+            new_span.text = after.to_string();
+            new_spans.push(new_span);
+        }
+    }
 }
 
 #[cfg(test)]
