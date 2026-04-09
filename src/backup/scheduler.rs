@@ -483,9 +483,10 @@ mod tests {
         // Clean up
         let _ = shutdown1.send(true);
         let _ = shutdown2.send(true);
-        // Wait for scheduler to exit and clear the flag
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        drop(handle1);
-        drop(handle2);
+
+        // Deterministically await task completion
+        let _ = tokio::time::timeout(Duration::from_secs(1), handle1).await;
+        let _ = tokio::time::timeout(Duration::from_secs(1), handle2).await;
+        assert!(!SCHEDULER_RUNNING.load(Ordering::SeqCst));
     }
 }
