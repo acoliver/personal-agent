@@ -342,6 +342,10 @@ pub fn spawn_backup_scheduler(
         return (handle, shutdown_tx);
     }
 
+    // Defensive guard: if tokio::spawn panics before the task starts,
+    // this guard will clear the flag. We forget it after spawn succeeds.
+    let spawn_guard = SchedulerGuard;
+
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let mut scheduler = BackupScheduler::new(backup_service, shutdown_rx);
@@ -350,6 +354,9 @@ pub fn spawn_backup_scheduler(
         let _guard = SchedulerGuard;
         scheduler.run().await;
     });
+
+    // Spawn succeeded, forget the defensive guard so the task's guard owns the responsibility
+    std::mem::forget(spawn_guard);
 
     (handle, shutdown_tx)
 }
@@ -465,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn test_single_scheduler_instance_enforced() {
         // Reset the global flag
-        SCHEDULER_RUNNING.store(false, Ordering::SeqCst);
+        reset_scheduler_flag_for_tests();
 
         let service: Arc<dyn BackupService> = Arc::new(MockBackupService);
 
