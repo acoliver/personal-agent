@@ -93,7 +93,7 @@ impl BackupService for MockBackupService {
 async fn scheduler_exits_when_disabled() {
     // Reset global scheduler flag (tests run in parallel)
     personal_agent::backup::reset_scheduler_flag_for_tests();
-    
+
     let mock = Arc::new(MockBackupService::new());
     mock.set_enabled(false);
 
@@ -118,7 +118,7 @@ async fn scheduler_exits_when_disabled() {
 async fn scheduler_shutdown_signal() {
     // Reset global scheduler flag (tests run in parallel)
     personal_agent::backup::reset_scheduler_flag_for_tests();
-    
+
     let mock = Arc::new(MockBackupService::new());
     mock.set_should_backup(false); // Don't actually try to backup
 
@@ -141,7 +141,7 @@ async fn scheduler_shutdown_signal() {
 async fn scheduler_respects_settings_changes() {
     // Reset global scheduler flag (tests run in parallel)
     personal_agent::backup::reset_scheduler_flag_for_tests();
-    
+
     let mock = Arc::new(MockBackupService::new());
     mock.set_should_backup(false);
 
