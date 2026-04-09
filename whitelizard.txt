@@ -1,0 +1,6 @@
+# Whitelist for lizard complexity warnings
+# Format: function_name@file_path or just function_name
+
+# is_word_char is incorrectly detected by lizard as 281 lines
+# It's actually just a simple one-liner function
+is_word_char

@@ -447,7 +447,9 @@ mod tests {
 
     #[test]
     fn test_find_paragraph_boundaries_middle() {
-        let text = "First line\nSecond line\nThird line";
+        let text = "First line
+Second line
+Third line";
         let range = find_paragraph_boundaries(text, 15); // In 'Second line'
         assert_eq!(range, 11..22);
         assert_eq!(&text[range], "Second line");
@@ -462,7 +464,8 @@ mod tests {
 
     #[test]
     fn test_find_paragraph_boundaries_first() {
-        let text = "First\nSecond";
+        let text = "First
+Second";
         let range = find_paragraph_boundaries(text, 2);
         assert_eq!(range, 0..5);
     }
@@ -478,7 +481,9 @@ mod tests {
     #[test]
     fn test_selection_state_select_paragraph() {
         let mut state = SelectionState::new();
-        let text = "First line\nSecond line\nThird line";
+        let text = "First line
+Second line
+Third line";
         state.select_paragraph(text, 15);
         assert_eq!(state.range, Some(11..22));
     }
