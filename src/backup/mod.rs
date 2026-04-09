@@ -10,6 +10,6 @@ pub mod scheduler;
 pub mod settings;
 pub mod types;
 
-pub use scheduler::{spawn_backup_scheduler, BackupScheduler};
+pub use scheduler::{reset_scheduler_flag_for_tests, spawn_backup_scheduler, BackupScheduler};
 pub use settings::DatabaseBackupSettings;
 pub use types::{BackupInfo, BackupMetadata, BackupResult, RestoreResult};
