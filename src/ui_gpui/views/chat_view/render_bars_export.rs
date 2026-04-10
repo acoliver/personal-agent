@@ -56,10 +56,7 @@ pub(super) fn build_conversation_export_content(
 
             export_message.model_id.clone_from(&message.model_label);
             if let Some(timestamp) = message.timestamp {
-                if let Some(parsed) = chrono::Utc
-                    .timestamp_millis_opt(timestamp.cast_signed())
-                    .single()
-                {
+                if let Some(parsed) = parse_timestamp(timestamp) {
                     export_message.timestamp = parsed;
                 }
             }

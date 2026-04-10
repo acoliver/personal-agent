@@ -44,19 +44,27 @@ macro_rules! icon_btn {
 
 const TOOLBAR_ICON_SIZE: f32 = 16.0;
 
+fn toolbar_icon_button(id: &'static str, active: bool) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .size(px(28.0))
+        .rounded(px(4.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .when(active, |d| d.bg(Theme::bg_dark()))
+        .when(!active, |d| {
+            d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+        })
+        .active(|s| s.bg(Theme::bg_dark()))
+        .text_size(px(Theme::font_size_body()))
+        .text_color(Theme::text_primary())
+}
+
 impl ChatView {
     fn render_copy_conversation_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .id("btn-copy-conversation")
-            .size(px(28.0))
-            .rounded(px(4.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .bg(Theme::bg_darker())
-            .hover(|s| s.bg(Theme::bg_dark()))
-            .active(|s| s.bg(Theme::bg_dark()))
+        toolbar_icon_button("btn-copy-conversation", false)
             .child(copy_icon(TOOLBAR_ICON_SIZE).text_color(Theme::text_primary()))
             .on_mouse_down(
                 MouseButton::Left,
