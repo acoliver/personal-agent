@@ -93,11 +93,6 @@ fn build_conversation_export_content(
                 }
             };
 
-            if export_message.thinking_content.is_none() {
-                export_message
-                    .thinking_content
-                    .clone_from(&message.thinking);
-            }
             export_message.model_id.clone_from(&message.model_label);
             if let Some(timestamp) = message.timestamp {
                 if let Some(parsed) = chrono::Utc
@@ -162,6 +157,11 @@ impl ChatView {
                     ) {
                         Ok(content) => {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(content));
+                            this.state.export_feedback_message =
+                                Some("Conversation copied to clipboard".to_string());
+                            this.state.export_feedback_is_error = false;
+                            this.state.export_feedback_path = None;
+                            cx.notify();
                         }
                         Err(message) => {
                             this.state.export_feedback_message = Some(message);
