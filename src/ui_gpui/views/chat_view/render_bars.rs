@@ -582,6 +582,8 @@ impl ChatView {
                     tracing::info!("New conversation clicked - emitting UserEvent");
                     this.emit(UserEvent::NewConversation);
                     this.state.messages.clear();
+                    // Clear text selection because old offsets reference cleared text.
+                    this.state.text_selection = None;
                     this.state.input_text.clear();
                     this.state.cursor_position = 0;
                     this.state.streaming = StreamingState::Idle;

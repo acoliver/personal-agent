@@ -223,6 +223,8 @@ impl ChatView {
                 println!(">>> Cmd+N pressed - new conversation <<<");
                 self.emit(UserEvent::NewConversation);
                 self.state.messages.clear();
+                // Clear text selection because old offsets reference cleared text.
+                self.state.text_selection = None;
                 self.state.input_text.clear();
                 self.state.cursor_position = 0;
                 self.state.streaming = StreamingState::Idle;

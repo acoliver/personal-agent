@@ -172,8 +172,16 @@ fn render_selection_styled_text(
         return None;
     }
 
-    let start = range.start.min(text.len());
-    let end = range.end.min(text.len());
+    // Snap selection bounds to UTF-8 char boundaries to avoid panics on
+    // multi-byte characters when callers pass byte offsets that fall mid-char.
+    let mut start = range.start.min(text.len());
+    while start > 0 && !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = range.end.min(text.len());
+    while end < text.len() && !text.is_char_boundary(end) {
+        end += 1;
+    }
     if start >= end {
         return None;
     }
@@ -210,8 +218,9 @@ fn render_selection_styled_text(
         });
     }
 
-    let full_text = format!("{before}{selected}{after}");
-    Some(StyledText::new(full_text).with_runs(runs))
+    // The reconstructed string is byte-identical to the original input, so
+    // reuse it directly instead of allocating via `format!`.
+    Some(StyledText::new(text.to_string()).with_runs(runs))
 }
 
 impl IntoElement for AssistantBubble {
