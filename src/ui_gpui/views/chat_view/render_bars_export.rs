@@ -10,16 +10,25 @@ pub(super) fn build_conversation_export_content(
     messages: &[super::state::ChatMessage],
     format: crate::models::ConversationExportFormat,
 ) -> Result<String, String> {
+    let parse_timestamp = |timestamp: u64| {
+        chrono::Utc
+            .timestamp_millis_opt(timestamp.cast_signed())
+            .single()
+    };
+
+    let created_at = messages
+        .iter()
+        .filter_map(|message| message.timestamp)
+        .min()
+        .and_then(parse_timestamp)
+        .unwrap_or_else(chrono::Utc::now);
+
     let updated_at = messages
         .iter()
         .filter_map(|message| message.timestamp)
         .max()
-        .and_then(|timestamp| {
-            chrono::Utc
-                .timestamp_millis_opt(timestamp.cast_signed())
-                .single()
-        })
-        .unwrap_or_else(chrono::Utc::now);
+        .and_then(parse_timestamp)
+        .unwrap_or(created_at);
 
     let title = selected_title
         .filter(|title| !title.trim().is_empty())
@@ -61,7 +70,7 @@ pub(super) fn build_conversation_export_content(
     render_export_content(
         &Conversation {
             id: conversation_id,
-            created_at: updated_at,
+            created_at,
             updated_at,
             title: Some(title),
             profile_id: selected_profile_id.unwrap_or_default(),
@@ -118,5 +127,36 @@ mod tests {
         .expect("export content should build");
 
         assert!(content.contains("Conversation: Fallback Title"));
+    }
+
+    #[test]
+    fn build_conversation_export_content_uses_earliest_message_as_created_at() {
+        let conversation_id = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap();
+        let messages = vec![
+            ChatMessage::assistant("Second message", "gpt-4o").with_timestamp(1_704_067_260_000),
+            ChatMessage::user("First message").with_timestamp(1_704_067_200_000),
+        ];
+
+        let content = build_conversation_export_content(
+            conversation_id,
+            "Timeline Test",
+            Some("Timeline Test"),
+            None,
+            &messages,
+            crate::models::ConversationExportFormat::Json,
+        )
+        .expect("export content should build");
+
+        let conversation: crate::models::Conversation =
+            serde_json::from_str(&content).expect("json export should parse");
+
+        assert_eq!(
+            conversation.created_at.timestamp_millis(),
+            1_704_067_200_000
+        );
+        assert_eq!(
+            conversation.updated_at.timestamp_millis(),
+            1_704_067_260_000
+        );
     }
 }
