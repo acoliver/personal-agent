@@ -1,9 +1,6 @@
-//! Chat view bar and dropdown render subtrees.
-//! Contains `render_top_bar`, `render_title_bar`, `render_conversation_dropdown`,
-//! and `render_profile_dropdown`. These are navigation-chrome render methods that
-//! sit above the chat area.
+//! Chat view bar and dropdown render subtrees above the chat area.
+//! Contains `render_top_bar`, `render_title_bar`, `render_conversation_dropdown`, and `render_profile_dropdown`.
 //! @plan PLAN-20260325-ISSUE11B.P02
-
 use super::state::StreamingState;
 use super::ChatView;
 use crate::events::types::UserEvent;
@@ -14,13 +11,10 @@ use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
 /// Height of the top bar.
 const TOP_BAR_HEIGHT: f32 = 44.0;
-
 /// Height of the title bar where selectors live.
 const TITLE_BAR_HEIGHT: f32 = 32.0;
-
 /// Gap below bars before dropdown appears (negative = move up).
 const DROPDOWN_GAP: f32 = -1.0;
-
 macro_rules! icon_btn {
     ($id:expr, $label:expr, $active:expr, $handler:expr) => {
         div()
@@ -41,9 +35,7 @@ macro_rules! icon_btn {
             .on_mouse_down(MouseButton::Left, $handler)
     };
 }
-
 const TOOLBAR_ICON_SIZE: f32 = 16.0;
-
 fn toolbar_icon_button(id: &'static str, active: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
@@ -63,13 +55,16 @@ fn toolbar_icon_button(id: &'static str, active: bool) -> gpui::Stateful<gpui::D
 }
 
 impl ChatView {
+    fn displayed_conversation_id(&self) -> Option<uuid::Uuid> {
+        self.state.active_conversation_id.or(self.conversation_id)
+    }
     fn render_copy_conversation_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
         toolbar_icon_button("btn-copy-conversation", false)
             .child(copy_icon(TOOLBAR_ICON_SIZE).text_color(Theme::text_primary()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _window, cx| {
-                    let Some(conversation_id) = this.current_or_active_conversation_id() else {
+                    let Some(conversation_id) = this.displayed_conversation_id() else {
                         this.state.export_feedback_message =
                             Some("No active conversation to copy".to_string());
                         this.state.export_feedback_is_error = true;
@@ -107,7 +102,6 @@ impl ChatView {
             )
     }
 
-    /// Render the top bar with icon, title, YOLO badge, and toolbar buttons
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub(super) fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let yolo_active = self.state.yolo_mode;
@@ -493,8 +487,7 @@ impl ChatView {
 
     /// Bug icon button with unviewed error count badge.
     ///
-    /// Hidden via opacity when there are no unviewed errors, preserving title-bar
-    /// layout stability (equivalent to CSS `visibility: hidden`).
+    /// Hidden via opacity when there are no unviewed errors, preserving title-bar layout stability.
     #[allow(clippy::unused_self)] // cx.listener borrows the entity, not &self directly
     fn render_bug_icon_btn(
         &self,
@@ -720,7 +713,6 @@ impl ChatView {
             )
     }
 
-    /// Render conversation dropdown overlay at root level so it can float over chat area.
     pub(super) fn render_conversation_dropdown(
         &self,
         cx: &mut gpui::Context<Self>,
@@ -963,8 +955,7 @@ impl ChatView {
             )
     }
 
-    /// Extra left offset when the sidebar toggle button is present in the
-    /// title bar (popout mode with sidebar hidden): 28px button + 8px gap.
+    /// Extra left offset when the sidebar toggle button is present in popout mode.
     fn sidebar_toggle_offset(cx: &gpui::Context<Self>) -> f32 {
         let is_popout = cx
             .try_global::<MainPanelAppState>()
