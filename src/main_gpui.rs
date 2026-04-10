@@ -57,9 +57,7 @@ mod startup;
 #[path = "main_gpui/system_tray.rs"]
 mod system_tray;
 
-use startup::{
-    bootstrap_legacy_runtime_data, build_startup_inputs, resolve_runtime_paths, RuntimePaths,
-};
+use startup::{build_startup_inputs, resolve_runtime_paths, RuntimePaths};
 use system_tray::SystemTray;
 
 #[cfg(target_os = "macos")]
@@ -414,9 +412,6 @@ fn run_gpui_app(cx: &mut App) {
 
     let runtime_paths = resolve_runtime_paths()
         .expect("Could not resolve runtime paths from platform config/data directories");
-    if let Err(e) = bootstrap_legacy_runtime_data(&runtime_paths) {
-        tracing::warn!("Legacy bootstrap copy failed: {}", e);
-    }
     let startup_inputs = match build_startup_inputs(&runtime_paths) {
         Ok(inputs) => inputs,
         Err(e) => {
@@ -550,10 +545,6 @@ async fn run_tokio_runtime(
 
     log_runtime_paths(&runtime_paths);
     ensure_runtime_directories(&runtime_paths);
-
-    if let Err(e) = bootstrap_legacy_runtime_data(&runtime_paths) {
-        tracing::warn!("Legacy bootstrap copy failed: {}", e);
-    }
 
     // Create mpsc channel for ViewCommands (presenter -> view_cmd_tx -> flume)
     let (view_tx, view_rx) = tokio::sync::mpsc::channel(256);

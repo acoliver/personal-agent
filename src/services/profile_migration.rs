@@ -3,18 +3,16 @@ use serde_json::{Map, Value};
 use std::path::Path;
 use uuid::Uuid;
 
-pub(crate) fn parse_legacy_profile<LegacyId, ParseKeyName, ParseAuth, ParseParameters>(
+pub(crate) fn parse_legacy_profile<LegacyId, ParseAuth, ParseParameters>(
     value: &Value,
     path: &Path,
     legacy_profile_id_for_path: LegacyId,
-    parse_legacy_auth_key_name: ParseKeyName,
     parse_auth_from_legacy: ParseAuth,
     parse_parameters_from_legacy: ParseParameters,
 ) -> Option<ModelProfile>
 where
     LegacyId: Fn(&Path) -> Uuid,
-    ParseKeyName: Fn(Option<&Value>) -> Option<String>,
-    ParseAuth: Fn(Option<&Value>, Option<String>) -> AuthConfig,
+    ParseAuth: Fn(Option<&Value>) -> AuthConfig,
     ParseParameters: Fn(Option<&Value>, Option<&Value>) -> ModelParameters,
 {
     let obj = value.as_object()?;
@@ -24,7 +22,6 @@ where
             obj,
             path,
             &legacy_profile_id_for_path,
-            &parse_legacy_auth_key_name,
             &parse_auth_from_legacy,
             &parse_parameters_from_legacy,
         ));
@@ -35,7 +32,6 @@ where
             obj,
             path,
             &legacy_profile_id_for_path,
-            &parse_legacy_auth_key_name,
             &parse_auth_from_legacy,
             &parse_parameters_from_legacy,
         ));
@@ -44,18 +40,16 @@ where
     None
 }
 
-fn parse_modern_legacy_profile<LegacyId, ParseKeyName, ParseAuth, ParseParameters>(
+fn parse_modern_legacy_profile<LegacyId, ParseAuth, ParseParameters>(
     obj: &Map<String, Value>,
     path: &Path,
     legacy_profile_id_for_path: &LegacyId,
-    parse_legacy_auth_key_name: &ParseKeyName,
     parse_auth_from_legacy: &ParseAuth,
     parse_parameters_from_legacy: &ParseParameters,
 ) -> ModelProfile
 where
     LegacyId: Fn(&Path) -> Uuid,
-    ParseKeyName: Fn(Option<&Value>) -> Option<String>,
-    ParseAuth: Fn(Option<&Value>, Option<String>) -> AuthConfig,
+    ParseAuth: Fn(Option<&Value>) -> AuthConfig,
     ParseParameters: Fn(Option<&Value>, Option<&Value>) -> ModelParameters,
 {
     let ephemeral = obj.get("ephemeralSettings");
@@ -65,10 +59,7 @@ where
         provider_id: modern_legacy_provider_id(obj),
         model_id: modern_legacy_model_id(obj),
         base_url: modern_legacy_base_url(obj),
-        auth: parse_auth_from_legacy(
-            obj.get("auth"),
-            legacy_keyfile_hint(ephemeral, parse_legacy_auth_key_name),
-        ),
+        auth: parse_auth_from_legacy(obj.get("auth")),
         parameters: parse_parameters_from_legacy(obj.get("parameters"), ephemeral),
         system_prompt: obj
             .get("system_prompt")
@@ -79,18 +70,16 @@ where
     }
 }
 
-fn parse_classic_legacy_profile<LegacyId, ParseKeyName, ParseAuth, ParseParameters>(
+fn parse_classic_legacy_profile<LegacyId, ParseAuth, ParseParameters>(
     obj: &Map<String, Value>,
     path: &Path,
     legacy_profile_id_for_path: &LegacyId,
-    parse_legacy_auth_key_name: &ParseKeyName,
     parse_auth_from_legacy: &ParseAuth,
     parse_parameters_from_legacy: &ParseParameters,
 ) -> ModelProfile
 where
     LegacyId: Fn(&Path) -> Uuid,
-    ParseKeyName: Fn(Option<&Value>) -> Option<String>,
-    ParseAuth: Fn(Option<&Value>, Option<String>) -> AuthConfig,
+    ParseAuth: Fn(Option<&Value>) -> AuthConfig,
     ParseParameters: Fn(Option<&Value>, Option<&Value>) -> ModelParameters,
 {
     let provider_id = obj
@@ -111,10 +100,7 @@ where
         provider_id,
         model_id,
         base_url: classic_legacy_base_url(ephemeral),
-        auth: parse_auth_from_legacy(
-            obj.get("auth"),
-            legacy_keyfile_hint(ephemeral, parse_legacy_auth_key_name),
-        ),
+        auth: parse_auth_from_legacy(obj.get("auth")),
         parameters: parse_parameters_from_legacy(obj.get("modelParams"), ephemeral),
         system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
         context_window_size: 128_000,
@@ -165,21 +151,6 @@ fn classic_legacy_base_url(ephemeral: Option<&Value>) -> String {
         .to_string()
 }
 
-fn legacy_keyfile_hint<ParseKeyName>(
-    ephemeral: Option<&Value>,
-    parse_legacy_auth_key_name: &ParseKeyName,
-) -> Option<String>
-where
-    ParseKeyName: Fn(Option<&Value>) -> Option<String>,
-{
-    ephemeral
-        .and_then(Value::as_object)
-        .and_then(|e| e.get("auth-keyfile"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .or_else(|| parse_legacy_auth_key_name(ephemeral))
-}
-
 #[cfg(test)]
 mod tests {
     use super::parse_legacy_profile;
@@ -192,15 +163,7 @@ mod tests {
         Uuid::new_v5(&Uuid::NAMESPACE_URL, path.to_string_lossy().as_bytes())
     }
 
-    fn parse_key_name(ephemeral: Option<&Value>) -> Option<String> {
-        ephemeral
-            .and_then(Value::as_object)
-            .and_then(|obj| obj.get("auth-key-name"))
-            .and_then(Value::as_str)
-            .map(|name| format!("resolved:{name}"))
-    }
-
-    fn parse_auth(value: Option<&Value>, key_hint: Option<String>) -> AuthConfig {
+    fn parse_auth(value: Option<&Value>) -> AuthConfig {
         let label = value
             .and_then(Value::as_object)
             .and_then(|obj| obj.get("Keychain"))
@@ -208,7 +171,6 @@ mod tests {
             .and_then(|obj| obj.get("label"))
             .and_then(Value::as_str)
             .map(ToOwned::to_owned)
-            .or(key_hint)
             .unwrap_or_default();
 
         AuthConfig::Keychain { label }
@@ -275,7 +237,6 @@ mod tests {
             &json!({ "unexpected": true }),
             Path::new("/tmp/unknown.json"),
             legacy_id_for_path,
-            parse_key_name,
             parse_auth,
             parse_parameters,
         );
@@ -309,7 +270,6 @@ mod tests {
             }),
             path,
             legacy_id_for_path,
-            parse_key_name,
             parse_auth,
             parse_parameters,
         )
@@ -349,7 +309,6 @@ mod tests {
             }),
             path,
             legacy_id_for_path,
-            parse_key_name,
             parse_auth,
             parse_parameters,
         )
@@ -362,7 +321,7 @@ mod tests {
         assert_eq!(
             parsed.auth,
             AuthConfig::Keychain {
-                label: "resolved:resolved-key".to_string()
+                label: String::new()
             }
         );
         assert_eq!(parsed.system_prompt, DEFAULT_SYSTEM_PROMPT);
@@ -391,7 +350,6 @@ mod tests {
             }),
             path,
             legacy_id_for_path,
-            parse_key_name,
             parse_auth,
             parse_parameters,
         )
@@ -405,7 +363,7 @@ mod tests {
         assert_eq!(
             parsed.auth,
             AuthConfig::Keychain {
-                label: "/tmp/keyfile.txt".to_string()
+                label: String::new()
             }
         );
         assert!((parsed.parameters.temperature - 0.55).abs() < f64::EPSILON);
@@ -427,7 +385,6 @@ mod tests {
             }),
             Path::new("/tmp/minimal.json"),
             legacy_id_for_path,
-            parse_key_name,
             parse_auth,
             parse_parameters,
         )
