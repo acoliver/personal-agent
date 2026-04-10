@@ -10,9 +10,7 @@ use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
-use crate::ui_gpui::components::UserBubble;
 use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
-
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
@@ -382,9 +380,31 @@ impl ChatView {
             }
         }
     }
-    /// Render user message - right aligned bubble with footer copy action
+
+    /// Render user message - right aligned, green bubble
     pub(super) fn render_user_message(content: &str) -> gpui::AnyElement {
-        UserBubble::new(content.to_string()).into_any_element()
+        let content_owned = content.to_string();
+        div()
+            .w_full()
+            .flex()
+            .justify_end()
+            .child({
+                let text = content_owned.clone();
+                Theme::user_bubble(
+                    div()
+                        .max_w(px(300.0))
+                        .px(px(10.0))
+                        .py(px(10.0))
+                        .rounded(px(12.0))
+                        .text_size(px(Theme::font_size_mono()))
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+                        })
+                        .child(content_owned),
+                )
+            })
+            .into_any_element()
     }
 
     /// Render assistant message - left aligned, dark bubble with model label

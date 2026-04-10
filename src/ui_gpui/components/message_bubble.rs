@@ -3,13 +3,10 @@
 //! @plan PLAN-20250128-GPUI.P06
 //! @requirement REQ-GPUI-003
 
-use crate::ui_gpui::components::copy_icons::copy_icon;
 use crate::ui_gpui::components::markdown_content::{
     blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
 };
-use gpui::{div, prelude::*, px, IntoElement, MouseButton, SharedString};
-
-const COPY_BUTTON_ICON_SIZE: f32 = 14.0;
+use gpui::{div, prelude::*, px, IntoElement, MouseButton};
 
 pub struct UserBubble {
     content: String,
@@ -29,42 +26,18 @@ impl IntoElement for UserBubble {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
-        let bubble_content = self.content.clone();
-        let button_content = self.content.clone();
-        let copy_button_id = button_content.clone();
-
-        div().flex().justify_end().w_full().child(
-            div()
-                .flex()
-                .flex_col()
-                .items_end()
-                .gap(px(Theme::SPACING_SM))
-                .max_w(px(400.0))
-                .child(Theme::user_bubble(
-                    div()
-                        .w_full()
-                        .px(px(Theme::SPACING_MD))
-                        .py(px(Theme::SPACING_SM))
-                        .rounded(px(Theme::RADIUS_LG))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                bubble_content.clone(),
-                            ));
-                        })
-                        .child(self.content),
-                ))
-                .child(render_copy_button(
-                    None,
-                    true,
-                    copy_button_id,
-                    move |_, _, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                            button_content.clone(),
-                        ));
-                    },
-                )),
-        )
+        div()
+            .flex()
+            .justify_end()
+            .w_full()
+            .child(Theme::user_bubble(
+                div()
+                    .w(px(400.0))
+                    .px(px(Theme::SPACING_MD))
+                    .py(px(Theme::SPACING_SM))
+                    .rounded(px(Theme::RADIUS_LG))
+                    .child(self.content),
+            ))
     }
 }
 
@@ -152,53 +125,6 @@ fn should_enable_bubble_copy(blocks: &[MarkdownBlock], is_streaming: bool) -> bo
     !is_streaming && !has_any_links(blocks)
 }
 
-const fn should_show_copy_button(is_streaming: bool) -> bool {
-    !is_streaming
-}
-
-fn render_copy_button(
-    leading_label: Option<String>,
-    align_end: bool,
-    id_suffix: impl Into<String>,
-    on_click: impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> gpui::Div {
-    use crate::ui_gpui::theme::Theme;
-
-    let mut footer = div()
-        .flex()
-        .items_center()
-        .gap(px(Theme::SPACING_SM))
-        .w_full();
-
-    if align_end {
-        footer = footer.justify_end();
-    } else {
-        footer = footer.justify_between();
-    }
-
-    if let Some(label) = leading_label {
-        footer = footer.child(div().text_sm().text_color(Theme::text_muted()).child(label));
-    }
-
-    let button_id = format!("copy-message-{}", id_suffix.into());
-
-    footer.child(
-        div()
-            .id(SharedString::from(button_id))
-            .size(px(28.0))
-            .rounded(px(Theme::RADIUS_SM))
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .bg(Theme::bg_darker())
-            .hover(|s| s.bg(Theme::bg_dark()))
-            .active(|s| s.bg(Theme::bg_dark()))
-            .child(copy_icon(COPY_BUTTON_ICON_SIZE).text_color(Theme::text_primary()))
-            .on_mouse_down(MouseButton::Left, on_click),
-    )
-}
-
 impl IntoElement for AssistantBubble {
     type Element = gpui::Div;
 
@@ -256,17 +182,7 @@ impl IntoElement for AssistantBubble {
 
         bubble = bubble.child(main_content);
 
-        if should_show_copy_button(self.is_streaming) {
-            let button_content = self.content.clone();
-            bubble = bubble.child(render_copy_button(
-                self.model_id.map(|model_id| format!("via {model_id}")),
-                false,
-                button_content.clone(),
-                move |_, _, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(button_content.clone()));
-                },
-            ));
-        } else if let Some(model_id) = self.model_id {
+        if let Some(model_id) = self.model_id {
             bubble = bubble.child(
                 div()
                     .text_sm()
@@ -303,11 +219,5 @@ mod tests {
 
         assert!(has_any_links(&blocks));
         assert!(!should_enable_bubble_copy(&blocks, false));
-    }
-
-    #[test]
-    fn test_copy_button_hidden_for_streaming_messages() {
-        assert!(!should_show_copy_button(true));
-        assert!(should_show_copy_button(false));
     }
 }
