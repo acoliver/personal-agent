@@ -24,6 +24,9 @@ pub mod window_icons;
 // Issue 139: Emoji filter toggle icons
 pub mod emoji_filter_icon;
 
+// Issue 152: Message bubble copy action icons
+pub mod copy_icons;
+
 // Issue 62: Markdown Rendering (TDD Phase)
 pub(crate) mod markdown_content;
 

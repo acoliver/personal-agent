@@ -11,8 +11,8 @@
 )]
 
 use super::{
-    count_bytes_in_spans, create_inline_span, extract_language, strip_html_tags, Alignment,
-    InlineStyle, MarkdownBlock, MarkdownInline, TableCell,
+    apply_autolinks, count_bytes_in_spans, create_inline_span, extract_language, strip_html_tags,
+    Alignment, InlineStyle, MarkdownBlock, MarkdownInline, TableCell,
 };
 use std::ops::Range;
 
@@ -25,26 +25,30 @@ use std::ops::Range;
 /// @requirement:REQ-MD-PARSE-001
 /// @pseudocode parse-markdown-blocks.md lines 1-10
 pub(crate) fn parse_markdown_blocks(content: &str) -> Vec<MarkdownBlock> {
-    let parsed = ParseState::new().parse(content);
+    let mut parsed = ParseState::new().parse(content);
     if parsed
         .iter()
         .any(|block| matches!(block, MarkdownBlock::Table { .. }))
     {
+        apply_autolinks(&mut parsed);
         return parsed;
     }
 
     let normalized = normalize_imperfect_table_markdown(content);
     if matches!(normalized, std::borrow::Cow::Borrowed(_)) {
+        apply_autolinks(&mut parsed);
         return parsed;
     }
 
-    let reparsed = ParseState::new().parse(normalized.as_ref());
+    let mut reparsed = ParseState::new().parse(normalized.as_ref());
     if reparsed
         .iter()
         .any(|block| matches!(block, MarkdownBlock::Table { .. }))
     {
+        apply_autolinks(&mut reparsed);
         reparsed
     } else {
+        apply_autolinks(&mut parsed);
         parsed
     }
 }

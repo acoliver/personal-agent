@@ -758,6 +758,8 @@ impl ChatView {
 
     /// Render user message - right aligned, green bubble
     /// @plan PLAN-20260406-ISSUE151.P01
+    /// @plan:PLAN-20260402-ISSUE153.P02
+    /// @requirement:REQ-MSG-LINK-001
     pub(super) fn render_user_message(
         content: &str,
         selection: Option<std::ops::Range<usize>>,

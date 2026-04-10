@@ -3,6 +3,9 @@
 #[path = "tests_category.rs"]
 mod tests_category;
 
+#[path = "tests_scrollable.rs"]
+mod tests_scrollable;
+
 #[path = "tests_skills.rs"]
 mod tests_skills;
 

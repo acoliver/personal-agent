@@ -115,6 +115,8 @@ impl SettingsView {
     }
 
     /// Render the profiles list and toolbar (no header — caller provides it).
+    /// The list is constrained to available space with overflow scrolling,
+    /// ensuring the +/- toolbar buttons remain visible at all times.
     fn render_profiles_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let profiles = &self.state.profiles;
         let total_profiles = profiles.len();
@@ -123,12 +125,14 @@ impl SettingsView {
             .flex()
             .flex_col()
             .flex_1()
+            .min_h(px(0.0)) // Critical: allows flex child to shrink below content size
             .gap(px(6.0))
             .child(
                 div()
                     .id("profiles-list")
                     .w_full()
                     .flex_1()
+                    .min_h(px(0.0)) // Critical: allows scrolling container to shrink
                     .bg(Theme::bg_darker())
                     .border_1()
                     .border_color(Theme::border())
@@ -339,6 +343,8 @@ impl SettingsView {
     }
 
     /// Render the MCP tools section with full-height list.
+    /// The list is constrained to available space with overflow scrolling,
+    /// ensuring the +/- toolbar buttons remain visible at all times.
     fn render_mcp_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let mcps = &self.state.mcps;
         let total_mcps = mcps.len();
@@ -347,6 +353,7 @@ impl SettingsView {
             .flex()
             .flex_col()
             .flex_1()
+            .min_h(px(0.0)) // Critical: allows flex child to shrink below content size
             .gap(px(6.0))
             .child(
                 div()
@@ -359,6 +366,7 @@ impl SettingsView {
                     .id("mcps-list")
                     .w_full()
                     .flex_1()
+                    .min_h(px(0.0)) // Critical: allows scrolling container to shrink
                     .bg(Theme::bg_darker())
                     .border_1()
                     .border_color(Theme::border())

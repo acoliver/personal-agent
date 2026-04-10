@@ -4,7 +4,7 @@
 //! @requirement REQ-GPUI-003
 
 use crate::ui_gpui::components::markdown_content::{
-    blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
+    blocks_to_elements, blocks_to_elements_with_color, parse_markdown_blocks, MarkdownBlock,
 };
 use gpui::{div, prelude::*, px, IntoElement, MouseButton, StyledText};
 use std::ops::Range;
@@ -35,25 +35,56 @@ impl IntoElement for UserBubble {
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
 
-        let content = if let Some(ref range) = self.selection {
-            render_text_with_selection(&self.content, range.clone())
-        } else {
-            div().child(self.content)
+        // Selection mode: render the raw text with the selection highlight
+        // and skip markdown / click-to-copy so the visible glyphs match the
+        // transcript backing string byte-for-byte.
+        if let Some(range) = self.selection.clone() {
+            let content = render_text_with_selection(&self.content, range).cursor_text();
+            return div()
+                .flex()
+                .justify_end()
+                .w_full()
+                .child(Theme::user_bubble(
+                    div()
+                        .w(px(400.0))
+                        .px(px(Theme::SPACING_MD))
+                        .py(px(Theme::SPACING_SM))
+                        .rounded(px(Theme::RADIUS_LG))
+                        .child(content),
+                ));
         }
-        .cursor_text();
+
+        // No selection: route through the markdown pipeline so links are
+        // clickable, and only enable click-to-copy when the bubble has none.
+        // @plan:PLAN-20260402-ISSUE153.P02
+        // @requirement:REQ-MSG-LINK-001
+        let blocks = parse_markdown_blocks(&self.content);
+        let text_color = Theme::user_bubble_text();
+        let rendered = blocks_to_elements_with_color(&blocks, text_color);
+        let has_links = has_any_links(&blocks);
+
+        let raw_content = self.content;
+        let mut bubble = div()
+            .max_w(px(300.0))
+            .px(px(10.0))
+            .py(px(10.0))
+            .rounded(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
+            .children(rendered);
+
+        if !has_links {
+            bubble = bubble
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(raw_content.clone()));
+                });
+        }
 
         div()
             .flex()
             .justify_end()
             .w_full()
-            .child(Theme::user_bubble(
-                div()
-                    .w(px(400.0))
-                    .px(px(Theme::SPACING_MD))
-                    .py(px(Theme::SPACING_SM))
-                    .rounded(px(Theme::RADIUS_LG))
-                    .child(content),
-            ))
+            .child(Theme::user_bubble(bubble))
     }
 }
 

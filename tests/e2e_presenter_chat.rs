@@ -39,6 +39,34 @@ use uuid::Uuid;
 
 mod support;
 
+fn app_support_dir() -> std::path::PathBuf {
+    dirs::config_dir()
+        .expect("No config directory")
+        .join("PersonalAgent")
+}
+
+fn app_data_dir() -> std::path::PathBuf {
+    dirs::data_local_dir()
+        .expect("No data directory")
+        .join("PersonalAgent")
+}
+
+fn test_data_dir() -> std::path::PathBuf {
+    app_data_dir().join("test-data")
+}
+
+fn app_settings_path() -> std::path::PathBuf {
+    test_data_dir().join("app_settings.e2e.json")
+}
+
+fn secrets_dir() -> std::path::PathBuf {
+    app_data_dir().join("secrets")
+}
+
+fn profiles_dir() -> std::path::PathBuf {
+    app_support_dir().join("profiles")
+}
+
 fn load_e2e_profile() -> ModelProfile {
     support::e2e_config::load_e2e_profile()
 }
@@ -93,19 +121,18 @@ async fn test_chat_presenter_receives_stream_events() {
     let (view_tx, view_rx) = mpsc::channel::<ViewCommand>(100);
 
     // Setup: Create data directory for conversation storage
-    let home = dirs::home_dir().expect("No home directory");
-    let data_dir = home.join(".llxprt/test-data");
-    let app_settings_path = home.join(".llxprt/test-data/app_settings.e2e.json");
+    let data_dir = test_data_dir();
+    let app_settings_path = app_settings_path();
     std::fs::create_dir_all(&data_dir).expect("Failed to create test data dir");
 
     // Setup: Create SecretsService
-    let secrets_dir = home.join(".llxprt/secrets");
+    let secrets_dir = secrets_dir();
     std::fs::create_dir_all(&secrets_dir).expect("Failed to create secrets dir");
     let _secrets_service: Arc<dyn personal_agent::services::SecretsService> =
         Arc::new(SecretsServiceImpl::new(secrets_dir).expect("Failed to create SecretsService"));
 
     // Setup: Create ProfileService
-    let profiles_dir = home.join(".llxprt/profiles");
+    let profiles_dir = profiles_dir();
     std::fs::create_dir_all(&profiles_dir).expect("Failed to create profiles dir");
     let profile_service_impl =
         ProfileServiceImpl::new(profiles_dir.clone()).expect("Failed to create ProfileService");
@@ -299,8 +326,7 @@ async fn test_chat_presenter_error_handling() {
     let event_bus = Arc::new(EventBus::new(100));
     let (view_tx, view_rx) = mpsc::channel::<ViewCommand>(100);
 
-    let home = dirs::home_dir().expect("No home directory");
-    let app_settings_path = home.join(".llxprt/test-data/app_settings.e2e.json");
+    let app_settings_path = app_settings_path();
 
     let db_dir = tempfile::TempDir::new().expect("Failed to create temp dir for DB");
     let db_path = db_dir.path().join("personalagent.db");
@@ -311,7 +337,7 @@ async fn test_chat_presenter_error_handling() {
     let conversation_service: Arc<dyn ConversationService> =
         Arc::new(SqliteConversationService::new(db));
 
-    let profiles_dir = home.join(".llxprt/profiles");
+    let profiles_dir = profiles_dir();
     std::fs::create_dir_all(&profiles_dir).expect("Failed to create profiles dir");
     let profile_service: Arc<dyn personal_agent::services::ProfileService> =
         Arc::new(ProfileServiceImpl::new(profiles_dir).expect("Failed to create ProfileService"));
@@ -410,8 +436,7 @@ async fn test_chat_presenter_manual_events() {
     let event_bus = Arc::new(EventBus::new(100));
     let (view_tx, view_rx) = mpsc::channel::<ViewCommand>(100);
 
-    let home = dirs::home_dir().expect("No home directory");
-    let app_settings_path = home.join(".llxprt/test-data/app_settings.e2e.json");
+    let app_settings_path = app_settings_path();
 
     let db_dir = tempfile::TempDir::new().expect("Failed to create temp dir for DB");
     let db_path = db_dir.path().join("personalagent.db");
@@ -426,7 +451,7 @@ async fn test_chat_presenter_manual_events() {
     let _llm_client =
         Arc::new(LlmClient::from_profile(&profile).expect("Failed to create LlmClient"));
 
-    let profiles_dir = home.join(".llxprt/profiles");
+    let profiles_dir = profiles_dir();
     let profile_service: Arc<dyn personal_agent::services::ProfileService> =
         Arc::new(ProfileServiceImpl::new(profiles_dir).expect("Failed to create ProfileService"));
 
