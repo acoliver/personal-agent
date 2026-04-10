@@ -10,6 +10,9 @@ use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
+use crate::ui_gpui::components::markdown_content::{
+    blocks_to_elements_with_color, parse_markdown_blocks, MarkdownBlock,
+};
 use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
@@ -54,6 +57,34 @@ const fn is_emoji(c: char) -> bool {
         '\u{20E3}'                |  // Combining enclosing keycap
         '\u{E0020}'..='\u{E007F}' // Tags for emoji sequences
     )
+}
+
+/// Check if markdown blocks contain any links.
+///
+/// @plan:PLAN-20260402-ISSUE153.P02
+/// @requirement:REQ-MSG-LINK-002
+fn has_any_links(blocks: &[MarkdownBlock]) -> bool {
+    blocks.iter().any(|block| match block {
+        MarkdownBlock::Paragraph { links, .. } | MarkdownBlock::Heading { links, .. } => {
+            !links.is_empty()
+        }
+        MarkdownBlock::BlockQuote { blocks } => has_any_links(blocks),
+        MarkdownBlock::List { items, .. } => {
+            items.iter().any(|item_blocks| has_any_links(item_blocks))
+        }
+        MarkdownBlock::Table { header, rows, .. } => {
+            let header_has_links = header.iter().any(|cell| {
+                !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
+            });
+            let body_has_links = rows.iter().any(|row| {
+                row.iter().any(|cell| {
+                    !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
+                })
+            });
+            header_has_links || body_has_links
+        }
+        _ => false,
+    })
 }
 
 impl ChatView {
@@ -382,28 +413,39 @@ impl ChatView {
     }
 
     /// Render user message - right aligned, green bubble
+    /// @plan:PLAN-20260402-ISSUE153.P02
+    /// @requirement:REQ-MSG-LINK-001
     pub(super) fn render_user_message(content: &str) -> gpui::AnyElement {
-        let content_owned = content.to_string();
+        // Use markdown pipeline for user messages to support clickable links
+        let blocks = parse_markdown_blocks(content);
+        // Use user_bubble_text() for proper contrast on green background
+        let text_color = Theme::user_bubble_text();
+        let rendered = blocks_to_elements_with_color(&blocks, text_color);
+        let has_links = has_any_links(&blocks);
+
+        let raw_content = content.to_string();
+        let mut bubble = div()
+            .max_w(px(300.0))
+            .px(px(10.0))
+            .py(px(10.0))
+            .rounded(px(12.0))
+            .text_size(px(Theme::font_size_mono()))
+            .children(rendered);
+
+        // Only enable click-to-copy when no links are present
+        if !has_links {
+            bubble = bubble
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(raw_content.clone()));
+                });
+        }
+
         div()
             .w_full()
             .flex()
             .justify_end()
-            .child({
-                let text = content_owned.clone();
-                Theme::user_bubble(
-                    div()
-                        .max_w(px(300.0))
-                        .px(px(10.0))
-                        .py(px(10.0))
-                        .rounded(px(12.0))
-                        .text_size(px(Theme::font_size_mono()))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
-                        })
-                        .child(content_owned),
-                )
-            })
+            .child(Theme::user_bubble(bubble))
             .into_any_element()
     }
 
