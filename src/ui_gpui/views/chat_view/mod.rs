@@ -15,6 +15,7 @@ mod ime;
 mod render;
 mod render_bars;
 mod render_bars_export;
+mod render_messages;
 
 mod render_sidebar;
 mod state;

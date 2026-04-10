@@ -1,5 +1,4 @@
-//! Chat view bar and dropdown render subtrees above the chat area.
-//! Contains `render_top_bar`, `render_title_bar`, `render_conversation_dropdown`, and `render_profile_dropdown`.
+//! Chat view bar and dropdown render subtrees: `render_top_bar`, `render_title_bar`, `render_conversation_dropdown`, `render_profile_dropdown`.
 //! @plan PLAN-20260325-ISSUE11B.P02
 use super::state::StreamingState;
 use super::ChatView;
