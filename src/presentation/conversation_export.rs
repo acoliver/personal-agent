@@ -73,6 +73,12 @@ pub fn resolve_export_directory(configured_dir: Option<&str>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Render a conversation into the selected export format.
+///
+/// # Errors
+///
+/// Returns an error when the conversation cannot be serialized for the selected
+/// format, which currently only applies to JSON export.
 pub fn render_export_content(
     conversation: &Conversation,
     format: ConversationExportFormat,
