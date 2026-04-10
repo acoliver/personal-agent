@@ -11,7 +11,7 @@ use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
 use crate::ui_gpui::components::markdown_content::{
-    blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
+    blocks_to_elements_with_color, parse_markdown_blocks, MarkdownBlock,
 };
 use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
@@ -418,7 +418,9 @@ impl ChatView {
     pub(super) fn render_user_message(content: &str) -> gpui::AnyElement {
         // Use markdown pipeline for user messages to support clickable links
         let blocks = parse_markdown_blocks(content);
-        let rendered = blocks_to_elements(&blocks);
+        // Use user_bubble_text() for proper contrast on green background
+        let text_color = Theme::user_bubble_text();
+        let rendered = blocks_to_elements_with_color(&blocks, text_color);
         let has_links = has_any_links(&blocks);
 
         let raw_content = content.to_string();

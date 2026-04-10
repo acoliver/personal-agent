@@ -304,32 +304,48 @@ fn extract_language(info: &str) -> Option<String> {
 ///
 /// Phase 2 of the two-phase IR pipeline. This function takes the IR produced
 /// by `parse_markdown_blocks()` and constructs GPUI elements for rendering.
+/// Uses text_primary() for text color.
 ///
 /// @plan:PLAN-20260402-MARKDOWN.P06
 pub(crate) fn blocks_to_elements(blocks: &[MarkdownBlock]) -> Vec<gpui::AnyElement> {
+    blocks_to_elements_with_color(blocks, crate::ui_gpui::theme::Theme::text_primary())
+}
+
+/// Phase 2 variant that accepts a custom text color.
+/// Used by user message bubbles which need user_bubble_text() color.
+///
+/// @plan:PLAN-20260402-ISSUE153.P02
+pub(crate) fn blocks_to_elements_with_color(
+    blocks: &[MarkdownBlock],
+    text_color: gpui::Hsla,
+) -> Vec<gpui::AnyElement> {
     blocks
         .iter()
         .map(|block| match block {
-            MarkdownBlock::Paragraph { spans, links } => render_paragraph(spans, links),
+            MarkdownBlock::Paragraph { spans, links } => {
+                render_paragraph_with_color(spans, links, text_color)
+            }
             MarkdownBlock::Heading {
                 level,
                 spans,
                 links,
-            } => render_heading(*level, spans, links),
+            } => render_heading_with_color(*level, spans, links, text_color),
             MarkdownBlock::CodeBlock { language, code } => {
                 render_code_block(language.as_ref(), code)
             }
-            MarkdownBlock::BlockQuote { blocks } => render_blockquote(blocks),
+            MarkdownBlock::BlockQuote { blocks } => {
+                render_blockquote_with_color(blocks, text_color)
+            }
             MarkdownBlock::List {
                 ordered,
                 start,
                 items,
-            } => render_list(*ordered, *start, items),
+            } => render_list_with_color(*ordered, *start, items, text_color),
             MarkdownBlock::Table {
                 alignments,
                 header,
                 rows,
-            } => render_table(alignments, header, rows),
+            } => render_table_with_color(alignments, header, rows, text_color),
             MarkdownBlock::ThematicBreak => render_thematic_break(),
             MarkdownBlock::ImageFallback { alt } => render_image_fallback(alt),
         })
@@ -371,15 +387,16 @@ pub(crate) fn is_safe_url(raw: &str) -> bool {
 
 /// @plan:PLAN-20260402-MARKDOWN.P06
 /// @requirement:REQ-MD-RENDER-023
-fn inline_to_text_run(span: &MarkdownInline) -> gpui::TextRun {
+fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::TextRun {
     use gpui::{font, FontStyle, FontWeight, StrikethroughStyle, TextRun, UnderlineStyle};
 
+    // For links, use accent color. For non-links, use the provided text_color
     let mut run = TextRun {
         len: span.text.len(),
         color: if span.link_url.is_some() {
             crate::ui_gpui::theme::Theme::accent()
         } else {
-            crate::ui_gpui::theme::Theme::text_primary()
+            text_color
         },
         ..Default::default()
     };
@@ -417,6 +434,7 @@ fn inline_to_text_run(span: &MarkdownInline) -> gpui::TextRun {
 fn spans_to_styled_text(
     spans: &[MarkdownInline],
     links: &[(Range<usize>, String)],
+    text_color: gpui::Hsla,
 ) -> gpui::AnyElement {
     use gpui::StyledText;
 
@@ -424,7 +442,7 @@ fn spans_to_styled_text(
     let mut runs = Vec::with_capacity(spans.len());
     for span in spans {
         text.push_str(&span.text);
-        runs.push(inline_to_text_run(span));
+        runs.push(inline_to_text_run(span, text_color));
     }
 
     let styled = StyledText::new(text).with_runs(runs);
@@ -457,25 +475,24 @@ fn spans_to_styled_text(
         .into_any_element()
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-001
-fn render_paragraph(
+/// @plan:PLAN-20260402-ISSUE153.P02
+fn render_paragraph_with_color(
     spans: &[MarkdownInline],
     links: &[(Range<usize>, String)],
+    text_color: gpui::Hsla,
 ) -> gpui::AnyElement {
     div()
         .text_size(px(crate::ui_gpui::theme::Theme::font_size_body()))
-        .text_color(crate::ui_gpui::theme::Theme::text_primary())
-        .child(spans_to_styled_text(spans, links))
+        .child(spans_to_styled_text(spans, links, text_color))
         .into_any_element()
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-003
-fn render_heading(
+/// @plan:PLAN-20260402-ISSUE153.P02
+fn render_heading_with_color(
     level: u8,
     spans: &[MarkdownInline],
     links: &[(Range<usize>, String)],
+    text_color: gpui::Hsla,
 ) -> gpui::AnyElement {
     let size = match level {
         1 => crate::ui_gpui::theme::Theme::font_size_h1(),
@@ -491,8 +508,7 @@ fn render_heading(
         .min_w(px(0.0))
         .text_size(px(size))
         .font_weight(gpui::FontWeight::BOLD)
-        .text_color(crate::ui_gpui::theme::Theme::text_primary())
-        .child(spans_to_styled_text(spans, links))
+        .child(spans_to_styled_text(spans, links, text_color))
         .into_any_element()
 }
 
@@ -525,9 +541,11 @@ fn render_code_block(language: Option<&String>, code: &str) -> gpui::AnyElement 
     block.child(code.to_string()).into_any_element()
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-007
-fn render_blockquote(children: &[MarkdownBlock]) -> gpui::AnyElement {
+/// @plan:PLAN-20260402-ISSUE153.P02
+fn render_blockquote_with_color(
+    children: &[MarkdownBlock],
+    text_color: gpui::Hsla,
+) -> gpui::AnyElement {
     div()
         .w_full()
         .border_l_2()
@@ -535,13 +553,17 @@ fn render_blockquote(children: &[MarkdownBlock]) -> gpui::AnyElement {
         .pl(px(crate::ui_gpui::theme::Theme::SPACING_SM))
         .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
         .bg(crate::ui_gpui::theme::Theme::bg_base())
-        .children(blocks_to_elements(children))
+        .children(blocks_to_elements_with_color(children, text_color))
         .into_any_element()
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-008
-fn render_list(ordered: bool, start: u64, items: &[Vec<MarkdownBlock>]) -> gpui::AnyElement {
+/// @plan:PLAN-20260402-ISSUE153.P02
+fn render_list_with_color(
+    ordered: bool,
+    start: u64,
+    items: &[Vec<MarkdownBlock>],
+    text_color: gpui::Hsla,
+) -> gpui::AnyElement {
     let mut list = div()
         .flex()
         .flex_col()
@@ -570,7 +592,7 @@ fn render_list(ordered: bool, start: u64, items: &[Vec<MarkdownBlock>]) -> gpui:
                         .flex()
                         .flex_col()
                         .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                        .children(blocks_to_elements(item_blocks)),
+                        .children(blocks_to_elements_with_color(item_blocks, text_color)),
                 ),
         );
     }
@@ -578,12 +600,12 @@ fn render_list(ordered: bool, start: u64, items: &[Vec<MarkdownBlock>]) -> gpui:
     list.into_any_element()
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-009
-fn render_table(
+/// @plan:PLAN-20260402-ISSUE153.P02
+fn render_table_with_color(
     alignments: &[Alignment],
     header: &[TableCell],
     rows: &[Vec<TableCell>],
+    text_color: gpui::Hsla,
 ) -> gpui::AnyElement {
     let col_count = header
         .len()
@@ -616,7 +638,7 @@ fn render_table(
 
     for (col_idx, cell) in header.iter().enumerate() {
         let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
-        let content = spans_to_styled_text(&cell.spans, &cell.links);
+        let content = spans_to_styled_text(&cell.spans, &cell.links, text_color);
 
         table_grid = table_grid.child(
             div()
@@ -634,7 +656,7 @@ fn render_table(
     for (row_idx, row) in rows.iter().enumerate() {
         for (col_idx, cell) in row.iter().enumerate() {
             let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
-            let content = spans_to_styled_text(&cell.spans, &cell.links);
+            let content = spans_to_styled_text(&cell.spans, &cell.links, text_color);
 
             table_grid = table_grid.child(
                 div()
