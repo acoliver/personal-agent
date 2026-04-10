@@ -39,7 +39,8 @@ impl IntoElement for UserBubble {
             render_text_with_selection(&self.content, range.clone())
         } else {
             div().child(self.content)
-        };
+        }
+        .cursor_text();
 
         div()
             .flex()
@@ -58,48 +59,11 @@ impl IntoElement for UserBubble {
 
 /// Render text with selection highlight.
 fn render_text_with_selection(text: &str, selection: Range<usize>) -> gpui::Div {
-    use crate::ui_gpui::theme::Theme;
-
-    if selection.is_empty() {
+    let Some(styled) = render_selection_styled_text(text, &selection, false) else {
         return div().child(text.to_string());
-    }
+    };
 
-    let start = selection.start.min(text.len());
-    let end = selection.end.min(text.len());
-
-    let before = &text[..start];
-    let selected = &text[start..end];
-    let after = &text[end..];
-
-    let mut parts = Vec::new();
-
-    if !before.is_empty() {
-        parts.push(gpui::TextRun {
-            len: before.len(),
-            color: Theme::text_primary(),
-            ..Default::default()
-        });
-    }
-
-    if !selected.is_empty() {
-        parts.push(gpui::TextRun {
-            len: selected.len(),
-            color: Theme::selection_fg(),
-            background_color: Some(Theme::selection_bg()),
-            ..Default::default()
-        });
-    }
-
-    if !after.is_empty() {
-        parts.push(gpui::TextRun {
-            len: after.len(),
-            color: Theme::text_primary(),
-            ..Default::default()
-        });
-    }
-
-    let full_text = format!("{before}{selected}{after}");
-    div().child(StyledText::new(full_text).with_runs(parts))
+    div().child(styled)
 }
 
 pub struct AssistantBubble {
@@ -194,10 +158,14 @@ fn should_enable_bubble_copy(blocks: &[MarkdownBlock], is_streaming: bool) -> bo
     !is_streaming && !has_any_links(blocks)
 }
 
-/// Render text with selection highlight for assistant bubbles.
+/// Render text with selection highlight.
 ///
 /// @plan PLAN-20260406-ISSUE151.P01
-fn render_selection_highlight(text: &str, range: &Range<usize>) -> Option<gpui::StyledText> {
+fn render_selection_styled_text(
+    text: &str,
+    range: &Range<usize>,
+    preserve_assistant_bubble_text: bool,
+) -> Option<gpui::StyledText> {
     use crate::ui_gpui::theme::Theme;
 
     if range.is_empty() {
@@ -206,7 +174,6 @@ fn render_selection_highlight(text: &str, range: &Range<usize>) -> Option<gpui::
 
     let start = range.start.min(text.len());
     let end = range.end.min(text.len());
-
     if start >= end {
         return None;
     }
@@ -215,11 +182,17 @@ fn render_selection_highlight(text: &str, range: &Range<usize>) -> Option<gpui::
     let selected = &text[start..end];
     let after = &text[end..];
 
+    let base_color = if preserve_assistant_bubble_text {
+        Theme::text_primary()
+    } else {
+        Theme::user_bubble_text()
+    };
+
     let mut runs = Vec::with_capacity(3);
     if !before.is_empty() {
         runs.push(gpui::TextRun {
             len: before.len(),
-            color: Theme::text_primary(),
+            color: base_color,
             ..Default::default()
         });
     }
@@ -232,13 +205,13 @@ fn render_selection_highlight(text: &str, range: &Range<usize>) -> Option<gpui::
     if !after.is_empty() {
         runs.push(gpui::TextRun {
             len: after.len(),
-            color: Theme::text_primary(),
+            color: base_color,
             ..Default::default()
         });
     }
 
     let full_text = format!("{before}{selected}{after}");
-    Some(gpui::StyledText::new(full_text).with_runs(runs))
+    Some(StyledText::new(full_text).with_runs(runs))
 }
 
 impl IntoElement for AssistantBubble {
@@ -270,36 +243,41 @@ impl IntoElement for AssistantBubble {
 
         let content_text = rendered_content_text(&self.content, self.is_streaming);
 
-        // @plan:PLAN-20260402-MARKDOWN.P11
-        // @requirement:REQ-MD-INTEGRATE-002
-        let blocks = parse_markdown_blocks(&content_text);
-        let rendered = blocks_to_elements(&blocks);
-
         let mut main_content = Theme::assistant_bubble(
             div()
                 .w_full()
                 .px(px(Theme::SPACING_MD))
                 .py(px(Theme::SPACING_SM))
-                .rounded(px(Theme::RADIUS_LG))
-                .children(rendered),
-        );
+                .rounded(px(Theme::RADIUS_LG)),
+        )
+        .cursor_text();
 
-        // Check for selection highlight or click-to-copy
+        // Check for selection highlight or normal markdown/copy behavior.
         // @plan PLAN-20260406-ISSUE151.P01
         if let Some(ref range) = self.selection {
-            if let Some(styled) = render_selection_highlight(&self.content, range) {
-                main_content = main_content.cursor_text().child(styled);
+            if let Some(styled) = render_selection_styled_text(&self.content, range, true) {
+                main_content = main_content.child(styled);
+            } else {
+                main_content = main_content.child(self.content.clone());
             }
-        } else if should_enable_bubble_copy(&blocks, self.is_streaming) {
-            let raw_markdown = self.content.clone();
-            main_content =
-                main_content
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+        } else {
+            // @plan:PLAN-20260402-MARKDOWN.P11
+            // @requirement:REQ-MD-INTEGRATE-002
+            let blocks = parse_markdown_blocks(&content_text);
+            let rendered = blocks_to_elements(&blocks);
+            main_content = main_content.children(rendered);
+
+            if should_enable_bubble_copy(&blocks, self.is_streaming) {
+                let raw_markdown = self.content.clone();
+                main_content = main_content.cursor_pointer().on_mouse_down(
+                    MouseButton::Left,
+                    move |_, _, cx| {
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                             raw_markdown.clone(),
                         ));
-                    });
+                    },
+                );
+            }
         }
 
         bubble = bubble.child(main_content);

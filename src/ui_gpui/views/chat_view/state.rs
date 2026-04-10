@@ -18,10 +18,9 @@ use uuid::Uuid;
 /// @plan PLAN-20260406-ISSUE151.P01
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextSelection {
-    /// Index of the message in the messages vector.
-    pub message_index: usize,
-    /// Byte range of selected text within the message content.
+    /// Byte range of selected text within the flattened transcript content.
     pub range: Range<usize>,
+
     /// Whether this is from a drag operation (for mouse tracking).
     pub is_dragging: bool,
 }

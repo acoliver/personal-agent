@@ -6,16 +6,16 @@
 //!
 //! @plan PLAN-20260325-ISSUE11B.P02
 
-use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
+use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState, TextSelection};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
-use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
+use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble, UserBubble};
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels,
-    ScrollWheelEvent, SharedString,
+    ScrollWheelEvent, SharedString, StyledText, TextRun,
 };
 
 /// Strip emojis from a string, replacing them with empty string.
@@ -54,6 +54,59 @@ const fn is_emoji(c: char) -> bool {
         '\u{20E3}'                |  // Combining enclosing keycap
         '\u{E0020}'..='\u{E007F}' // Tags for emoji sequences
     )
+}
+
+#[allow(clippy::option_if_let_else, clippy::similar_names)]
+fn render_transcript_text(text: &str, selection: Option<std::ops::Range<usize>>) -> StyledText {
+    use crate::ui_gpui::theme::Theme;
+
+    let clamped = selection.and_then(|range| {
+        if range.is_empty() {
+            return None;
+        }
+        let start = range.start.min(text.len());
+        let end = range.end.min(text.len());
+        (start < end).then_some(start..end)
+    });
+
+    let normal_color = Theme::text_primary();
+    let highlight_fg = Theme::selection_fg();
+    let highlight_bg = Theme::selection_bg();
+
+    if let Some(range) = clamped {
+        let before_len = range.start;
+        let selected_len = range.end - range.start;
+        let after_len = text.len() - range.end;
+
+        let mut runs = Vec::new();
+        if before_len > 0 {
+            runs.push(TextRun {
+                len: before_len,
+                color: normal_color,
+                ..Default::default()
+            });
+        }
+        runs.push(TextRun {
+            len: selected_len,
+            color: highlight_fg,
+            background_color: Some(highlight_bg),
+            ..Default::default()
+        });
+        if after_len > 0 {
+            runs.push(TextRun {
+                len: after_len,
+                color: normal_color,
+                ..Default::default()
+            });
+        }
+        StyledText::new(text.to_string()).with_runs(runs)
+    } else {
+        StyledText::new(text.to_string()).with_runs(vec![TextRun {
+            len: text.len(),
+            color: normal_color,
+            ..Default::default()
+        }])
+    }
 }
 
 impl ChatView {
@@ -206,9 +259,7 @@ impl ChatView {
                     self.handle_select_all(cx);
                 }
             }
-            "c" => {
-                self.handle_copy(cx);
-            }
+            "c" => self.handle_copy(cx),
             "x" => {
                 if self.state.sidebar_search_focused {
                     let text = self.state.sidebar_search_query.clone();
@@ -242,98 +293,413 @@ impl ChatView {
         }
     }
 
-    /// Render the chat area with messages
+    /// Render the chat area with messages.
+    ///
+    /// Build the flattened transcript backing buffer in visual order so a
+    /// single selection range can span user/assistant/thinking blocks.
+    ///
+    /// When `filter_emoji` is on the buffer is left empty (display text
+    /// diverges from source) and selection is disabled.
+    fn build_transcript_buffer(
+        messages: &[ChatMessage],
+        thinking_content: Option<&str>,
+        show_thinking: bool,
+        filter_emoji: bool,
+    ) -> (String, Vec<std::ops::Range<usize>>) {
+        let mut transcript_text = String::new();
+        let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+
+        if filter_emoji {
+            return (transcript_text, ranges);
+        }
+
+        for msg in messages {
+            let content_start = transcript_text.len();
+            transcript_text.push_str(&msg.content);
+            let content_end = transcript_text.len();
+            ranges.push(content_start..content_end);
+
+            if show_thinking {
+                if let Some(thinking) = msg.thinking.as_ref() {
+                    if !thinking.is_empty() {
+                        transcript_text.push('\n');
+                        let thinking_start = transcript_text.len();
+                        transcript_text.push_str(thinking);
+                        let thinking_end = transcript_text.len();
+                        ranges.push(thinking_start..thinking_end);
+                    }
+                }
+            }
+
+            transcript_text.push('\n');
+        }
+
+        if let Some(thinking) = thinking_content {
+            if !thinking.is_empty() {
+                let thinking_start = transcript_text.len();
+                transcript_text.push_str(thinking);
+                let thinking_end = transcript_text.len();
+                ranges.push(thinking_start..thinking_end);
+                transcript_text.push('\n');
+            }
+        }
+
+        (transcript_text, ranges)
+    }
+
+    /// Compute the per-block sub-range that lies inside the given selection.
+    fn block_sub_range(
+        block: &std::ops::Range<usize>,
+        selection: Option<&std::ops::Range<usize>>,
+    ) -> Option<std::ops::Range<usize>> {
+        let range = selection?;
+        let start = range.start.max(block.start);
+        let end = range.end.min(block.end);
+        (start < end).then_some(start - block.start..end - block.start)
+    }
+
+    /// Build a thinking-bubble row for an assistant message.
+    fn build_thinking_row(index: usize, thinking_styled: StyledText) -> gpui::AnyElement {
+        div()
+            .id(SharedString::from(format!("msg-{index}-thinking")))
+            .max_w(px(300.0))
+            .px(px(8.0))
+            .py(px(8.0))
+            .rounded(px(8.0))
+            .bg(Theme::thinking_bg())
+            .border_l_2()
+            .border_color(Theme::text_muted())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_small()))
+                            .text_color(Theme::text_muted())
+                            .child("Thinking"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_ui()))
+                            .text_color(Theme::text_muted())
+                            .italic()
+                            .cursor_text()
+                            .child(thinking_styled),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Build the message-row elements that go inside the chat area, also
+    /// returning the per-block GPUI text layouts in visual order so handlers
+    /// can hit-test them.
+    fn build_message_rows(
+        messages: &[ChatMessage],
+        block_ranges: &[std::ops::Range<usize>],
+        selection_range: Option<&std::ops::Range<usize>>,
+        show_thinking: bool,
+        filter_emoji: bool,
+    ) -> (Vec<gpui::AnyElement>, Vec<gpui::TextLayout>) {
+        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        let mut layouts: Vec<gpui::TextLayout> = Vec::with_capacity(block_ranges.len());
+
+        if filter_emoji {
+            for (i, msg) in messages.iter().enumerate() {
+                let id = SharedString::from(format!("msg-{i}"));
+                let element = Self::render_message(msg, show_thinking, filter_emoji, i, None);
+                rows.push(
+                    div()
+                        .id(id)
+                        .w_full()
+                        .flex()
+                        .justify_start()
+                        .child(element)
+                        .into_any_element(),
+                );
+            }
+            return (rows, layouts);
+        }
+
+        let mut block_cursor: usize = 0;
+        for (i, msg) in messages.iter().enumerate() {
+            let msg_block = block_ranges.get(block_cursor);
+            let msg_range = msg_block.and_then(|b| Self::block_sub_range(b, selection_range));
+            let msg_styled = render_transcript_text(&msg.content, msg_range.clone());
+            layouts.push(msg_styled.layout().clone());
+            block_cursor += 1;
+
+            let id = SharedString::from(format!("msg-{i}"));
+            let element = Self::render_message(msg, show_thinking, filter_emoji, i, msg_range);
+            rows.push(
+                div()
+                    .id(id)
+                    .w_full()
+                    .flex()
+                    .justify_start()
+                    .child(element)
+                    .into_any_element(),
+            );
+
+            if !show_thinking {
+                continue;
+            }
+            let Some(thinking) = msg.thinking.as_ref() else {
+                continue;
+            };
+            if thinking.is_empty() {
+                continue;
+            }
+
+            let thinking_block = block_ranges.get(block_cursor);
+            let thinking_range =
+                thinking_block.and_then(|b| Self::block_sub_range(b, selection_range));
+            let thinking_styled = render_transcript_text(thinking, thinking_range);
+            layouts.push(thinking_styled.layout().clone());
+            block_cursor += 1;
+
+            rows.push(Self::build_thinking_row(i, thinking_styled));
+        }
+
+        (rows, layouts)
+    }
+
+    /// Pointer handler body: left mouse down on the chat area.
+    fn on_chat_pointer_down_left(
+        &mut self,
+        event: &gpui::MouseDownEvent,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.refresh_autoscroll_state_from_handle();
+
+        if self.state.filter_emoji {
+            self.transcript_drag_anchor = None;
+            self.clear_transcript_selection();
+            cx.notify();
+            return;
+        }
+
+        let Some((block_index, block_offset)) =
+            self.transcript_block_index_at_point(event.position)
+        else {
+            self.transcript_drag_anchor = None;
+            self.clear_transcript_selection();
+            cx.notify();
+            return;
+        };
+
+        let Some(abs_offset) = self.transcript_offset_for_block_index(block_index, block_offset)
+        else {
+            self.transcript_drag_anchor = None;
+            self.clear_transcript_selection();
+            cx.notify();
+            return;
+        };
+
+        match event.click_count {
+            2 => {
+                self.transcript_drag_anchor = None;
+                self.select_word_at_offset(abs_offset, cx);
+            }
+            n if n >= 3 => {
+                self.transcript_drag_anchor = None;
+                self.select_paragraph_at_offset(abs_offset, cx);
+            }
+            _ => {
+                self.transcript_drag_anchor = Some(abs_offset);
+                self.set_text_selection(abs_offset, abs_offset, true);
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// Pointer handler body: mouse move while dragging a transcript selection.
+    fn on_chat_pointer_move(&mut self, event: &gpui::MouseMoveEvent, cx: &mut gpui::Context<Self>) {
+        if self.state.filter_emoji || !event.dragging() {
+            return;
+        }
+        let Some(anchor) = self.transcript_drag_anchor else {
+            return;
+        };
+        let Some((block_index, block_offset)) =
+            self.transcript_block_index_at_point(event.position)
+        else {
+            return;
+        };
+        let Some(current_offset) =
+            self.transcript_offset_for_block_index(block_index, block_offset)
+        else {
+            return;
+        };
+        self.set_text_selection(anchor, current_offset, true);
+        cx.notify();
+    }
+
+    /// Attach the full set of chat-area pointer handlers (drag select,
+    /// double/triple-click word/paragraph, right-click copy, click-out clear)
+    /// to a chat-area div builder.
+    fn attach_chat_pointer_handlers(
+        cx: &mut gpui::Context<Self>,
+        d: gpui::Stateful<gpui::Div>,
+    ) -> gpui::Stateful<gpui::Div> {
+        d.on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
+            this.refresh_autoscroll_state_after_wheel(event);
+            cx.notify();
+        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, event: &gpui::MouseDownEvent, _window, cx| {
+                this.on_chat_pointer_down_left(event, cx);
+            }),
+        )
+        .on_mouse_move(
+            cx.listener(|this, event: &gpui::MouseMoveEvent, _window, cx| {
+                this.on_chat_pointer_move(event, cx);
+            }),
+        )
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(|this, _event: &gpui::MouseUpEvent, _window, cx| {
+                this.on_chat_pointer_up_left(cx);
+            }),
+        )
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|this, _event: &gpui::MouseDownEvent, _window, cx| {
+                this.handle_copy(cx);
+            }),
+        )
+        .on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
+            this.transcript_drag_anchor = None;
+            if this.state.text_selection.is_some() {
+                this.clear_transcript_selection();
+                cx.notify();
+            }
+        }))
+    }
+
+    /// Build the "No messages yet" empty-state child element.
+    fn build_empty_state_child() -> gpui::AnyElement {
+        div()
+            .text_size(px(Theme::font_size_body()))
+            .text_color(Theme::text_secondary())
+            .child("No messages yet")
+            .into_any_element()
+    }
+
+    /// Pointer handler body: left mouse up on the chat area.
+    fn on_chat_pointer_up_left(&mut self, cx: &mut gpui::Context<Self>) {
+        self.transcript_drag_anchor = None;
+        if let Some(selection) = self.state.text_selection.as_ref() {
+            if selection.is_dragging {
+                let range = selection.range.clone();
+                self.state.text_selection = Some(TextSelection {
+                    range,
+                    is_dragging: false,
+                });
+                cx.notify();
+            }
+        }
+    }
+
+    /// Render the chat area with messages.
+    ///
+    /// Builds the flattened transcript backing buffer and per-block text
+    /// layouts up front, stashes them on `self` for hit-testing handlers, then
+    /// attaches pointer handlers (single drag, double-click word, triple-click
+    /// paragraph, right-click copy).
+    ///
     /// @plan PLAN-20250130-GPUIREDUX.P03
-    pub(super) fn render_chat_area(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    /// @plan PLAN-20260406-ISSUE151.P01 - transcript selection + copy
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn render_chat_area(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let messages = self.state.messages.clone();
         let streaming = self.state.streaming.clone();
         let show_thinking = self.state.show_thinking;
         let filter_emoji = self.state.filter_emoji;
-        div()
+
+        let (transcript_text, transcript_block_ranges) = Self::build_transcript_buffer(
+            &messages,
+            self.state.thinking_content.as_deref(),
+            show_thinking,
+            filter_emoji,
+        );
+
+        let selection_range = if filter_emoji {
+            None
+        } else {
+            self.state.text_selection.as_ref().map(|s| s.range.clone())
+        };
+
+        let (message_rows, transcript_block_layouts) = Self::build_message_rows(
+            &messages,
+            &transcript_block_ranges,
+            selection_range.as_ref(),
+            show_thinking,
+            filter_emoji,
+        );
+
+        // Stash transcript state on self so the mouse handlers can hit-test.
+        self.transcript_text = transcript_text;
+        self.transcript_block_ranges = transcript_block_ranges;
+        self.transcript_block_layouts = transcript_block_layouts;
+
+        let messages_empty = messages.is_empty();
+        let is_streaming = matches!(streaming, StreamingState::Streaming { .. });
+
+        let approval_rows: Vec<gpui::AnyElement> = self
+            .state
+            .approval_bubbles
+            .iter()
+            .enumerate()
+            .filter(|(_, bubble)| {
+                matches!(bubble.state, super::state::ApprovalBubbleState::Pending)
+            })
+            .take(1)
+            .map(|(i, bubble)| {
+                let id = SharedString::from(format!("approval-{i}"));
+                div()
+                    .id(id)
+                    .w_full()
+                    .flex()
+                    .justify_start()
+                    .child(self.render_approval_bubble(bubble, cx))
+                    .into_any_element()
+            })
+            .collect();
+
+        let streaming_element = if is_streaming {
+            Some(self.render_streaming_message(&streaming, show_thinking, filter_emoji))
+        } else {
+            None
+        };
+
+        let base = div()
             .id("chat-area")
             .flex_1()
             .min_h_0()
             .w_full()
             .bg(Theme::bg_base())
             .overflow_y_scroll()
-            .track_scroll(&self.chat_scroll_handle)
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
-                this.refresh_autoscroll_state_after_wheel(event);
-                cx.notify();
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _event, _window, cx| {
-                    this.refresh_autoscroll_state_from_handle();
-                    cx.notify();
-                }),
-            )
+            .track_scroll(&self.chat_scroll_handle);
+
+        Self::attach_chat_pointer_handlers(cx, base)
             .p(px(12.0))
             .flex()
             .flex_col()
             .items_stretch()
             .justify_start()
             .gap(px(8.0))
-            // Empty state
-            .when(
-                messages.is_empty() && !matches!(streaming, StreamingState::Streaming { .. }),
-                |d| {
-                    d.items_center().justify_center().child(
-                        div()
-                            .text_size(px(Theme::font_size_body()))
-                            .text_color(Theme::text_secondary())
-                            .child("No messages yet"),
-                    )
-                },
-            )
-            // Messages with selection support
-            // @plan PLAN-20260406-ISSUE151.P01
-            // Note: Selection is not applied when filter_emoji is enabled because
-            // the displayed text differs from the source text, causing range drift.
-            .when(!messages.is_empty(), |d| {
-                let selection = if filter_emoji {
-                    None // Disable selection when emoji filtering is active
-                } else {
-                    self.state.text_selection.clone()
-                };
-                d.children(messages.into_iter().enumerate().map(|(i, msg)| {
-                    let id = SharedString::from(format!("msg-{i}"));
-                    let msg_selection = selection.as_ref().and_then(|s| {
-                        if s.message_index == i {
-                            Some(s.range.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    let element =
-                        Self::render_message(&msg, show_thinking, filter_emoji, i, msg_selection);
-                    div().id(id).w_full().flex().justify_start().child(element)
-                }))
+            .when(messages_empty && !is_streaming, |d| {
+                d.items_center()
+                    .justify_center()
+                    .child(Self::build_empty_state_child())
             })
-            // Approval bubbles (inline in message stream) - queue: only first pending
-            .children(
-                self.state
-                    .approval_bubbles
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, bubble)| {
-                        matches!(bubble.state, super::state::ApprovalBubbleState::Pending)
-                    })
-                    .take(1)
-                    .map(|(i, bubble)| {
-                        let id = SharedString::from(format!("approval-{i}"));
-                        div()
-                            .id(id)
-                            .w_full()
-                            .flex()
-                            .justify_start()
-                            .child(self.render_approval_bubble(bubble, cx))
-                    }),
-            )
-            // Streaming message
-            .when(matches!(streaming, StreamingState::Streaming { .. }), |d| {
-                d.child(self.render_streaming_message(&streaming, show_thinking, filter_emoji))
-            })
+            .when(!messages_empty, |d| d.children(message_rows))
+            .children(approval_rows)
+            .when_some(streaming_element, gpui::ParentElement::child)
     }
 
     /// Render the streaming assistant message bubble.
@@ -394,12 +760,8 @@ impl ChatView {
         content: &str,
         selection: Option<std::ops::Range<usize>>,
     ) -> gpui::AnyElement {
-        let bubble = crate::ui_gpui::components::UserBubble::new(content).selection(selection);
-        div()
-            .w_full()
-            .flex()
-            .justify_end()
-            .child(bubble)
+        UserBubble::new(content)
+            .selection(selection)
             .into_any_element()
     }
 
@@ -765,7 +1127,7 @@ impl ChatView {
 
     /// Render the main chat content column (title bar + chat area + input bar).
     fn render_main_content(
-        &self,
+        &mut self,
         _app_mode: AppMode,
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,

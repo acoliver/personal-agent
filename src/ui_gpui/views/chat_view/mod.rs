@@ -46,6 +46,16 @@ pub struct ChatView {
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
     pub(super) chat_scroll_handle: ScrollHandle,
+    /// Flattened transcript text used for native-style transcript selection.
+    ///
+    /// Built in visual order so a single range can span user/assistant/thinking blocks.
+    pub(super) transcript_text: String,
+    /// Inclusive byte ranges into `transcript_text` for each selectable transcript block.
+    pub(super) transcript_block_ranges: Vec<std::ops::Range<usize>>,
+    /// GPUI text layouts aligned to `transcript_block_ranges` for hit-testing.
+    pub(super) transcript_block_layouts: Vec<gpui::TextLayout>,
+    /// Anchor offset (into `transcript_text`) for an in-progress drag selection.
+    pub(super) transcript_drag_anchor: Option<usize>,
     #[cfg(test)]
     pub(super) maybe_scroll_chat_to_bottom_invocations: Cell<usize>,
 }
@@ -59,9 +69,61 @@ impl ChatView {
             conversation_id: None,
             selection_generation: 0,
             chat_scroll_handle: ScrollHandle::new(),
+            transcript_text: String::new(),
+            transcript_block_ranges: Vec::new(),
+            transcript_block_layouts: Vec::new(),
+            transcript_drag_anchor: None,
             #[cfg(test)]
             maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
         }
+    }
+
+    pub(super) fn transcript_block_index_at_point(
+        &self,
+        position: gpui::Point<Pixels>,
+    ) -> Option<(usize, usize)> {
+        self.transcript_block_layouts
+            .iter()
+            .enumerate()
+            .find_map(|(block_index, layout)| {
+                layout
+                    .index_for_position(position)
+                    .ok()
+                    .map(|ix| (block_index, ix))
+            })
+    }
+
+    pub(super) fn transcript_offset_for_block_index(
+        &self,
+        block_index: usize,
+        block_offset: usize,
+    ) -> Option<usize> {
+        let block_range = self.transcript_block_ranges.get(block_index)?;
+        let clamped = block_offset.min(block_range.len());
+        Some(block_range.start + clamped)
+    }
+
+    pub(super) fn set_text_selection(&mut self, start: usize, end: usize, is_dragging: bool) {
+        let transcript_len = self.transcript_text.len();
+        if transcript_len == 0 {
+            self.state.text_selection = None;
+            return;
+        }
+
+        let mut selection_start = start.min(transcript_len);
+        let mut selection_end = end.min(transcript_len);
+        if selection_start > selection_end {
+            std::mem::swap(&mut selection_start, &mut selection_end);
+        }
+
+        self.state.text_selection = Some(TextSelection {
+            range: selection_start..selection_end,
+            is_dragging,
+        });
+    }
+
+    pub(super) const fn clear_transcript_selection(&mut self) {
+        self.state.text_selection = None;
     }
 
     pub(super) fn refresh_autoscroll_state_from_handle(&mut self) {
@@ -646,18 +708,16 @@ impl ChatView {
     /// Handle copy (Cmd+C)
     /// @plan PLAN-20260406-ISSUE151.P01
     pub fn handle_copy(&self, cx: &mut gpui::Context<Self>) {
-        // Check for text selection first (Issue #151)
-        if let Some(ref selection) = self.state.text_selection {
-            if let Some(msg) = self.state.messages.get(selection.message_index) {
-                let range = selection.range.clone();
-                if !range.is_empty() && range.end <= msg.content.len() {
-                    let selected_text = msg.content[range].to_string();
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected_text));
-                    return;
-                }
+        if let Some(selection) = self.state.text_selection.as_ref() {
+            let range = selection.range.clone();
+            if !range.is_empty() && range.end <= self.transcript_text.len() {
+                let selected_text = self.transcript_text[range].to_string();
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected_text));
+                return;
             }
         }
-        // Fall back to input text copy
+
+        // Fall back to input text copy.
         let text = if self.state.sidebar_search_focused {
             self.state.sidebar_search_query.clone()
         } else if self.state.conversation_title_editing {
@@ -668,6 +728,30 @@ impl ChatView {
         if !text.is_empty() {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
         }
+    }
+
+    /// Select word in transcript at absolute byte offset (double click).
+    /// @plan PLAN-20260406-ISSUE151.P01
+    pub fn select_word_at_offset(&mut self, position: usize, _cx: &mut gpui::Context<Self>) {
+        use crate::ui_gpui::components::selectable_text::find_word_boundaries;
+
+        let range = find_word_boundaries(&self.transcript_text, position);
+        self.state.text_selection = Some(TextSelection {
+            range,
+            is_dragging: false,
+        });
+    }
+
+    /// Select paragraph in transcript at absolute byte offset (triple click).
+    /// @plan PLAN-20260406-ISSUE151.P01
+    pub fn select_paragraph_at_offset(&mut self, position: usize, _cx: &mut gpui::Context<Self>) {
+        use crate::ui_gpui::components::selectable_text::find_paragraph_boundaries;
+
+        let range = find_paragraph_boundaries(&self.transcript_text, position);
+        self.state.text_selection = Some(TextSelection {
+            range,
+            is_dragging: false,
+        });
     }
 
     /// Move cursor left
