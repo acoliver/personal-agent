@@ -944,3 +944,7 @@ mod approval_tests;
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod mod_tests;
+
+#[cfg(test)]
+#[path = "selection_tests.rs"]
+mod selection_tests;
