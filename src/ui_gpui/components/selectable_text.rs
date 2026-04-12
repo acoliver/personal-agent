@@ -155,7 +155,17 @@ pub fn find_word_boundaries(text: &str, position: usize) -> Range<usize> {
 #[must_use]
 pub fn find_paragraph_boundaries(text: &str, position: usize) -> Range<usize> {
     let len = text.len();
-    let pos = position.min(len);
+    let mut pos = position.min(len);
+
+    // Snap to a valid char boundary when pos falls mid-byte.
+    if !text.is_char_boundary(pos) {
+        pos = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i < pos)
+            .last()
+            .unwrap_or(0);
+    }
 
     let mut start = pos;
     for (i, ch) in text.char_indices().rev() {
@@ -277,5 +287,15 @@ mod tests {
         assert_eq!(&text[range.clone()], "Café");
         assert!(text.is_char_boundary(range.start));
         assert!(text.is_char_boundary(range.end));
+    }
+
+    #[test]
+    fn test_find_paragraph_boundaries_mid_byte_position() {
+        let text = "café"; // 'é' is bytes 3..5
+                           // Position 4 is mid-byte inside 'é'. Should snap to byte 3.
+        let range = find_paragraph_boundaries(text, 4);
+        assert!(text.is_char_boundary(range.start));
+        assert!(text.is_char_boundary(range.end));
+        assert_eq!(&text[range], "café");
     }
 }
