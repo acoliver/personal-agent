@@ -45,6 +45,10 @@ fn approx_eq(a: f32, b: f32) -> bool {
     (a - b).abs() < 1e-5
 }
 
+fn colors_differ(a: gpui::Hsla, b: gpui::Hsla) -> bool {
+    !approx_eq(a.h, b.h) || !approx_eq(a.s, b.s) || !approx_eq(a.l, b.l) || !approx_eq(a.a, b.a)
+}
+
 // ── existing baseline test (kept intact) ────────────────────────────────────
 
 #[test]
@@ -315,6 +319,52 @@ fn green_screen_accent_error_is_file_driven() -> TestResult {
         from_theme.l,
         from_file.l
     );
+
+    Ok(())
+}
+
+#[test]
+fn green_screen_affirmative_and_selected_foregrounds_stay_distinct() {
+    let _guard = ThemeSwitchGuard::acquire();
+
+    set_active_theme_slug("green-screen");
+
+    assert!(
+        colors_differ(Theme::selection_bg(), Theme::selection_fg()),
+        "selection foreground must differ from selection background in green-screen"
+    );
+    assert!(
+        colors_differ(Theme::accent(), Theme::accent_fg()),
+        "accent foreground must differ from accent background in green-screen"
+    );
+    assert!(
+        colors_differ(Theme::success(), Theme::selection_fg()),
+        "success status color should remain visually distinct from selected foreground in green-screen"
+    );
+}
+
+#[test]
+fn green_screen_selected_and_affirmative_foregrounds_are_black() -> TestResult {
+    let _guard = ThemeSwitchGuard::acquire();
+
+    set_active_theme_slug("green-screen");
+
+    let expected_black = Theme::hex_to_hsla("#000000")?;
+
+    for (label, actual) in [
+        ("selection_fg", Theme::selection_fg()),
+        ("accent_fg", Theme::accent_fg()),
+        ("error_fg", Theme::error_fg()),
+        ("user_bubble_text", Theme::user_bubble_text()),
+    ] {
+        assert!(
+            approx_eq(actual.h, expected_black.h)
+                && approx_eq(actual.s, expected_black.s)
+                && approx_eq(actual.l, expected_black.l)
+                && approx_eq(actual.a, expected_black.a),
+            "{label} must resolve to black in the green-screen theme"
+        );
+    }
 
     Ok(())
 }

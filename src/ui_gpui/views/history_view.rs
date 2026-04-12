@@ -279,7 +279,7 @@ impl HistoryView {
                     .rounded(px(6.0))
                     .bg(Theme::bg_dark())
                     .cursor_pointer()
-                    .hover(|s| s.bg(Theme::accent()))
+                    .hover(|s| s.bg(Theme::accent()).text_color(Theme::accent_fg()))
                     .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
                     .child("Load")

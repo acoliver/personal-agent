@@ -190,7 +190,7 @@ impl SettingsView {
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .hover(|s| s.bg(Theme::accent()))
+                    .hover(|s| s.bg(Theme::accent()).text_color(Theme::accent_fg()))
                     .text_size(px(Theme::font_size_ui()))
                     .text_color(Theme::text_primary())
                     .child("Add")

@@ -424,7 +424,9 @@ impl SettingsView {
             .py(px(8.0))
             .rounded(px(4.0))
             .cursor_pointer()
-            .when(!in_progress, |d| d.hover(|s| s.bg(Theme::accent())))
+            .when(!in_progress, |d| {
+                d.hover(|s| s.bg(Theme::accent()).text_color(Theme::accent_fg()))
+            })
             .bg(if in_progress {
                 Theme::bg_dark()
             } else {
