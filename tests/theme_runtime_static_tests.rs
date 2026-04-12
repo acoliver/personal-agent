@@ -46,10 +46,7 @@ fn approx_eq(a: f32, b: f32) -> bool {
 }
 
 fn colors_differ(a: gpui::Hsla, b: gpui::Hsla) -> bool {
-    !approx_eq(a.h, b.h)
-        || !approx_eq(a.s, b.s)
-        || !approx_eq(a.l, b.l)
-        || !approx_eq(a.a, b.a)
+    !approx_eq(a.h, b.h) || !approx_eq(a.s, b.s) || !approx_eq(a.l, b.l) || !approx_eq(a.a, b.a)
 }
 
 // ── existing baseline test (kept intact) ────────────────────────────────────
