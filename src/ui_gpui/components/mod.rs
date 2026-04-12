@@ -45,7 +45,9 @@ pub use divider::Divider;
 pub use dropdown::Dropdown;
 pub use icon_button::IconButton;
 pub use secure_text_field::SecureTextField;
-pub use selectable_text::{find_paragraph_boundaries, find_word_boundaries};
+pub use selectable_text::{
+    build_selectable_styled_text, find_paragraph_boundaries, find_word_boundaries, TextLayoutSink,
+};
 pub use text_field::TextField;
 pub use toggle::Toggle;
 pub use top_bar::{TopBar, TopBarButton};

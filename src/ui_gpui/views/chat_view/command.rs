@@ -94,8 +94,7 @@ impl ChatView {
 
     fn handle_conversation_cleared(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.messages.clear();
-        // Clear text selection because old offsets reference cleared text.
-        self.state.text_selection = None;
+        self.clear_transcript_selection();
         self.state.streaming = super::state::StreamingState::Idle;
         self.state.thinking_content = None;
         self.state.conversation_dropdown_open = false;

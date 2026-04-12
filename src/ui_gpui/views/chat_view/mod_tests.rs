@@ -834,3 +834,285 @@ async fn handle_copy_falls_back_to_title_input_when_renaming(cx: &mut TestAppCon
         .expect("clipboard text written");
     assert_eq!(value, "Renamed Conversation");
 }
+
+// ── Stage 4: Block model, cross-block, multi-byte, armed/clear tests ────
+
+/// Build transcript with thinking blocks and verify block structure.
+#[gpui::test]
+async fn build_transcript_buffer_alternates_message_and_thinking(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |_view: &mut ChatView, _cx| {
+            let messages = vec![
+                ChatMessage {
+                    role: state::MessageRole::User,
+                    content: "Hello".to_string(),
+                    thinking: None,
+                    model_label: None,
+                    timestamp: None,
+                },
+                ChatMessage {
+                    role: state::MessageRole::Assistant,
+                    content: "World".to_string(),
+                    thinking: Some("deep thought".to_string()),
+                    model_label: Some("model".to_string()),
+                    timestamp: None,
+                },
+            ];
+            let (text, ranges) = ChatView::build_transcript_buffer(&messages, None, true, false);
+
+            // User message: body only (no thinking), so 1 range.
+            // Assistant message: body + thinking, so 2 ranges.
+            // Total: 3 block ranges.
+            assert_eq!(ranges.len(), 3, "expected 3 block ranges");
+            assert_eq!(&text[ranges[0].clone()], "Hello");
+            assert_eq!(&text[ranges[1].clone()], "World");
+            assert_eq!(&text[ranges[2].clone()], "deep thought");
+
+            // Ranges should be non-overlapping and ordered.
+            for pair in ranges.windows(2) {
+                assert!(
+                    pair[0].end <= pair[1].start,
+                    "ranges should be non-overlapping: {:?} vs {:?}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+        });
+    });
+}
+
+/// When `filter_emoji` is true, `build_transcript_buffer` returns empty.
+#[gpui::test]
+async fn build_transcript_buffer_empty_when_filter_emoji(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |_view: &mut ChatView, _cx| {
+            let messages = vec![ChatMessage {
+                role: state::MessageRole::User,
+                content: "Hello".to_string(),
+                thinking: None,
+                model_label: None,
+                timestamp: None,
+            }];
+            let (text, ranges) = ChatView::build_transcript_buffer(&messages, None, true, true);
+            assert!(text.is_empty());
+            assert!(ranges.is_empty());
+        });
+    });
+}
+
+/// Copy selection spanning message body and thinking block.
+#[gpui::test]
+async fn handle_copy_across_message_and_thinking_blocks(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // Install a transcript with body "Hello" and thinking "deep thought"
+            // separated by a newline. build_transcript_buffer produces:
+            //   "Hello\ndeep thought\n"
+            //   ranges: [0..5, 6..18]
+            view.transcript_text = "Hello\ndeep thought\n".to_string();
+            view.transcript_block_ranges = vec![0..5, 6..18];
+
+            // Select from "llo" in body through "deep" in thinking: bytes 2..10
+            view.set_text_selection(2, 10, false);
+
+            view.handle_copy(cx);
+        });
+    });
+
+    let clipboard = visual_cx.read_from_clipboard();
+    let value = clipboard
+        .as_ref()
+        .and_then(gpui::ClipboardItem::text)
+        .expect("clipboard text written");
+    assert_eq!(value, "llo\ndeep");
+}
+
+/// Multi-byte content across blocks preserves valid UTF-8 on copy.
+#[gpui::test]
+async fn multibyte_content_across_blocks_preserves_valid_utf8(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // "café" is 5 bytes (é = 2 bytes), "résumé" is 8 bytes
+            let block1 = "café";
+            let block2 = "résumé";
+            let mut text = String::new();
+            let start1 = text.len();
+            text.push_str(block1);
+            let end1 = text.len();
+            text.push('\n');
+            let start2 = text.len();
+            text.push_str(block2);
+            let end2 = text.len();
+            text.push('\n');
+
+            view.transcript_text = text;
+            view.transcript_block_ranges = vec![start1..end1, start2..end2];
+
+            // Select spanning both blocks.
+            view.set_text_selection(0, end2, false);
+
+            view.handle_copy(cx);
+        });
+    });
+
+    let clipboard = visual_cx.read_from_clipboard();
+    let value = clipboard
+        .as_ref()
+        .and_then(gpui::ClipboardItem::text)
+        .expect("clipboard text written");
+    // Should be valid UTF-8 containing both blocks + separator.
+    assert!(value.contains("café"));
+    assert!(value.contains("résumé"));
+}
+
+/// Word selection does not cross block boundary.
+#[gpui::test]
+async fn select_word_does_not_cross_block_boundary(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // Two blocks with no space before the newline: "abcdef" "\n" "ghijkl"
+            install_transcript(view, &["abcdef", "ghijkl"]);
+
+            // Click at the last char of block 0 ("f").
+            let offset = view.transcript_block_ranges[0].end - 1;
+            view.select_word_at_offset(offset, cx);
+
+            let sel = view.state.text_selection.as_ref().expect("selection set");
+            let selected = &view.transcript_text[sel.range.clone()];
+            // Should select within block 0 only, not cross into block 1.
+            assert!(
+                !selected.contains("ghijkl"),
+                "selection should not cross block boundary: got {selected:?}"
+            );
+        });
+    });
+}
+
+/// Verifies `clear_transcript_selection` resets all selection-related state.
+#[gpui::test]
+async fn clear_transcript_selection_resets_all_state(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, _cx| {
+            install_transcript(view, &["test content"]);
+            view.set_text_selection(0, 4, true);
+            view.transcript_drag_anchor = Some(0);
+            view.transcript_selection_armed = true;
+            view.transcript_pending_click = Some(PendingClick {
+                position: point(gpui::px(10.0), gpui::px(10.0)),
+                click_count: 2,
+            });
+
+            view.clear_transcript_selection();
+
+            assert!(view.state.text_selection.is_none());
+            assert!(view.transcript_drag_anchor.is_none());
+            assert!(!view.transcript_selection_armed);
+            assert!(view.transcript_pending_click.is_none());
+        });
+    });
+}
+
+/// Conversation switch (`apply_store_snapshot` Ready) clears selection.
+#[gpui::test]
+async fn conversation_switch_clears_selection_and_armed_state(cx: &mut TestAppContext) {
+    use crate::ui_gpui::app_store_types::ChatStoreSnapshot;
+
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+    let (bridge, _user_rx) = make_chat_bridge();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.set_bridge(bridge.clone());
+
+            // Set up active selection state.
+            install_transcript(view, &["old content"]);
+            view.set_text_selection(0, 3, false);
+            view.transcript_selection_armed = true;
+
+            // Simulate a conversation switch via apply_store_snapshot.
+            let snapshot = ChatStoreSnapshot {
+                transcript: vec![ConversationMessagePayload {
+                    role: MessageRole::User,
+                    content: "new content".to_string(),
+                    thinking_content: None,
+                    timestamp: None,
+                    model_id: None,
+                }],
+                ..ChatStoreSnapshot::default()
+            };
+            view.apply_store_snapshot(snapshot, cx);
+
+            // Selection state should be fully cleared.
+            assert!(
+                view.state.text_selection.is_none(),
+                "selection should be cleared"
+            );
+            assert!(
+                !view.transcript_selection_armed,
+                "armed flag should be cleared"
+            );
+        });
+    });
+}
+
+/// `build_selectable_styled_text` snaps mid-byte selection to char boundaries.
+#[test]
+fn build_selectable_styled_text_snaps_to_char_boundaries() {
+    use crate::ui_gpui::components::build_selectable_styled_text;
+
+    let text = "café"; // 'é' is bytes 3..5
+                       // Range starting at byte 4 (mid-char in 'é') should snap.
+    let styled = build_selectable_styled_text(text, Some(&(4..5)), gpui::black());
+    // Should not panic — that's the primary assertion.
+    // The text should still be "café".
+    let _ = styled.layout();
+}
+
+/// `build_transcript_buffer` includes streaming thinking content.
+#[gpui::test]
+async fn build_transcript_buffer_includes_streaming_thinking(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |_view: &mut ChatView, _cx| {
+            let messages = vec![ChatMessage {
+                role: state::MessageRole::User,
+                content: "Hello".to_string(),
+                thinking: None,
+                model_label: None,
+                timestamp: None,
+            }];
+            let (text, ranges) = ChatView::build_transcript_buffer(
+                &messages,
+                Some("streaming thought"),
+                true,
+                false,
+            );
+
+            // Should have 2 ranges: user body + streaming thinking.
+            assert_eq!(ranges.len(), 2);
+            assert_eq!(&text[ranges[0].clone()], "Hello");
+            assert_eq!(&text[ranges[1].clone()], "streaming thought");
+        });
+    });
+}

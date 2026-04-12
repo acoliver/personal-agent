@@ -1,4 +1,5 @@
-//! Word/paragraph boundary helpers used by the chat-view selection logic.
+//! Word/paragraph boundary helpers and transcript selection primitives used by
+//! the chat-view selection logic.
 //!
 //! Earlier iterations of this module hosted a standalone `SelectableText`
 //! GPUI element. The chat view ultimately implemented selection directly on
@@ -9,6 +10,82 @@
 //! @requirement REQ-TEXT-SELECT-001
 
 use std::ops::Range;
+
+use gpui::{StyledText, TextRun};
+
+use crate::ui_gpui::theme::Theme;
+
+/// Shared layout sink for bubble → `ChatView` hit-testing.
+///
+/// Starts as `None`; the bubble stores `styled.layout().clone()` during
+/// `into_element` when in flat/selectable mode. After GPUI paints the element
+/// the inner `TextLayout` becomes measured and `index_for_position` is safe.
+pub type TextLayoutSink = std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>;
+
+/// Build a `StyledText` with optional selection highlight.
+///
+/// Selection bounds are snapped to UTF-8 char boundaries. The returned text is
+/// byte-identical to `text` so the associated `TextLayout` can hit-test.
+#[allow(clippy::option_if_let_else, clippy::similar_names)]
+#[must_use]
+pub fn build_selectable_styled_text(
+    text: &str,
+    selection: Option<&Range<usize>>,
+    base_color: gpui::Hsla,
+) -> StyledText {
+    let clamped = selection.and_then(|range| {
+        if range.is_empty() {
+            return None;
+        }
+        let mut sel_start = range.start.min(text.len());
+        while sel_start > 0 && !text.is_char_boundary(sel_start) {
+            sel_start -= 1;
+        }
+        let mut sel_end = range.end.min(text.len());
+        while sel_end < text.len() && !text.is_char_boundary(sel_end) {
+            sel_end += 1;
+        }
+        (sel_start < sel_end).then_some(sel_start..sel_end)
+    });
+
+    if let Some(range) = clamped {
+        let before_len = range.start;
+        let selected_len = range.end - range.start;
+        let after_len = text.len() - range.end;
+
+        let sel_fg = Theme::selection_fg();
+        let sel_bg = Theme::selection_bg();
+
+        let mut runs = Vec::with_capacity(3);
+        if before_len > 0 {
+            runs.push(TextRun {
+                len: before_len,
+                color: base_color,
+                ..Default::default()
+            });
+        }
+        runs.push(TextRun {
+            len: selected_len,
+            color: sel_fg,
+            background_color: Some(sel_bg),
+            ..Default::default()
+        });
+        if after_len > 0 {
+            runs.push(TextRun {
+                len: after_len,
+                color: base_color,
+                ..Default::default()
+            });
+        }
+        StyledText::new(text.to_string()).with_runs(runs)
+    } else {
+        StyledText::new(text.to_string()).with_runs(vec![TextRun {
+            len: text.len(),
+            color: base_color,
+            ..Default::default()
+        }])
+    }
+}
 
 /// Find the word boundaries surrounding `position` (UTF-8 byte offset).
 ///

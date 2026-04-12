@@ -6,16 +6,16 @@
 //!
 //! @plan PLAN-20260325-ISSUE11B.P02
 
-use super::render_messages::render_transcript_text;
 use super::state::{ChatMessage, StreamingState, TextSelection};
 use super::ChatView;
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::AppMode;
+use crate::ui_gpui::components::TextLayoutSink;
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels,
-    ScrollWheelEvent, SharedString, StyledText,
+    ScrollWheelEvent, SharedString,
 };
 
 impl ChatView {
@@ -132,8 +132,7 @@ impl ChatView {
                 println!(">>> Cmd+N pressed - new conversation <<<");
                 self.emit(UserEvent::NewConversation);
                 self.state.messages.clear();
-                // Clear text selection because old offsets reference cleared text.
-                self.state.text_selection = None;
+                self.clear_transcript_selection();
                 self.state.input_text.clear();
                 self.state.cursor_position = 0;
                 self.state.streaming = StreamingState::Idle;
@@ -211,7 +210,7 @@ impl ChatView {
     ///
     /// When `filter_emoji` is on the buffer is left empty (display text
     /// diverges from source) and selection is disabled.
-    fn build_transcript_buffer(
+    pub(super) fn build_transcript_buffer(
         messages: &[ChatMessage],
         thinking_content: Option<&str>,
         show_thinking: bool,
@@ -269,57 +268,34 @@ impl ChatView {
         (start < end).then_some(start - block.start..end - block.start)
     }
 
-    /// Build a thinking-bubble row for an assistant message.
-    fn build_thinking_row(index: usize, thinking_styled: StyledText) -> gpui::AnyElement {
-        div()
-            .id(SharedString::from(format!("msg-{index}-thinking")))
-            .max_w(px(300.0))
-            .px(px(8.0))
-            .py(px(8.0))
-            .rounded(px(8.0))
-            .bg(Theme::thinking_bg())
-            .border_l_2()
-            .border_color(Theme::text_muted())
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        div()
-                            .text_size(px(Theme::font_size_small()))
-                            .text_color(Theme::text_muted())
-                            .child("Thinking"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_muted())
-                            .italic()
-                            .cursor_text()
-                            .child(thinking_styled),
-                    ),
-            )
-            .into_any_element()
-    }
-
     /// Build the message-row elements that go inside the chat area, also
-    /// returning the per-block GPUI text layouts in visual order so handlers
-    /// can hit-test them.
+    /// returning per-block layout sinks for hit-testing. Each message body and
+    /// optional thinking block gets a `TextLayoutSink` that the bubble will
+    /// populate during `into_element` when `selectable` is true.
     fn build_message_rows(
         messages: &[ChatMessage],
         block_ranges: &[std::ops::Range<usize>],
         selection_range: Option<&std::ops::Range<usize>>,
         show_thinking: bool,
         filter_emoji: bool,
-    ) -> (Vec<gpui::AnyElement>, Vec<gpui::TextLayout>) {
+        selectable: bool,
+    ) -> (Vec<gpui::AnyElement>, Vec<TextLayoutSink>) {
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        let mut layouts: Vec<gpui::TextLayout> = Vec::with_capacity(block_ranges.len());
+        let mut layouts: Vec<TextLayoutSink> = Vec::with_capacity(block_ranges.len());
 
         if filter_emoji {
             for (i, msg) in messages.iter().enumerate() {
                 let id = SharedString::from(format!("msg-{i}"));
-                let element = Self::render_message(msg, show_thinking, filter_emoji, i, None);
+                let element = Self::render_message(
+                    msg,
+                    show_thinking,
+                    filter_emoji,
+                    i,
+                    None,
+                    false,
+                    None,
+                    None,
+                );
                 rows.push(
                     div()
                         .id(id)
@@ -334,15 +310,37 @@ impl ChatView {
         }
 
         let mut block_cursor: usize = 0;
+        #[allow(clippy::explicit_counter_loop)]
         for (i, msg) in messages.iter().enumerate() {
             let msg_block = block_ranges.get(block_cursor);
             let msg_range = msg_block.and_then(|b| Self::block_sub_range(b, selection_range));
-            let msg_styled = render_transcript_text(&msg.content, msg_range.clone());
-            layouts.push(msg_styled.layout().clone());
+            let body_sink: TextLayoutSink = std::rc::Rc::new(std::cell::RefCell::new(None));
+            layouts.push(body_sink.clone());
             block_cursor += 1;
 
+            // Create thinking sink if this message has thinking content
+            let thinking_sink: Option<TextLayoutSink> = if show_thinking {
+                msg.thinking.as_ref().filter(|t| !t.is_empty()).map(|_| {
+                    let sink: TextLayoutSink = std::rc::Rc::new(std::cell::RefCell::new(None));
+                    layouts.push(sink.clone());
+                    block_cursor += 1;
+                    sink
+                })
+            } else {
+                None
+            };
+
             let id = SharedString::from(format!("msg-{i}"));
-            let element = Self::render_message(msg, show_thinking, filter_emoji, i, msg_range);
+            let element = Self::render_message(
+                msg,
+                show_thinking,
+                filter_emoji,
+                i,
+                msg_range,
+                selectable,
+                Some(body_sink),
+                thinking_sink,
+            );
             rows.push(
                 div()
                     .id(id)
@@ -352,25 +350,6 @@ impl ChatView {
                     .child(element)
                     .into_any_element(),
             );
-
-            if !show_thinking {
-                continue;
-            }
-            let Some(thinking) = msg.thinking.as_ref() else {
-                continue;
-            };
-            if thinking.is_empty() {
-                continue;
-            }
-
-            let thinking_block = block_ranges.get(block_cursor);
-            let thinking_range =
-                thinking_block.and_then(|b| Self::block_sub_range(b, selection_range));
-            let thinking_styled = render_transcript_text(thinking, thinking_range);
-            layouts.push(thinking_styled.layout().clone());
-            block_cursor += 1;
-
-            rows.push(Self::build_thinking_row(i, thinking_styled));
         }
 
         (rows, layouts)
@@ -385,7 +364,6 @@ impl ChatView {
         self.refresh_autoscroll_state_from_handle();
 
         if self.state.filter_emoji {
-            self.transcript_drag_anchor = None;
             self.clear_transcript_selection();
             cx.notify();
             return;
@@ -394,7 +372,25 @@ impl ChatView {
         let Some((block_index, block_offset)) =
             self.transcript_block_index_at_point(event.position)
         else {
-            self.transcript_drag_anchor = None;
+            // Sinks not yet populated — arm flat mode for the next frame.
+            if !self.transcript_selection_armed {
+                self.transcript_selection_armed = true;
+                // For multi-click, stash the event for deferred replay.
+                if event.click_count >= 2 {
+                    self.transcript_pending_click = Some(super::PendingClick {
+                        position: event.position,
+                        click_count: event.click_count,
+                    });
+                    let entity = cx.entity();
+                    cx.defer(move |cx| {
+                        entity.update(cx, |this, cx| {
+                            this.replay_pending_click(cx);
+                        });
+                    });
+                }
+                cx.notify();
+                return;
+            }
             self.clear_transcript_selection();
             cx.notify();
             return;
@@ -402,7 +398,6 @@ impl ChatView {
 
         let Some(abs_offset) = self.transcript_offset_for_block_index(block_index, block_offset)
         else {
-            self.transcript_drag_anchor = None;
             self.clear_transcript_selection();
             cx.notify();
             return;
@@ -423,6 +418,27 @@ impl ChatView {
             }
         }
 
+        cx.notify();
+    }
+
+    /// Replay a stashed multi-click (double/triple) after sinks become available.
+    fn replay_pending_click(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(pending) = self.transcript_pending_click.take() else {
+            return;
+        };
+        let Some((block_index, block_offset)) =
+            self.transcript_block_index_at_point(pending.position)
+        else {
+            return;
+        };
+        let Some(abs_offset) = self.transcript_offset_for_block_index(block_index, block_offset)
+        else {
+            return;
+        };
+        match pending.click_count {
+            2 => self.select_word_at_offset(abs_offset, cx),
+            _ => self.select_paragraph_at_offset(abs_offset, cx),
+        }
         cx.notify();
     }
 
@@ -483,8 +499,7 @@ impl ChatView {
             }),
         )
         .on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
-            this.transcript_drag_anchor = None;
-            if this.state.text_selection.is_some() {
+            if this.state.text_selection.is_some() || this.transcript_selection_armed {
                 this.clear_transcript_selection();
                 cx.notify();
             }
@@ -512,6 +527,11 @@ impl ChatView {
                 });
                 cx.notify();
             }
+        } else if self.transcript_selection_armed {
+            // User clicked and released without selecting — clear armed state.
+            self.transcript_selection_armed = false;
+            self.transcript_pending_click = None;
+            cx.notify();
         }
     }
 
@@ -544,12 +564,16 @@ impl ChatView {
             self.state.text_selection.as_ref().map(|s| s.range.clone())
         };
 
+        let selectable = !filter_emoji
+            && (self.state.text_selection.is_some() || self.transcript_selection_armed);
+
         let (message_rows, transcript_block_layouts) = Self::build_message_rows(
             &messages,
             &transcript_block_ranges,
             selection_range.as_ref(),
             show_thinking,
             filter_emoji,
+            selectable,
         );
 
         // Stash transcript state on self so the mouse handlers can hit-test.

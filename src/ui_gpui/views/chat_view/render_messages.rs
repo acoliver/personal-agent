@@ -10,9 +10,8 @@
 use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
-use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble, UserBubble};
-use crate::ui_gpui::theme::Theme;
-use gpui::{div, prelude::*, IntoElement, StyledText, TextRun};
+use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble, TextLayoutSink, UserBubble};
+use gpui::{div, prelude::*, IntoElement};
 
 /// Strip emojis from a string, replacing them with empty string.
 /// This only affects display, not the underlying database storage.
@@ -52,63 +51,6 @@ const fn is_emoji(c: char) -> bool {
     )
 }
 
-/// Build a `StyledText` for a transcript block, optionally highlighting a
-/// selection sub-range. The returned text is byte-identical to `text` so the
-/// associated `TextLayout` can be used for hit-testing.
-#[allow(clippy::option_if_let_else, clippy::similar_names)]
-pub(super) fn render_transcript_text(
-    text: &str,
-    selection: Option<std::ops::Range<usize>>,
-) -> StyledText {
-    let clamped = selection.and_then(|range| {
-        if range.is_empty() {
-            return None;
-        }
-        let start = range.start.min(text.len());
-        let end = range.end.min(text.len());
-        (start < end).then_some(start..end)
-    });
-
-    let normal_color = Theme::text_primary();
-    let highlight_fg = Theme::selection_fg();
-    let highlight_bg = Theme::selection_bg();
-
-    if let Some(range) = clamped {
-        let before_len = range.start;
-        let selected_len = range.end - range.start;
-        let after_len = text.len() - range.end;
-
-        let mut runs = Vec::new();
-        if before_len > 0 {
-            runs.push(TextRun {
-                len: before_len,
-                color: normal_color,
-                ..Default::default()
-            });
-        }
-        runs.push(TextRun {
-            len: selected_len,
-            color: highlight_fg,
-            background_color: Some(highlight_bg),
-            ..Default::default()
-        });
-        if after_len > 0 {
-            runs.push(TextRun {
-                len: after_len,
-                color: normal_color,
-                ..Default::default()
-            });
-        }
-        StyledText::new(text.to_string()).with_runs(runs)
-    } else {
-        StyledText::new(text.to_string()).with_runs(vec![TextRun {
-            len: text.len(),
-            color: normal_color,
-            ..Default::default()
-        }])
-    }
-}
-
 impl ChatView {
     /// Render the streaming assistant message bubble.
     pub(super) fn render_streaming_message(
@@ -146,19 +88,31 @@ impl ChatView {
 
     /// Render a single message
     /// @plan PLAN-20250130-GPUIREDUX.P03
-    /// @plan PLAN-20260406-ISSUE151.P01 - added `message_index` for selection
+    /// @plan PLAN-20260406-ISSUE151.P01 - sink-based selection
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_message(
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
         _message_index: usize,
         selection: Option<std::ops::Range<usize>>,
+        selectable: bool,
+        body_sink: Option<TextLayoutSink>,
+        thinking_sink: Option<TextLayoutSink>,
     ) -> gpui::AnyElement {
         match msg.role {
-            MessageRole::User => Self::render_user_message(&msg.content, selection),
-            MessageRole::Assistant => {
-                Self::render_assistant_message(msg, show_thinking, filter_emoji, selection)
+            MessageRole::User => {
+                Self::render_user_message(&msg.content, selection, selectable, body_sink)
             }
+            MessageRole::Assistant => Self::render_assistant_message(
+                msg,
+                show_thinking,
+                filter_emoji,
+                selection,
+                selectable,
+                body_sink,
+                thinking_sink,
+            ),
         }
     }
 
@@ -169,21 +123,31 @@ impl ChatView {
     pub(super) fn render_user_message(
         content: &str,
         selection: Option<std::ops::Range<usize>>,
+        selectable: bool,
+        body_sink: Option<TextLayoutSink>,
     ) -> gpui::AnyElement {
-        UserBubble::new(content)
+        let mut bubble = UserBubble::new(content)
             .selection(selection)
-            .into_any_element()
+            .selectable(selectable);
+        if let Some(sink) = body_sink {
+            bubble = bubble.body_layout_sink(sink);
+        }
+        bubble.into_any_element()
     }
 
     /// Render assistant message - left aligned, dark bubble with model label
     /// @plan:PLAN-20260402-MARKDOWN.P11
     /// @requirement:REQ-MD-INTEGRATE-010
-    /// @plan PLAN-20260406-ISSUE151.P01 - added selection parameter
+    /// @plan PLAN-20260406-ISSUE151.P01 - sink-based selection
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_assistant_message(
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
         selection: Option<std::ops::Range<usize>>,
+        selectable: bool,
+        body_sink: Option<TextLayoutSink>,
+        thinking_sink: Option<TextLayoutSink>,
     ) -> gpui::AnyElement {
         let content = if filter_emoji {
             strip_emojis(&msg.content)
@@ -191,7 +155,15 @@ impl ChatView {
             msg.content.clone()
         };
 
-        let mut bubble = AssistantBubble::new(content).selection(selection);
+        let mut bubble = AssistantBubble::new(content)
+            .selection(selection)
+            .selectable(selectable);
+        if let Some(sink) = body_sink {
+            bubble = bubble.body_layout_sink(sink);
+        }
+        if let Some(sink) = thinking_sink {
+            bubble = bubble.thinking_layout_sink(sink);
+        }
 
         if let Some(ref model_label) = msg.model_label {
             bubble = bubble.model_id(model_label.clone());

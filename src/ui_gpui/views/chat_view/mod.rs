@@ -39,6 +39,13 @@ use std::cell::Cell;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Stashed mouse-down event for deferred replay (multi-click gestures when
+/// sinks are not yet populated on the first frame).
+pub(super) struct PendingClick {
+    pub position: gpui::Point<Pixels>,
+    pub click_count: usize,
+}
+
 /// Chat view component with event handling
 ///
 /// @plan PLAN-20250130-GPUIREDUX.P04
@@ -55,10 +62,21 @@ pub struct ChatView {
     pub(super) transcript_text: String,
     /// Inclusive byte ranges into `transcript_text` for each selectable transcript block.
     pub(super) transcript_block_ranges: Vec<std::ops::Range<usize>>,
-    /// GPUI text layouts aligned to `transcript_block_ranges` for hit-testing.
-    pub(super) transcript_block_layouts: Vec<gpui::TextLayout>,
+    /// Layout sinks aligned to `transcript_block_ranges` for hit-testing.
+    /// Each sink is populated by the corresponding bubble's `into_element`
+    /// when `selectable` mode is active. The inner `Option` starts as `None`
+    /// and becomes `Some` after GPUI paints the element, at which point
+    /// `index_for_position` is safe to call.
+    pub(super) transcript_block_layouts: Vec<crate::ui_gpui::components::TextLayoutSink>,
     /// Anchor offset (into `transcript_text`) for an in-progress drag selection.
     pub(super) transcript_drag_anchor: Option<usize>,
+    /// True when the user has clicked in the chat area but sinks are not yet
+    /// populated (flat mode hasn't rendered). The next render frame will
+    /// produce sinks and any stashed pending click will be replayed.
+    pub(super) transcript_selection_armed: bool,
+    /// Stashed click event for deferred replay after the first selectable
+    /// render frame. Only used for multi-click (double/triple).
+    pub(super) transcript_pending_click: Option<PendingClick>,
     #[cfg(test)]
     pub(super) maybe_scroll_chat_to_bottom_invocations: Cell<usize>,
 }
@@ -76,6 +94,8 @@ impl ChatView {
             transcript_block_ranges: Vec::new(),
             transcript_block_layouts: Vec::new(),
             transcript_drag_anchor: None,
+            transcript_selection_armed: false,
+            transcript_pending_click: None,
             #[cfg(test)]
             maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
         }
@@ -88,7 +108,9 @@ impl ChatView {
         self.transcript_block_layouts
             .iter()
             .enumerate()
-            .find_map(|(block_index, layout)| {
+            .find_map(|(block_index, sink)| {
+                let guard = sink.borrow();
+                let layout = guard.as_ref()?;
                 layout
                     .index_for_position(position)
                     .ok()
@@ -127,6 +149,9 @@ impl ChatView {
 
     pub(super) const fn clear_transcript_selection(&mut self) {
         self.state.text_selection = None;
+        self.transcript_drag_anchor = None;
+        self.transcript_selection_armed = false;
+        self.transcript_pending_click = None;
     }
 
     pub(super) fn refresh_autoscroll_state_from_handle(&mut self) {
@@ -324,15 +349,13 @@ impl ChatView {
         match &load_state {
             ConversationLoadState::Ready { .. } => {
                 self.state.messages = Self::messages_from_payload(transcript);
-                // Clear text selection when messages change
-                self.state.text_selection = None;
+                self.clear_transcript_selection();
             }
             ConversationLoadState::Loading { .. } | ConversationLoadState::Error { .. } => {}
             ConversationLoadState::Idle => {
                 if selected_conversation_id.is_none() {
                     self.state.messages.clear();
-                    // Clear text selection when messages are cleared
-                    self.state.text_selection = None;
+                    self.clear_transcript_selection();
                 }
             }
         }
