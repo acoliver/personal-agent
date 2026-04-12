@@ -58,6 +58,8 @@ tiktoken-rs = "0.9"
 flate2 = "1"
 aes-gcm = "0.10"
 sha2 = "0.10"
+rust-embed = "8"
+
 
 
 [target.'cfg(target_os = "macos")'.dependencies]
