@@ -413,8 +413,8 @@ impl ApiKeyManagerView {
                     .rounded(px(4.0))
                     .bg(Theme::accent())
                     .text_size(px(Theme::font_size_mono()))
-                    .text_color(Theme::text_primary())
-                    .hover(|s| s.opacity(0.85))
+                    .text_color(Theme::accent_fg())
+                    .hover(|s| s.bg(Theme::accent_hover()).text_color(Theme::accent_fg()))
                     .child("Save")
                     .on_mouse_down(
                         MouseButton::Left,
