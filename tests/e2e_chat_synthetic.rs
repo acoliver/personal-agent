@@ -135,15 +135,15 @@ async fn test_real_chat_with_synthetic_api() {
 
         println!("\n");
 
+        let recorded_events = {
+            let events = events.lock().unwrap();
+            events.clone()
+        };
+        let (response_text, event_summary) = summarize_events(&recorded_events);
+        last_event_summary = event_summary;
+
         match result {
             Ok(()) => {
-                let recorded_events = {
-                    let events = events.lock().unwrap();
-                    events.clone()
-                };
-                let (response_text, event_summary) = summarize_events(&recorded_events);
-                last_event_summary = event_summary;
-
                 if !response_text.trim().is_empty() {
                     println!("[OK] Got response: {}", response_text.trim());
                     println!("[OK] E2E test PASSED - Real LLM interaction works!");

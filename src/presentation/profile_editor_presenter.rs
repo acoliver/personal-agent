@@ -269,7 +269,10 @@ impl ProfileEditorPresenter {
             }
             parameters.max_tokens = payload_parameters.max_tokens;
             if let Some(max_tokens_field_name) = payload_parameters.max_tokens_field_name {
-                parameters.max_tokens_field_name = Some(max_tokens_field_name);
+                let normalized = max_tokens_field_name.trim();
+                if !normalized.is_empty() {
+                    parameters.max_tokens_field_name = Some(normalized.to_string());
+                }
             }
             if let Some(show_thinking) = payload_parameters.show_thinking {
                 parameters.show_thinking = show_thinking;

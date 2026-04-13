@@ -310,7 +310,7 @@ impl LlmClient {
         provider: &str,
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
-        if provider == "openai" && self.quirks.has_custom_headers() {
+        if provider == "openai" {
             return self.build_openai_model_with_quirks(base_url);
         }
 
