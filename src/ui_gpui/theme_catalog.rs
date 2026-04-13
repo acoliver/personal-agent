@@ -4,9 +4,16 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 
+use rust_embed::Embed;
 use serde::Deserialize;
+
+#[derive(Embed)]
+#[folder = "assets/themes/"]
+#[include = "*.json"]
+struct BundledThemeAssets;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -157,6 +164,34 @@ pub struct ThemeCatalog {
 }
 
 impl ThemeCatalog {
+    fn insert_theme(
+        &mut self,
+        path: PathBuf,
+        parsed: ThemeDefinition,
+    ) -> Result<(), ThemeCatalogError> {
+        if let Some(first_path) = self.source_paths_by_slug.get(&parsed.slug) {
+            return Err(ThemeCatalogError::DuplicateSlug {
+                slug: parsed.slug.clone(),
+                first_path: first_path.clone(),
+                second_path: path,
+            });
+        }
+
+        let slug = parsed.slug.clone();
+        self.ordered_slugs.push(slug.clone());
+        self.source_paths_by_slug.insert(slug.clone(), path);
+        self.themes_by_slug.insert(slug, parsed);
+
+        Ok(())
+    }
+
+    fn parse_theme(path: &Path, contents: &str) -> Result<ThemeDefinition, ThemeCatalogError> {
+        serde_json::from_str(contents).map_err(|source| ThemeCatalogError::ParseThemeFile {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+
     /// Load a theme catalog from a directory of JSON theme files.
     ///
     /// # Errors
@@ -195,27 +230,8 @@ impl ThemeCatalog {
                     path: path.clone(),
                     source,
                 })?;
-
-            let parsed: ThemeDefinition = serde_json::from_str(&contents).map_err(|source| {
-                ThemeCatalogError::ParseThemeFile {
-                    path: path.clone(),
-                    source,
-                }
-            })?;
-
-            if let Some(first_path) = catalog.source_paths_by_slug.get(&parsed.slug) {
-                return Err(ThemeCatalogError::DuplicateSlug {
-                    slug: parsed.slug.clone(),
-                    first_path: first_path.clone(),
-                    second_path: path,
-                });
-            }
-
-            catalog.ordered_slugs.push(parsed.slug.clone());
-            catalog
-                .source_paths_by_slug
-                .insert(parsed.slug.clone(), path.clone());
-            catalog.themes_by_slug.insert(parsed.slug.clone(), parsed);
+            let parsed = Self::parse_theme(&path, &contents)?;
+            catalog.insert_theme(path, parsed)?;
         }
 
         Ok(catalog)
@@ -228,14 +244,42 @@ impl ThemeCatalog {
             .join("themes")
     }
 
-    /// Load the catalog from the bundled `assets/themes` directory.
+    /// Load the catalog from theme assets embedded into the binary.
     ///
     /// # Errors
     ///
-    /// Returns a [`ThemeCatalogError`] if the assets directory is missing or
-    /// any bundled theme file is malformed.
+    /// Returns a [`ThemeCatalogError`] if any embedded theme file is missing,
+    /// malformed, or contains a duplicate slug.
     pub fn load_bundled() -> Result<Self, ThemeCatalogError> {
-        Self::load_from_dir(&Self::bundled_theme_dir())
+        let mut file_names = BundledThemeAssets::iter()
+            .filter(|path| path.ends_with(".json"))
+            .map(|path| path.to_string())
+            .collect::<Vec<_>>();
+        file_names.sort();
+
+        let mut catalog = Self::default();
+        for file_name in file_names {
+            let path = PathBuf::from(&file_name);
+            let asset = BundledThemeAssets::get(&file_name).ok_or_else(|| {
+                ThemeCatalogError::ReadThemeFile {
+                    path: path.clone(),
+                    source: Error::new(
+                        ErrorKind::NotFound,
+                        "embedded theme asset missing while iterating bundle",
+                    ),
+                }
+            })?;
+            let contents = std::str::from_utf8(asset.data.as_ref()).map_err(|_| {
+                ThemeCatalogError::ReadThemeFile {
+                    path: path.clone(),
+                    source: Error::new(ErrorKind::InvalidData, "invalid UTF-8 in embedded theme"),
+                }
+            })?;
+            let parsed = Self::parse_theme(&path, contents)?;
+            catalog.insert_theme(path, parsed)?;
+        }
+
+        Ok(catalog)
     }
 
     #[must_use]
