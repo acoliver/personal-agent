@@ -571,7 +571,7 @@ impl ProfileEditorView {
             .child(
                 Self::render_text_field(
                     "field-max-tokens",
-                    &self.state.data.max_tokens.to_string(),
+                    &self.state.data.max_tokens,
                     "4096",
                     active,
                 )

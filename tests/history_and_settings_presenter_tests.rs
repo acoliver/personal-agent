@@ -489,7 +489,8 @@ fn make_profile(id: Uuid, name: &str, provider_id: &str, model_id: &str) -> Mode
         parameters: ModelParameters {
             temperature: 0.42,
             top_p: 0.9,
-            max_tokens: 2048,
+            max_tokens: Some(2048),
+            max_tokens_field_name: Some("max_tokens".to_string()),
             thinking_budget: Some(128),
             enable_thinking: true,
             show_thinking: true,
@@ -1122,6 +1123,11 @@ mod settings_presenter_tests {
                 api_key_label: "editor-key".to_string(),
                 temperature: profile.parameters.temperature,
                 max_tokens: profile.parameters.max_tokens,
+                max_tokens_field_name: profile
+                    .parameters
+                    .max_tokens_field_name
+                    .clone()
+                    .unwrap_or_else(|| "max_tokens".to_string()),
                 context_limit: None,
                 show_thinking: profile.parameters.show_thinking,
                 enable_thinking: profile.parameters.enable_thinking,

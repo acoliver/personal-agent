@@ -5,7 +5,8 @@ fn model_profile_apply_parameters_and_auth() {
     let parameters = ModelParameters {
         temperature: 0.2,
         top_p: 0.3,
-        max_tokens: 512,
+        max_tokens: Some(512),
+        max_tokens_field_name: Some("max_tokens".to_string()),
         thinking_budget: Some(256),
         enable_thinking: true,
         show_thinking: true,

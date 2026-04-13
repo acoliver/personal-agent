@@ -166,7 +166,7 @@ impl ProfileService for RecordingProfileService {
     }
 }
 
-fn payload() -> EventModelProfile {
+fn payload(max_tokens: Option<u32>, max_tokens_field_name: &str) -> EventModelProfile {
     EventModelProfile {
         id: uuid::Uuid::new_v4(),
         name: "Editor Name".to_string(),
@@ -178,7 +178,8 @@ fn payload() -> EventModelProfile {
         }),
         parameters: Some(ModelProfileParameters {
             temperature: Some(0.2),
-            max_tokens: Some(2048),
+            max_tokens,
+            max_tokens_field_name: Some(max_tokens_field_name.to_string()),
             show_thinking: Some(true),
             enable_thinking: Some(true),
             thinking_budget: Some(12000),
@@ -209,7 +210,7 @@ async fn test_save_profile_payload_maps_fields_to_update_call() {
         .expect("presenter start must succeed");
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-    let save_payload = payload();
+    let save_payload = payload(Some(2048), "max_completion_tokens");
     event_bus_sender
         .send(personal_agent::events::AppEvent::User(
             personal_agent::events::types::UserEvent::SaveProfile {
@@ -249,7 +250,11 @@ async fn test_save_profile_payload_maps_fields_to_update_call() {
         .clone()
         .expect("parameters should be passed to update");
     assert!((params.temperature - 0.2).abs() < f64::EPSILON);
-    assert_eq!(params.max_tokens, 2048);
+    assert_eq!(params.max_tokens, Some(2048));
+    assert_eq!(
+        params.max_tokens_field_name.as_deref(),
+        Some("max_completion_tokens")
+    );
     assert!(params.show_thinking);
     assert!(params.enable_thinking);
     assert_eq!(params.thinking_budget, Some(12000));
@@ -281,7 +286,9 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
 
     event_bus_sender
         .send(personal_agent::events::AppEvent::User(
-            personal_agent::events::types::UserEvent::SaveProfile { profile: payload() },
+            personal_agent::events::types::UserEvent::SaveProfile {
+                profile: payload(None, "max_completion_tokens"),
+            },
         ))
         .ok();
 
@@ -317,7 +324,11 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
     assert_eq!(create.name, "Editor Name");
     assert!(matches!(create.auth, AuthConfig::Keychain { .. }));
     assert!((create.parameters.temperature - 0.2).abs() < f64::EPSILON);
-    assert_eq!(create.parameters.max_tokens, 2048);
+    assert_eq!(create.parameters.max_tokens, None);
+    assert_eq!(
+        create.parameters.max_tokens_field_name.as_deref(),
+        Some("max_completion_tokens")
+    );
     assert!(create.parameters.show_thinking);
     assert!(create.parameters.enable_thinking);
     assert_eq!(create.parameters.thinking_budget, Some(12000));

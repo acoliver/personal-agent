@@ -98,7 +98,8 @@ pub struct ProfileEditorData {
     /// Available keychain labels populated by `ApiKeysListed`.
     pub available_keys: Vec<String>,
     pub temperature: f32,
-    pub max_tokens: u32,
+    pub max_tokens: String,
+    pub max_tokens_field_name: String,
     pub context_limit: u32,
     pub show_thinking: bool,
     pub enable_extended_thinking: bool,
@@ -111,7 +112,8 @@ impl ProfileEditorData {
     pub fn new() -> Self {
         Self {
             temperature: 1.0,
-            max_tokens: 4096,
+            max_tokens: "4096".to_string(),
+            max_tokens_field_name: "max_tokens".to_string(),
             context_limit: 128_000,
             show_thinking: true,
             thinking_budget: 10000,
@@ -219,13 +221,13 @@ impl ProfileEditorView {
             Some(ActiveField::BaseUrl) => self.state.data.base_url.push_str(text),
             Some(ActiveField::MaxTokens) => {
                 if text.chars().all(|c| c.is_ascii_digit()) {
-                    let mut s = self.state.data.max_tokens.to_string();
+                    let mut s = self.state.data.max_tokens.clone();
                     if s == "0" {
                         s.clear();
                     }
                     s.push_str(text);
-                    if let Ok(parsed) = s.parse::<u32>() {
-                        self.state.data.max_tokens = parsed;
+                    if s.parse::<u32>().is_ok() {
+                        self.state.data.max_tokens = s;
                     }
                 }
             }
@@ -272,13 +274,9 @@ impl ProfileEditorView {
                 self.state.data.base_url.pop();
             }
             Some(ActiveField::MaxTokens) => {
-                let mut s = self.state.data.max_tokens.to_string();
+                let mut s = self.state.data.max_tokens.clone();
                 s.pop();
-                self.state.data.max_tokens = if s.is_empty() {
-                    0
-                } else {
-                    s.parse::<u32>().unwrap_or(self.state.data.max_tokens)
-                };
+                self.state.data.max_tokens = s;
             }
             Some(ActiveField::ContextLimit) => {
                 let mut s = self.state.data.context_limit.to_string();
@@ -408,7 +406,8 @@ impl ProfileEditorView {
 
         let parameters = Some(ModelProfileParameters {
             temperature: Some(f64::from(self.state.data.temperature)),
-            max_tokens: Some(self.state.data.max_tokens),
+            max_tokens: self.state.data.max_tokens.parse::<u32>().ok(),
+            max_tokens_field_name: Some(self.state.data.max_tokens_field_name.clone()),
             show_thinking: Some(self.state.data.show_thinking),
             enable_thinking: Some(self.state.data.enable_extended_thinking),
             thinking_budget: if self.state.data.enable_extended_thinking {
@@ -473,6 +472,7 @@ impl ProfileEditorView {
                 api_key_label,
                 temperature,
                 max_tokens,
+                max_tokens_field_name,
                 context_limit,
                 show_thinking,
                 enable_thinking,
@@ -494,7 +494,9 @@ impl ProfileEditorView {
                 {
                     self.state.data.temperature = temperature as f32;
                 }
-                self.state.data.max_tokens = max_tokens;
+                self.state.data.max_tokens =
+                    max_tokens.map_or_else(String::new, |value| value.to_string());
+                self.state.data.max_tokens_field_name = max_tokens_field_name;
                 if let Some(limit) = context_limit {
                     self.state.data.context_limit = limit;
                 }
@@ -606,7 +608,8 @@ mod tests {
                     base_url: "https://api.anthropic.com/v1".to_string(),
                     api_key_label: "anthropic-key".to_string(),
                     temperature: 0.25,
-                    max_tokens: 8192,
+                    max_tokens: Some(8192),
+                    max_tokens_field_name: "max_tokens".to_string(),
                     context_limit: Some(200_000),
                     show_thinking: false,
                     enable_thinking: true,
@@ -644,7 +647,8 @@ mod tests {
             assert_eq!(view.state.data.base_url, "https://api.anthropic.com/v1");
             assert_eq!(view.state.data.key_label, "anthropic-key");
             assert!((view.state.data.temperature - 0.25_f32).abs() < f32::EPSILON);
-            assert_eq!(view.state.data.max_tokens, 8192);
+            assert_eq!(view.state.data.max_tokens, "8192");
+            assert_eq!(view.state.data.max_tokens_field_name, "max_tokens");
             assert_eq!(view.state.data.context_limit, 200_000);
             assert!(!view.state.data.show_thinking);
             assert!(view.state.data.enable_extended_thinking);
@@ -706,13 +710,13 @@ mod tests {
                 assert_eq!(view.marked_text_range(window, cx), None);
 
                 view.state.active_field = Some(ActiveField::MaxTokens);
-                view.state.data.max_tokens = 0;
+                view.state.data.max_tokens = "0".to_string();
                 view.replace_text_in_range(None, "12", window, cx);
-                assert_eq!(view.state.data.max_tokens, 12);
+                assert_eq!(view.state.data.max_tokens, "12");
                 view.replace_text_in_range(None, "x", window, cx);
-                assert_eq!(view.state.data.max_tokens, 12);
+                assert_eq!(view.state.data.max_tokens, "12");
                 view.backspace_active_field();
-                assert_eq!(view.state.data.max_tokens, 1);
+                assert_eq!(view.state.data.max_tokens, "1");
 
                 view.state.active_field = Some(ActiveField::SystemPrompt);
                 let prompt_before = view.state.data.system_prompt.clone();
@@ -807,7 +811,7 @@ mod tests {
             view.state.data.key_label = "custom-key".to_string();
             view.state.data.enable_extended_thinking = true;
             view.state.data.thinking_budget = 4096;
-            view.state.data.max_tokens = 2048;
+            view.state.data.max_tokens = "2048".to_string();
 
             view.handle_command(
                 ViewCommand::ModelSelected {

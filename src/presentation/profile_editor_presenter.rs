@@ -267,8 +267,9 @@ impl ProfileEditorPresenter {
             if let Some(temperature) = payload_parameters.temperature {
                 parameters.temperature = temperature;
             }
-            if let Some(max_tokens) = payload_parameters.max_tokens {
-                parameters.max_tokens = max_tokens;
+            parameters.max_tokens = payload_parameters.max_tokens;
+            if let Some(max_tokens_field_name) = payload_parameters.max_tokens_field_name {
+                parameters.max_tokens_field_name = Some(max_tokens_field_name);
             }
             if let Some(show_thinking) = payload_parameters.show_thinking {
                 parameters.show_thinking = show_thinking;

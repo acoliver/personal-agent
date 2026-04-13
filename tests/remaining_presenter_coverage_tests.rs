@@ -518,6 +518,7 @@ async fn profile_editor_handles_save_paths_and_connection_feedback() {
         parameters: Some(ModelProfileParameters {
             temperature: Some(0.2),
             max_tokens: Some(2048),
+            max_tokens_field_name: Some("max_tokens".to_string()),
             show_thinking: Some(true),
             enable_thinking: Some(true),
             thinking_budget: Some(512),

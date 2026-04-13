@@ -89,7 +89,8 @@ impl AuthConfig {
 pub struct ModelParameters {
     pub temperature: f64,
     pub top_p: f64,
-    pub max_tokens: u32,
+    pub max_tokens: Option<u32>,
+    pub max_tokens_field_name: Option<String>,
     pub thinking_budget: Option<u32>,
     pub enable_thinking: bool,
     pub show_thinking: bool,
@@ -118,7 +119,8 @@ impl Default for ModelParameters {
         Self {
             temperature: 0.7,
             top_p: 1.0,
-            max_tokens: 4096,
+            max_tokens: Some(4096),
+            max_tokens_field_name: Some("max_tokens".to_string()),
             thinking_budget: None,
             enable_thinking: false,
             show_thinking: false,
@@ -151,7 +153,7 @@ impl ModelProfile {
 
     /// Create a profile with custom parameters
     #[must_use]
-    pub const fn with_parameters(mut self, parameters: ModelParameters) -> Self {
+    pub fn with_parameters(mut self, parameters: ModelParameters) -> Self {
         self.parameters = parameters;
         self
     }
@@ -167,7 +169,7 @@ impl ModelProfile {
     }
 
     /// Update the parameters
-    pub const fn set_parameters(&mut self, parameters: ModelParameters) {
+    pub fn set_parameters(&mut self, parameters: ModelParameters) {
         self.parameters = parameters;
     }
 }

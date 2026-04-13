@@ -538,8 +538,11 @@ impl crate::llm::LlmClient {
         let mut builder = AgentBuilder::from_arc(model)
             .temperature(self.profile.parameters.temperature)
             .top_p(self.profile.parameters.top_p)
-            .max_tokens(u64::from(self.profile.parameters.max_tokens))
             .parallel_tool_calls(true);
+
+        if let Some(max_tokens) = self.profile.parameters.max_tokens {
+            builder = builder.max_tokens(u64::from(max_tokens));
+        }
 
         if !system_prompt.is_empty() {
             builder = builder.system_prompt(system_prompt);

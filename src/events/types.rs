@@ -621,6 +621,7 @@ pub enum ModelProfileAuth {
 pub struct ModelProfileParameters {
     pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
+    pub max_tokens_field_name: Option<String>,
     pub show_thinking: Option<bool>,
     pub enable_thinking: Option<bool>,
     pub thinking_budget: Option<u32>,

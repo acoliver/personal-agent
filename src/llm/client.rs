@@ -154,7 +154,7 @@ impl LlmClient {
         ModelSettings {
             temperature: Some(self.profile.parameters.temperature),
             top_p: Some(self.profile.parameters.top_p),
-            max_tokens: Some(u64::from(self.profile.parameters.max_tokens)),
+            max_tokens: self.profile.parameters.max_tokens.map(u64::from),
             ..ModelSettings::default()
         }
     }
@@ -373,6 +373,7 @@ impl LlmClient {
                 model_name: self.profile.model_id.clone(),
                 enable_thinking: self.profile.parameters.enable_thinking,
                 thinking_budget: self.profile.parameters.thinking_budget.map(u64::from),
+                max_tokens_field_name: self.profile.parameters.max_tokens_field_name.clone(),
             },
         );
 

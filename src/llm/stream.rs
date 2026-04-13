@@ -102,9 +102,11 @@ pub async fn send_message_stream(
 
     // Apply model parameters
     let params = &profile.parameters;
-    builder = builder
-        .temperature(params.temperature)
-        .max_tokens(u64::from(params.max_tokens));
+    builder = builder.temperature(params.temperature);
+
+    if let Some(max_tokens) = params.max_tokens {
+        builder = builder.max_tokens(u64::from(max_tokens));
+    }
 
     let agent = builder.build();
 

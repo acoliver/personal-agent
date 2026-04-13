@@ -192,7 +192,7 @@ mod tests {
                 .and_then(Value::as_u64)
                 .and_then(|v| u32::try_from(v).ok())
             {
-                params.max_tokens = v;
+                params.max_tokens = Some(v);
             }
             if let Some(v) = obj.get("enable_thinking").and_then(Value::as_bool) {
                 params.enable_thinking = v;
@@ -215,7 +215,7 @@ mod tests {
                 .and_then(Value::as_u64)
                 .and_then(|v| u32::try_from(v).ok())
             {
-                params.max_tokens = v;
+                params.max_tokens = Some(v);
             }
             if let Some(v) = obj.get("reasoning.enabled").and_then(Value::as_bool) {
                 params.enable_thinking = v;
@@ -289,7 +289,7 @@ mod tests {
         );
         assert!((parsed.parameters.temperature - 0.2).abs() < f64::EPSILON);
         assert!((parsed.parameters.top_p - 0.8).abs() < f64::EPSILON);
-        assert_eq!(parsed.parameters.max_tokens, 2048);
+        assert_eq!(parsed.parameters.max_tokens, Some(2048));
         assert!(parsed.parameters.enable_thinking);
         assert!(parsed.parameters.show_thinking);
         assert_eq!(parsed.parameters.thinking_budget, Some(512));
@@ -368,7 +368,7 @@ mod tests {
         );
         assert!((parsed.parameters.temperature - 0.55).abs() < f64::EPSILON);
         assert!((parsed.parameters.top_p - 0.91).abs() < f64::EPSILON);
-        assert_eq!(parsed.parameters.max_tokens, 888);
+        assert_eq!(parsed.parameters.max_tokens, Some(888));
         assert!(parsed.parameters.enable_thinking);
         assert!(parsed.parameters.show_thinking);
         assert_eq!(parsed.parameters.thinking_budget, Some(128));

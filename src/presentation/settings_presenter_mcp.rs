@@ -266,6 +266,11 @@ impl SettingsPresenter {
                     api_key_label,
                     temperature: profile.parameters.temperature,
                     max_tokens: profile.parameters.max_tokens,
+                    max_tokens_field_name: profile
+                        .parameters
+                        .max_tokens_field_name
+                        .clone()
+                        .unwrap_or_else(|| "max_tokens".to_string()),
                     context_limit: None,
                     show_thinking: profile.parameters.show_thinking,
                     enable_thinking: profile.parameters.enable_thinking,

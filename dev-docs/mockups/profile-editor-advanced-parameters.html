@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - Profile Editor Advanced Parameters Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #1a3318; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: #6a9955; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #7ab966; }
+  .nebula ::-webkit-scrollbar-track { background: #2a2a3a; }
+  .nebula ::-webkit-scrollbar-thumb { background: #89B4FA; }
+  .nebula ::-webkit-scrollbar-thumb:hover { background: #a3c5fb; }
+
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .section-label {
+    font-size: 13px;
+    color: #6a9955;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .annotation {
+    font-size: 11px;
+    color: #6a9955;
+    font-style: italic;
+    margin-top: 8px;
+    max-width: 640px;
+    line-height: 1.6;
+  }
+  .mockup-wrapper { display: flex; flex-direction: column; align-items: center; }
+  .divider { width: 80%; height: 1px; background: #444; margin: 10px 0; }
+
+  .popup-frame {
+    width: 400px;
+    height: 520px;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  .top-bar {
+    height: 44px;
+    background: #000;
+    border-bottom: 1px solid #6a9955;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    flex-shrink: 0;
+  }
+  .top-btn {
+    min-width: 60px;
+    height: 28px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    border: none;
+    background: transparent;
+    color: #6a9955;
+    cursor: default;
+  }
+  .top-btn.save {
+    background: #6a9955;
+    color: #000;
+    font-weight: 600;
+  }
+  .top-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #6a9955;
+  }
+
+  .editor-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #000;
+  }
+
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .field-label {
+    font-size: 11px;
+    color: #6a9955;
+    letter-spacing: 0.5px;
+  }
+  .field-box {
+    height: 28px;
+    background: #000;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    color: #6a9955;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .field-box.active {
+    background: #0a1a0a;
+    box-shadow: inset 0 0 0 1px #7ab966;
+  }
+  .field-box.multiline {
+    height: 86px;
+    align-items: flex-start;
+    padding: 8px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .field-box.muted { color: #3b7a3b; }
+  .inline-note {
+    font-size: 10px;
+    color: #3b7a3b;
+    line-height: 1.45;
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: default;
+  }
+  .checkbox {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #6a9955;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+  .checkbox.checked {
+    background: #6a9955;
+    color: #000;
+  }
+  .checkbox-label {
+    font-size: 12px;
+    color: #6a9955;
+  }
+
+  .section-hdr {
+    font-size: 11px;
+    color: #6a9955;
+    letter-spacing: 0.5px;
+  }
+
+  .advanced-row {
+    min-height: 30px;
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #000;
+  }
+  .advanced-row.active {
+    background: #0a1a0a;
+    box-shadow: inset 0 0 0 1px #7ab966;
+  }
+  .caret {
+    font-size: 11px;
+    color: #6a9955;
+    width: 12px;
+    flex-shrink: 0;
+    text-align: center;
+  }
+  .advanced-title {
+    font-size: 12px;
+    color: #6a9955;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .advanced-panel {
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    padding: 10px;
+    background: #050a05;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .help-text {
+    font-size: 10px;
+    color: #3b7a3b;
+    line-height: 1.5;
+  }
+  .subgroup {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .subgroup-hdr {
+    font-size: 11px;
+    color: #6a9955;
+    letter-spacing: 0.4px;
+  }
+  .editor-box {
+    border: 1px solid #6a9955;
+    border-radius: 4px;
+    background: #000;
+    padding: 8px;
+    font-family: "Menlo", "SF Mono", monospace;
+    font-size: 10px;
+    color: #7ab966;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    min-height: 88px;
+  }
+  .button-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .small-btn {
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid #6a9955;
+    background: #000;
+    color: #6a9955;
+    font-size: 11px;
+    cursor: default;
+  }
+  .small-btn.secondary {
+    color: #3b7a3b;
+    border-color: #3b7a3b;
+  }
+  .callout-box {
+    border: 1px solid #6a9955;
+    border-radius: 6px;
+    padding: 12px;
+    background: #081108;
+    max-width: 660px;
+    color: #6a9955;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .callout-box code {
+    background: #1a3318;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+
+  .nebula .section-label { color: #89B4FA; }
+  .nebula .annotation { color: #89B4FA; }
+  .nebula .popup-frame { background: #1E1E2E; }
+  .nebula .top-bar { background: #1E1E2E; border-bottom-color: #6C7086; }
+  .nebula .top-btn { color: #e5e7eb; }
+  .nebula .top-btn.save { background: #89B4FA; color: #0f172a; }
+  .nebula .top-title { color: #e5e7eb; }
+  .nebula .editor-body { background: #1E1E2E; }
+  .nebula .field-label,
+  .nebula .section-hdr,
+  .nebula .advanced-title,
+  .nebula .subgroup-hdr,
+  .nebula .checkbox-label { color: #e5e7eb; }
+  .nebula .field-box,
+  .nebula .advanced-row,
+  .nebula .editor-box,
+  .nebula .small-btn {
+    background: #161628;
+    border-color: #6C7086;
+    color: #e5e7eb;
+  }
+  .nebula .field-box.active,
+  .nebula .advanced-row.active { background: #2a2a3a; box-shadow: inset 0 0 0 1px #89B4FA; }
+  .nebula .field-box.muted,
+  .nebula .help-text,
+  .nebula .inline-note { color: #6C7086; }
+  .nebula .checkbox { border-color: #6C7086; }
+  .nebula .checkbox.checked { background: #89B4FA; color: #0f172a; border-color: #89B4FA; }
+  .nebula .caret { color: #89B4FA; }
+  .nebula .advanced-panel { background: #161628; border-color: #6C7086; }
+  .nebula .small-btn.secondary { color: #6C7086; border-color: #45475A; }
+  .nebula .callout-box { background: #161628; border-color: #89B4FA; color: #e5e7eb; }
+  .nebula .callout-box code { background: #2a2a3a; color: #e5e7eb; }
+</style>
+</head>
+<body>
+
+<h1>PersonalAgent - Profile Editor Advanced Parameters</h1>
+<h2>Revised mockup: simpler collapsed row and corrected omit behavior</h2>
+
+<div class="mockup-wrapper">
+  <div class="section-label">1. Default State — Simple Collapsed Advanced Row</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-btn">Cancel</div>
+      <div class="top-title">Edit Profile</div>
+      <div class="top-btn save">Save</div>
+    </div>
+
+    <div class="editor-body">
+      <div class="field-group">
+        <div class="field-label">NAME</div>
+        <div class="field-box">OpenAI o3 Reasoning</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">MODEL</div>
+        <div class="field-box">o3-mini</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">API TYPE</div>
+        <div class="field-box">OpenAI</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">BASE URL</div>
+        <div class="field-box">https://api.openai.com/v1</div>
+      </div>
+
+      <div class="section-hdr">PARAMETERS</div>
+
+      <div class="field-group">
+        <div class="field-label">TEMPERATURE</div>
+        <div class="field-box">1.0</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">MAX TOKENS</div>
+        <div class="field-box">4096</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">CONTEXT LIMIT</div>
+        <div class="field-box">128000</div>
+      </div>
+
+      <div class="checkbox-row">
+        <div class="checkbox checked">v</div>
+        <div class="checkbox-label">Show Thinking</div>
+      </div>
+
+      <div class="checkbox-row">
+        <div class="checkbox"></div>
+        <div class="checkbox-label">Enable Extended Thinking</div>
+      </div>
+
+      <div class="advanced-row">
+        <div class="caret">▸</div>
+        <div class="advanced-title">Advanced request parameters</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">SYSTEM PROMPT</div>
+        <div class="field-box multiline">You are a helpful assistant that explains tradeoffs and implementation details clearly.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    The collapsed state is intentionally minimal: just the disclosure row and nothing else hanging off it.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper">
+  <div class="section-label">2. Expanded State — Max Tokens Field Name Override</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-btn">Cancel</div>
+      <div class="top-title">Edit Profile</div>
+      <div class="top-btn save">Save</div>
+    </div>
+
+    <div class="editor-body">
+      <div class="field-group">
+        <div class="field-label">NAME</div>
+        <div class="field-box">OpenAI o3 Reasoning</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">MODEL</div>
+        <div class="field-box">o3-mini</div>
+      </div>
+
+      <div class="section-hdr">PARAMETERS</div>
+
+      <div class="field-group">
+        <div class="field-label">TEMPERATURE</div>
+        <div class="field-box">1.0</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">MAX TOKENS</div>
+        <div class="field-box">4096</div>
+      </div>
+
+      <div class="advanced-panel">
+        <div class="advanced-row" style="border:none; padding:0; background:transparent; min-height:0;">
+          <div class="caret">▾</div>
+          <div class="advanced-title">Advanced request parameters</div>
+        </div>
+
+        <div class="subgroup">
+          <div class="subgroup-hdr">GENERATED FIELD MAPPING</div>
+
+          <div class="field-group">
+            <div class="field-label">MAX TOKENS FIELD NAME</div>
+            <div class="field-box active">max_completion_tokens</div>
+            <div class="inline-note">Default: <code>max_tokens</code>.</div>
+          </div>
+        </div>
+
+        <div class="subgroup">
+          <div class="subgroup-hdr">EXTRA JSON FIELDS</div>
+          <div class="editor-box">{
+  "reasoning": {
+    "effort": "medium"
+  }
+}</div>
+        </div>
+
+        <div class="button-row">
+          <div class="small-btn">Validate JSON</div>
+          <div class="small-btn secondary">Reset Advanced</div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">SYSTEM PROMPT</div>
+        <div class="field-box multiline">You are a helpful assistant that explains tradeoffs and implementation details clearly.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Here the normal Max Tokens value is still 4096, but the outgoing request uses <code>max_completion_tokens</code> as the field name.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper">
+  <div class="section-label">3. Expanded State — Blank Max Tokens Value Means Omit The Field</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-btn">Cancel</div>
+      <div class="top-title">Edit Profile</div>
+      <div class="top-btn save">Save</div>
+    </div>
+
+    <div class="editor-body">
+      <div class="field-group">
+        <div class="field-label">NAME</div>
+        <div class="field-box">OpenAI o3 Reasoning</div>
+      </div>
+
+      <div class="section-hdr">PARAMETERS</div>
+
+      <div class="field-group">
+        <div class="field-label">MAX TOKENS</div>
+        <div class="field-box muted"></div>
+        <div class="inline-note">When this value is blank, no max-tokens field is sent at all.</div>
+      </div>
+
+      <div class="advanced-panel">
+        <div class="advanced-row" style="border:none; padding:0; background:transparent; min-height:0;">
+          <div class="caret">▾</div>
+          <div class="advanced-title">Advanced request parameters</div>
+        </div>
+
+        <div class="subgroup">
+          <div class="subgroup-hdr">GENERATED FIELD MAPPING</div>
+          <div class="field-group">
+            <div class="field-label">MAX TOKENS FIELD NAME</div>
+            <div class="field-box">max_completion_tokens</div>
+            <div class="inline-note">The field name only matters when Max Tokens has a value.</div>
+          </div>
+        </div>
+
+        <div class="subgroup">
+          <div class="subgroup-hdr">EXTRA JSON FIELDS</div>
+          <div class="editor-box">{
+}</div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">SYSTEM PROMPT</div>
+        <div class="field-box multiline">You are a helpful assistant that explains tradeoffs and implementation details clearly.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    This is the corrected omission behavior: omission is driven by an empty <code>MAX TOKENS</code> value, not by an empty field-name override.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper nebula">
+  <div class="section-label">4. Midnight Nebula Variant</div>
+
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-btn">Cancel</div>
+      <div class="top-title">Edit Profile</div>
+      <div class="top-btn save">Save</div>
+    </div>
+
+    <div class="editor-body">
+      <div class="field-group">
+        <div class="field-label">NAME</div>
+        <div class="field-box">OpenAI o3 Reasoning</div>
+      </div>
+
+      <div class="section-hdr">PARAMETERS</div>
+
+      <div class="field-group">
+        <div class="field-label">MAX TOKENS</div>
+        <div class="field-box">4096</div>
+      </div>
+
+      <div class="advanced-panel">
+        <div class="advanced-row" style="border:none; padding:0; background:transparent; min-height:0;">
+          <div class="caret">▾</div>
+          <div class="advanced-title">Advanced request parameters</div>
+        </div>
+
+        <div class="field-group">
+          <div class="field-label">MAX TOKENS FIELD NAME</div>
+          <div class="field-box active">max_completion_tokens</div>
+        </div>
+
+        <div class="subgroup">
+          <div class="subgroup-hdr">EXTRA JSON FIELDS</div>
+          <div class="editor-box">{
+  "reasoning": {
+    "effort": "medium"
+  }
+}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annotation">
+    Same simplified structure in Midnight Nebula so it stays consistent with the existing themed mockups.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper">
+  <div class="section-label">5. Direction Summary</div>
+  <div class="callout-box">
+    <div><strong>Collapsed state:</strong> keep <code>Advanced request parameters</code> as a simple disclosure row.</div>
+    <div><strong>Advanced mapping:</strong> let users change <code>MAX TOKENS FIELD NAME</code> from the default <code>max_tokens</code> to <code>max_completion_tokens</code> or another compatible name.</div>
+    <div><strong>Omission behavior:</strong> if the user clears the main <code>MAX TOKENS</code> value, the request sends no token-limit field at all.</div>
+    <div><strong>Extra JSON:</strong> still available for provider-specific fields that do not fit the typed editor.</div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -126,7 +126,7 @@ impl ProfileServiceImpl {
             {
                 if let Some(v) = n.as_u64() {
                     params.max_tokens =
-                        u32::try_from(v.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
+                        Some(u32::try_from(v.min(u64::from(u32::MAX))).unwrap_or(u32::MAX));
                 }
             }
             if let Some(Value::Bool(v)) = obj
@@ -154,7 +154,7 @@ impl ProfileServiceImpl {
             {
                 if let Some(v) = n.as_u64() {
                     params.max_tokens =
-                        u32::try_from(v.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
+                        Some(u32::try_from(v.min(u64::from(u32::MAX))).unwrap_or(u32::MAX));
                 }
             }
             if let Some(Value::Bool(v)) = obj.get("reasoning.enabled") {

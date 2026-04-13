@@ -40,6 +40,8 @@ pub struct NormalizingSseModelConfig {
     pub enable_thinking: bool,
     /// Optional thinking budget.
     pub thinking_budget: Option<u64>,
+    /// Optional request field-name override for the token limit.
+    pub max_tokens_field_name: Option<String>,
 }
 
 /// Model wrapper that normalizes non-standard SSE formatting in streaming
@@ -53,6 +55,7 @@ pub struct NormalizingSseModel {
     default_timeout: Duration,
     enable_thinking: bool,
     thinking_budget: Option<u64>,
+    max_tokens_field_name: Option<String>,
 }
 
 impl NormalizingSseModel {
@@ -66,6 +69,7 @@ impl NormalizingSseModel {
             default_timeout: Duration::from_secs(120),
             enable_thinking: config.enable_thinking,
             thinking_budget: config.thinking_budget,
+            max_tokens_field_name: config.max_tokens_field_name,
         }
     }
 }
@@ -106,6 +110,7 @@ impl Model for NormalizingSseModel {
             params,
             self.enable_thinking,
             self.thinking_budget,
+            self.max_tokens_field_name.as_deref(),
         )?;
         let timeout = settings.timeout.unwrap_or(self.default_timeout);
 
@@ -155,6 +160,7 @@ impl std::fmt::Debug for NormalizingSseModel {
 ///
 /// When `enable_thinking` is set, `max_completion_tokens` is used instead of
 /// `max_tokens` (the `OpenAI` reasoning API requirement).
+#[allow(clippy::too_many_arguments)]
 fn build_chat_request_payload(
     model_name: &str,
     messages: &[ModelRequest],
@@ -162,6 +168,7 @@ fn build_chat_request_payload(
     params: &ModelRequestParameters,
     enable_thinking: bool,
     thinking_budget: Option<u64>,
+    max_tokens_field_name: Option<&str>,
 ) -> Result<serde_json::Value, ModelError> {
     let chat_messages: Vec<OutboundChatMessage> =
         messages.iter().flat_map(convert_request).collect();
@@ -174,10 +181,10 @@ fn build_chat_request_payload(
 
     let tool_choice = params.tool_choice.as_ref().map(convert_tool_choice);
 
-    let (max_tokens, max_completion_tokens) = if enable_thinking {
-        (None, thinking_budget.or(settings.max_tokens))
+    let token_limit = if enable_thinking {
+        thinking_budget.or(settings.max_tokens)
     } else {
-        (settings.max_tokens, None)
+        settings.max_tokens
     };
 
     let request = ChatCompletionRequest {
@@ -185,8 +192,8 @@ fn build_chat_request_payload(
         messages: Vec::new(),
         temperature: settings.temperature,
         top_p: settings.top_p,
-        max_tokens,
-        max_completion_tokens,
+        max_tokens: None,
+        max_completion_tokens: None,
         stop: settings.stop.clone(),
         presence_penalty: settings.presence_penalty,
         frequency_penalty: settings.frequency_penalty,
@@ -214,10 +221,26 @@ fn build_chat_request_payload(
     }
 
     let encoded_messages = serde_json::to_value(chat_messages)?;
-    request_value
+    let request_object = request_value
         .as_object_mut()
-        .expect("request_value object checked above")
-        .insert("messages".to_string(), encoded_messages);
+        .expect("request_value object checked above");
+    request_object.insert("messages".to_string(), encoded_messages);
+
+    let default_token_field_name = if enable_thinking {
+        "max_completion_tokens"
+    } else {
+        "max_tokens"
+    };
+    let token_field_name = max_tokens_field_name
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(default_token_field_name)
+        .to_string();
+
+    request_object.remove("max_tokens");
+    request_object.remove("max_completion_tokens");
+    if let Some(token_limit) = token_limit {
+        request_object.insert(token_field_name, serde_json::Value::from(token_limit));
+    }
 
     Ok(request_value)
 }
@@ -432,6 +455,7 @@ mod tests {
             &ModelRequestParameters::default(),
             true,
             Some(512),
+            None,
         )
         .expect("payload should serialize");
 
@@ -446,5 +470,49 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("chain")
         );
+    }
+
+    #[test]
+    fn build_chat_request_payload_uses_configured_max_tokens_field_name() {
+        let settings = ModelSettings {
+            max_tokens: Some(2048),
+            ..ModelSettings::default()
+        };
+
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &settings,
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            Some("max_completion_tokens"),
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(
+            payload
+                .get("max_completion_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(2048)
+        );
+        assert!(payload.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn build_chat_request_payload_omits_token_limit_when_max_tokens_is_absent() {
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &ModelSettings::default(),
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            Some("max_completion_tokens"),
+        )
+        .expect("payload should serialize");
+
+        assert!(payload.get("max_tokens").is_none());
+        assert!(payload.get("max_completion_tokens").is_none());
     }
 }
