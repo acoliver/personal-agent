@@ -155,6 +155,8 @@ pub struct ProfileEditorState {
     pub is_new: bool,
     pub(super) active_field: Option<ActiveField>,
     pub(super) advanced_request_parameters_expanded: bool,
+    /// Validation message for the advanced request JSON field.
+    pub(super) advanced_json_validation_message: Option<String>,
 }
 
 impl ProfileEditorState {
@@ -165,6 +167,7 @@ impl ProfileEditorState {
             is_new: true,
             active_field: None,
             advanced_request_parameters_expanded: false,
+            advanced_json_validation_message: None,
         }
     }
 
@@ -177,6 +180,7 @@ impl ProfileEditorState {
             is_new: false,
             active_field: None,
             advanced_request_parameters_expanded: advanced_expanded,
+            advanced_json_validation_message: None,
         }
     }
 }
@@ -453,10 +457,20 @@ impl ProfileEditorView {
                 .ok()
                 .filter(serde_json::Value::is_object);
 
+        // Normalize max_tokens_field_name: empty or the default "max_tokens" sentinel means None
+        let max_tokens_field_name = {
+            let name = self.state.data.max_tokens_field_name.trim();
+            if name.is_empty() || name == "max_tokens" {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        };
+
         let parameters = Some(ModelProfileParameters {
             temperature: Some(f64::from(self.state.data.temperature)),
             max_tokens: self.state.data.max_tokens.parse::<u32>().ok(),
-            max_tokens_field_name: Some(self.state.data.max_tokens_field_name.clone()),
+            max_tokens_field_name,
             extra_request_fields,
             show_thinking: Some(self.state.data.show_thinking),
             enable_thinking: Some(self.state.data.enable_extended_thinking),

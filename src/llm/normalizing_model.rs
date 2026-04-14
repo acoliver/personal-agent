@@ -162,10 +162,11 @@ impl std::fmt::Debug for NormalizingSseModel {
 // ---------------------------------------------------------------------------
 
 /// Reserved request field names that must not be overwritten by extra fields.
-const RESERVED_REQUEST_KEYS: [&str; 11] = [
+const RESERVED_REQUEST_KEYS: [&str; 14] = [
     "model",
     "messages",
     "stream",
+    "stream_options",
     "temperature",
     "top_p",
     "presence_penalty",
@@ -174,6 +175,8 @@ const RESERVED_REQUEST_KEYS: [&str; 11] = [
     "stop",
     "tools",
     "tool_choice",
+    "max_tokens",
+    "max_completion_tokens",
 ];
 
 /// Build a streaming chat request payload.
@@ -222,7 +225,13 @@ fn build_chat_request_payload(
         .expect("request_value object checked above");
     request_object.insert("messages".to_string(), encoded_messages);
 
-    let token_field_name = resolve_token_field_name(enable_thinking, max_tokens_field_name);
+    let default_token_field_name = if enable_thinking {
+        "max_completion_tokens"
+    } else {
+        "max_tokens"
+    };
+    let token_field_name = resolve_token_field_name(enable_thinking, max_tokens_field_name)
+        .unwrap_or_else(|| default_token_field_name.to_string());
     apply_token_limit(request_object, token_limit, &token_field_name);
     merge_extra_fields(request_object, extra_request_fields, &token_field_name);
 
@@ -261,17 +270,41 @@ fn build_chat_request_struct(
     }
 }
 
+/// Reserved keys that must not be overwritten by token field name override.
+const RESERVED_TOKEN_FIELD_NAMES: &[&str] = &[
+    "model",
+    "messages",
+    "stream",
+    "stream_options",
+    "tools",
+    "tool_choice",
+    "temperature",
+    "top_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "seed",
+    "stop",
+];
+
 /// Resolve the token field name based on thinking mode and user override.
-fn resolve_token_field_name(enable_thinking: bool, max_tokens_field_name: Option<&str>) -> String {
+///
+/// Returns `None` if the override is empty, whitespace-only, the default name,
+/// or collides with a reserved request key.
+fn resolve_token_field_name(
+    enable_thinking: bool,
+    max_tokens_field_name: Option<&str>,
+) -> Option<String> {
     let default_name = if enable_thinking {
         "max_completion_tokens"
     } else {
         "max_tokens"
     };
     max_tokens_field_name
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or(default_name)
-        .to_string()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .filter(|name| *name != default_name)
+        .filter(|name| !RESERVED_TOKEN_FIELD_NAMES.contains(name))
+        .map(str::to_string)
 }
 
 /// Apply token limit to the request object using the resolved field name.

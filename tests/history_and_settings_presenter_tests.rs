@@ -1183,9 +1183,8 @@ mod settings_presenter_tests {
     async fn edit_legacy_profile_uses_defaults_for_missing_advanced_fields() {
         let legacy_profile =
             make_legacy_profile(Uuid::new_v4(), "legacy-editor", "openai", "gpt-4.1");
-        let profile_service =
-            MockProfileService::new(vec![legacy_profile.clone()], None)
-                .with_get_results(vec![Ok(legacy_profile.clone())]);
+        let profile_service = MockProfileService::new(vec![legacy_profile.clone()], None)
+            .with_get_results(vec![Ok(legacy_profile.clone())]);
         let app_settings_service = MockAppSettingsService::new(None);
         let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =
             setup_settings_presenter(profile_service, app_settings_service);

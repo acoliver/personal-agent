@@ -163,7 +163,7 @@ impl ProfileEditorView {
             )
     }
 
-    pub(super) fn validate_advanced_request_json(&self) {
+    pub(super) fn validate_advanced_request_json(&mut self, cx: &mut gpui::Context<Self>) {
         let message = match serde_json::from_str::<serde_json::Value>(
             &self.state.data.extra_request_fields,
         ) {
@@ -172,6 +172,8 @@ impl ProfileEditorView {
             Err(error) => format!("Advanced request JSON is invalid: {error}"),
         };
         tracing::info!("Advanced request JSON validation: {message}");
+        self.state.advanced_json_validation_message = Some(message);
+        cx.notify();
     }
 
     pub(super) fn render_advanced_request_parameter_actions(
@@ -197,8 +199,8 @@ impl ProfileEditorView {
                     .child("Validate JSON")
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, _window, _cx| {
-                            this.validate_advanced_request_json();
+                        cx.listener(|this, _, _window, cx| {
+                            this.validate_advanced_request_json(cx);
                         }),
                     ),
             )
@@ -254,8 +256,27 @@ impl ProfileEditorView {
                         .gap(px(12.0))
                         .child(self.render_max_tokens_field_name_advanced_section(field_active, cx))
                         .child(self.render_extra_request_fields_editor(extra_json_active, cx))
-                        .child(Self::render_advanced_request_parameter_actions(cx)),
+                        .child(Self::render_advanced_request_parameter_actions(cx))
+                        .child(Self::render_advanced_json_validation_message(
+                            self.state.advanced_json_validation_message.as_ref(),
+                        )),
                 )
             })
+    }
+
+    fn render_advanced_json_validation_message(message: Option<&String>) -> impl IntoElement {
+        message.map_or_else(div, |msg| {
+            let is_valid = msg.contains("is valid");
+            let text_color = if is_valid {
+                Theme::text_secondary()
+            } else {
+                Theme::error()
+            };
+            div()
+                .mt(px(4.0))
+                .text_size(px(Theme::font_size_small()))
+                .text_color(text_color)
+                .child(msg.clone())
+        })
     }
 }
