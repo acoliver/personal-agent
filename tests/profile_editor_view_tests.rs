@@ -568,3 +568,88 @@ fn command_payload_shapes_used_by_profile_editor_match_expectations() {
             && max_tokens_field_name == "max_completion_tokens"
     ));
 }
+
+#[test]
+fn profile_editor_load_with_whitespace_max_tokens_field_name_treated_as_empty() {
+    let id = Uuid::new_v4();
+    let mut state = ProfileEditorState::new_profile();
+
+    apply_profile_editor_load(
+        &mut state,
+        id,
+        "Whitespace Field",
+        "openai",
+        "gpt-4.1",
+        "https://api.openai.com/v1",
+        "openai-key",
+        0.5,
+        Some(1024),
+        "   ", // whitespace-only max_tokens_field_name
+        "{}",
+        None,
+        false,
+        false,
+        None,
+        "prompt",
+    );
+
+    // Whitespace-only max_tokens_field_name should still be stored as-is
+    // The normalization to None happens in emit_save_profile
+    assert_eq!(state.data.max_tokens_field_name, "   ");
+}
+
+#[test]
+fn profile_editor_load_with_empty_max_tokens_field_name() {
+    let id = Uuid::new_v4();
+    let mut state = ProfileEditorState::new_profile();
+
+    apply_profile_editor_load(
+        &mut state,
+        id,
+        "Empty Field",
+        "anthropic",
+        "claude-sonnet-4-20250514",
+        "https://api.anthropic.com/v1",
+        "anthropic-key",
+        0.7,
+        Some(4096),
+        "", // empty max_tokens_field_name
+        "{}",
+        None,
+        false,
+        false,
+        None,
+        "prompt",
+    );
+
+    assert_eq!(state.data.max_tokens_field_name, "");
+}
+
+#[test]
+fn profile_editor_load_with_custom_max_tokens_field_name() {
+    let id = Uuid::new_v4();
+    let mut state = ProfileEditorState::new_profile();
+
+    apply_profile_editor_load(
+        &mut state,
+        id,
+        "Custom Field",
+        "openai",
+        "o1-mini",
+        "https://api.openai.com/v1",
+        "openai-key",
+        1.0,
+        Some(100_000),
+        "max_completion_tokens", // custom override
+        "{}",
+        None,
+        false,
+        true, // enable_thinking
+        Some(10000),
+        "Be thorough",
+    );
+
+    assert_eq!(state.data.max_tokens_field_name, "max_completion_tokens");
+    assert!(state.data.enable_extended_thinking);
+    assert_eq!(state.data.thinking_budget, 10000);
+}
