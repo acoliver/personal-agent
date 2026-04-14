@@ -245,12 +245,27 @@ fn build_chat_request_payload(
     request_object.remove("max_tokens");
     request_object.remove("max_completion_tokens");
     if let Some(token_limit) = token_limit {
-        request_object.insert(token_field_name, serde_json::Value::from(token_limit));
+        request_object.insert(token_field_name.clone(), serde_json::Value::from(token_limit));
     }
 
     if let Some(serde_json::Value::Object(extra_fields)) = extra_request_fields {
+        let reserved_keys = [
+            "model",
+            "messages",
+            "stream",
+            "temperature",
+            "top_p",
+            "presence_penalty",
+            "frequency_penalty",
+            "seed",
+            "stop",
+            "tools",
+            "tool_choice",
+        ];
         for (key, value) in extra_fields {
-            request_object.insert(key.clone(), value.clone());
+            if !reserved_keys.contains(&key.as_str()) && key != &token_field_name {
+                request_object.insert(key.clone(), value.clone());
+            }
         }
     }
 
