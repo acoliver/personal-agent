@@ -229,7 +229,7 @@ fn build_chat_request_payload(
     Ok(request_value)
 }
 
-/// Build the ChatCompletionRequest struct with standard streaming settings.
+/// Build the `ChatCompletionRequest` struct with standard streaming settings.
 fn build_chat_request_struct(
     model_name: &str,
     settings: &ModelSettings,
