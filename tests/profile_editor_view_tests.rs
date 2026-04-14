@@ -45,6 +45,7 @@ fn apply_profile_editor_load(
     temperature: f64,
     max_tokens: Option<u32>,
     max_tokens_field_name: &str,
+    extra_request_fields: &str,
     context_limit: Option<u32>,
     show_thinking: bool,
     enable_thinking: bool,
@@ -68,6 +69,7 @@ fn apply_profile_editor_load(
     }
     state.data.max_tokens = max_tokens.map_or_else(String::new, |value| value.to_string());
     state.data.max_tokens_field_name = max_tokens_field_name.to_string();
+    state.data.extra_request_fields = extra_request_fields.to_string();
     if let Some(limit) = context_limit {
         state.data.context_limit = limit;
     }
@@ -301,6 +303,7 @@ fn profile_editor_load_maps_existing_profile_fields_and_defaults_thinking_budget
         0.35,
         Some(1234),
         "max_completion_tokens",
+        "{\"reasoning\":{\"effort\":\"medium\"}}",
         Some(64_000),
         false,
         true,
@@ -321,6 +324,10 @@ fn profile_editor_load_maps_existing_profile_fields_and_defaults_thinking_budget
     assert!((state.data.temperature - 0.35_f32).abs() < f32::EPSILON);
     assert_eq!(state.data.max_tokens, "1234");
     assert_eq!(state.data.max_tokens_field_name, "max_completion_tokens");
+    assert_eq!(
+        state.data.extra_request_fields,
+        "{\"reasoning\":{\"effort\":\"medium\"}}"
+    );
     assert_eq!(state.data.context_limit, 64_000);
     assert!(!state.data.show_thinking);
     assert!(state.data.enable_extended_thinking);
@@ -338,6 +345,7 @@ fn profile_editor_load_maps_existing_profile_fields_and_defaults_thinking_budget
         0.1,
         None,
         "max_tokens",
+        "{}",
         None,
         true,
         false,
@@ -347,6 +355,7 @@ fn profile_editor_load_maps_existing_profile_fields_and_defaults_thinking_budget
     assert_eq!(state.data.api_type, ApiType::OpenAI);
     assert_eq!(state.data.max_tokens, "");
     assert_eq!(state.data.max_tokens_field_name, "max_tokens");
+    assert_eq!(state.data.extra_request_fields, "{}");
     assert_eq!(state.data.context_limit, 64_000);
     assert_eq!(state.data.thinking_budget, 777);
     assert!(state.data.show_thinking);

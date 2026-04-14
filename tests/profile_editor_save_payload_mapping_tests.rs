@@ -260,6 +260,11 @@ async fn test_save_profile_payload_maps_fields_to_update_call() {
     assert!(params.show_thinking);
     assert!(params.enable_thinking);
     assert_eq!(params.thinking_budget, Some(12000));
+    assert_eq!(
+        params.extra_request_fields,
+        Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
+        "extra_request_fields should survive the mapping"
+    );
 }
 
 #[tokio::test]
@@ -334,4 +339,9 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
     assert!(create.parameters.show_thinking);
     assert!(create.parameters.enable_thinking);
     assert_eq!(create.parameters.thinking_budget, Some(12000));
+    assert_eq!(
+        create.parameters.extra_request_fields,
+        Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
+        "extra_request_fields should survive the fallback create path"
+    );
 }
