@@ -328,8 +328,31 @@ impl LlmClient {
             config = config.with_thinking(budget);
         }
 
-        serdes_ai::build_model_extended(provider, &self.profile.model_id, config)
-            .map_err(|e| LlmError::SerdesAi(e.to_string()))
+        let inner = serdes_ai::build_model_extended(provider, &self.profile.model_id, config)
+            .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+
+        // Wrap with normalizer to apply max_tokens_field_name and extra_request_fields
+        // for all providers, not just OpenAI. This ensures consistent behavior.
+        let resolved_base_url = base_url.unwrap_or("").to_string();
+        let http_client = HttpClient::builder()
+            .build()
+            .map_err(|e| LlmError::InvalidConfig(format!("failed to build HTTP client: {e}")))?;
+
+        let wrapper = super::normalizing_model::NormalizingSseModel::new(
+            super::normalizing_model::NormalizingSseModelConfig {
+                inner,
+                client: http_client,
+                api_key: self.api_key.clone(),
+                base_url: resolved_base_url,
+                model_name: self.profile.model_id.clone(),
+                enable_thinking: self.profile.parameters.enable_thinking,
+                thinking_budget: self.profile.parameters.thinking_budget.map(u64::from),
+                max_tokens_field_name: self.profile.parameters.max_tokens_field_name.clone(),
+                extra_request_fields: self.profile.parameters.extra_request_fields.clone(),
+            },
+        );
+
+        Ok(std::sync::Arc::new(wrapper))
     }
 
     fn build_openai_model_with_quirks(
