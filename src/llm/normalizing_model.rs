@@ -21,7 +21,7 @@ use serdes_ai_models::model::{Model, ModelRequestParameters, StreamedResponse};
 use serdes_ai_models::openai::stream::OpenAIStreamParser;
 use serdes_ai_models::openai::types::{
     ChatCompletionRequest, ChatMessage, ChatTool, FunctionCall, MessageContent, StreamOptions,
-    ToolCall,
+    ToolCall, ToolChoiceValue,
 };
 use serdes_ai_models::profile::ModelProfile;
 use serdes_ai_models::ToolChoice;
@@ -161,6 +161,21 @@ impl std::fmt::Debug for NormalizingSseModel {
 // Request-body construction
 // ---------------------------------------------------------------------------
 
+/// Reserved request field names that must not be overwritten by extra fields.
+const RESERVED_REQUEST_KEYS: [&str; 11] = [
+    "model",
+    "messages",
+    "stream",
+    "temperature",
+    "top_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "seed",
+    "stop",
+    "tools",
+    "tool_choice",
+];
+
 /// Build a streaming chat request payload.
 ///
 /// When `enable_thinking` is set, `max_completion_tokens` is used instead of
@@ -184,16 +199,52 @@ fn build_chat_request_payload(
     } else {
         Some(convert_tools(&params.tools))
     };
-
     let tool_choice = params.tool_choice.as_ref().map(convert_tool_choice);
-
     let token_limit = if enable_thinking {
         thinking_budget.or(settings.max_tokens)
     } else {
         settings.max_tokens
     };
 
-    let request = ChatCompletionRequest {
+    let request = build_chat_request_struct(
+        model_name,
+        settings,
+        tools,
+        tool_choice,
+    );
+    let mut request_value = serde_json::to_value(request)?;
+    if !request_value.is_object() {
+        return Err(ModelError::from(serde_json::Error::io(
+            std::io::Error::other(format!(
+                "ChatCompletionRequest must serialize to a JSON object, got: {request_value}"
+            )),
+        )));
+    }
+
+    let encoded_messages = serde_json::to_value(chat_messages)?;
+    let request_object = request_value
+        .as_object_mut()
+        .expect("request_value object checked above");
+    request_object.insert("messages".to_string(), encoded_messages);
+
+    let token_field_name = resolve_token_field_name(
+        enable_thinking,
+        max_tokens_field_name,
+    );
+    apply_token_limit(request_object, token_limit, &token_field_name);
+    merge_extra_fields(request_object, extra_request_fields, &token_field_name);
+
+    Ok(request_value)
+}
+
+/// Build the ChatCompletionRequest struct with standard streaming settings.
+fn build_chat_request_struct(
+    model_name: &str,
+    settings: &ModelSettings,
+    tools: Option<Vec<ChatTool>>,
+    tool_choice: Option<ToolChoiceValue>,
+) -> ChatCompletionRequest {
+    ChatCompletionRequest {
         model: model_name.to_string(),
         messages: Vec::new(),
         temperature: settings.temperature,
@@ -215,64 +266,56 @@ fn build_chat_request_payload(
         }),
         logprobs: None,
         top_logprobs: None,
-    };
-
-    let mut request_value = serde_json::to_value(request)?;
-    if !request_value.is_object() {
-        return Err(ModelError::from(serde_json::Error::io(
-            std::io::Error::other(format!(
-                "ChatCompletionRequest must serialize to a JSON object, got: {request_value}"
-            )),
-        )));
     }
+}
 
-    let encoded_messages = serde_json::to_value(chat_messages)?;
-    let request_object = request_value
-        .as_object_mut()
-        .expect("request_value object checked above");
-    request_object.insert("messages".to_string(), encoded_messages);
-
-    let default_token_field_name = if enable_thinking {
+/// Resolve the token field name based on thinking mode and user override.
+fn resolve_token_field_name(
+    enable_thinking: bool,
+    max_tokens_field_name: Option<&str>,
+) -> String {
+    let default_name = if enable_thinking {
         "max_completion_tokens"
     } else {
         "max_tokens"
     };
-    let token_field_name = max_tokens_field_name
+    max_tokens_field_name
         .filter(|name| !name.trim().is_empty())
-        .unwrap_or(default_token_field_name)
-        .to_string();
+        .unwrap_or(default_name)
+        .to_string()
+}
 
+/// Apply token limit to the request object using the resolved field name.
+fn apply_token_limit(
+    request_object: &mut serde_json::Map<String, serde_json::Value>,
+    token_limit: Option<u64>,
+    token_field_name: &str,
+) {
     request_object.remove("max_tokens");
     request_object.remove("max_completion_tokens");
-    if let Some(token_limit) = token_limit {
+    if let Some(limit) = token_limit {
         request_object.insert(
-            token_field_name.clone(),
-            serde_json::Value::from(token_limit),
+            token_field_name.to_string(),
+            serde_json::Value::from(limit),
         );
     }
+}
 
+/// Merge extra request fields, skipping reserved keys and the token field.
+fn merge_extra_fields(
+    request_object: &mut serde_json::Map<String, serde_json::Value>,
+    extra_request_fields: Option<&serde_json::Value>,
+    token_field_name: &str,
+) {
     if let Some(serde_json::Value::Object(extra_fields)) = extra_request_fields {
-        let reserved_keys = [
-            "model",
-            "messages",
-            "stream",
-            "temperature",
-            "top_p",
-            "presence_penalty",
-            "frequency_penalty",
-            "seed",
-            "stop",
-            "tools",
-            "tool_choice",
-        ];
         for (key, value) in extra_fields {
-            if !reserved_keys.contains(&key.as_str()) && key != &token_field_name {
+            if !RESERVED_REQUEST_KEYS.contains(&key.as_str())
+                && key != token_field_name
+            {
                 request_object.insert(key.clone(), value.clone());
             }
         }
     }
-
-    Ok(request_value)
 }
 
 fn convert_request(req: &ModelRequest) -> Vec<OutboundChatMessage> {
