@@ -245,7 +245,10 @@ fn build_chat_request_payload(
     request_object.remove("max_tokens");
     request_object.remove("max_completion_tokens");
     if let Some(token_limit) = token_limit {
-        request_object.insert(token_field_name.clone(), serde_json::Value::from(token_limit));
+        request_object.insert(
+            token_field_name.clone(),
+            serde_json::Value::from(token_limit),
+        );
     }
 
     if let Some(serde_json::Value::Object(extra_fields)) = extra_request_fields {
