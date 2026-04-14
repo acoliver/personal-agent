@@ -608,4 +608,56 @@ mod tests {
         assert!(payload.get("max_tokens").is_none());
         assert!(payload.get("max_completion_tokens").is_none());
     }
+
+    #[test]
+    fn resolve_token_field_name_returns_none_for_empty_string() {
+        assert_eq!(resolve_token_field_name(false, Some("")), None);
+        assert_eq!(resolve_token_field_name(true, Some("")), None);
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_none_for_whitespace() {
+        assert_eq!(resolve_token_field_name(false, Some("   ")), None);
+        assert_eq!(resolve_token_field_name(true, Some("	")), None);
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_none_for_default_name() {
+        // For non-thinking mode, default is "max_tokens"
+        assert_eq!(resolve_token_field_name(false, Some("max_tokens")), None);
+        // For thinking mode, default is "max_completion_tokens"
+        assert_eq!(
+            resolve_token_field_name(true, Some("max_completion_tokens")),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_none_for_reserved_keys() {
+        assert_eq!(resolve_token_field_name(false, Some("model")), None);
+        assert_eq!(resolve_token_field_name(false, Some("messages")), None);
+        assert_eq!(resolve_token_field_name(false, Some("stream")), None);
+        assert_eq!(resolve_token_field_name(false, Some("tools")), None);
+        assert_eq!(resolve_token_field_name(false, Some("temperature")), None);
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_some_for_valid_override() {
+        assert_eq!(
+            resolve_token_field_name(false, Some("custom_tokens")),
+            Some("custom_tokens".to_string())
+        );
+        assert_eq!(
+            resolve_token_field_name(true, Some("max_tokens")),
+            Some("max_tokens".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_token_field_name_trims_whitespace() {
+        assert_eq!(
+            resolve_token_field_name(false, Some("  custom_field  ")),
+            Some("custom_field".to_string())
+        );
+    }
 }
