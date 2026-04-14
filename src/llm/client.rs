@@ -783,4 +783,59 @@ mod tests {
             serdes_ai::core::messages::ModelRequestPart::ToolReturn(_)
         )));
     }
+
+    #[test]
+    fn build_model_wraps_non_openai_with_normalizer() {
+        crate::services::secure_store::use_mock_backend();
+        crate::services::secure_store::api_keys::store("_test_build_model", "test-key")
+            .expect("store test key");
+
+        let profile = ModelProfile {
+            provider_id: "anthropic".to_string(),
+            model_id: "claude-3-opus".to_string(),
+            auth: AuthConfig::Keychain {
+                label: "_test_build_model".to_string(),
+            },
+            parameters: crate::models::profile::ModelParameters {
+                max_tokens_field_name: Some("max_completion_tokens".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let client = LlmClient::from_profile(&profile).unwrap();
+        // Verify that build_model succeeds for non-OpenAI providers
+        let result = client.build_model("anthropic", None);
+        assert!(result.is_ok(), "build_model should succeed for anthropic");
+
+        let _ = crate::services::secure_store::api_keys::delete("_test_build_model");
+    }
+
+    #[test]
+    fn build_model_openai_uses_quirks_path() {
+        crate::services::secure_store::use_mock_backend();
+        crate::services::secure_store::api_keys::store("_test_build_openai", "test-key")
+            .expect("store test key");
+
+        let profile = ModelProfile {
+            provider_id: "openai".to_string(),
+            model_id: "gpt-4.1".to_string(),
+            auth: AuthConfig::Keychain {
+                label: "_test_build_openai".to_string(),
+            },
+            parameters: crate::models::profile::ModelParameters {
+                max_tokens_field_name: Some("max_completion_tokens".to_string()),
+                extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let client = LlmClient::from_profile(&profile).unwrap();
+        // Verify that build_model succeeds for OpenAI providers (uses quirks path)
+        let result = client.build_model("openai", None);
+        assert!(result.is_ok(), "build_model should succeed for openai");
+
+        let _ = crate::services::secure_store::api_keys::delete("_test_build_openai");
+    }
 }
