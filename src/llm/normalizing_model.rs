@@ -660,4 +660,126 @@ mod tests {
             Some("custom_field".to_string())
         );
     }
+
+    #[test]
+    fn build_chat_request_payload_merges_extra_request_fields() {
+        let extra_fields = serde_json::json!({
+            "reasoning": {"effort": "medium"},
+            "custom_param": "value"
+        });
+
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &ModelSettings::default(),
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            None,
+            Some(&extra_fields),
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(
+            payload
+                .get("reasoning")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|obj| obj.get("effort"))
+                .and_then(serde_json::Value::as_str),
+            Some("medium")
+        );
+        assert_eq!(
+            payload
+                .get("custom_param")
+                .and_then(serde_json::Value::as_str),
+            Some("value")
+        );
+    }
+
+    #[test]
+    fn build_chat_request_payload_skips_reserved_keys_in_extra_fields() {
+        let extra_fields = serde_json::json!({
+            "model": "should-be-ignored",
+            "messages": "should-be-ignored",
+            "stream": false,
+            "valid_key": "kept"
+        });
+
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &ModelSettings::default(),
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            None,
+            Some(&extra_fields),
+        )
+        .expect("payload should serialize");
+
+        // model and messages should not be overwritten by extra_fields
+        assert_eq!(
+            payload.get("model").and_then(serde_json::Value::as_str),
+            Some("gpt-4.1")
+        );
+        assert!(payload.get("messages").is_some()); // original messages array
+        assert_eq!(
+            payload.get("stream").and_then(serde_json::Value::as_bool),
+            Some(true)
+        ); // default streaming
+        assert_eq!(
+            payload.get("valid_key").and_then(serde_json::Value::as_str),
+            Some("kept")
+        );
+    }
+
+    #[test]
+    fn build_chat_request_payload_uses_default_token_field_when_no_override() {
+        let settings = ModelSettings {
+            max_tokens: Some(1024),
+            ..ModelSettings::default()
+        };
+
+        // Non-thinking mode should use max_tokens
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &settings,
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            None,
+            None,
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(
+            payload
+                .get("max_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(1024)
+        );
+        assert!(payload.get("max_completion_tokens").is_none());
+
+        // Thinking mode should use max_completion_tokens
+        let payload_thinking = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &settings,
+            &ModelRequestParameters::default(),
+            true,
+            None,
+            None,
+            None,
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(
+            payload_thinking
+                .get("max_completion_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(1024)
+        );
+        assert!(payload_thinking.get("max_tokens").is_none());
+    }
 }
