@@ -491,6 +491,8 @@ fn make_profile(id: Uuid, name: &str, provider_id: &str, model_id: &str) -> Mode
             top_p: 0.9,
             max_tokens: Some(2048),
             max_tokens_field_name: Some("max_tokens".to_string()),
+            extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
+
             thinking_budget: Some(128),
             enable_thinking: true,
             show_thinking: true,
@@ -1128,6 +1130,15 @@ mod settings_presenter_tests {
                     .max_tokens_field_name
                     .clone()
                     .unwrap_or_else(|| "max_tokens".to_string()),
+                extra_request_fields: serde_json::to_string(
+                    profile
+                        .parameters
+                        .extra_request_fields
+                        .as_ref()
+                        .unwrap_or(&serde_json::json!({})),
+                )
+                .expect("extra request fields should serialize"),
+
                 context_limit: None,
                 show_thinking: profile.parameters.show_thinking,
                 enable_thinking: profile.parameters.enable_thinking,

@@ -79,6 +79,8 @@ pub(super) enum ActiveField {
     Model,
     BaseUrl,
     MaxTokens,
+    MaxTokensFieldName,
+    ExtraRequestFields,
     ContextLimit,
     ThinkingBudget,
     SystemPrompt,
@@ -100,6 +102,7 @@ pub struct ProfileEditorData {
     pub temperature: f32,
     pub max_tokens: String,
     pub max_tokens_field_name: String,
+    pub extra_request_fields: String,
     pub context_limit: u32,
     pub show_thinking: bool,
     pub enable_extended_thinking: bool,
@@ -114,6 +117,7 @@ impl ProfileEditorData {
             temperature: 1.0,
             max_tokens: "4096".to_string(),
             max_tokens_field_name: "max_tokens".to_string(),
+            extra_request_fields: "{}".to_string(),
             context_limit: 128_000,
             show_thinking: true,
             thinking_budget: 10000,
@@ -149,6 +153,7 @@ pub struct ProfileEditorState {
     pub data: ProfileEditorData,
     pub is_new: bool,
     pub(super) active_field: Option<ActiveField>,
+    pub(super) advanced_request_parameters_expanded: bool,
 }
 
 impl ProfileEditorState {
@@ -158,6 +163,7 @@ impl ProfileEditorState {
             data: ProfileEditorData::new(),
             is_new: true,
             active_field: None,
+            advanced_request_parameters_expanded: false,
         }
     }
 
@@ -167,6 +173,7 @@ impl ProfileEditorState {
             data,
             is_new: false,
             active_field: None,
+            advanced_request_parameters_expanded: false,
         }
     }
 }
@@ -231,6 +238,12 @@ impl ProfileEditorView {
                     }
                 }
             }
+            Some(ActiveField::MaxTokensFieldName) => {
+                self.state.data.max_tokens_field_name.push_str(text);
+            }
+            Some(ActiveField::ExtraRequestFields) => {
+                self.state.data.extra_request_fields.push_str(text);
+            }
             Some(ActiveField::ContextLimit) => {
                 if text.chars().all(|c| c.is_ascii_digit()) {
                     let mut s = self.state.data.context_limit.to_string();
@@ -278,6 +291,12 @@ impl ProfileEditorView {
                 s.pop();
                 self.state.data.max_tokens = s;
             }
+            Some(ActiveField::MaxTokensFieldName) => {
+                self.state.data.max_tokens_field_name.pop();
+            }
+            Some(ActiveField::ExtraRequestFields) => {
+                self.state.data.extra_request_fields.pop();
+            }
             Some(ActiveField::ContextLimit) => {
                 let mut s = self.state.data.context_limit.to_string();
                 s.pop();
@@ -310,6 +329,8 @@ impl ProfileEditorView {
             ActiveField::Model,
             ActiveField::BaseUrl,
             ActiveField::MaxTokens,
+            ActiveField::MaxTokensFieldName,
+            ActiveField::ExtraRequestFields,
             ActiveField::ContextLimit,
             ActiveField::ThinkingBudget,
             ActiveField::SystemPrompt,
@@ -349,6 +370,20 @@ impl ProfileEditorView {
                     .base_url
                     .truncate(len.saturating_sub(byte_count));
             }
+            Some(ActiveField::MaxTokensFieldName) => {
+                let len = self.state.data.max_tokens_field_name.len();
+                self.state
+                    .data
+                    .max_tokens_field_name
+                    .truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::ExtraRequestFields) => {
+                let len = self.state.data.extra_request_fields.len();
+                self.state
+                    .data
+                    .extra_request_fields
+                    .truncate(len.saturating_sub(byte_count));
+            }
             Some(ActiveField::SystemPrompt) => {
                 let len = self.state.data.system_prompt.len();
                 self.state
@@ -365,6 +400,8 @@ impl ProfileEditorView {
             Some(ActiveField::Name) => &self.state.data.name,
             Some(ActiveField::Model) => &self.state.data.model_id,
             Some(ActiveField::BaseUrl) => &self.state.data.base_url,
+            Some(ActiveField::MaxTokensFieldName) => &self.state.data.max_tokens_field_name,
+            Some(ActiveField::ExtraRequestFields) => &self.state.data.extra_request_fields,
             Some(
                 ActiveField::MaxTokens | ActiveField::ContextLimit | ActiveField::ThinkingBudget,
             )
@@ -404,10 +441,14 @@ impl ProfileEditorView {
             Some(ModelProfileAuth::None)
         };
 
+        let extra_request_fields =
+            serde_json::from_str::<serde_json::Value>(&self.state.data.extra_request_fields).ok();
+
         let parameters = Some(ModelProfileParameters {
             temperature: Some(f64::from(self.state.data.temperature)),
             max_tokens: self.state.data.max_tokens.parse::<u32>().ok(),
             max_tokens_field_name: Some(self.state.data.max_tokens_field_name.clone()),
+            extra_request_fields,
             show_thinking: Some(self.state.data.show_thinking),
             enable_thinking: Some(self.state.data.enable_extended_thinking),
             thinking_budget: if self.state.data.enable_extended_thinking {
@@ -418,7 +459,7 @@ impl ProfileEditorView {
         });
 
         self.emit(&UserEvent::SaveProfile {
-            profile: crate::events::types::ModelProfile {
+            profile: Box::new(crate::events::types::ModelProfile {
                 id,
                 name: self.state.data.name.clone(),
                 provider_id,
@@ -427,7 +468,7 @@ impl ProfileEditorView {
                 auth,
                 parameters,
                 system_prompt: Some(self.state.data.system_prompt.clone()),
-            },
+            }),
         });
     }
 
@@ -473,6 +514,7 @@ impl ProfileEditorView {
                 temperature,
                 max_tokens,
                 max_tokens_field_name,
+                extra_request_fields,
                 context_limit,
                 show_thinking,
                 enable_thinking,
@@ -497,6 +539,10 @@ impl ProfileEditorView {
                 self.state.data.max_tokens =
                     max_tokens.map_or_else(String::new, |value| value.to_string());
                 self.state.data.max_tokens_field_name = max_tokens_field_name;
+                self.state.data.extra_request_fields = extra_request_fields;
+                self.state.advanced_request_parameters_expanded =
+                    self.state.data.max_tokens_field_name != "max_tokens"
+                        || self.state.data.extra_request_fields.trim() != "{}";
                 if let Some(limit) = context_limit {
                     self.state.data.context_limit = limit;
                 }
@@ -610,6 +656,8 @@ mod tests {
                     temperature: 0.25,
                     max_tokens: Some(8192),
                     max_tokens_field_name: "max_tokens".to_string(),
+                    extra_request_fields: "{}".to_string(),
+
                     context_limit: Some(200_000),
                     show_thinking: false,
                     enable_thinking: true,
@@ -649,6 +697,7 @@ mod tests {
             assert!((view.state.data.temperature - 0.25_f32).abs() < f32::EPSILON);
             assert_eq!(view.state.data.max_tokens, "8192");
             assert_eq!(view.state.data.max_tokens_field_name, "max_tokens");
+            assert!(!view.state.advanced_request_parameters_expanded);
             assert_eq!(view.state.data.context_limit, 200_000);
             assert!(!view.state.data.show_thinking);
             assert!(view.state.data.enable_extended_thinking);
@@ -704,6 +753,7 @@ mod tests {
                 );
 
                 view.replace_text_in_range(None, "!", window, cx);
+
                 assert_eq!(view.state.data.name, "Preset Δ!");
                 assert_eq!(view.marked_text_range(window, cx), None);
                 view.unmark_text(window, cx);
@@ -718,6 +768,18 @@ mod tests {
                 view.backspace_active_field();
                 assert_eq!(view.state.data.max_tokens, "1");
 
+                view.state.advanced_request_parameters_expanded = true;
+                view.state.active_field = Some(ActiveField::MaxTokensFieldName);
+                view.state.data.max_tokens_field_name = "max_tokens".to_string();
+                view.replace_text_in_range(None, "_override", window, cx);
+                assert_eq!(view.state.data.max_tokens_field_name, "max_tokens_override");
+                assert_eq!(
+                    view.text_for_range(0..10, &mut None, window, cx),
+                    Some("max_tokens".to_string())
+                );
+                view.backspace_active_field();
+                assert_eq!(view.state.data.max_tokens_field_name, "max_tokens_overrid");
+
                 view.state.active_field = Some(ActiveField::SystemPrompt);
                 let prompt_before = view.state.data.system_prompt.clone();
                 view.replace_and_mark_text_in_range(None, " plan", None, window, cx);
@@ -730,6 +792,62 @@ mod tests {
                 assert!(view.state.data.system_prompt.ends_with(" final"));
                 assert_eq!(view.marked_text_range(window, cx), None);
             });
+        });
+    }
+
+    #[gpui::test]
+    async fn profile_editor_load_toggles_advanced_request_parameter_visibility(
+        cx: &mut TestAppContext,
+    ) {
+        let profile_id = Uuid::new_v4();
+        let view = cx.new(ProfileEditorView::new);
+
+        view.update(cx, |view: &mut ProfileEditorView, cx| {
+            view.handle_command(
+                ViewCommand::ProfileEditorLoad {
+                    id: profile_id,
+                    name: "Existing Profile".to_string(),
+                    provider_id: "openai".to_string(),
+                    model_id: "gpt-4.1".to_string(),
+                    base_url: "https://api.openai.com/v1".to_string(),
+                    api_key_label: "openai-key".to_string(),
+                    temperature: 0.3,
+                    max_tokens: Some(4096),
+                    max_tokens_field_name: "max_completion_tokens".to_string(),
+                    extra_request_fields: "{}".to_string(),
+
+                    context_limit: Some(128_000),
+                    show_thinking: true,
+                    enable_thinking: false,
+                    thinking_budget: Some(2048),
+                    system_prompt: "Use tools when helpful".to_string(),
+                },
+                cx,
+            );
+            assert!(view.state.advanced_request_parameters_expanded);
+
+            view.handle_command(
+                ViewCommand::ProfileEditorLoad {
+                    id: profile_id,
+                    name: "Existing Profile".to_string(),
+                    provider_id: "anthropic".to_string(),
+                    model_id: "claude-sonnet-4-20250514".to_string(),
+                    base_url: "https://api.anthropic.com/v1".to_string(),
+                    api_key_label: "anthropic-key".to_string(),
+                    temperature: 0.25,
+                    max_tokens: Some(8192),
+                    max_tokens_field_name: "max_tokens".to_string(),
+                    extra_request_fields: "{}".to_string(),
+
+                    context_limit: Some(200_000),
+                    show_thinking: false,
+                    enable_thinking: true,
+                    thinking_budget: None,
+                    system_prompt: "Use tools when helpful".to_string(),
+                },
+                cx,
+            );
+            assert!(!view.state.advanced_request_parameters_expanded);
         });
     }
 
@@ -909,9 +1027,10 @@ mod tests {
                 view.state.active_field = None;
                 view.cycle_active_field();
                 assert_eq!(view.state.active_field, Some(ActiveField::Name));
-                for _ in 0..6 {
+                for _ in 0..8 {
                     view.cycle_active_field();
                 }
+
                 assert_eq!(view.state.active_field, Some(ActiveField::SystemPrompt));
                 view.cycle_active_field();
                 assert_eq!(view.state.active_field, Some(ActiveField::Name));

@@ -739,7 +739,7 @@ async fn test_profile_editor_save_profile_attempts_update_then_falls_back_to_cre
     let profile_id = uuid::Uuid::new_v4();
     event_bus_sender
         .send(AppEvent::User(UserEvent::SaveProfile {
-            profile: personal_agent::events::types::ModelProfile {
+            profile: Box::new(personal_agent::events::types::ModelProfile {
                 id: profile_id,
                 name: "Edited Profile".to_string(),
                 provider_id: None,
@@ -748,7 +748,7 @@ async fn test_profile_editor_save_profile_attempts_update_then_falls_back_to_cre
                 auth: None,
                 parameters: None,
                 system_prompt: None,
-            },
+            }),
         }))
         .ok();
 

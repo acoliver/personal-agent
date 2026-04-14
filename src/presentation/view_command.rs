@@ -297,6 +297,7 @@ pub enum ViewCommand {
         temperature: f64,
         max_tokens: Option<u32>,
         max_tokens_field_name: String,
+        extra_request_fields: String,
         context_limit: Option<u32>,
         show_thinking: bool,
         enable_thinking: bool,

@@ -7,6 +7,8 @@ fn model_profile_apply_parameters_and_auth() {
         top_p: 0.3,
         max_tokens: Some(512),
         max_tokens_field_name: Some("max_tokens".to_string()),
+        extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
+
         thinking_budget: Some(256),
         enable_thinking: true,
         show_thinking: true,

@@ -374,6 +374,7 @@ impl LlmClient {
                 enable_thinking: self.profile.parameters.enable_thinking,
                 thinking_budget: self.profile.parameters.thinking_budget.map(u64::from),
                 max_tokens_field_name: self.profile.parameters.max_tokens_field_name.clone(),
+                extra_request_fields: self.profile.parameters.extra_request_fields.clone(),
             },
         );
 

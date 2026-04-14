@@ -519,6 +519,8 @@ async fn profile_editor_handles_save_paths_and_connection_feedback() {
             temperature: Some(0.2),
             max_tokens: Some(2048),
             max_tokens_field_name: Some("max_tokens".to_string()),
+            extra_request_fields: Some(serde_json::json!({})),
+
             show_thinking: Some(true),
             enable_thinking: Some(true),
             thinking_budget: Some(512),
@@ -528,7 +530,7 @@ async fn profile_editor_handles_save_paths_and_connection_feedback() {
 
     event_bus
         .publish(AppEvent::User(UserEvent::SaveProfile {
-            profile: save_profile,
+            profile: Box::new(save_profile),
         }))
         .expect("publish save profile");
     let save_commands = collect_broadcast_commands(&mut view_rx).await;
@@ -669,7 +671,7 @@ async fn profile_editor_falls_back_to_create_and_surfaces_save_errors() {
 
     event_bus
         .publish(AppEvent::User(UserEvent::SaveProfile {
-            profile: EventModelProfile {
+            profile: Box::new(EventModelProfile {
                 id: existing.id,
                 name: "Created Via Fallback".to_string(),
                 provider_id: None,
@@ -678,7 +680,7 @@ async fn profile_editor_falls_back_to_create_and_surfaces_save_errors() {
                 auth: None,
                 parameters: None,
                 system_prompt: None,
-            },
+            }),
         }))
         .expect("publish save profile fallback");
     let commands = collect_broadcast_commands(&mut view_rx).await;
@@ -693,7 +695,7 @@ async fn profile_editor_falls_back_to_create_and_surfaces_save_errors() {
         .await;
     event_bus
         .publish(AppEvent::User(UserEvent::SaveProfile {
-            profile: EventModelProfile {
+            profile: Box::new(EventModelProfile {
                 id: existing.id,
                 name: "Broken".to_string(),
                 provider_id: Some("openai".to_string()),
@@ -702,9 +704,10 @@ async fn profile_editor_falls_back_to_create_and_surfaces_save_errors() {
                 auth: None,
                 parameters: None,
                 system_prompt: None,
-            },
+            }),
         }))
         .expect("publish save profile error");
+
     let error_commands = collect_broadcast_commands(&mut view_rx).await;
     assert!(error_commands.iter().any(|command| matches!(
         command,

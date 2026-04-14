@@ -180,6 +180,8 @@ fn payload(max_tokens: Option<u32>, max_tokens_field_name: &str) -> EventModelPr
             temperature: Some(0.2),
             max_tokens,
             max_tokens_field_name: Some(max_tokens_field_name.to_string()),
+            extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
+
             show_thinking: Some(true),
             enable_thinking: Some(true),
             thinking_budget: Some(12000),
@@ -214,7 +216,7 @@ async fn test_save_profile_payload_maps_fields_to_update_call() {
     event_bus_sender
         .send(personal_agent::events::AppEvent::User(
             personal_agent::events::types::UserEvent::SaveProfile {
-                profile: save_payload.clone(),
+                profile: Box::new(save_payload.clone()),
             },
         ))
         .ok();
@@ -287,7 +289,7 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
     event_bus_sender
         .send(personal_agent::events::AppEvent::User(
             personal_agent::events::types::UserEvent::SaveProfile {
-                profile: payload(None, "max_completion_tokens"),
+                profile: Box::new(payload(None, "max_completion_tokens")),
             },
         ))
         .ok();

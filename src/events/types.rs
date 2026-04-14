@@ -103,7 +103,7 @@ pub enum UserEvent {
     EditProfile { id: Uuid },
 
     /// User clicked save on profile editor
-    SaveProfile { profile: ModelProfile },
+    SaveProfile { profile: Box<ModelProfile> },
 
     /// User clicked delete profile
     DeleteProfile { id: Uuid },
@@ -622,6 +622,7 @@ pub struct ModelProfileParameters {
     pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
     pub max_tokens_field_name: Option<String>,
+    pub extra_request_fields: Option<serde_json::Value>,
     pub show_thinking: Option<bool>,
     pub enable_thinking: Option<bool>,
     pub thinking_budget: Option<u32>,

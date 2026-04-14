@@ -42,6 +42,8 @@ pub struct NormalizingSseModelConfig {
     pub thinking_budget: Option<u64>,
     /// Optional request field-name override for the token limit.
     pub max_tokens_field_name: Option<String>,
+    /// Optional provider-specific JSON fields to merge into the outgoing request.
+    pub extra_request_fields: Option<serde_json::Value>,
 }
 
 /// Model wrapper that normalizes non-standard SSE formatting in streaming
@@ -56,6 +58,7 @@ pub struct NormalizingSseModel {
     enable_thinking: bool,
     thinking_budget: Option<u64>,
     max_tokens_field_name: Option<String>,
+    extra_request_fields: Option<serde_json::Value>,
 }
 
 impl NormalizingSseModel {
@@ -70,6 +73,7 @@ impl NormalizingSseModel {
             enable_thinking: config.enable_thinking,
             thinking_budget: config.thinking_budget,
             max_tokens_field_name: config.max_tokens_field_name,
+            extra_request_fields: config.extra_request_fields,
         }
     }
 }
@@ -111,6 +115,7 @@ impl Model for NormalizingSseModel {
             self.enable_thinking,
             self.thinking_budget,
             self.max_tokens_field_name.as_deref(),
+            self.extra_request_fields.as_ref(),
         )?;
         let timeout = settings.timeout.unwrap_or(self.default_timeout);
 
@@ -169,6 +174,7 @@ fn build_chat_request_payload(
     enable_thinking: bool,
     thinking_budget: Option<u64>,
     max_tokens_field_name: Option<&str>,
+    extra_request_fields: Option<&serde_json::Value>,
 ) -> Result<serde_json::Value, ModelError> {
     let chat_messages: Vec<OutboundChatMessage> =
         messages.iter().flat_map(convert_request).collect();
@@ -240,6 +246,12 @@ fn build_chat_request_payload(
     request_object.remove("max_completion_tokens");
     if let Some(token_limit) = token_limit {
         request_object.insert(token_field_name, serde_json::Value::from(token_limit));
+    }
+
+    if let Some(serde_json::Value::Object(extra_fields)) = extra_request_fields {
+        for (key, value) in extra_fields {
+            request_object.insert(key.clone(), value.clone());
+        }
     }
 
     Ok(request_value)
@@ -456,6 +468,7 @@ mod tests {
             true,
             Some(512),
             None,
+            None,
         )
         .expect("payload should serialize");
 
@@ -487,6 +500,7 @@ mod tests {
             false,
             None,
             Some("max_completion_tokens"),
+            None,
         )
         .expect("payload should serialize");
 
@@ -509,6 +523,7 @@ mod tests {
             false,
             None,
             Some("max_completion_tokens"),
+            None,
         )
         .expect("payload should serialize");
 

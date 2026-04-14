@@ -132,6 +132,8 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
             temperature: Some(f64::from(data.temperature)),
             max_tokens: parsed_max_tokens,
             max_tokens_field_name: Some(data.max_tokens_field_name.clone()),
+            extra_request_fields: serde_json::from_str(&data.extra_request_fields).ok(),
+
             show_thinking: Some(data.show_thinking),
             enable_thinking: Some(data.enable_extended_thinking),
             thinking_budget: if data.enable_extended_thinking {
@@ -207,6 +209,8 @@ fn profile_editor_state_construction_preserves_is_new_and_payloads() {
         temperature: 0.2,
         max_tokens: "8192".to_string(),
         max_tokens_field_name: "max_completion_tokens".to_string(),
+        extra_request_fields: "{}".to_string(),
+
         context_limit: 200_000,
         show_thinking: false,
         enable_extended_thinking: true,
@@ -415,6 +419,8 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         temperature: 0.4,
         max_tokens: "9000".to_string(),
         max_tokens_field_name: "max_completion_tokens".to_string(),
+        extra_request_fields: "{}".to_string(),
+
         context_limit: 200_000,
         show_thinking: true,
         enable_extended_thinking: true,
@@ -430,6 +436,8 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         key_label: "local-key".to_string(),
         available_keys: vec![],
         temperature: 0.9,
+        extra_request_fields: "{}".to_string(),
+
         max_tokens: String::new(),
         max_tokens_field_name: "max_tokens".to_string(),
         context_limit: 16_000,
@@ -513,6 +521,8 @@ fn command_payload_shapes_used_by_profile_editor_match_expectations() {
         temperature: 0.7,
         max_tokens: Some(8192),
         max_tokens_field_name: "max_completion_tokens".to_string(),
+        extra_request_fields: "{\"reasoning\":{\"effort\":\"medium\"}}".to_string(),
+
         context_limit: Some(128_000),
         show_thinking: false,
         enable_thinking: false,

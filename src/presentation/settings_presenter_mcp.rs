@@ -271,6 +271,11 @@ impl SettingsPresenter {
                         .max_tokens_field_name
                         .clone()
                         .unwrap_or_else(|| "max_tokens".to_string()),
+                    extra_request_fields: profile
+                        .parameters
+                        .extra_request_fields
+                        .clone()
+                        .map_or_else(|| "{}".to_string(), |value| value.to_string()),
                     context_limit: None,
                     show_thinking: profile.parameters.show_thinking,
                     enable_thinking: profile.parameters.enable_thinking,
