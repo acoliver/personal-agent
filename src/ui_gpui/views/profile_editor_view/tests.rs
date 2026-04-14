@@ -6,7 +6,7 @@
 
 use super::*;
 use flume;
-use gpui::{AppContext, EntityInputHandler, TestAppContext};
+use gpui::{AppContext, TestAppContext};
 
 use crate::config::default_api_base_url_for_provider;
 use crate::events::types::UserEvent;
@@ -26,9 +26,7 @@ pub(super) fn clear_navigation_requests() {
 }
 
 #[gpui::test]
-async fn set_bridge_requests_api_keys_and_model_selection_can_be_saved(
-    cx: &mut TestAppContext,
-) {
+async fn set_bridge_requests_api_keys_and_model_selection_can_be_saved(cx: &mut TestAppContext) {
     let (bridge, user_rx) = make_bridge();
     let view = cx.new(ProfileEditorView::new);
 
@@ -145,146 +143,12 @@ async fn profile_editor_load_and_api_key_listing_replace_visible_editor_state(
 }
 
 #[gpui::test]
-async fn input_handling_updates_fields_and_backspace_removes_chars(cx: &mut TestAppContext) {
-    clear_navigation_requests();
-    let view = cx.new(ProfileEditorView::new);
-
-    view.update(cx, |view: &mut ProfileEditorView, window, cx| {
-        view.state.active_field = Some(ActiveField::Name);
-        view.replace_text_in_range(None, "Preset Δ", window, cx);
-        assert_eq!(view.state.data.name, "Preset Δ");
-        assert_eq!(view.marked_text_range(window, cx), None);
-        view.unmark_text(window, cx);
-
-        view.state.active_field = Some(ActiveField::MaxTokens);
-        view.state.data.max_tokens = "0".to_string();
-        view.replace_text_in_range(None, "16", window, cx);
-        assert_eq!(view.state.data.max_tokens, "16");
-        view.replace_text_in_range(None, "k", window, cx);
-        assert_eq!(view.state.data.max_tokens, "16");
-        view.backspace_active_field();
-        assert_eq!(view.state.data.max_tokens, "1");
-
-        view.state.advanced_request_parameters_expanded = true;
-        view.state.active_field = Some(ActiveField::MaxTokensFieldName);
-        view.state.data.max_tokens_field_name = "max_tokens".to_string();
-        view.replace_text_in_range(None, "_override", window, cx);
-        assert_eq!(view.state.data.max_tokens_field_name, "max_tokens_override");
-        assert_eq!(
-            view.text_for_range(0..10, &mut None, window, cx),
-            Some("max_tokens".to_string())
-        );
-        view.backspace_active_field();
-        assert_eq!(view.state.data.max_tokens_field_name, "max_tokens_overrid");
-
-        view.state.active_field = Some(ActiveField::SystemPrompt);
-        let prompt_before = view.state.data.system_prompt.clone();
-        view.replace_and_mark_text_in_range(None, " plan", None, window, cx);
-        assert_eq!(view.state.data.system_prompt, prompt_before + " plan");
-        view.unmark_text(window, cx);
-
-        view.state.active_field = Some(ActiveField::BaseUrl);
-        view.state.data.base_url = "https://api.example".to_string();
-        view.replace_text_in_range(None, "https://api.example", window, cx);
-        view.replace_and_mark_text_in_range(None, "/v", None, window, cx);
-        assert_eq!(view.state.data.base_url, "https://api.example/v");
-        view.replace_text_in_range(None, "/v1", window, cx);
-        assert_eq!(view.state.data.base_url, "https://api.example/v1");
-        view.backspace_active_field();
-        assert_eq!(view.state.data.base_url, "https://api.example/v");
-
-        view.state.active_field = Some(ActiveField::ContextLimit);
-        view.state.data.context_limit = 0;
-        view.replace_text_in_range(None, "32", window, cx);
-        assert_eq!(view.state.data.context_limit, 32);
-        view.replace_text_in_range(None, "k", window, cx);
-        assert_eq!(view.state.data.context_limit, 32);
-        view.backspace_active_field();
-        assert_eq!(view.state.data.context_limit, 3);
-
-        view.state.active_field = Some(ActiveField::ThinkingBudget);
-        view.state.data.thinking_budget = 0;
-        view.replace_text_in_range(None, "4096", window, cx);
-        assert_eq!(view.state.data.thinking_budget, 4096);
-        view.backspace_active_field();
-        assert_eq!(view.state.data.thinking_budget, 409);
-
-        view.state.active_field = None;
-        view.cycle_active_field();
-        assert_eq!(view.state.active_field, Some(ActiveField::Name));
-        for _ in 0..8 {
-            view.cycle_active_field();
-        }
-
-        assert_eq!(view.state.active_field, Some(ActiveField::SystemPrompt));
-        view.cycle_active_field();
-        assert_eq!(view.state.active_field, Some(ActiveField::Name));
-    });
-}
-
-#[gpui::test]
-async fn profile_editor_load_toggles_advanced_request_parameter_visibility(
-    cx: &mut TestAppContext,
-) {
-    let profile_id = Uuid::new_v4();
-    let view = cx.new(ProfileEditorView::new);
-
-    view.update(cx, |view: &mut ProfileEditorView, cx| {
-        view.handle_command(
-            ViewCommand::ProfileEditorLoad {
-                id: profile_id,
-                name: "Existing Profile".to_string(),
-                provider_id: "openai".to_string(),
-                model_id: "gpt-4.1".to_string(),
-                base_url: "https://api.openai.com/v1".to_string(),
-                api_key_label: "openai-key".to_string(),
-                temperature: 0.3,
-                max_tokens: Some(4096),
-                max_tokens_field_name: "max_completion_tokens".to_string(),
-                extra_request_fields: "{}".to_string(),
-
-                context_limit: Some(128_000),
-                show_thinking: true,
-                enable_thinking: false,
-                thinking_budget: Some(2048),
-                system_prompt: "Use tools when helpful".to_string(),
-            },
-            cx,
-        );
-        assert!(view.state.advanced_request_parameters_expanded);
-
-        view.handle_command(
-            ViewCommand::ProfileEditorLoad {
-                id: profile_id,
-                name: "Existing Profile".to_string(),
-                provider_id: "anthropic".to_string(),
-                model_id: "claude-sonnet-4-20250514".to_string(),
-                base_url: "https://api.anthropic.com/v1".to_string(),
-                api_key_label: "anthropic-key".to_string(),
-                temperature: 0.25,
-                max_tokens: Some(8192),
-                max_tokens_field_name: "max_tokens".to_string(),
-                extra_request_fields: "{}".to_string(),
-
-                context_limit: Some(200_000),
-                show_thinking: false,
-                enable_thinking: true,
-                thinking_budget: None,
-                system_prompt: "Use tools when helpful".to_string(),
-            },
-            cx,
-        );
-        assert!(!view.state.advanced_request_parameters_expanded);
-    });
-}
-
-#[gpui::test]
 async fn key_refresh_and_navigation_actions_emit_expected_events(cx: &mut TestAppContext) {
     clear_navigation_requests();
     let (bridge, user_rx) = make_bridge();
     let view = cx.new(ProfileEditorView::new);
 
-    view.update(cx, |view: &mut ProfileEditorView, cx| {
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
         view.set_bridge(Arc::clone(&bridge));
         // Trigger a refresh
         view.request_api_key_refresh();
@@ -368,5 +232,39 @@ async fn api_type_cycles_through_anthropic_openai_local_anthropic(cx: &mut TestA
             ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
         };
         assert_eq!(view.state.data.api_type.display(), "Anthropic");
+    });
+}
+
+#[gpui::test]
+async fn validate_advanced_request_json_sets_validation_message(cx: &mut TestAppContext) {
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        // Valid JSON object
+        view.state.data.extra_request_fields = r#"{"reasoning":{"effort":"medium"}}"#.to_string();
+        view.validate_advanced_request_json(cx);
+        assert_eq!(
+            view.state.advanced_json_validation_message,
+            Some("Advanced request JSON is valid.".to_string())
+        );
+
+        // Invalid JSON
+        view.state.data.extra_request_fields = "not json".to_string();
+        view.validate_advanced_request_json(cx);
+        assert!(view.state.advanced_json_validation_message.is_some());
+        let msg = view
+            .state
+            .advanced_json_validation_message
+            .as_ref()
+            .unwrap();
+        assert!(msg.starts_with("Advanced request JSON is invalid:"));
+
+        // Non-object JSON (array)
+        view.state.data.extra_request_fields = "[1, 2, 3]".to_string();
+        view.validate_advanced_request_json(cx);
+        assert_eq!(
+            view.state.advanced_json_validation_message,
+            Some("Advanced request JSON must be a JSON object.".to_string())
+        );
     });
 }

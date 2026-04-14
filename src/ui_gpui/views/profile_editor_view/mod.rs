@@ -585,3 +585,6 @@ impl ProfileEditorView {
         cx.notify();
     }
 }
+
+#[cfg(test)]
+mod tests;
