@@ -206,12 +206,7 @@ fn build_chat_request_payload(
         settings.max_tokens
     };
 
-    let request = build_chat_request_struct(
-        model_name,
-        settings,
-        tools,
-        tool_choice,
-    );
+    let request = build_chat_request_struct(model_name, settings, tools, tool_choice);
     let mut request_value = serde_json::to_value(request)?;
     if !request_value.is_object() {
         return Err(ModelError::from(serde_json::Error::io(
@@ -227,10 +222,7 @@ fn build_chat_request_payload(
         .expect("request_value object checked above");
     request_object.insert("messages".to_string(), encoded_messages);
 
-    let token_field_name = resolve_token_field_name(
-        enable_thinking,
-        max_tokens_field_name,
-    );
+    let token_field_name = resolve_token_field_name(enable_thinking, max_tokens_field_name);
     apply_token_limit(request_object, token_limit, &token_field_name);
     merge_extra_fields(request_object, extra_request_fields, &token_field_name);
 
@@ -270,10 +262,7 @@ fn build_chat_request_struct(
 }
 
 /// Resolve the token field name based on thinking mode and user override.
-fn resolve_token_field_name(
-    enable_thinking: bool,
-    max_tokens_field_name: Option<&str>,
-) -> String {
+fn resolve_token_field_name(enable_thinking: bool, max_tokens_field_name: Option<&str>) -> String {
     let default_name = if enable_thinking {
         "max_completion_tokens"
     } else {
@@ -294,10 +283,7 @@ fn apply_token_limit(
     request_object.remove("max_tokens");
     request_object.remove("max_completion_tokens");
     if let Some(limit) = token_limit {
-        request_object.insert(
-            token_field_name.to_string(),
-            serde_json::Value::from(limit),
-        );
+        request_object.insert(token_field_name.to_string(), serde_json::Value::from(limit));
     }
 }
 
@@ -309,9 +295,7 @@ fn merge_extra_fields(
 ) {
     if let Some(serde_json::Value::Object(extra_fields)) = extra_request_fields {
         for (key, value) in extra_fields {
-            if !RESERVED_REQUEST_KEYS.contains(&key.as_str())
-                && key != token_field_name
-            {
+            if !RESERVED_REQUEST_KEYS.contains(&key.as_str()) && key != token_field_name {
                 request_object.insert(key.clone(), value.clone());
             }
         }
