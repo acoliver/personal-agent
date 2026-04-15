@@ -97,7 +97,7 @@ impl ProfileEditorView {
 
     /// Render a field label
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_label(text: &str) -> impl IntoElement {
+    pub(super) fn render_label(text: &str) -> impl IntoElement {
         div()
             .text_size(px(Theme::font_size_ui()))
             .text_color(Theme::text_secondary())
@@ -107,7 +107,7 @@ impl ProfileEditorView {
 
     /// Render a text input field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_text_field(
+    pub(super) fn render_text_field(
         id: &str,
         value: &str,
         placeholder: &str,
@@ -571,7 +571,7 @@ impl ProfileEditorView {
             .child(
                 Self::render_text_field(
                     "field-max-tokens",
-                    &self.state.data.max_tokens.to_string(),
+                    &self.state.data.max_tokens,
                     "4096",
                     active,
                 )
@@ -585,8 +585,6 @@ impl ProfileEditorView {
             )
     }
 
-    /// Render context limit field
-    /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_context_limit_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let active = self.state.active_field == Some(ActiveField::ContextLimit);
 
@@ -840,6 +838,7 @@ impl ProfileEditorView {
                     .gap(px(12.0))
                     .child(self.render_temperature_section(cx))
                     .child(self.render_max_tokens_section(cx))
+                    .child(self.render_advanced_request_parameters_section(cx))
                     .child(self.render_context_limit_section(cx))
                     .child(self.render_show_thinking_section(cx))
                     .child(self.render_extended_thinking_section(cx)),

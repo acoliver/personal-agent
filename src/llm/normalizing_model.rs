@@ -21,7 +21,7 @@ use serdes_ai_models::model::{Model, ModelRequestParameters, StreamedResponse};
 use serdes_ai_models::openai::stream::OpenAIStreamParser;
 use serdes_ai_models::openai::types::{
     ChatCompletionRequest, ChatMessage, ChatTool, FunctionCall, MessageContent, StreamOptions,
-    ToolCall,
+    ToolCall, ToolChoiceValue,
 };
 use serdes_ai_models::profile::ModelProfile;
 use serdes_ai_models::ToolChoice;
@@ -40,6 +40,10 @@ pub struct NormalizingSseModelConfig {
     pub enable_thinking: bool,
     /// Optional thinking budget.
     pub thinking_budget: Option<u64>,
+    /// Optional request field-name override for the token limit.
+    pub max_tokens_field_name: Option<String>,
+    /// Optional provider-specific JSON fields to merge into the outgoing request.
+    pub extra_request_fields: Option<serde_json::Value>,
 }
 
 /// Model wrapper that normalizes non-standard SSE formatting in streaming
@@ -53,6 +57,8 @@ pub struct NormalizingSseModel {
     default_timeout: Duration,
     enable_thinking: bool,
     thinking_budget: Option<u64>,
+    max_tokens_field_name: Option<String>,
+    extra_request_fields: Option<serde_json::Value>,
 }
 
 impl NormalizingSseModel {
@@ -66,6 +72,8 @@ impl NormalizingSseModel {
             default_timeout: Duration::from_secs(120),
             enable_thinking: config.enable_thinking,
             thinking_budget: config.thinking_budget,
+            max_tokens_field_name: config.max_tokens_field_name,
+            extra_request_fields: config.extra_request_fields,
         }
     }
 }
@@ -106,6 +114,8 @@ impl Model for NormalizingSseModel {
             params,
             self.enable_thinking,
             self.thinking_budget,
+            self.max_tokens_field_name.as_deref(),
+            self.extra_request_fields.as_ref(),
         )?;
         let timeout = settings.timeout.unwrap_or(self.default_timeout);
 
@@ -151,10 +161,29 @@ impl std::fmt::Debug for NormalizingSseModel {
 // Request-body construction
 // ---------------------------------------------------------------------------
 
+/// Reserved request field names that must not be overwritten by extra fields.
+const RESERVED_REQUEST_KEYS: [&str; 14] = [
+    "model",
+    "messages",
+    "stream",
+    "stream_options",
+    "temperature",
+    "top_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "seed",
+    "stop",
+    "tools",
+    "tool_choice",
+    "max_tokens",
+    "max_completion_tokens",
+];
+
 /// Build a streaming chat request payload.
 ///
 /// When `enable_thinking` is set, `max_completion_tokens` is used instead of
 /// `max_tokens` (the `OpenAI` reasoning API requirement).
+#[allow(clippy::too_many_arguments)]
 fn build_chat_request_payload(
     model_name: &str,
     messages: &[ModelRequest],
@@ -162,6 +191,8 @@ fn build_chat_request_payload(
     params: &ModelRequestParameters,
     enable_thinking: bool,
     thinking_budget: Option<u64>,
+    max_tokens_field_name: Option<&str>,
+    extra_request_fields: Option<&serde_json::Value>,
 ) -> Result<serde_json::Value, ModelError> {
     let chat_messages: Vec<OutboundChatMessage> =
         messages.iter().flat_map(convert_request).collect();
@@ -171,22 +202,56 @@ fn build_chat_request_payload(
     } else {
         Some(convert_tools(&params.tools))
     };
-
     let tool_choice = params.tool_choice.as_ref().map(convert_tool_choice);
-
-    let (max_tokens, max_completion_tokens) = if enable_thinking {
-        (None, thinking_budget.or(settings.max_tokens))
+    let token_limit = if enable_thinking {
+        thinking_budget.or(settings.max_tokens)
     } else {
-        (settings.max_tokens, None)
+        settings.max_tokens
     };
 
-    let request = ChatCompletionRequest {
+    let request = build_chat_request_struct(model_name, settings, tools, tool_choice);
+    let mut request_value = serde_json::to_value(request)?;
+    if !request_value.is_object() {
+        return Err(ModelError::from(serde_json::Error::io(
+            std::io::Error::other(format!(
+                "ChatCompletionRequest must serialize to a JSON object, got: {request_value}"
+            )),
+        )));
+    }
+
+    let encoded_messages = serde_json::to_value(chat_messages)?;
+    let request_object = request_value
+        .as_object_mut()
+        .expect("request_value object checked above");
+    request_object.insert("messages".to_string(), encoded_messages);
+
+    let default_token_field_name = if enable_thinking {
+        "max_completion_tokens"
+    } else {
+        "max_tokens"
+    };
+    let token_field_name = resolve_token_field_name(enable_thinking, max_tokens_field_name)
+        .unwrap_or_else(|| default_token_field_name.to_string());
+    apply_token_limit(request_object, token_limit, &token_field_name);
+    merge_extra_fields(request_object, extra_request_fields, &token_field_name);
+
+    Ok(request_value)
+}
+
+/// Build the `ChatCompletionRequest` struct with standard streaming settings.
+fn build_chat_request_struct(
+    model_name: &str,
+    settings: &ModelSettings,
+    tools: Option<Vec<ChatTool>>,
+    tool_choice: Option<ToolChoiceValue>,
+) -> ChatCompletionRequest {
+    ChatCompletionRequest {
         model: model_name.to_string(),
         messages: Vec::new(),
         temperature: settings.temperature,
         top_p: settings.top_p,
-        max_tokens,
-        max_completion_tokens,
+        max_tokens: None,
+        max_completion_tokens: None,
         stop: settings.stop.clone(),
         presence_penalty: settings.presence_penalty,
         frequency_penalty: settings.frequency_penalty,
@@ -202,24 +267,72 @@ fn build_chat_request_payload(
         }),
         logprobs: None,
         top_logprobs: None,
-    };
-
-    let mut request_value = serde_json::to_value(request)?;
-    if !request_value.is_object() {
-        return Err(ModelError::from(serde_json::Error::io(
-            std::io::Error::other(format!(
-                "ChatCompletionRequest must serialize to a JSON object, got: {request_value}"
-            )),
-        )));
     }
+}
 
-    let encoded_messages = serde_json::to_value(chat_messages)?;
-    request_value
-        .as_object_mut()
-        .expect("request_value object checked above")
-        .insert("messages".to_string(), encoded_messages);
+/// Reserved keys that must not be overwritten by token field name override.
+const RESERVED_TOKEN_FIELD_NAMES: &[&str] = &[
+    "model",
+    "messages",
+    "stream",
+    "stream_options",
+    "tools",
+    "tool_choice",
+    "temperature",
+    "top_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "seed",
+    "stop",
+];
 
-    Ok(request_value)
+/// Resolve the token field name based on thinking mode and user override.
+///
+/// Returns `None` if the override is empty, whitespace-only, the default name,
+/// or collides with a reserved request key.
+fn resolve_token_field_name(
+    enable_thinking: bool,
+    max_tokens_field_name: Option<&str>,
+) -> Option<String> {
+    let default_name = if enable_thinking {
+        "max_completion_tokens"
+    } else {
+        "max_tokens"
+    };
+    max_tokens_field_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .filter(|name| *name != default_name)
+        .filter(|name| !RESERVED_TOKEN_FIELD_NAMES.contains(name))
+        .map(str::to_string)
+}
+
+/// Apply token limit to the request object using the resolved field name.
+fn apply_token_limit(
+    request_object: &mut serde_json::Map<String, serde_json::Value>,
+    token_limit: Option<u64>,
+    token_field_name: &str,
+) {
+    request_object.remove("max_tokens");
+    request_object.remove("max_completion_tokens");
+    if let Some(limit) = token_limit {
+        request_object.insert(token_field_name.to_string(), serde_json::Value::from(limit));
+    }
+}
+
+/// Merge extra request fields, skipping reserved keys and the token field.
+fn merge_extra_fields(
+    request_object: &mut serde_json::Map<String, serde_json::Value>,
+    extra_request_fields: Option<&serde_json::Value>,
+    token_field_name: &str,
+) {
+    if let Some(serde_json::Value::Object(extra_fields)) = extra_request_fields {
+        for (key, value) in extra_fields {
+            if !RESERVED_REQUEST_KEYS.contains(&key.as_str()) && key != token_field_name {
+                request_object.insert(key.clone(), value.clone());
+            }
+        }
+    }
 }
 
 fn convert_request(req: &ModelRequest) -> Vec<OutboundChatMessage> {
@@ -432,6 +545,8 @@ mod tests {
             &ModelRequestParameters::default(),
             true,
             Some(512),
+            None,
+            None,
         )
         .expect("payload should serialize");
 
@@ -446,5 +561,225 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("chain")
         );
+    }
+
+    #[test]
+    fn build_chat_request_payload_uses_configured_max_tokens_field_name() {
+        let settings = ModelSettings {
+            max_tokens: Some(2048),
+            ..ModelSettings::default()
+        };
+
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &settings,
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            Some("max_completion_tokens"),
+            None,
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(
+            payload
+                .get("max_completion_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(2048)
+        );
+        assert!(payload.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn build_chat_request_payload_omits_token_limit_when_max_tokens_is_absent() {
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &ModelSettings::default(),
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            Some("max_completion_tokens"),
+            None,
+        )
+        .expect("payload should serialize");
+
+        assert!(payload.get("max_tokens").is_none());
+        assert!(payload.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_none_for_empty_string() {
+        assert_eq!(resolve_token_field_name(false, Some("")), None);
+        assert_eq!(resolve_token_field_name(true, Some("")), None);
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_none_for_whitespace() {
+        assert_eq!(resolve_token_field_name(false, Some("   ")), None);
+        assert_eq!(resolve_token_field_name(true, Some("	")), None);
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_none_for_default_name() {
+        // For non-thinking mode, default is "max_tokens"
+        assert_eq!(resolve_token_field_name(false, Some("max_tokens")), None);
+        // For thinking mode, default is "max_completion_tokens"
+        assert_eq!(
+            resolve_token_field_name(true, Some("max_completion_tokens")),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_none_for_reserved_keys() {
+        assert_eq!(resolve_token_field_name(false, Some("model")), None);
+        assert_eq!(resolve_token_field_name(false, Some("messages")), None);
+        assert_eq!(resolve_token_field_name(false, Some("stream")), None);
+        assert_eq!(resolve_token_field_name(false, Some("tools")), None);
+        assert_eq!(resolve_token_field_name(false, Some("temperature")), None);
+    }
+
+    #[test]
+    fn resolve_token_field_name_returns_some_for_valid_override() {
+        assert_eq!(
+            resolve_token_field_name(false, Some("custom_tokens")),
+            Some("custom_tokens".to_string())
+        );
+        assert_eq!(
+            resolve_token_field_name(true, Some("max_tokens")),
+            Some("max_tokens".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_token_field_name_trims_whitespace() {
+        assert_eq!(
+            resolve_token_field_name(false, Some("  custom_field  ")),
+            Some("custom_field".to_string())
+        );
+    }
+
+    #[test]
+    fn build_chat_request_payload_merges_extra_request_fields() {
+        let extra_fields = serde_json::json!({
+            "reasoning": {"effort": "medium"},
+            "custom_param": "value"
+        });
+
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &ModelSettings::default(),
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            None,
+            Some(&extra_fields),
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(
+            payload
+                .get("reasoning")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|obj| obj.get("effort"))
+                .and_then(serde_json::Value::as_str),
+            Some("medium")
+        );
+        assert_eq!(
+            payload
+                .get("custom_param")
+                .and_then(serde_json::Value::as_str),
+            Some("value")
+        );
+    }
+
+    #[test]
+    fn build_chat_request_payload_skips_reserved_keys_in_extra_fields() {
+        let extra_fields = serde_json::json!({
+            "model": "should-be-ignored",
+            "messages": "should-be-ignored",
+            "stream": false,
+            "valid_key": "kept"
+        });
+
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &ModelSettings::default(),
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            None,
+            Some(&extra_fields),
+        )
+        .expect("payload should serialize");
+
+        // model and messages should not be overwritten by extra_fields
+        assert_eq!(
+            payload.get("model").and_then(serde_json::Value::as_str),
+            Some("gpt-4.1")
+        );
+        assert!(payload.get("messages").is_some()); // original messages array
+        assert_eq!(
+            payload.get("stream").and_then(serde_json::Value::as_bool),
+            Some(true)
+        ); // default streaming
+        assert_eq!(
+            payload.get("valid_key").and_then(serde_json::Value::as_str),
+            Some("kept")
+        );
+    }
+
+    #[test]
+    fn build_chat_request_payload_uses_default_token_field_when_no_override() {
+        let settings = ModelSettings {
+            max_tokens: Some(1024),
+            ..ModelSettings::default()
+        };
+
+        // Non-thinking mode should use max_tokens
+        let payload = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &settings,
+            &ModelRequestParameters::default(),
+            false,
+            None,
+            None,
+            None,
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(
+            payload
+                .get("max_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(1024)
+        );
+        assert!(payload.get("max_completion_tokens").is_none());
+
+        // Thinking mode should use max_completion_tokens
+        let payload_thinking = build_chat_request_payload(
+            "gpt-4.1",
+            &[],
+            &settings,
+            &ModelRequestParameters::default(),
+            true,
+            None,
+            None,
+            None,
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(
+            payload_thinking
+                .get("max_completion_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(1024)
+        );
+        assert!(payload_thinking.get("max_tokens").is_none());
     }
 }

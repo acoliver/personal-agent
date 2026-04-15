@@ -203,8 +203,9 @@ impl ProfileEditorPresenter {
     ) {
         match event {
             UserEvent::SaveProfile { profile } => {
-                Self::on_save_profile(profile_service, event_bus_tx, view_tx, profile).await;
+                Self::on_save_profile(profile_service, event_bus_tx, view_tx, *profile).await;
             }
+
             UserEvent::SaveProfileEditor => {
                 Self::on_save_profile_editor(
                     profile_service,
@@ -267,8 +268,15 @@ impl ProfileEditorPresenter {
             if let Some(temperature) = payload_parameters.temperature {
                 parameters.temperature = temperature;
             }
-            if let Some(max_tokens) = payload_parameters.max_tokens {
-                parameters.max_tokens = max_tokens;
+            parameters.max_tokens = payload_parameters.max_tokens;
+            if let Some(max_tokens_field_name) = payload_parameters.max_tokens_field_name {
+                let normalized = max_tokens_field_name.trim();
+                if !normalized.is_empty() {
+                    parameters.max_tokens_field_name = Some(normalized.to_string());
+                }
+            }
+            if let Some(extra_request_fields) = payload_parameters.extra_request_fields {
+                parameters.extra_request_fields = Some(extra_request_fields);
             }
             if let Some(show_thinking) = payload_parameters.show_thinking {
                 parameters.show_thinking = show_thinking;

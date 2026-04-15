@@ -43,7 +43,9 @@ fn apply_profile_editor_load(
     base_url: &str,
     api_key_label: &str,
     temperature: f64,
-    max_tokens: u32,
+    max_tokens: Option<u32>,
+    max_tokens_field_name: &str,
+    extra_request_fields: &str,
     context_limit: Option<u32>,
     show_thinking: bool,
     enable_thinking: bool,
@@ -65,7 +67,9 @@ fn apply_profile_editor_load(
     {
         state.data.temperature = temperature as f32;
     }
-    state.data.max_tokens = max_tokens;
+    state.data.max_tokens = max_tokens.map_or_else(String::new, |value| value.to_string());
+    state.data.max_tokens_field_name = max_tokens_field_name.to_string();
+    state.data.extra_request_fields = extra_request_fields.to_string();
     if let Some(limit) = context_limit {
         state.data.context_limit = limit;
     }
@@ -112,6 +116,18 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
         Some(personal_agent::events::types::ModelProfileAuth::None)
     };
 
+    let parsed_max_tokens = data.max_tokens.parse::<u32>().ok();
+
+    // Normalize max_tokens_field_name: empty or the default "max_tokens" sentinel means None
+    let max_tokens_field_name = {
+        let name = data.max_tokens_field_name.trim();
+        if name.is_empty() || name == "max_tokens" {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    };
+
     personal_agent::events::types::ModelProfile {
         id,
         name: data.name.clone(),
@@ -126,7 +142,10 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
         auth,
         parameters: Some(personal_agent::events::types::ModelProfileParameters {
             temperature: Some(f64::from(data.temperature)),
-            max_tokens: Some(data.max_tokens),
+            max_tokens: parsed_max_tokens,
+            max_tokens_field_name,
+            extra_request_fields: serde_json::from_str(&data.extra_request_fields).ok(),
+
             show_thinking: Some(data.show_thinking),
             enable_thinking: Some(data.enable_extended_thinking),
             thinking_budget: if data.enable_extended_thinking {
@@ -161,7 +180,8 @@ fn profile_editor_data_new_sets_expected_defaults_and_can_save_validation() {
     assert_eq!(data.key_label, "");
     assert!(data.available_keys.is_empty());
     assert!((data.temperature - 1.0).abs() < f32::EPSILON);
-    assert_eq!(data.max_tokens, 4096);
+    assert_eq!(data.max_tokens, "4096");
+    assert_eq!(data.max_tokens_field_name, "max_tokens");
     assert_eq!(data.context_limit, 128_000);
     assert!(data.show_thinking);
     assert!(!data.enable_extended_thinking);
@@ -199,7 +219,10 @@ fn profile_editor_state_construction_preserves_is_new_and_payloads() {
         key_label: "openai-key".to_string(),
         available_keys: vec!["openai-key".to_string()],
         temperature: 0.2,
-        max_tokens: 8192,
+        max_tokens: "8192".to_string(),
+        max_tokens_field_name: "max_completion_tokens".to_string(),
+        extra_request_fields: "{}".to_string(),
+
         context_limit: 200_000,
         show_thinking: false,
         enable_extended_thinking: true,
@@ -216,6 +239,10 @@ fn profile_editor_state_construction_preserves_is_new_and_payloads() {
     assert_eq!(edit_state.data.id, edit_data.id);
     assert_eq!(edit_state.data.name, "Existing");
     assert_eq!(edit_state.data.api_type, ApiType::OpenAI);
+    assert_eq!(
+        edit_state.data.max_tokens_field_name,
+        "max_completion_tokens"
+    );
     assert_eq!(
         edit_state.data.available_keys,
         vec!["openai-key".to_string()]
@@ -284,7 +311,9 @@ fn profile_editor_load_maps_existing_profile_fields_and_defaults_thinking_budget
         "https://example.test/v1",
         "stored-key",
         0.35,
-        1234,
+        Some(1234),
+        "max_completion_tokens",
+        "{\"reasoning\":{\"effort\":\"medium\"}}",
         Some(64_000),
         false,
         true,
@@ -303,7 +332,12 @@ fn profile_editor_load_maps_existing_profile_fields_and_defaults_thinking_budget
     assert_eq!(state.data.base_url, "https://example.test/v1");
     assert_eq!(state.data.key_label, "stored-key");
     assert!((state.data.temperature - 0.35_f32).abs() < f32::EPSILON);
-    assert_eq!(state.data.max_tokens, 1234);
+    assert_eq!(state.data.max_tokens, "1234");
+    assert_eq!(state.data.max_tokens_field_name, "max_completion_tokens");
+    assert_eq!(
+        state.data.extra_request_fields,
+        "{\"reasoning\":{\"effort\":\"medium\"}}"
+    );
     assert_eq!(state.data.context_limit, 64_000);
     assert!(!state.data.show_thinking);
     assert!(state.data.enable_extended_thinking);
@@ -319,7 +353,9 @@ fn profile_editor_load_maps_existing_profile_fields_and_defaults_thinking_budget
         "https://api.openai.com/v1",
         "openai-key",
         0.1,
-        4096,
+        None,
+        "max_tokens",
+        "{}",
         None,
         true,
         false,
@@ -327,6 +363,9 @@ fn profile_editor_load_maps_existing_profile_fields_and_defaults_thinking_budget
         "Second prompt",
     );
     assert_eq!(state.data.api_type, ApiType::OpenAI);
+    assert_eq!(state.data.max_tokens, "");
+    assert_eq!(state.data.max_tokens_field_name, "max_tokens");
+    assert_eq!(state.data.extra_request_fields, "{}");
     assert_eq!(state.data.context_limit, 64_000);
     assert_eq!(state.data.thinking_budget, 777);
     assert!(state.data.show_thinking);
@@ -397,7 +436,10 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         key_label: "anthropic-key".to_string(),
         available_keys: vec![],
         temperature: 0.4,
-        max_tokens: 9000,
+        max_tokens: "9000".to_string(),
+        max_tokens_field_name: "max_completion_tokens".to_string(),
+        extra_request_fields: "{}".to_string(),
+
         context_limit: 200_000,
         show_thinking: true,
         enable_extended_thinking: true,
@@ -413,7 +455,10 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         key_label: "local-key".to_string(),
         available_keys: vec![],
         temperature: 0.9,
-        max_tokens: 2048,
+        extra_request_fields: "{}".to_string(),
+
+        max_tokens: String::new(),
+        max_tokens_field_name: "max_tokens".to_string(),
         context_limit: 16_000,
         show_thinking: false,
         enable_extended_thinking: false,
@@ -448,6 +493,10 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
             < 1e-6
     );
     assert_eq!(existing_parameters.max_tokens, Some(9000));
+    assert_eq!(
+        existing_parameters.max_tokens_field_name.as_deref(),
+        Some("max_completion_tokens")
+    );
     assert_eq!(existing_parameters.show_thinking, Some(true));
     assert_eq!(existing_parameters.enable_thinking, Some(true));
     assert_eq!(existing_parameters.thinking_budget, Some(512));
@@ -462,7 +511,9 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
     assert_eq!(created_payload.model_id.as_deref(), Some("gpt-4o-mini"));
     let created_parameters = created_payload.parameters.expect("parameters should exist");
     assert!((created_parameters.temperature.expect("temperature present") - 0.9).abs() < 1e-6);
-    assert_eq!(created_parameters.max_tokens, Some(2048));
+    assert_eq!(created_parameters.max_tokens, None);
+    // "max_tokens" sentinel is normalized to None
+    assert_eq!(created_parameters.max_tokens_field_name, None);
     assert_eq!(created_parameters.show_thinking, Some(false));
     assert_eq!(created_parameters.enable_thinking, Some(false));
     assert_eq!(created_parameters.thinking_budget, None);
@@ -485,7 +536,10 @@ fn command_payload_shapes_used_by_profile_editor_match_expectations() {
         base_url: "https://api.openai.com/v1".to_string(),
         api_key_label: "openai-key".to_string(),
         temperature: 0.7,
-        max_tokens: 8192,
+        max_tokens: Some(8192),
+        max_tokens_field_name: "max_completion_tokens".to_string(),
+        extra_request_fields: "{\"reasoning\":{\"effort\":\"medium\"}}".to_string(),
+
         context_limit: Some(128_000),
         show_thinking: false,
         enable_thinking: false,
@@ -510,8 +564,164 @@ fn command_payload_shapes_used_by_profile_editor_match_expectations() {
             provider_id,
             model_id,
             api_key_label,
-            max_tokens,
+            max_tokens: Some(max_tokens),
+            max_tokens_field_name,
             ..
-        } if id == profile_id && name == "Loaded" && provider_id == "openai" && model_id == "gpt-4.1" && api_key_label == "openai-key" && max_tokens == 8192
+        } if id == profile_id
+            && name == "Loaded"
+            && provider_id == "openai"
+            && model_id == "gpt-4.1"
+            && api_key_label == "openai-key"
+            && max_tokens == 8192
+            && max_tokens_field_name == "max_completion_tokens"
     ));
+}
+
+#[test]
+fn profile_editor_load_with_whitespace_max_tokens_field_name_treated_as_empty() {
+    let id = Uuid::new_v4();
+    let mut state = ProfileEditorState::new_profile();
+
+    apply_profile_editor_load(
+        &mut state,
+        id,
+        "Whitespace Field",
+        "openai",
+        "gpt-4.1",
+        "https://api.openai.com/v1",
+        "openai-key",
+        0.5,
+        Some(1024),
+        "   ", // whitespace-only max_tokens_field_name
+        "{}",
+        None,
+        false,
+        false,
+        None,
+        "prompt",
+    );
+
+    // Whitespace-only max_tokens_field_name should still be stored as-is
+    // The normalization to None happens in emit_save_profile
+    assert_eq!(state.data.max_tokens_field_name, "   ");
+}
+
+#[test]
+fn profile_editor_load_with_empty_max_tokens_field_name() {
+    let id = Uuid::new_v4();
+    let mut state = ProfileEditorState::new_profile();
+
+    apply_profile_editor_load(
+        &mut state,
+        id,
+        "Empty Field",
+        "anthropic",
+        "claude-sonnet-4-20250514",
+        "https://api.anthropic.com/v1",
+        "anthropic-key",
+        0.7,
+        Some(4096),
+        "", // empty max_tokens_field_name
+        "{}",
+        None,
+        false,
+        false,
+        None,
+        "prompt",
+    );
+
+    assert_eq!(state.data.max_tokens_field_name, "");
+}
+
+#[test]
+fn profile_editor_load_with_custom_max_tokens_field_name() {
+    let id = Uuid::new_v4();
+    let mut state = ProfileEditorState::new_profile();
+
+    apply_profile_editor_load(
+        &mut state,
+        id,
+        "Custom Field",
+        "openai",
+        "o1-mini",
+        "https://api.openai.com/v1",
+        "openai-key",
+        1.0,
+        Some(100_000),
+        "max_completion_tokens", // custom override
+        "{}",
+        None,
+        false,
+        true, // enable_thinking
+        Some(10000),
+        "Be thorough",
+    );
+
+    assert_eq!(state.data.max_tokens_field_name, "max_completion_tokens");
+    assert!(state.data.enable_extended_thinking);
+    assert_eq!(state.data.thinking_budget, 10000);
+}
+
+#[test]
+fn emit_save_payload_normalizes_max_tokens_field_name_sentinel_to_none() {
+    let mut data = ProfileEditorData::new();
+    data.id = Some(Uuid::new_v4().to_string());
+    data.name = "Test Profile".to_string();
+    data.model_id = "claude-sonnet-4".to_string();
+    data.base_url = "https://api.anthropic.com/v1".to_string();
+    data.key_label = "anthropic-key".to_string();
+    data.max_tokens_field_name = "max_tokens".to_string(); // sentinel value
+
+    let payload = emit_save_payload(&data);
+    let params = payload.parameters.expect("parameters should exist");
+    // The view normalizes "max_tokens" sentinel to None
+    assert_eq!(params.max_tokens_field_name, None);
+}
+
+#[test]
+fn emit_save_payload_keeps_custom_max_tokens_field_name() {
+    let mut data = ProfileEditorData::new();
+    data.id = Some(Uuid::new_v4().to_string());
+    data.name = "Test Profile".to_string();
+    data.model_id = "claude-sonnet-4".to_string();
+    data.base_url = "https://api.anthropic.com/v1".to_string();
+    data.key_label = "anthropic-key".to_string();
+    data.max_tokens_field_name = "max_completion_tokens".to_string(); // custom override
+
+    let payload = emit_save_payload(&data);
+    let params = payload.parameters.expect("parameters should exist");
+    assert_eq!(
+        params.max_tokens_field_name.as_deref(),
+        Some("max_completion_tokens")
+    );
+}
+
+#[test]
+fn emit_save_payload_normalizes_empty_max_tokens_field_name_to_none() {
+    let mut data = ProfileEditorData::new();
+    data.id = Some(Uuid::new_v4().to_string());
+    data.name = "Test Profile".to_string();
+    data.model_id = "claude-sonnet-4".to_string();
+    data.base_url = "https://api.anthropic.com/v1".to_string();
+    data.key_label = "anthropic-key".to_string();
+    data.max_tokens_field_name = String::new(); // empty
+
+    let payload = emit_save_payload(&data);
+    let params = payload.parameters.expect("parameters should exist");
+    assert_eq!(params.max_tokens_field_name, None);
+}
+
+#[test]
+fn emit_save_payload_normalizes_whitespace_max_tokens_field_name_to_none() {
+    let mut data = ProfileEditorData::new();
+    data.id = Some(Uuid::new_v4().to_string());
+    data.name = "Test Profile".to_string();
+    data.model_id = "claude-sonnet-4".to_string();
+    data.base_url = "https://api.anthropic.com/v1".to_string();
+    data.key_label = "anthropic-key".to_string();
+    data.max_tokens_field_name = "   ".to_string(); // whitespace
+
+    let payload = emit_save_payload(&data);
+    let params = payload.parameters.expect("parameters should exist");
+    assert_eq!(params.max_tokens_field_name, None);
 }

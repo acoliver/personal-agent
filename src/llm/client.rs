@@ -154,7 +154,7 @@ impl LlmClient {
         ModelSettings {
             temperature: Some(self.profile.parameters.temperature),
             top_p: Some(self.profile.parameters.top_p),
-            max_tokens: Some(u64::from(self.profile.parameters.max_tokens)),
+            max_tokens: self.profile.parameters.max_tokens.map(u64::from),
             ..ModelSettings::default()
         }
     }
@@ -310,7 +310,7 @@ impl LlmClient {
         provider: &str,
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
-        if provider == "openai" && self.quirks.has_custom_headers() {
+        if provider == "openai" {
             return self.build_openai_model_with_quirks(base_url);
         }
 
@@ -328,8 +328,31 @@ impl LlmClient {
             config = config.with_thinking(budget);
         }
 
-        serdes_ai::build_model_extended(provider, &self.profile.model_id, config)
-            .map_err(|e| LlmError::SerdesAi(e.to_string()))
+        let inner = serdes_ai::build_model_extended(provider, &self.profile.model_id, config)
+            .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
+
+        // Wrap with normalizer to apply max_tokens_field_name and extra_request_fields
+        // for all providers, not just OpenAI. This ensures consistent behavior.
+        let resolved_base_url = base_url.unwrap_or("").to_string();
+        let http_client = HttpClient::builder()
+            .build()
+            .map_err(|e| LlmError::InvalidConfig(format!("failed to build HTTP client: {e}")))?;
+
+        let wrapper = super::normalizing_model::NormalizingSseModel::new(
+            super::normalizing_model::NormalizingSseModelConfig {
+                inner,
+                client: http_client,
+                api_key: self.api_key.clone(),
+                base_url: resolved_base_url,
+                model_name: self.profile.model_id.clone(),
+                enable_thinking: self.profile.parameters.enable_thinking,
+                thinking_budget: self.profile.parameters.thinking_budget.map(u64::from),
+                max_tokens_field_name: self.profile.parameters.max_tokens_field_name.clone(),
+                extra_request_fields: self.profile.parameters.extra_request_fields.clone(),
+            },
+        );
+
+        Ok(std::sync::Arc::new(wrapper))
     }
 
     fn build_openai_model_with_quirks(
@@ -373,6 +396,8 @@ impl LlmClient {
                 model_name: self.profile.model_id.clone(),
                 enable_thinking: self.profile.parameters.enable_thinking,
                 thinking_budget: self.profile.parameters.thinking_budget.map(u64::from),
+                max_tokens_field_name: self.profile.parameters.max_tokens_field_name.clone(),
+                extra_request_fields: self.profile.parameters.extra_request_fields.clone(),
             },
         );
 
@@ -757,5 +782,60 @@ mod tests {
             part,
             serdes_ai::core::messages::ModelRequestPart::ToolReturn(_)
         )));
+    }
+
+    #[test]
+    fn build_model_wraps_non_openai_with_normalizer() {
+        crate::services::secure_store::use_mock_backend();
+        crate::services::secure_store::api_keys::store("_test_build_model", "test-key")
+            .expect("store test key");
+
+        let profile = ModelProfile {
+            provider_id: "anthropic".to_string(),
+            model_id: "claude-3-opus".to_string(),
+            auth: AuthConfig::Keychain {
+                label: "_test_build_model".to_string(),
+            },
+            parameters: crate::models::profile::ModelParameters {
+                max_tokens_field_name: Some("max_completion_tokens".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let client = LlmClient::from_profile(&profile).unwrap();
+        // Verify that build_model succeeds for non-OpenAI providers
+        let result = client.build_model("anthropic", None);
+        assert!(result.is_ok(), "build_model should succeed for anthropic");
+
+        let _ = crate::services::secure_store::api_keys::delete("_test_build_model");
+    }
+
+    #[test]
+    fn build_model_openai_uses_quirks_path() {
+        crate::services::secure_store::use_mock_backend();
+        crate::services::secure_store::api_keys::store("_test_build_openai", "test-key")
+            .expect("store test key");
+
+        let profile = ModelProfile {
+            provider_id: "openai".to_string(),
+            model_id: "gpt-4.1".to_string(),
+            auth: AuthConfig::Keychain {
+                label: "_test_build_openai".to_string(),
+            },
+            parameters: crate::models::profile::ModelParameters {
+                max_tokens_field_name: Some("max_completion_tokens".to_string()),
+                extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let client = LlmClient::from_profile(&profile).unwrap();
+        // Verify that build_model succeeds for OpenAI providers (uses quirks path)
+        let result = client.build_model("openai", None);
+        assert!(result.is_ok(), "build_model should succeed for openai");
+
+        let _ = crate::services::secure_store::api_keys::delete("_test_build_openai");
     }
 }

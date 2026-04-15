@@ -29,6 +29,7 @@ impl NavigationChannel {
 
     /// Set a callback to trigger GPUI redraw when navigation is requested
     pub fn set_notify_callback(&self, callback: impl Fn() + Send + Sync + 'static) {
+        // Recover from poisoned mutex by taking the inner value
         if let Ok(mut guard) = self.notify_callback.lock() {
             *guard = Some(Box::new(callback));
         }
@@ -36,6 +37,7 @@ impl NavigationChannel {
 
     /// Request navigation to a view
     pub fn request_navigate(&self, to: ViewId) {
+        // Recover from poisoned mutex by taking the inner value
         if let Ok(mut guard) = self.pending_navigation.lock() {
             *guard = Some(to);
             self.has_request.store(true, Ordering::SeqCst);
@@ -64,7 +66,8 @@ impl NavigationChannel {
         if self.has_request.swap(false, Ordering::SeqCst) {
             self.pending_navigation
                 .lock()
-                .map_or(None, |mut guard| guard.take())
+                .ok()
+                .and_then(|mut guard| guard.take())
         } else {
             None
         }

@@ -489,7 +489,35 @@ fn make_profile(id: Uuid, name: &str, provider_id: &str, model_id: &str) -> Mode
         parameters: ModelParameters {
             temperature: 0.42,
             top_p: 0.9,
-            max_tokens: 2048,
+            max_tokens: Some(2048),
+            max_tokens_field_name: Some("max_tokens".to_string()),
+            extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
+
+            thinking_budget: Some(128),
+            enable_thinking: true,
+            show_thinking: true,
+        },
+        system_prompt: format!("prompt for {name}"),
+        context_window_size: 128_000,
+    }
+}
+
+fn make_legacy_profile(id: Uuid, name: &str, provider_id: &str, model_id: &str) -> ModelProfile {
+    ModelProfile {
+        id,
+        name: name.to_string(),
+        provider_id: provider_id.to_string(),
+        model_id: model_id.to_string(),
+        base_url: format!("https://{provider_id}.example.com"),
+        auth: AuthConfig::Keychain {
+            label: format!("{name}-key"),
+        },
+        parameters: ModelParameters {
+            temperature: 0.42,
+            top_p: 0.9,
+            max_tokens: Some(2048),
+            max_tokens_field_name: None,
+            extra_request_fields: None,
             thinking_budget: Some(128),
             enable_thinking: true,
             show_thinking: true,
@@ -1122,6 +1150,20 @@ mod settings_presenter_tests {
                 api_key_label: "editor-key".to_string(),
                 temperature: profile.parameters.temperature,
                 max_tokens: profile.parameters.max_tokens,
+                max_tokens_field_name: profile
+                    .parameters
+                    .max_tokens_field_name
+                    .clone()
+                    .unwrap_or_else(|| "max_tokens".to_string()),
+                extra_request_fields: serde_json::to_string(
+                    profile
+                        .parameters
+                        .extra_request_fields
+                        .as_ref()
+                        .unwrap_or(&serde_json::json!({})),
+                )
+                .expect("extra request fields should serialize"),
+
                 context_limit: None,
                 show_thinking: profile.parameters.show_thinking,
                 enable_thinking: profile.parameters.enable_thinking,
@@ -1134,6 +1176,50 @@ mod settings_presenter_tests {
             ViewCommand::NavigateTo {
                 view: ViewId::ProfileEditor,
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_legacy_profile_uses_defaults_for_missing_advanced_fields() {
+        let legacy_profile =
+            make_legacy_profile(Uuid::new_v4(), "legacy-editor", "openai", "gpt-4.1");
+        let profile_service = MockProfileService::new(vec![legacy_profile.clone()], None)
+            .with_get_results(vec![Ok(legacy_profile.clone())]);
+        let app_settings_service = MockAppSettingsService::new(None);
+        let (mut presenter, event_tx, mut view_rx, _profile_service, _app_settings_service) =
+            setup_settings_presenter(profile_service, app_settings_service);
+
+        presenter.start().await.expect("start should succeed");
+        drain_startup(&mut view_rx).await;
+
+        send_settings_event(
+            &event_tx,
+            AppEvent::User(UserEvent::EditProfile {
+                id: legacy_profile.id,
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            recv_broadcast_command(&mut view_rx).await,
+            ViewCommand::ProfileEditorLoad {
+                id: legacy_profile.id,
+                name: legacy_profile.name.clone(),
+                provider_id: legacy_profile.provider_id.clone(),
+                model_id: legacy_profile.model_id.clone(),
+                base_url: legacy_profile.base_url.clone(),
+                api_key_label: "legacy-editor-key".to_string(),
+                temperature: legacy_profile.parameters.temperature,
+                max_tokens: legacy_profile.parameters.max_tokens,
+                max_tokens_field_name: "max_tokens".to_string(),
+                extra_request_fields: "{}".to_string(),
+                context_limit: None,
+                show_thinking: legacy_profile.parameters.show_thinking,
+                enable_thinking: legacy_profile.parameters.enable_thinking,
+                thinking_budget: legacy_profile.parameters.thinking_budget,
+                system_prompt: legacy_profile.system_prompt.clone(),
+            },
+            "legacy profiles without max_tokens_field_name or extra_request_fields should use defaults"
         );
     }
 

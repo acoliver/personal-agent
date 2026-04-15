@@ -18,6 +18,54 @@ fn load_e2e_profile() -> ModelProfile {
     support::e2e_config::load_e2e_profile()
 }
 
+fn summarize_events(events: &[personal_agent::StreamEvent]) -> (String, Vec<String>) {
+    let mut response_text = String::new();
+    let summaries = events
+        .iter()
+        .map(|event| match event {
+            personal_agent::StreamEvent::TextDelta(text) => {
+                response_text.push_str(text);
+                format!("TextDelta({} chars)", text.len())
+            }
+            personal_agent::StreamEvent::ThinkingDelta(text) => {
+                format!("ThinkingDelta({} chars)", text.len())
+            }
+            personal_agent::StreamEvent::ToolUse(tool_use) => {
+                format!("ToolUse({})", tool_use.name)
+            }
+            personal_agent::StreamEvent::ToolCallStarted { tool_name, .. } => {
+                format!("ToolCallStarted({tool_name})")
+            }
+            personal_agent::StreamEvent::ToolCallCompleted {
+                tool_name, success, ..
+            } => {
+                format!("ToolCallCompleted({tool_name}, success={success})")
+            }
+            personal_agent::StreamEvent::ToolTranscript {
+                tool_calls,
+                tool_results,
+            } => {
+                format!(
+                    "ToolTranscript(calls={}, results={})",
+                    tool_calls.len(),
+                    tool_results.len()
+                )
+            }
+            personal_agent::StreamEvent::Complete {
+                input_tokens,
+                output_tokens,
+            } => {
+                format!("Complete(input_tokens={input_tokens:?}, output_tokens={output_tokens:?})")
+            }
+            personal_agent::StreamEvent::Error(message) => {
+                format!("Error({message})")
+            }
+        })
+        .collect();
+
+    (response_text, summaries)
+}
+
 #[tokio::test]
 #[ignore = "Requires PA_E2E_* configuration"]
 async fn test_real_chat_with_synthetic_api() {
@@ -64,40 +112,57 @@ async fn test_real_chat_with_synthetic_api() {
         "Say 'Hello from E2E test' and nothing else.",
     )];
 
-    let mut response_text = String::new();
-    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let events_clone = events.clone();
+    let mut last_error = None;
+    let mut last_event_summary = Vec::new();
 
-    let result = client
-        .request_stream_with_tools(&messages, &[], move |event| {
-            events_clone.lock().unwrap().push(event.clone());
-            if let personal_agent::StreamEvent::TextDelta(text) = event {
-                print!("{text}");
-                std::io::Write::flush(&mut std::io::stdout()).ok();
-            }
-        })
-        .await;
-
-    println!("\n");
-
-    // Verify we got a real response
-    match result {
-        Ok(()) => {
-            {
-                let events = events.lock().unwrap();
-                for event in events.iter() {
-                    if let personal_agent::StreamEvent::TextDelta(text) = event {
-                        response_text.push_str(text);
-                    }
-                }
-            }
-
-            assert!(!response_text.is_empty(), "Should get response from LLM");
-            println!("[OK] Got response: {}", response_text.trim());
-            println!("[OK] E2E test PASSED - Real LLM interaction works!");
+    for attempt in 1..=2 {
+        if attempt > 1 {
+            println!("\nRetrying live E2E request after empty response on attempt {attempt}...");
         }
-        Err(e) => {
-            panic!("E2E test FAILED: LLM request failed: {e}");
+
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+
+        let result = client
+            .request_stream_with_tools(&messages, &[], move |event| {
+                events_clone.lock().unwrap().push(event.clone());
+                if let personal_agent::StreamEvent::TextDelta(text) = event {
+                    print!("{text}");
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                }
+            })
+            .await;
+
+        println!("\n");
+
+        let recorded_events = {
+            let events = events.lock().unwrap();
+            events.clone()
+        };
+        let (response_text, event_summary) = summarize_events(&recorded_events);
+        last_event_summary = event_summary;
+
+        match result {
+            Ok(()) => {
+                if !response_text.trim().is_empty() {
+                    println!("[OK] Got response: {}", response_text.trim());
+                    println!("[OK] E2E test PASSED - Real LLM interaction works!");
+                    return;
+                }
+
+                last_error = Some(format!(
+                    "LLM stream completed without text response on attempt {attempt}"
+                ));
+            }
+            Err(e) => {
+                last_error = Some(format!("LLM request failed on attempt {attempt}: {e}"));
+            }
         }
     }
+
+    panic!(
+        "E2E test FAILED: {}. Observed events: {:?}",
+        last_error.unwrap_or_else(|| "unknown live E2E failure".to_string()),
+        last_event_summary
+    );
 }

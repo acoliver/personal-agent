@@ -295,7 +295,9 @@ pub enum ViewCommand {
         /// Keychain label for the API key (empty string = none set).
         api_key_label: String,
         temperature: f64,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
+        max_tokens_field_name: String,
+        extra_request_fields: String,
         context_limit: Option<u32>,
         show_thinking: bool,
         enable_thinking: bool,
