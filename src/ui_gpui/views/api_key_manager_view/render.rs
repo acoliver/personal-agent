@@ -525,21 +525,19 @@ impl ApiKeyManagerView {
         }
 
         match key {
-            "backspace" => {
-                if self.state.active_field.is_some() {
-                    if self.ime_marked_byte_count > 0 {
-                        let len = self.active_text_len();
-                        self.truncate_active_text(len.saturating_sub(self.ime_marked_byte_count));
-                        self.ime_marked_byte_count = 0;
-                    } else {
-                        let text = self.active_text().to_string();
-                        let mut chars: Vec<char> = text.chars().collect();
-                        chars.pop();
-                        let new_text: String = chars.into_iter().collect();
-                        self.set_active_text(new_text);
-                    }
-                    cx.notify();
+            "backspace" if self.state.active_field.is_some() => {
+                if self.ime_marked_byte_count > 0 {
+                    let len = self.active_text_len();
+                    self.truncate_active_text(len.saturating_sub(self.ime_marked_byte_count));
+                    self.ime_marked_byte_count = 0;
+                } else {
+                    let text = self.active_text().to_string();
+                    let mut chars: Vec<char> = text.chars().collect();
+                    chars.pop();
+                    let new_text: String = chars.into_iter().collect();
+                    self.set_active_text(new_text);
                 }
+                cx.notify();
             }
             "tab" => {
                 match (&self.state.edit_mode, self.state.active_field) {
@@ -554,11 +552,9 @@ impl ApiKeyManagerView {
                 }
                 cx.notify();
             }
-            "enter" => {
-                if self.state.edit_mode != EditMode::Idle {
-                    self.save_current();
-                    cx.notify();
-                }
+            "enter" if self.state.edit_mode != EditMode::Idle => {
+                self.save_current();
+                cx.notify();
             }
             "escape" => {
                 if self.state.edit_mode == EditMode::Idle {

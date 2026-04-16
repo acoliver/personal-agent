@@ -26,8 +26,7 @@ impl OAuthToken {
         self.expires_at.is_some_and(|expires_at| {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-                .unwrap_or(0);
+                .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
             now >= expires_at
         })
     }

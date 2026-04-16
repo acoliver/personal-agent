@@ -224,6 +224,10 @@ impl ProfileEditorView {
         self.state.active_field = None;
     }
 
+    // Collapsing the inner `if` into a match guard would make the outer match
+    // non-exhaustive because the `Some(ActiveField::...)` arms are enumerated
+    // without a wildcard. Keeping the nested form preserves exhaustiveness.
+    #[allow(clippy::collapsible_match)]
     fn append_to_active_field(&mut self, text: &str) {
         if text.is_empty() {
             return;

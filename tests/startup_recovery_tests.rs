@@ -238,7 +238,7 @@ fn backup_info_sorts_by_timestamp() {
     ];
 
     // Sort newest first
-    backups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    backups.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
     assert_eq!(backups[0].formatted_timestamp(), "2026-04-05 15:00 UTC");
     assert_eq!(backups[1].formatted_timestamp(), "2026-04-03 12:00 UTC");

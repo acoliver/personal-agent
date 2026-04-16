@@ -45,7 +45,7 @@ impl McpManager {
         Self {
             secrets,
             active: HashMap::new(),
-            idle_timeout: Duration::from_secs(30 * 60), // 30 minutes
+            idle_timeout: Duration::from_mins(30),
         }
     }
 

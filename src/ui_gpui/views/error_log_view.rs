@@ -67,21 +67,17 @@ impl ErrorLogView {
                 title,
                 message,
                 severity: _,
-            } => {
-                if title == "Save Error Log" {
-                    self.export_feedback_message = Some(format!("{title}: {message}"));
-                    self.export_feedback_is_error = true;
-                    self.export_feedback_path = None;
-                    cx.notify();
-                }
+            } if title == "Save Error Log" => {
+                self.export_feedback_message = Some(format!("{title}: {message}"));
+                self.export_feedback_is_error = true;
+                self.export_feedback_path = None;
+                cx.notify();
             }
-            ViewCommand::ShowNotification { message } => {
-                if message.contains("No errors recorded") {
-                    self.export_feedback_message = Some(message);
-                    self.export_feedback_is_error = false;
-                    self.export_feedback_path = None;
-                    cx.notify();
-                }
+            ViewCommand::ShowNotification { message } if message.contains("No errors recorded") => {
+                self.export_feedback_message = Some(message);
+                self.export_feedback_is_error = false;
+                self.export_feedback_path = None;
+                cx.notify();
             }
             _ => {}
         }

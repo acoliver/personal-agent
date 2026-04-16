@@ -168,25 +168,21 @@ impl ChatView {
                 self.state.export_feedback_path = Some(path);
                 cx.notify();
             }
-            ViewCommand::ShowNotification { message } => {
-                if Self::is_export_notification(&message) {
-                    self.state.export_feedback_message = Some(message);
-                    self.state.export_feedback_is_error = false;
-                    self.state.export_feedback_path = None;
-                    cx.notify();
-                }
+            ViewCommand::ShowNotification { message } if Self::is_export_notification(&message) => {
+                self.state.export_feedback_message = Some(message);
+                self.state.export_feedback_is_error = false;
+                self.state.export_feedback_path = None;
+                cx.notify();
             }
             ViewCommand::ShowError {
                 title,
                 message,
                 severity: _,
-            } => {
-                if Self::is_export_error(&title) {
-                    self.state.export_feedback_message = Some(format!("{title}: {message}"));
-                    self.state.export_feedback_is_error = true;
-                    self.state.export_feedback_path = None;
-                    cx.notify();
-                }
+            } if Self::is_export_error(&title) => {
+                self.state.export_feedback_message = Some(format!("{title}: {message}"));
+                self.state.export_feedback_is_error = true;
+                self.state.export_feedback_path = None;
+                cx.notify();
             }
             ViewCommand::ToolApprovalRequest {
                 conversation_id,
