@@ -91,9 +91,16 @@ pub(super) fn append_persisted_message_if_target_matches_selected(
     content: String,
     model_id: Option<String>,
 ) -> bool {
-    if matches!(role, MessageRole::User | MessageRole::Assistant)
-        && inner.snapshot.chat.selected_conversation_id != Some(conversation_id)
-    {
+    // Invariant: upstream producers (chat_presenter) only emit MessageAppended
+    // for User/Assistant roles. System is filtered out in load_conversation_replay
+    // and Tool is never constructed in the UI command flow. The debug_assert
+    // documents and enforces that invariant without altering release behavior.
+    debug_assert!(
+        matches!(role, MessageRole::User | MessageRole::Assistant),
+        "append_persisted_message received unexpected role: {role:?}"
+    );
+
+    if inner.snapshot.chat.selected_conversation_id != Some(conversation_id) {
         return false;
     }
 
@@ -134,10 +141,18 @@ pub(super) fn mutate_history_and_selected_title_if_targeted(
     update_conversation_title(inner, conversation_id, title)
 }
 
+/// Remove `conversation_id` from the history/chat lists.
+///
+/// Returns a `DeletedConversationOutcome` describing whether the deleted
+/// conversation was the currently-selected one and, if so, what replacement
+/// (if any) should become the new selection. The caller is responsible for
+/// driving the selection retargeting protocol (e.g. via `begin_selection_locked`)
+/// so that the new selection follows the standard `Loading { conversation_id,
+/// generation }` flow and snapshot subscribers initiate a transcript load.
 pub(super) fn mutate_history_and_selected_selection_if_targeted(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
-) -> bool {
+) -> DeletedConversationOutcome {
     let previous_history_len = inner.snapshot.history.conversations.len();
     let previous_chat_len = inner.snapshot.chat.conversations.len();
     inner
@@ -151,28 +166,46 @@ pub(super) fn mutate_history_and_selected_selection_if_targeted(
         .conversations
         .retain(|conversation| conversation.id != conversation_id);
 
+    let lists_changed = inner.snapshot.history.conversations.len() != previous_history_len
+        || inner.snapshot.chat.conversations.len() != previous_chat_len;
+
     if inner.snapshot.chat.selected_conversation_id == Some(conversation_id) {
-        inner.snapshot.chat.selected_conversation_id = inner
+        let next_selected = inner
             .snapshot
             .history
             .conversations
             .first()
             .map(|conversation| conversation.id);
-        inner.snapshot.history.selected_conversation_id =
-            inner.snapshot.chat.selected_conversation_id;
-        inner.snapshot.chat.transcript.clear();
-        inner.snapshot.chat.load_state = ConversationLoadState::Idle;
-        clear_streaming_ephemera_only(inner);
-        if let Some(next_selected) = inner.snapshot.chat.selected_conversation_id {
-            apply_selected_title_from_history(inner, next_selected);
-        } else {
-            inner.snapshot.chat.selected_conversation_title = "New Conversation".to_string();
-        }
-        true
+        DeletedConversationOutcome::SelectedDeleted { next_selected }
+    } else if lists_changed {
+        DeletedConversationOutcome::ListsChanged
     } else {
-        inner.snapshot.history.conversations.len() != previous_history_len
-            || inner.snapshot.chat.conversations.len() != previous_chat_len
+        DeletedConversationOutcome::NoChange
     }
+}
+
+/// Outcome of removing a conversation from the store's lists.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum DeletedConversationOutcome {
+    /// No entry matched the supplied id.
+    NoChange,
+    /// An entry was removed but it was not the currently-selected one.
+    ListsChanged,
+    /// The currently-selected conversation was removed; the caller must
+    /// drive the selection retargeting protocol using `next_selected` (or
+    /// set the idle/no-selection state if `None`).
+    SelectedDeleted { next_selected: Option<Uuid> },
+}
+
+/// Reset the chat snapshot projection for a deleted selection when no
+/// replacement conversation is available.
+pub(super) fn reset_selection_to_idle_after_deletion(inner: &mut AppStoreInner) {
+    inner.snapshot.chat.selected_conversation_id = None;
+    inner.snapshot.history.selected_conversation_id = None;
+    inner.snapshot.chat.transcript.clear();
+    inner.snapshot.chat.load_state = ConversationLoadState::Idle;
+    clear_streaming_ephemera_only(inner);
+    inner.snapshot.chat.selected_conversation_title = "New Conversation".to_string();
 }
 
 fn update_conversation_title(

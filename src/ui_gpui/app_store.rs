@@ -740,7 +740,24 @@ fn reduce_conversation_title_updated(inner: &mut AppStoreInner, id: Uuid, title:
 }
 
 fn reduce_conversation_deleted(inner: &mut AppStoreInner, id: Uuid) -> bool {
-    let changed = mutate_history_and_selected_selection_if_targeted(inner, id);
+    let outcome = mutate_history_and_selected_selection_if_targeted(inner, id);
+    let changed = match outcome {
+        selection_helpers::DeletedConversationOutcome::NoChange => false,
+        selection_helpers::DeletedConversationOutcome::ListsChanged => true,
+        selection_helpers::DeletedConversationOutcome::SelectedDeleted { next_selected } => {
+            // The currently-selected conversation was removed. For any
+            // replacement we must follow the standard selection protocol so
+            // snapshot subscribers observe a Loading state with an
+            // incremented generation and initiate a transcript load, matching
+            // the behaviour of a user-driven selection change.
+            if let Some(next) = next_selected {
+                begin_selection_locked(inner, next, BeginSelectionMode::BatchNoPublish);
+            } else {
+                selection_helpers::reset_selection_to_idle_after_deletion(inner);
+            }
+            true
+        }
+    };
     if changed {
         inner.streaming_states.remove(&id);
         inner.finalized_stream_guards.remove(&id);

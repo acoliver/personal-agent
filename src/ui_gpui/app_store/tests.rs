@@ -291,11 +291,28 @@ fn deleting_selected_conversation_resets_transcript_and_load_state() {
         after_delete.chat.transcript.is_empty(),
         "deleting the selected conversation must reset the transcript so A's messages do not render under B"
     );
-    assert_eq!(
-        after_delete.chat.load_state,
-        ConversationLoadState::Idle,
-        "retargeted selection must not be left in a stale Ready state"
-    );
+    match after_delete.chat.load_state {
+        ConversationLoadState::Loading {
+            conversation_id,
+            generation,
+        } => {
+            assert_eq!(
+                conversation_id, conversation_b,
+                "retargeted selection must load the new conversation"
+            );
+            assert!(
+                generation > generation_a,
+                "retargeted selection must bump the selection generation"
+            );
+            assert_eq!(
+                generation, after_delete.chat.selection_generation,
+                "snapshot selection_generation must match the Loading generation"
+            );
+        }
+        other => panic!(
+            "retargeted selection must enter Loading state so subscribers initiate a transcript load, got {other:?}"
+        ),
+    }
     assert_eq!(
         after_delete.chat.selected_conversation_title, "Conversation B",
         "selected title must follow the retargeted conversation"
