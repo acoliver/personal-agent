@@ -7,9 +7,15 @@ use uuid::Uuid;
 
 use crate::presentation::view_command::{ConversationMessagePayload, MessageRole};
 
-use super::app_store::{
-    clear_streaming_ephemera_only, non_empty_or_none, AppStoreInner, FinalizedStreamGuard,
-};
+use super::app_store::{clear_streaming_ephemera_only, AppStoreInner, FinalizedStreamGuard};
+
+fn non_empty_or_none(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
 
 fn streaming_state_mut(
     inner: &mut AppStoreInner,
