@@ -970,7 +970,15 @@ mod reduce_batch_message_append {
     }
 
     #[test]
-    fn assistant_message_matching_finalize_guard_survives_reselection() {
+    fn reselection_clears_transcript_and_conversation_messages_loaded_is_authoritative() {
+        // Prior to the per-conversation isolation fix, the finalize-guard was
+        // relied upon to survive a switch-away-and-back in order to dedup a
+        // stale MessageAppended. That invariant was an artifact of the old
+        // design where the transcript was not re-scoped to the selected
+        // conversation on switch. Now `begin_selection_locked` clears the
+        // snapshot transcript, and `ConversationMessagesLoaded` is the sole
+        // authoritative repopulation path for the previously-selected
+        // conversation. This test pins the new contract.
         let conversation_a = Uuid::new_v4();
         let conversation_b = Uuid::new_v4();
         let store = GpuiAppStore::from_startup_inputs(StartupInputs {
@@ -994,6 +1002,7 @@ mod reduce_batch_message_append {
                 tokens: 1,
             },
         ]));
+        assert_eq!(current_snapshot(&store).chat.transcript.len(), 1);
 
         let switched_to_b =
             store.begin_selection(conversation_b, BeginSelectionMode::BatchNoPublish);
@@ -1001,22 +1010,43 @@ mod reduce_batch_message_append {
             switched_to_b,
             BeginSelectionResult::BeganSelection { .. }
         ));
+        assert!(
+            current_snapshot(&store).chat.transcript.is_empty(),
+            "switching to B must clear the snapshot transcript"
+        );
+
         let switched_back_to_a =
             store.begin_selection(conversation_a, BeginSelectionMode::BatchNoPublish);
-        assert!(matches!(
-            switched_back_to_a,
-            BeginSelectionResult::BeganSelection { .. }
-        ));
+        let generation_a = match switched_back_to_a {
+            BeginSelectionResult::BeganSelection { generation } => generation,
+            BeginSelectionResult::NoOpSameSelection => {
+                panic!("expected begin_selection to switch back to conversation A")
+            }
+        };
+        assert!(
+            current_snapshot(&store).chat.transcript.is_empty(),
+            "switching back to A must also clear the snapshot transcript during Loading"
+        );
 
-        let changed = store.reduce_batch(vec![ViewCommand::MessageAppended {
-            conversation_id: conversation_a,
+        // The authoritative repopulation path is ConversationMessagesLoaded.
+        let persisted_assistant = ConversationMessagePayload {
             role: MessageRole::Assistant,
             content: "same".to_string(),
+            thinking_content: None,
+            timestamp: None,
             model_id: None,
-        }]);
+        };
+        assert!(
+            store.reduce_batch(vec![ViewCommand::ConversationMessagesLoaded {
+                conversation_id: conversation_a,
+                selection_generation: generation_a,
+                messages: vec![persisted_assistant],
+            }])
+        );
 
-        assert!(!changed);
-        assert_eq!(current_snapshot(&store).chat.transcript.len(), 1);
+        let snapshot = current_snapshot(&store);
+        assert_eq!(snapshot.chat.transcript.len(), 1);
+        assert_eq!(snapshot.chat.transcript[0].content, "same");
     }
 }
 

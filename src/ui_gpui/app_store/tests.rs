@@ -151,3 +151,94 @@ fn begin_selection_reprojects_streaming_state_without_cross_conversation_leakage
     assert_eq!(after_switch_back.chat.streaming.thinking_buffer, "thinking");
     assert!(after_switch_back.chat.streaming.thinking_visible);
 }
+
+#[test]
+fn begin_selection_clears_previous_transcript_in_snapshot() {
+    let conversation_a = Uuid::new_v4();
+    let conversation_b = Uuid::new_v4();
+    let selected_profile_id = Uuid::new_v4();
+
+    let store = GpuiAppStore::from_startup_inputs(startup_inputs(
+        conversation_a,
+        conversation_b,
+        selected_profile_id,
+    ));
+
+    let generation_a =
+        match store.begin_selection(conversation_a, BeginSelectionMode::BatchNoPublish) {
+            BeginSelectionResult::NoOpSameSelection => 1,
+            BeginSelectionResult::BeganSelection { generation } => generation,
+        };
+
+    store.reduce_batch(vec![ViewCommand::ConversationMessagesLoaded {
+        conversation_id: conversation_a,
+        selection_generation: generation_a,
+        messages: vec![user_message("hello from A")],
+    }]);
+
+    let before_switch = store.current_snapshot();
+    assert_eq!(
+        before_switch.chat.transcript.len(),
+        1,
+        "precondition: conversation A transcript is populated"
+    );
+
+    let generation_b =
+        match store.begin_selection(conversation_b, BeginSelectionMode::BatchNoPublish) {
+            BeginSelectionResult::NoOpSameSelection => {
+                panic!("expected begin_selection to switch to conversation B")
+            }
+            BeginSelectionResult::BeganSelection { generation } => generation,
+        };
+
+    let after_switch = store.current_snapshot();
+    assert_eq!(
+        after_switch.chat.selected_conversation_id,
+        Some(conversation_b)
+    );
+    assert_eq!(
+        after_switch.chat.load_state,
+        ConversationLoadState::Loading {
+            conversation_id: conversation_b,
+            generation: generation_b,
+        }
+    );
+    assert!(
+        after_switch.chat.transcript.is_empty(),
+        "transcript must be cleared in snapshot while new conversation is Loading"
+    );
+
+    store.reduce_batch(vec![ViewCommand::ConversationMessagesLoaded {
+        conversation_id: conversation_b,
+        selection_generation: generation_b,
+        messages: vec![user_message("hello from B")],
+    }]);
+
+    let after_load_b = store.current_snapshot();
+    assert_eq!(after_load_b.chat.transcript.len(), 1);
+    assert_eq!(after_load_b.chat.transcript[0].content, "hello from B");
+
+    let generation_a_again =
+        match store.begin_selection(conversation_a, BeginSelectionMode::BatchNoPublish) {
+            BeginSelectionResult::NoOpSameSelection => {
+                panic!("expected begin_selection to switch back to A")
+            }
+            BeginSelectionResult::BeganSelection { generation } => generation,
+        };
+
+    let after_switch_back = store.current_snapshot();
+    assert!(
+        after_switch_back.chat.transcript.is_empty(),
+        "switching back to A must also clear B's transcript from snapshot during Loading"
+    );
+
+    store.reduce_batch(vec![ViewCommand::ConversationMessagesLoaded {
+        conversation_id: conversation_a,
+        selection_generation: generation_a_again,
+        messages: vec![user_message("hello from A")],
+    }]);
+
+    let after_reload_a = store.current_snapshot();
+    assert_eq!(after_reload_a.chat.transcript.len(), 1);
+    assert_eq!(after_reload_a.chat.transcript[0].content, "hello from A");
+}

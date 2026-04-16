@@ -406,6 +406,11 @@ fn begin_selection_locked(
         conversation_id,
         generation: next_generation,
     };
+    // The selected conversation's transcript is part of the selected-projection;
+    // clear it here so snapshot subscribers never see the previous conversation's
+    // messages while the new conversation is in the Loading state.
+    // reduce_messages_loaded repopulates it when the transcript arrives.
+    inner.snapshot.chat.transcript.clear();
     project_selected_streaming_state(inner);
 
     if !apply_selected_title_from_history(inner, conversation_id) {
