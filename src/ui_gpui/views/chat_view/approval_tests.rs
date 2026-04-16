@@ -221,6 +221,7 @@ async fn conversation_cleared_also_clears_approval_bubbles(cx: &mut TestAppConte
 
     visual_cx.update(|_window, app| {
         view.update(app, |view: &mut ChatView, cx| {
+            view.set_conversation_id(Uuid::nil());
             view.handle_command(
                 ViewCommand::ToolApprovalRequest {
                     conversation_id: Uuid::nil(),
@@ -232,7 +233,10 @@ async fn conversation_cleared_also_clears_approval_bubbles(cx: &mut TestAppConte
             assert_eq!(approval_bubbles_for_active_test_conversation(view).len(), 1);
 
             view.handle_command(ViewCommand::ConversationCleared, cx);
-            assert!(view.state.approval_bubbles.is_empty());
+            assert!(
+                !view.state.approval_bubbles.contains_key(&Uuid::nil()),
+                "active conversation bubbles should be removed on clear"
+            );
         });
     });
 }
