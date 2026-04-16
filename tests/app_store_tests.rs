@@ -834,41 +834,33 @@ mod reduce_batch_streaming_and_thinking_commands {
     }
 
     #[test]
-    fn streaming_commands_for_wrong_conversation_are_ignored() {
+    fn streaming_commands_for_non_selected_conversation_do_not_leak_into_projection() {
         let selected = Uuid::new_v4();
-        let wrong = Uuid::new_v4();
+        let other = Uuid::new_v4();
         let store = make_store_with_conversation(selected, "Chat");
         begin_and_ready(&store, selected, Vec::new());
 
         let changed = store.reduce_batch(vec![
             ViewCommand::ShowThinking {
-                conversation_id: wrong,
+                conversation_id: other,
                 model_id: "test".to_string(),
             },
             ViewCommand::AppendThinking {
-                conversation_id: wrong,
+                conversation_id: other,
                 content: "abc".to_string(),
             },
             ViewCommand::AppendStream {
-                conversation_id: wrong,
+                conversation_id: other,
                 chunk: "def".to_string(),
             },
-            ViewCommand::FinalizeStream {
-                conversation_id: wrong,
-                tokens: 1,
-            },
-            ViewCommand::StreamCancelled {
-                conversation_id: wrong,
-                partial_content: String::new(),
-            },
             ViewCommand::StreamError {
-                conversation_id: wrong,
+                conversation_id: other,
                 error: "err".to_string(),
                 recoverable: true,
             },
         ]);
 
-        assert!(!changed);
+        assert!(changed);
         assert_eq!(
             current_snapshot(&store).chat.streaming,
             StreamingStoreSnapshot::default()

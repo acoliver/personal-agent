@@ -28,6 +28,7 @@ impl ChatView {
 
     fn handle_tool_approval_request(
         &mut self,
+        conversation_id: uuid::Uuid,
         request_id: String,
         context: ToolApprovalContext,
         cx: &mut gpui::Context<Self>,
@@ -41,13 +42,14 @@ impl ChatView {
             return;
         }
 
-        // Try to find an existing pending bubble to group with
-        if let Some(existing) = self
+        let bubbles = self
             .state
             .approval_bubbles
-            .iter_mut()
-            .find(|b| b.can_group_with(&context))
-        {
+            .entry(conversation_id)
+            .or_default();
+
+        // Try to find an existing pending bubble to group with
+        if let Some(existing) = bubbles.iter_mut().find(|b| b.can_group_with(&context)) {
             // Group with existing bubble
             let details = context.details.clone();
             existing.add_operation(request_id, details);
@@ -56,9 +58,7 @@ impl ChatView {
         }
 
         // Create new bubble
-        self.state
-            .approval_bubbles
-            .push(ToolApprovalBubble::new(request_id, context));
+        bubbles.push(ToolApprovalBubble::new(request_id, context));
         self.maybe_scroll_chat_to_bottom(cx);
         cx.notify();
     }
@@ -72,7 +72,8 @@ impl ChatView {
             let pending_ids: Vec<String> = self
                 .state
                 .approval_bubbles
-                .iter()
+                .values()
+                .flat_map(|bubbles| bubbles.iter())
                 .filter(|b| b.state == ApprovalBubbleState::Pending)
                 .flat_map(|b| b.request_ids.clone())
                 .collect();
@@ -85,9 +86,12 @@ impl ChatView {
             }
 
             // Drop all pending bubbles — they've been auto-approved
+            for bubbles in self.state.approval_bubbles.values_mut() {
+                bubbles.retain(|b| b.state != ApprovalBubbleState::Pending);
+            }
             self.state
                 .approval_bubbles
-                .retain(|b| b.state != ApprovalBubbleState::Pending);
+                .retain(|_, bubbles| !bubbles.is_empty());
         }
         cx.notify();
     }
@@ -176,32 +180,35 @@ impl ChatView {
                 }
             }
             ViewCommand::ToolApprovalRequest {
+                conversation_id,
                 request_id,
                 context,
             } => {
-                self.handle_tool_approval_request(request_id, context, cx);
+                self.handle_tool_approval_request(conversation_id, request_id, context, cx);
             }
             ViewCommand::ToolApprovalResolved {
+                conversation_id,
                 request_id,
                 approved,
             } => {
-                // Find the bubble containing this request_id
-                if let Some(bubble) = self
-                    .state
-                    .approval_bubbles
-                    .iter_mut()
-                    .find(|b| b.request_ids.contains(&request_id))
-                {
-                    bubble.state = if approved {
-                        ApprovalBubbleState::Approved
-                    } else {
-                        ApprovalBubbleState::Denied
-                    };
+                // Find the bubble containing this request_id in the owning conversation bucket.
+                if let Some(bubbles) = self.state.approval_bubbles.get_mut(&conversation_id) {
+                    if let Some(bubble) = bubbles
+                        .iter_mut()
+                        .find(|b| b.request_ids.contains(&request_id))
+                    {
+                        bubble.state = if approved {
+                            ApprovalBubbleState::Approved
+                        } else {
+                            ApprovalBubbleState::Denied
+                        };
+                    }
+                    // Remove resolved bubbles so they don't accumulate.
+                    bubbles.retain(|b| b.state == ApprovalBubbleState::Pending);
+                    if bubbles.is_empty() {
+                        self.state.approval_bubbles.remove(&conversation_id);
+                    }
                 }
-                // Remove resolved bubbles so they don't accumulate.
-                self.state
-                    .approval_bubbles
-                    .retain(|b| b.state == ApprovalBubbleState::Pending);
                 cx.notify();
             }
             ViewCommand::YoloModeChanged { active } => {

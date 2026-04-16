@@ -146,6 +146,7 @@ pub(super) async fn run_stream_task(
     };
 
     let context = build_stream_context(
+        conversation_id,
         view_tx.clone(),
         approval_gate.clone(),
         policy.clone(),

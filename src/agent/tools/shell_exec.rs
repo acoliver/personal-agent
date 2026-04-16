@@ -166,9 +166,11 @@ async fn check_approval(
         )),
         ToolApprovalDecision::AskUser => {
             let request_id = uuid::Uuid::new_v4().to_string();
-            let waiter = tool_context
-                .approval_gate
-                .wait_for_approvals(request_id.clone(), identifiers);
+            let waiter = tool_context.approval_gate.wait_for_approvals(
+                request_id.clone(),
+                identifiers,
+                tool_context.conversation_id,
+            );
 
             // Build rich context for approval UI
             let mut context = ToolApprovalContext::new("ShellExec", ToolCategory::Shell, command);
@@ -179,6 +181,7 @@ async fn check_approval(
             if tool_context
                 .view_tx
                 .send(ViewCommand::ToolApprovalRequest {
+                    conversation_id: tool_context.conversation_id,
                     request_id: request_id.clone(),
                     context,
                 })
@@ -422,6 +425,7 @@ mod tests {
     fn make_context_with_policy(policy: ToolApprovalPolicy) -> McpToolContext {
         let (view_tx, _view_rx) = tokio::sync::mpsc::channel(8);
         McpToolContext {
+            conversation_id: uuid::Uuid::nil(),
             view_tx,
             approval_gate: std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new()),
             policy: std::sync::Arc::new(tokio::sync::Mutex::new(policy)),

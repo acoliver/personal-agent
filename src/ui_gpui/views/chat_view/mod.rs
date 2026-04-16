@@ -215,11 +215,6 @@ impl ChatView {
         let previous_conversation_id = self.conversation_id;
         let previous_selection_generation = self.selection_generation;
 
-        // Clear approval bubbles when switching to a different conversation.
-        if previous_conversation_id != selected_conversation_id {
-            self.state.approval_bubbles.clear();
-        }
-
         self.state.conversations = conversations;
         self.state.active_conversation_id = selected_conversation_id;
         self.conversation_id = selected_conversation_id;

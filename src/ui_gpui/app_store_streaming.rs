@@ -11,12 +11,24 @@ use super::app_store::{
     clear_streaming_ephemera_only, non_empty_or_none, AppStoreInner, FinalizedStreamGuard,
 };
 
-pub(super) fn clear_streaming_visible_state(inner: &mut AppStoreInner) {
-    inner.snapshot.chat.streaming.stream_buffer.clear();
-    inner.snapshot.chat.streaming.thinking_buffer.clear();
-    inner.snapshot.chat.streaming.thinking_visible = false;
-    inner.snapshot.chat.streaming.last_error = None;
-    inner.snapshot.chat.streaming.model_id = None;
+fn streaming_state_mut(
+    inner: &mut AppStoreInner,
+    target: Uuid,
+) -> &mut super::app_store_types::ConversationStreamingState {
+    inner.streaming_states.entry(target).or_default()
+}
+
+fn remove_empty_state_for_target(inner: &mut AppStoreInner, target: Uuid) {
+    let should_remove = inner.streaming_states.get(&target).is_some_and(|state| {
+        !state.thinking_visible
+            && state.stream_buffer.is_empty()
+            && state.thinking_buffer.is_empty()
+            && state.last_error.is_none()
+            && state.model_id.is_none()
+    });
+    if should_remove {
+        inner.streaming_states.remove(&target);
+    }
 }
 
 pub(super) fn resolve_nil_or_explicit_target(
@@ -28,135 +40,130 @@ pub(super) fn resolve_nil_or_explicit_target(
             "Received nil conversation_id for streaming event; falling back to active/selected target"
         );
         inner
-            .snapshot
-            .chat
-            .streaming
-            .active_target
+            .active_streaming_target
             .or(inner.snapshot.chat.selected_conversation_id)
     } else {
         Some(conversation_id)
     }
 }
 
-pub(super) fn show_thinking_if_target_matches_selected_or_nil(
+pub(super) fn show_thinking_for_target(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
+    model_id: String,
 ) -> bool {
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
     };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
-        return false;
+
+    let state = streaming_state_mut(inner, target);
+    let changed = !state.thinking_visible || state.model_id.as_deref() != Some(model_id.as_str());
+    state.thinking_visible = true;
+    state.model_id = Some(model_id);
+
+    if changed {
+        inner.active_streaming_target = Some(target);
     }
-    let mut changed = if inner.snapshot.chat.streaming.thinking_visible {
-        false
-    } else {
-        inner.snapshot.chat.streaming.thinking_visible = true;
-        true
-    };
-    changed |= if inner.snapshot.chat.streaming.active_target == Some(target) {
-        false
-    } else {
-        inner.snapshot.chat.streaming.active_target = Some(target);
-        true
-    };
-    if inner.snapshot.chat.streaming.stream_buffer.is_empty()
-        && inner.snapshot.chat.streaming.thinking_buffer.is_empty()
-        && inner.snapshot.chat.streaming.last_error.is_none()
-    {
-        changed = true;
-    }
+
     changed
 }
 
-pub(super) fn hide_thinking_if_target_matches_selected_or_nil(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-) -> bool {
+pub(super) fn hide_thinking_for_target(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
     };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
+
+    let Some(state) = inner.streaming_states.get_mut(&target) else {
+        return false;
+    };
+
+    if !state.thinking_visible {
         return false;
     }
-    if !inner.snapshot.chat.streaming.thinking_visible {
-        return false;
-    }
-    inner.snapshot.chat.streaming.thinking_visible = false;
+
+    state.thinking_visible = false;
+    remove_empty_state_for_target(inner, target);
     true
 }
 
-pub(super) fn append_thinking_buffer_if_target_matches_selected_or_nil(
+pub(super) fn append_thinking_buffer_for_target(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
     content: &str,
 ) -> bool {
+    if content.is_empty() {
+        return false;
+    }
+
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
     };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) || content.is_empty() {
-        return false;
-    }
-    inner.snapshot.chat.streaming.active_target = Some(target);
-    inner.snapshot.chat.streaming.thinking_visible = true;
-    inner
-        .snapshot
-        .chat
-        .streaming
-        .thinking_buffer
-        .push_str(content);
+
+    let state = streaming_state_mut(inner, target);
+    state.thinking_visible = true;
+    state.thinking_buffer.push_str(content);
+    inner.active_streaming_target = Some(target);
     true
 }
 
-pub(super) fn append_stream_buffer_if_target_matches_selected_or_nil(
+pub(super) fn append_stream_buffer_for_target(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
     chunk: &str,
 ) -> bool {
+    if chunk.is_empty() {
+        return false;
+    }
+
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
     };
-    if inner.snapshot.chat.selected_conversation_id != Some(target) || chunk.is_empty() {
-        return false;
-    }
-    inner.snapshot.chat.streaming.active_target = Some(target);
-    inner.snapshot.chat.streaming.stream_buffer.push_str(chunk);
+
+    let state = streaming_state_mut(inner, target);
+    state.stream_buffer.push_str(chunk);
+    inner.active_streaming_target = Some(target);
     true
 }
 
-pub(super) fn finalize_stream_if_target_matches_selected_or_nil(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-) -> bool {
+pub(super) fn finalize_stream_for_target(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
     };
-    if inner.snapshot.chat.streaming.active_target != Some(target) {
+
+    if inner.active_streaming_target != Some(target) {
         return false;
     }
 
-    if inner.snapshot.chat.selected_conversation_id != Some(target) {
-        inner.snapshot.chat.streaming.active_target = None;
-        return true;
-    }
+    let state = inner
+        .streaming_states
+        .get(&target)
+        .cloned()
+        .unwrap_or_default();
 
-    if inner.snapshot.chat.streaming.stream_buffer.is_empty() {
-        inner.last_finalized_stream_guard = None;
-    } else {
+    if inner.snapshot.chat.selected_conversation_id == Some(target)
+        && !state.stream_buffer.is_empty()
+    {
         let assistant_payload = ConversationMessagePayload {
             role: MessageRole::Assistant,
-            content: inner.snapshot.chat.streaming.stream_buffer.clone(),
-            thinking_content: non_empty_or_none(&inner.snapshot.chat.streaming.thinking_buffer),
+            content: state.stream_buffer.clone(),
+            thinking_content: non_empty_or_none(&state.thinking_buffer),
             timestamp: None,
-            model_id: inner.snapshot.chat.streaming.model_id.clone(),
+            model_id: state.model_id.clone(),
         };
         inner.snapshot.chat.transcript.push(assistant_payload);
-        inner.last_finalized_stream_guard = Some(FinalizedStreamGuard {
-            conversation_id: target,
-            transcript_len_after_finalize: inner.snapshot.chat.transcript.len(),
-        });
+        inner.finalized_stream_guards.insert(
+            target,
+            FinalizedStreamGuard {
+                conversation_id: target,
+                transcript_len_after_finalize: inner.snapshot.chat.transcript.len(),
+            },
+        );
+    } else {
+        inner.finalized_stream_guards.remove(&target);
     }
 
+    inner.active_streaming_target = None;
+    inner.streaming_states.remove(&target);
     clear_streaming_ephemera_only(inner);
     true
 }
@@ -169,33 +176,27 @@ pub(super) fn clear_streaming_ephemera_for_target(
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
     };
-    clear_streaming_ephemera_if_selected_target_matches(inner, target, error)
-}
 
-fn clear_streaming_ephemera_if_selected_target_matches(
-    inner: &mut AppStoreInner,
-    target: Uuid,
-    error: Option<String>,
-) -> bool {
-    let previous = inner.snapshot.chat.streaming.clone();
-    let mut next = previous.clone();
+    let has_state = inner.streaming_states.contains_key(&target);
+    let was_active = inner.active_streaming_target == Some(target);
+    if !has_state && !was_active {
+        return false;
+    }
 
-    if inner.snapshot.chat.selected_conversation_id == Some(target) {
-        next.active_target = None;
-        next.stream_buffer.clear();
-        next.thinking_buffer.clear();
-        next.thinking_visible = false;
-        next.last_error = error;
-    } else if next.active_target == Some(target) {
-        next.active_target = None;
+    if let Some(error_message) = error {
+        let state = streaming_state_mut(inner, target);
+        state.thinking_visible = false;
+        state.stream_buffer.clear();
+        state.thinking_buffer.clear();
+        state.last_error = Some(error_message);
+        inner.active_streaming_target = None;
     } else {
-        return false;
+        inner.streaming_states.remove(&target);
+        if inner.active_streaming_target == Some(target) {
+            inner.active_streaming_target = None;
+        }
     }
 
-    if previous == next {
-        return false;
-    }
-    inner.snapshot.chat.streaming = next;
     true
 }
 

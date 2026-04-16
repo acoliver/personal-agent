@@ -98,10 +98,11 @@ async fn handle_mcp_approval(
     args: &serde_json::Value,
 ) -> Result<(), ToolError> {
     let request_id = uuid::Uuid::new_v4().to_string();
-    let waiter = ctx
-        .deps()
-        .approval_gate
-        .wait_for_approval(request_id.clone(), tool_identifier.to_string());
+    let waiter = ctx.deps().approval_gate.wait_for_approval(
+        request_id.clone(),
+        tool_identifier.to_string(),
+        ctx.deps().conversation_id,
+    );
 
     // Build rich context for MCP tool approval
     let mut context = ToolApprovalContext::new(
@@ -124,6 +125,7 @@ async fn handle_mcp_approval(
         .deps()
         .view_tx
         .try_send(ViewCommand::ToolApprovalRequest {
+            conversation_id: ctx.deps().conversation_id,
             request_id: request_id.clone(),
             context,
         })

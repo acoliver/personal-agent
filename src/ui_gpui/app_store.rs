@@ -15,6 +15,7 @@
 //! @requirement REQ-ARCH-006.7
 //! @pseudocode analysis/pseudocode/01-app-store.md:001-405
 //! @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-087
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use uuid::Uuid;
@@ -24,11 +25,9 @@ use crate::presentation::view_command::{
 };
 
 use crate::ui_gpui::app_store_streaming::{
-    append_stream_buffer_if_target_matches_selected_or_nil,
-    append_thinking_buffer_if_target_matches_selected_or_nil, clear_streaming_ephemera_for_target,
-    clear_streaming_visible_state, finalize_stream_if_target_matches_selected_or_nil,
-    hide_thinking_if_target_matches_selected_or_nil,
-    show_thinking_if_target_matches_selected_or_nil,
+    append_stream_buffer_for_target, append_thinking_buffer_for_target,
+    clear_streaming_ephemera_for_target, finalize_stream_for_target, hide_thinking_for_target,
+    show_thinking_for_target,
 };
 pub use crate::ui_gpui::app_store_types::*;
 
@@ -118,9 +117,11 @@ pub enum BeginSelectionResult {
 #[derive(Default)]
 pub(super) struct AppStoreInner {
     pub(super) snapshot: GpuiAppSnapshot,
+    pub(super) streaming_states: HashMap<Uuid, ConversationStreamingState>,
+    pub(super) active_streaming_target: Option<Uuid>,
     pub(super) subscribers: Vec<flume::Sender<GpuiAppSnapshot>>,
     pub(super) title_provenance: SelectedTitleProvenance,
-    pub(super) last_finalized_stream_guard: Option<FinalizedStreamGuard>,
+    pub(super) finalized_stream_guards: HashMap<Uuid, FinalizedStreamGuard>,
 }
 
 /// Process-lifetime authoritative store handle.
@@ -397,13 +398,8 @@ fn begin_selection_locked(
         conversation_id,
         generation: next_generation,
     };
-    let should_restore_thinking =
-        inner.snapshot.chat.streaming.active_target == Some(conversation_id);
-    clear_streaming_visible_state(inner);
-    if should_restore_thinking {
-        inner.snapshot.chat.streaming.thinking_visible = true;
-    }
-    inner.last_finalized_stream_guard = None;
+    inner.finalized_stream_guards.remove(&conversation_id);
+    project_selected_streaming_state(inner);
 
     if !apply_selected_title_from_history(inner, conversation_id) {
         inner.snapshot.chat.selected_conversation_title = "Untitled Conversation".to_string();
@@ -417,6 +413,14 @@ fn begin_selection_locked(
     BeginSelectionResult::BeganSelection {
         generation: next_generation,
     }
+}
+
+fn project_selected_streaming_state(inner: &mut AppStoreInner) {
+    inner.snapshot.chat.streaming = project_streaming_snapshot(
+        &inner.streaming_states,
+        inner.snapshot.chat.selected_conversation_id,
+        inner.active_streaming_target,
+    );
 }
 
 fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewCommand) -> bool {
@@ -561,11 +565,8 @@ fn reduce_messages_loaded(
         conversation_id,
         generation: selection_generation,
     };
-    clear_streaming_visible_state(inner);
-    if inner.snapshot.chat.streaming.active_target == Some(conversation_id) {
-        inner.snapshot.chat.streaming.thinking_visible = true;
-    }
-    inner.last_finalized_stream_guard = None;
+    inner.finalized_stream_guards.remove(&conversation_id);
+    project_selected_streaming_state(inner);
     true
 }
 fn reduce_conversation_load_failed(
@@ -592,10 +593,7 @@ fn reduce_conversation_load_failed(
         return false;
     }
     inner.snapshot.chat.load_state = next_state;
-    clear_streaming_visible_state(inner);
-    if inner.snapshot.chat.streaming.active_target == Some(conversation_id) {
-        inner.snapshot.chat.streaming.thinking_visible = true;
-    }
+    project_selected_streaming_state(inner);
     true
 }
 
@@ -608,11 +606,10 @@ fn reduce_message_appended(
 ) -> bool {
     if role == MessageRole::Assistant
         && inner
-            .last_finalized_stream_guard
-            .as_ref()
+            .finalized_stream_guards
+            .get(&conversation_id)
             .is_some_and(|guard| {
-                conversation_id == guard.conversation_id
-                    && inner.snapshot.chat.transcript.len() == guard.transcript_len_after_finalize
+                inner.snapshot.chat.transcript.len() == guard.transcript_len_after_finalize
                     && inner.snapshot.chat.transcript.last().is_some_and(|tail| {
                         tail.role == MessageRole::Assistant && tail.content == content
                     })
@@ -634,35 +631,59 @@ fn reduce_show_thinking(
     conversation_id: Uuid,
     model_id: String,
 ) -> bool {
-    let changed = show_thinking_if_target_matches_selected_or_nil(inner, conversation_id);
+    let changed = show_thinking_for_target(inner, conversation_id, model_id);
     if changed {
-        inner.snapshot.chat.streaming.model_id = Some(model_id);
+        project_selected_streaming_state(inner);
     }
     changed
 }
 
 fn reduce_hide_thinking(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
-    hide_thinking_if_target_matches_selected_or_nil(inner, conversation_id)
+    let changed = hide_thinking_for_target(inner, conversation_id);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_append_thinking(inner: &mut AppStoreInner, conversation_id: Uuid, content: &str) -> bool {
-    append_thinking_buffer_if_target_matches_selected_or_nil(inner, conversation_id, content)
+    let changed = append_thinking_buffer_for_target(inner, conversation_id, content);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_append_stream(inner: &mut AppStoreInner, conversation_id: Uuid, chunk: &str) -> bool {
-    append_stream_buffer_if_target_matches_selected_or_nil(inner, conversation_id, chunk)
+    let changed = append_stream_buffer_for_target(inner, conversation_id, chunk);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_finalize_stream(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
-    finalize_stream_if_target_matches_selected_or_nil(inner, conversation_id)
+    let changed = finalize_stream_for_target(inner, conversation_id);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_stream_cancelled(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
-    clear_streaming_ephemera_for_target(inner, conversation_id, None)
+    let changed = clear_streaming_ephemera_for_target(inner, conversation_id, None);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_stream_error(inner: &mut AppStoreInner, conversation_id: Uuid, error: String) -> bool {
-    clear_streaming_ephemera_for_target(inner, conversation_id, Some(error))
+    let changed = clear_streaming_ephemera_for_target(inner, conversation_id, Some(error));
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_chat_profiles_updated(
@@ -707,7 +728,16 @@ fn reduce_conversation_title_updated(inner: &mut AppStoreInner, id: Uuid, title:
 }
 
 fn reduce_conversation_deleted(inner: &mut AppStoreInner, id: Uuid) -> bool {
-    mutate_history_and_selected_selection_if_targeted(inner, id)
+    let changed = mutate_history_and_selected_selection_if_targeted(inner, id);
+    if changed {
+        inner.streaming_states.remove(&id);
+        inner.finalized_stream_guards.remove(&id);
+        if inner.active_streaming_target == Some(id) {
+            inner.active_streaming_target = None;
+        }
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_conversation_created(inner: &mut AppStoreInner, id: Uuid) -> bool {

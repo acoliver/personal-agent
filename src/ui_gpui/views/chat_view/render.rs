@@ -340,8 +340,10 @@ impl ChatView {
             // Approval bubbles (inline in message stream) - queue: only first pending
             .children(
                 self.state
-                    .approval_bubbles
-                    .iter()
+                    .active_conversation_id
+                    .and_then(|conversation_id| self.state.approval_bubbles.get(&conversation_id))
+                    .into_iter()
+                    .flat_map(|bubbles| bubbles.iter())
                     .enumerate()
                     .filter(|(_, bubble)| {
                         matches!(bubble.state, super::state::ApprovalBubbleState::Pending)

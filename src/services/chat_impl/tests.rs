@@ -89,7 +89,8 @@ async fn resolve_tool_approval_denied_does_not_update_policy() {
     let (service, mut view_rx, approval_gate) =
         make_approval_test_chat_service(app_settings.clone());
     let request_id = Uuid::new_v4().to_string();
-    let waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+    let waiter =
+        approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string(), Uuid::nil());
 
     service
         .resolve_tool_approval(request_id.clone(), ToolApprovalResponseAction::Denied)
@@ -109,6 +110,7 @@ async fn resolve_tool_approval_denied_does_not_update_policy() {
     assert_eq!(
         resolved,
         ViewCommand::ToolApprovalResolved {
+            conversation_id: Uuid::nil(),
             request_id,
             approved: false,
         }
@@ -130,10 +132,16 @@ async fn resolve_tool_approval_denied_resolves_all_pending_approvals() {
     let denied_request_id = Uuid::new_v4().to_string();
     let secondary_request_id = Uuid::new_v4().to_string();
 
-    let denied_waiter =
-        approval_gate.wait_for_approval(denied_request_id.clone(), "WriteFile".to_string());
-    let secondary_waiter =
-        approval_gate.wait_for_approval(secondary_request_id.clone(), "Search".to_string());
+    let denied_waiter = approval_gate.wait_for_approval(
+        denied_request_id.clone(),
+        "WriteFile".to_string(),
+        Uuid::nil(),
+    );
+    let secondary_waiter = approval_gate.wait_for_approval(
+        secondary_request_id.clone(),
+        "Search".to_string(),
+        Uuid::nil(),
+    );
 
     service
         .resolve_tool_approval(
@@ -165,9 +173,15 @@ async fn resolve_tool_approval_denied_resolves_all_pending_approvals() {
         .into_iter()
         .map(|command| match command {
             ViewCommand::ToolApprovalResolved {
+                conversation_id,
                 request_id,
                 approved,
             } => {
+                assert_eq!(
+                    conversation_id,
+                    Uuid::nil(),
+                    "denied flow should report request ownership"
+                );
                 assert!(!approved, "denied flow should not approve any request");
                 request_id
             }
@@ -188,6 +202,7 @@ async fn resolve_tool_approval_proceed_session_updates_all_identifiers() {
     let waiter = approval_gate.wait_for_approvals(
         request_id.clone(),
         vec!["git status".to_string(), "pwd".to_string()],
+        Uuid::nil(),
     );
 
     service
@@ -208,6 +223,7 @@ async fn resolve_tool_approval_proceed_session_updates_all_identifiers() {
     assert_eq!(
         resolved,
         ViewCommand::ToolApprovalResolved {
+            conversation_id: Uuid::nil(),
             request_id,
             approved: true,
         }
@@ -244,6 +260,7 @@ async fn resolve_tool_approval_proceed_always_persists_all_identifiers() {
     let waiter = approval_gate.wait_for_approvals(
         request_id.clone(),
         vec!["git status".to_string(), "pwd".to_string()],
+        Uuid::nil(),
     );
 
     service
@@ -264,6 +281,7 @@ async fn resolve_tool_approval_proceed_always_persists_all_identifiers() {
     assert_eq!(
         resolved,
         ViewCommand::ToolApprovalResolved {
+            conversation_id: Uuid::nil(),
             request_id: request_id.clone(),
             approved: true,
         }
@@ -401,7 +419,8 @@ async fn resolve_tool_approval_is_atomic_between_competing_decisions() {
     let (service, _view_rx, approval_gate) = make_approval_test_chat_service(app_settings.clone());
 
     let request_id = Uuid::new_v4().to_string();
-    let _waiter = approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+    let _waiter =
+        approval_gate.wait_for_approval(request_id.clone(), "WriteFile".to_string(), Uuid::nil());
 
     let barrier = Arc::new(Barrier::new(2));
     let service_denied = Arc::new(service);
@@ -831,8 +850,11 @@ async fn cancel_clears_current_conversation_and_pending_approvals() {
         .expect("begin_stream should succeed");
 
     let pending_request_id = Uuid::new_v4().to_string();
-    let waiter =
-        approval_gate.wait_for_approval(pending_request_id.clone(), "WriteFile".to_string());
+    let waiter = approval_gate.wait_for_approval(
+        pending_request_id.clone(),
+        "WriteFile".to_string(),
+        conversation_id,
+    );
 
     service.cancel();
 
@@ -858,6 +880,7 @@ async fn cancel_clears_current_conversation_and_pending_approvals() {
     assert_eq!(
         resolved_command,
         ViewCommand::ToolApprovalResolved {
+            conversation_id,
             request_id: pending_request_id,
             approved: false,
         }

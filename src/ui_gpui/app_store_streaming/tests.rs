@@ -64,53 +64,89 @@ fn begin_and_ready(store: &GpuiAppStore, conversation_id: Uuid) -> u64 {
     generation
 }
 
-fn background_streaming_state(
-    store: &GpuiAppStore,
-    streaming_conversation_id: Uuid,
-    selected_conversation_id: Uuid,
-) {
-    begin_and_ready(store, streaming_conversation_id);
+#[test]
+fn background_streaming_state_is_projected_per_selected_conversation() {
+    let conversation_a = Uuid::new_v4();
+    let conversation_b = Uuid::new_v4();
+    let selected_profile_id = Uuid::new_v4();
+
+    let store = GpuiAppStore::from_startup_inputs(startup_inputs(
+        conversation_a,
+        conversation_b,
+        selected_profile_id,
+    ));
+
+    let generation_a = begin_and_ready(&store, conversation_a);
 
     let started_stream = store.reduce_batch(vec![
         ViewCommand::ShowThinking {
-            conversation_id: streaming_conversation_id,
-            model_id: "test".to_string(),
+            conversation_id: conversation_a,
+            model_id: "model-a".to_string(),
         },
         ViewCommand::AppendThinking {
-            conversation_id: streaming_conversation_id,
+            conversation_id: conversation_a,
             content: "a-thinking".to_string(),
         },
         ViewCommand::AppendStream {
-            conversation_id: streaming_conversation_id,
+            conversation_id: conversation_a,
             chunk: "a-stream".to_string(),
         },
     ]);
     assert!(started_stream);
 
-    begin_and_ready(store, selected_conversation_id);
+    let snapshot_on_a = store.current_snapshot();
+    assert_eq!(
+        snapshot_on_a.chat.selected_conversation_id,
+        Some(conversation_a)
+    );
+    assert_eq!(
+        snapshot_on_a.chat.streaming.active_target,
+        Some(conversation_a)
+    );
+    assert_eq!(snapshot_on_a.chat.streaming.stream_buffer, "a-stream");
+    assert_eq!(snapshot_on_a.chat.streaming.thinking_buffer, "a-thinking");
+    assert!(snapshot_on_a.chat.streaming.thinking_visible);
+    assert_eq!(
+        snapshot_on_a.chat.streaming.model_id.as_deref(),
+        Some("model-a")
+    );
 
-    let snapshot = store.current_snapshot();
+    let generation_b = begin_and_ready(&store, conversation_b);
+    assert!(generation_b > generation_a);
+    let snapshot_on_b = store.current_snapshot();
     assert_eq!(
-        snapshot.chat.selected_conversation_id,
-        Some(selected_conversation_id)
+        snapshot_on_b.chat.selected_conversation_id,
+        Some(conversation_b)
+    );
+    assert!(snapshot_on_b.chat.streaming.stream_buffer.is_empty());
+    assert!(snapshot_on_b.chat.streaming.thinking_buffer.is_empty());
+    assert!(!snapshot_on_b.chat.streaming.thinking_visible);
+    assert_eq!(
+        snapshot_on_b.chat.streaming.active_target, None,
+        "selected conversation B should not project A as active target"
+    );
+
+    let generation_back_to_a = begin_and_ready(&store, conversation_a);
+    assert!(generation_back_to_a > generation_b);
+    let snapshot_back_on_a = store.current_snapshot();
+    assert_eq!(
+        snapshot_back_on_a.chat.selected_conversation_id,
+        Some(conversation_a)
     );
     assert_eq!(
-        snapshot.chat.streaming.active_target,
-        Some(streaming_conversation_id),
-        "loading selected conversation should preserve background stream target"
+        snapshot_back_on_a.chat.streaming.active_target,
+        Some(conversation_a)
     );
-    assert!(
-        snapshot.chat.streaming.stream_buffer.is_empty(),
-        "loading selected conversation should clear visible stream buffer"
+    assert_eq!(snapshot_back_on_a.chat.streaming.stream_buffer, "a-stream");
+    assert_eq!(
+        snapshot_back_on_a.chat.streaming.thinking_buffer,
+        "a-thinking"
     );
-    assert!(
-        snapshot.chat.streaming.thinking_buffer.is_empty(),
-        "loading selected conversation should clear visible thinking buffer"
-    );
+    assert!(snapshot_back_on_a.chat.streaming.thinking_visible);
 }
 
 #[test]
-fn finalize_stream_for_background_target_clears_active_target_without_touching_visible_buffers() {
+fn finalize_stream_for_background_target_preserves_selected_projection() {
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();
     let selected_profile_id = Uuid::new_v4();
@@ -121,50 +157,60 @@ fn finalize_stream_for_background_target_clears_active_target_without_touching_v
         selected_profile_id,
     ));
 
-    background_streaming_state(&store, conversation_a, conversation_b);
+    begin_and_ready(&store, conversation_a);
+    assert!(store.reduce_batch(vec![
+        ViewCommand::ShowThinking {
+            conversation_id: conversation_a,
+            model_id: "model-a".to_string(),
+        },
+        ViewCommand::AppendThinking {
+            conversation_id: conversation_a,
+            content: "a-thinking".to_string(),
+        },
+        ViewCommand::AppendStream {
+            conversation_id: conversation_a,
+            chunk: "a-stream".to_string(),
+        },
+    ]));
 
+    begin_and_ready(&store, conversation_b);
     let before_finalize = store.current_snapshot();
+    assert_eq!(
+        before_finalize.chat.selected_conversation_id,
+        Some(conversation_b)
+    );
+    assert!(before_finalize.chat.streaming.stream_buffer.is_empty());
+
     let finalize_changed = store.reduce_batch(vec![ViewCommand::FinalizeStream {
         conversation_id: conversation_a,
         tokens: 123,
     }]);
-    assert!(
-        finalize_changed,
-        "background finalize should clear active target and publish snapshot"
-    );
+    assert!(finalize_changed);
 
     let after_finalize = store.current_snapshot();
     assert_eq!(
         after_finalize.chat.selected_conversation_id,
-        Some(conversation_b),
-        "selected conversation remains unchanged"
+        Some(conversation_b)
     );
     assert_eq!(
-        after_finalize.chat.streaming.active_target, None,
-        "background finalize should clear active target"
+        after_finalize.chat.streaming, before_finalize.chat.streaming,
+        "finalizing a background stream should not mutate selected conversation projection"
     );
+
+    begin_and_ready(&store, conversation_a);
+    let snapshot_a = store.current_snapshot();
     assert_eq!(
-        after_finalize.chat.streaming.stream_buffer, before_finalize.chat.streaming.stream_buffer,
-        "selected conversation stream buffer must remain untouched"
+        snapshot_a.chat.selected_conversation_id,
+        Some(conversation_a)
     );
-    assert_eq!(
-        after_finalize.chat.streaming.thinking_buffer,
-        before_finalize.chat.streaming.thinking_buffer,
-        "selected conversation thinking buffer must remain untouched"
-    );
-    assert_eq!(
-        after_finalize.chat.streaming.thinking_visible,
-        before_finalize.chat.streaming.thinking_visible,
-        "selected conversation thinking visibility must remain untouched"
-    );
-    assert_eq!(
-        after_finalize.chat.streaming.last_error, before_finalize.chat.streaming.last_error,
-        "background finalize should not change selected conversation errors"
-    );
+    assert_eq!(snapshot_a.chat.streaming.active_target, None);
+    assert!(snapshot_a.chat.streaming.stream_buffer.is_empty());
+    assert!(snapshot_a.chat.streaming.thinking_buffer.is_empty());
+    assert!(!snapshot_a.chat.streaming.thinking_visible);
 }
 
 #[test]
-fn background_stream_error_only_clears_matching_active_target_and_preserves_selected_ui_state() {
+fn background_stream_error_preserves_selected_projection_and_is_scoped() {
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();
     let selected_profile_id = Uuid::new_v4();
@@ -175,35 +221,47 @@ fn background_stream_error_only_clears_matching_active_target_and_preserves_sele
         selected_profile_id,
     ));
 
-    background_streaming_state(&store, conversation_a, conversation_b);
+    begin_and_ready(&store, conversation_a);
+    assert!(store.reduce_batch(vec![
+        ViewCommand::ShowThinking {
+            conversation_id: conversation_a,
+            model_id: "model-a".to_string(),
+        },
+        ViewCommand::AppendThinking {
+            conversation_id: conversation_a,
+            content: "a-thinking".to_string(),
+        },
+        ViewCommand::AppendStream {
+            conversation_id: conversation_a,
+            chunk: "a-stream".to_string(),
+        },
+    ]));
 
+    begin_and_ready(&store, conversation_b);
     let before_error = store.current_snapshot();
+
     let error_changed = store.reduce_batch(vec![ViewCommand::StreamError {
         conversation_id: conversation_a,
         error: "background failure".to_string(),
         recoverable: false,
     }]);
-    assert!(
-        error_changed,
-        "background stream error should clear matching active target"
-    );
+    assert!(error_changed);
 
     let after_error = store.current_snapshot();
-    assert_eq!(after_error.chat.streaming.active_target, None);
     assert_eq!(
-        after_error.chat.streaming.stream_buffer, before_error.chat.streaming.stream_buffer,
-        "selected stream buffer must remain unchanged"
+        after_error.chat.streaming, before_error.chat.streaming,
+        "background stream error should not mutate selected conversation projection"
+    );
+
+    begin_and_ready(&store, conversation_a);
+    let snapshot_a = store.current_snapshot();
+    assert_eq!(
+        snapshot_a.chat.selected_conversation_id,
+        Some(conversation_a)
     );
     assert_eq!(
-        after_error.chat.streaming.thinking_buffer, before_error.chat.streaming.thinking_buffer,
-        "selected thinking buffer must remain unchanged"
+        snapshot_a.chat.streaming.last_error.as_deref(),
+        Some("background failure")
     );
-    assert_eq!(
-        after_error.chat.streaming.thinking_visible, before_error.chat.streaming.thinking_visible,
-        "selected thinking visibility must remain unchanged"
-    );
-    assert_eq!(
-        after_error.chat.streaming.last_error, before_error.chat.streaming.last_error,
-        "background error should not overwrite selected conversation errors"
-    );
+    assert_eq!(snapshot_a.chat.streaming.active_target, None);
 }

@@ -22,7 +22,7 @@ fn split_prompt_and_history_uses_last_user_message() {
 async fn approval_waiter_drop_cleans_pending_entry() {
     let gate = ApprovalGate::new();
     let request_id = Uuid::new_v4().to_string();
-    let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+    let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string(), Uuid::nil());
 
     drop(waiter);
 
@@ -33,7 +33,7 @@ async fn approval_waiter_drop_cleans_pending_entry() {
 async fn resolve_returns_none_when_waiter_was_dropped() {
     let gate = ApprovalGate::new();
     let request_id = Uuid::new_v4().to_string();
-    let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+    let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string(), Uuid::nil());
 
     drop(waiter);
 
@@ -46,7 +46,7 @@ async fn resolve_returns_none_when_waiter_was_dropped() {
 async fn resolve_returns_identifier_when_waiter_is_alive() {
     let gate = ApprovalGate::new();
     let request_id = Uuid::new_v4().to_string();
-    let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string());
+    let waiter = gate.wait_for_approval(request_id.clone(), "WriteFile".to_string(), Uuid::nil());
 
     let resolver = {
         let gate = gate;
@@ -55,12 +55,13 @@ async fn resolve_returns_identifier_when_waiter_is_alive() {
     };
 
     let approved = waiter.wait().await.expect("waiter should receive decision");
-    let identifier = resolver
+    let (conversation_id, identifier) = resolver
         .await
         .expect("resolver task should complete")
         .expect("identifier should be returned for live waiter");
 
     assert!(approved);
+    assert_eq!(conversation_id, Uuid::nil());
     assert_eq!(identifier, "WriteFile");
 }
 
@@ -71,6 +72,7 @@ async fn resolve_returns_all_identifiers_when_waiter_is_alive() {
     let waiter = gate.wait_for_approvals(
         request_id.clone(),
         vec!["ls".to_string(), "pwd".to_string()],
+        Uuid::nil(),
     );
 
     let resolver = {
@@ -80,12 +82,13 @@ async fn resolve_returns_all_identifiers_when_waiter_is_alive() {
     };
 
     let approved = waiter.wait().await.expect("waiter should receive decision");
-    let identifiers = resolver
+    let (conversation_id, identifiers) = resolver
         .await
         .expect("resolver task should complete")
         .expect("identifiers should be returned for live waiter");
 
     assert!(approved);
+    assert_eq!(conversation_id, Uuid::nil());
     assert_eq!(identifiers, vec!["ls".to_string(), "pwd".to_string()]);
 }
 
@@ -96,14 +99,15 @@ async fn resolve_all_resolves_every_pending_waiter() {
     let request_id_a = Uuid::new_v4().to_string();
     let request_id_b = Uuid::new_v4().to_string();
 
-    let waiter_a = gate.wait_for_approval(request_id_a.clone(), "WriteFile".to_string());
-    let waiter_b = gate.wait_for_approval(request_id_b.clone(), "Search".to_string());
+    let waiter_a =
+        gate.wait_for_approval(request_id_a.clone(), "WriteFile".to_string(), Uuid::nil());
+    let waiter_b = gate.wait_for_approval(request_id_b.clone(), "Search".to_string(), Uuid::nil());
 
     let resolved_ids = gate.resolve_all(false);
 
     assert_eq!(resolved_ids.len(), 2);
-    assert!(resolved_ids.contains(&request_id_a));
-    assert!(resolved_ids.contains(&request_id_b));
+    assert!(resolved_ids.contains(&(Uuid::nil(), request_id_a.clone())));
+    assert!(resolved_ids.contains(&(Uuid::nil(), request_id_b.clone())));
 
     let approved_a = waiter_a
         .wait()

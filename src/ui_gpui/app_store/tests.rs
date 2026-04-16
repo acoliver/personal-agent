@@ -51,7 +51,7 @@ fn startup_inputs(first_id: Uuid, second_id: Uuid, selected_profile_id: Uuid) ->
 }
 
 #[test]
-fn begin_selection_preserves_background_active_target_and_clears_visible_streaming_state() {
+fn begin_selection_reprojects_streaming_state_without_cross_conversation_leakage() {
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();
     let selected_profile_id = Uuid::new_v4();
@@ -93,20 +93,11 @@ fn begin_selection_preserves_background_active_target_and_clears_visible_streami
     assert_eq!(
         before_switch.chat.streaming.active_target,
         Some(conversation_a),
-        "precondition: conversation A is actively streaming"
+        "precondition: conversation A projects itself as active while selected"
     );
-    assert!(
-        !before_switch.chat.streaming.stream_buffer.is_empty(),
-        "precondition: visible stream buffer populated"
-    );
-    assert!(
-        !before_switch.chat.streaming.thinking_buffer.is_empty(),
-        "precondition: visible thinking buffer populated"
-    );
-    assert!(
-        before_switch.chat.streaming.thinking_visible,
-        "precondition: thinking indicator visible"
-    );
+    assert_eq!(before_switch.chat.streaming.stream_buffer, "partial");
+    assert_eq!(before_switch.chat.streaming.thinking_buffer, "thinking");
+    assert!(before_switch.chat.streaming.thinking_visible);
 
     let switch_generation =
         match store.begin_selection(conversation_b, BeginSelectionMode::BatchNoPublish) {
@@ -130,24 +121,33 @@ fn begin_selection_preserves_background_active_target_and_clears_visible_streami
         }
     );
     assert_eq!(
-        after_switch.chat.streaming.active_target,
-        Some(conversation_a),
-        "background stream target should be preserved across selection switch"
+        after_switch.chat.streaming.active_target, None,
+        "conversation B should not project conversation A as active"
     );
-    assert!(
-        after_switch.chat.streaming.stream_buffer.is_empty(),
-        "visible stream buffer should be cleared on switch"
+    assert!(after_switch.chat.streaming.stream_buffer.is_empty());
+    assert!(after_switch.chat.streaming.thinking_buffer.is_empty());
+    assert!(!after_switch.chat.streaming.thinking_visible);
+    assert!(after_switch.chat.streaming.last_error.is_none());
+
+    let switch_back_generation =
+        match store.begin_selection(conversation_a, BeginSelectionMode::BatchNoPublish) {
+            BeginSelectionResult::NoOpSameSelection => {
+                panic!("expected begin_selection to switch back to conversation A")
+            }
+            BeginSelectionResult::BeganSelection { generation } => generation,
+        };
+    assert!(switch_back_generation > switch_generation);
+
+    let after_switch_back = store.current_snapshot();
+    assert_eq!(
+        after_switch_back.chat.selected_conversation_id,
+        Some(conversation_a)
     );
-    assert!(
-        after_switch.chat.streaming.thinking_buffer.is_empty(),
-        "visible thinking buffer should be cleared on switch"
+    assert_eq!(
+        after_switch_back.chat.streaming.active_target,
+        Some(conversation_a)
     );
-    assert!(
-        !after_switch.chat.streaming.thinking_visible,
-        "thinking indicator should be hidden after switch"
-    );
-    assert!(
-        after_switch.chat.streaming.last_error.is_none(),
-        "last error should be cleared with visible streaming state"
-    );
+    assert_eq!(after_switch_back.chat.streaming.stream_buffer, "partial");
+    assert_eq!(after_switch_back.chat.streaming.thinking_buffer, "thinking");
+    assert!(after_switch_back.chat.streaming.thinking_visible);
 }
