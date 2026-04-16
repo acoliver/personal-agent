@@ -968,6 +968,56 @@ mod reduce_batch_message_append {
         assert!(!changed);
         assert_eq!(current_snapshot(&store).chat.transcript.len(), 1);
     }
+
+    #[test]
+    fn assistant_message_matching_finalize_guard_survives_reselection() {
+        let conversation_a = Uuid::new_v4();
+        let conversation_b = Uuid::new_v4();
+        let store = GpuiAppStore::from_startup_inputs(StartupInputs {
+            profiles: Vec::new(),
+            selected_profile_id: None,
+            conversations: vec![
+                make_summary(conversation_a, "Conversation A", 0),
+                make_summary(conversation_b, "Conversation B", 0),
+            ],
+            selected_conversation: None,
+        });
+
+        begin_and_ready(&store, conversation_a, Vec::new());
+        assert!(store.reduce_batch(vec![
+            ViewCommand::AppendStream {
+                conversation_id: conversation_a,
+                chunk: "same".to_string(),
+            },
+            ViewCommand::FinalizeStream {
+                conversation_id: conversation_a,
+                tokens: 1,
+            },
+        ]));
+
+        let switched_to_b =
+            store.begin_selection(conversation_b, BeginSelectionMode::BatchNoPublish);
+        assert!(matches!(
+            switched_to_b,
+            BeginSelectionResult::BeganSelection { .. }
+        ));
+        let switched_back_to_a =
+            store.begin_selection(conversation_a, BeginSelectionMode::BatchNoPublish);
+        assert!(matches!(
+            switched_back_to_a,
+            BeginSelectionResult::BeganSelection { .. }
+        ));
+
+        let changed = store.reduce_batch(vec![ViewCommand::MessageAppended {
+            conversation_id: conversation_a,
+            role: MessageRole::Assistant,
+            content: "same".to_string(),
+            model_id: None,
+        }]);
+
+        assert!(!changed);
+        assert_eq!(current_snapshot(&store).chat.transcript.len(), 1);
+    }
 }
 
 mod reduce_batch_conversation_lifecycle {

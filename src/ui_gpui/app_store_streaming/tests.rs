@@ -210,6 +210,70 @@ fn finalize_stream_for_background_target_preserves_selected_projection() {
 }
 
 #[test]
+fn finalize_stream_for_explicit_target_when_another_stream_is_active() {
+    let conversation_a = Uuid::new_v4();
+    let conversation_b = Uuid::new_v4();
+    let selected_profile_id = Uuid::new_v4();
+
+    let store = GpuiAppStore::from_startup_inputs(startup_inputs(
+        conversation_a,
+        conversation_b,
+        selected_profile_id,
+    ));
+
+    begin_and_ready(&store, conversation_a);
+    assert!(store.reduce_batch(vec![
+        ViewCommand::ShowThinking {
+            conversation_id: conversation_a,
+            model_id: "model-a".to_string(),
+        },
+        ViewCommand::AppendStream {
+            conversation_id: conversation_a,
+            chunk: "a-stream".to_string(),
+        },
+    ]));
+
+    begin_and_ready(&store, conversation_b);
+    assert!(store.reduce_batch(vec![
+        ViewCommand::ShowThinking {
+            conversation_id: conversation_b,
+            model_id: "model-b".to_string(),
+        },
+        ViewCommand::AppendStream {
+            conversation_id: conversation_b,
+            chunk: "b-stream".to_string(),
+        },
+    ]));
+
+    let finalize_changed = store.reduce_batch(vec![ViewCommand::FinalizeStream {
+        conversation_id: conversation_a,
+        tokens: 7,
+    }]);
+    assert!(finalize_changed);
+
+    let snapshot_on_b = store.current_snapshot();
+    assert_eq!(
+        snapshot_on_b.chat.selected_conversation_id,
+        Some(conversation_b)
+    );
+    assert_eq!(
+        snapshot_on_b.chat.streaming.active_target,
+        Some(conversation_b),
+        "finalizing A should not clear B's active stream projection"
+    );
+    assert_eq!(snapshot_on_b.chat.streaming.stream_buffer, "b-stream");
+
+    begin_and_ready(&store, conversation_a);
+    let snapshot_on_a = store.current_snapshot();
+    assert_eq!(
+        snapshot_on_a.chat.selected_conversation_id,
+        Some(conversation_a)
+    );
+    assert_eq!(snapshot_on_a.chat.streaming.active_target, None);
+    assert!(snapshot_on_a.chat.streaming.stream_buffer.is_empty());
+}
+
+#[test]
 fn background_stream_error_preserves_selected_projection_and_is_scoped() {
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();

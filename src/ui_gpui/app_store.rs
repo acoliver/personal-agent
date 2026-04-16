@@ -406,7 +406,6 @@ fn begin_selection_locked(
         conversation_id,
         generation: next_generation,
     };
-    inner.finalized_stream_guards.remove(&conversation_id);
     project_selected_streaming_state(inner);
 
     if !apply_selected_title_from_history(inner, conversation_id) {

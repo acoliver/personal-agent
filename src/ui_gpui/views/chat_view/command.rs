@@ -42,6 +42,8 @@ impl ChatView {
             return;
         }
 
+        let is_visible_conversation = self.state.active_conversation_id == Some(conversation_id);
+
         let bubbles = self
             .state
             .approval_bubbles
@@ -53,14 +55,18 @@ impl ChatView {
             // Group with existing bubble
             let details = context.details.clone();
             existing.add_operation(request_id, details);
-            cx.notify();
+            if is_visible_conversation {
+                cx.notify();
+            }
             return;
         }
 
         // Create new bubble
         bubbles.push(ToolApprovalBubble::new(request_id, context));
-        self.maybe_scroll_chat_to_bottom(cx);
-        cx.notify();
+        if is_visible_conversation {
+            self.maybe_scroll_chat_to_bottom(cx);
+            cx.notify();
+        }
     }
 
     /// Handle YOLO mode activation - auto-approve any pending tool approval bubbles.
@@ -97,6 +103,7 @@ impl ChatView {
     }
 
     fn handle_conversation_cleared(&mut self, cx: &mut gpui::Context<Self>) {
+        let cleared_conversation_id = self.state.active_conversation_id;
         self.state.messages.clear();
         self.state.streaming = super::state::StreamingState::Idle;
         self.state.thinking_content = None;
@@ -106,7 +113,9 @@ impl ChatView {
         self.state.export_feedback_message = None;
         self.state.export_feedback_is_error = false;
         self.state.export_feedback_path = None;
-        self.state.approval_bubbles.clear();
+        if let Some(conversation_id) = cleared_conversation_id {
+            self.state.approval_bubbles.remove(&conversation_id);
+        }
         self.state.chat_autoscroll_enabled = true;
         self.chat_scroll_handle.scroll_to_bottom();
         self.state.sync_conversation_title_from_active();

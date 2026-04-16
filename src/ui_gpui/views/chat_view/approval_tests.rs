@@ -238,6 +238,110 @@ async fn conversation_cleared_also_clears_approval_bubbles(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn conversation_cleared_only_clears_active_conversation_bubbles(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    let active_conversation_id = Uuid::new_v4();
+    let background_conversation_id = Uuid::new_v4();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.set_conversation_id(active_conversation_id);
+
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    conversation_id: active_conversation_id,
+                    request_id: "req-active".into(),
+                    context: make_shell_context("echo active"),
+                },
+                cx,
+            );
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    conversation_id: background_conversation_id,
+                    request_id: "req-background".into(),
+                    context: make_shell_context("echo background"),
+                },
+                cx,
+            );
+
+            assert_eq!(
+                view.state
+                    .approval_bubbles
+                    .get(&active_conversation_id)
+                    .map_or(0, Vec::len),
+                1
+            );
+            assert_eq!(
+                view.state
+                    .approval_bubbles
+                    .get(&background_conversation_id)
+                    .map_or(0, Vec::len),
+                1
+            );
+
+            view.handle_command(ViewCommand::ConversationCleared, cx);
+
+            assert!(
+                !view
+                    .state
+                    .approval_bubbles
+                    .contains_key(&active_conversation_id),
+                "active conversation bubbles should be removed"
+            );
+            assert_eq!(
+                view.state
+                    .approval_bubbles
+                    .get(&background_conversation_id)
+                    .map_or(0, Vec::len),
+                1,
+                "background conversation bubbles should be preserved"
+            );
+        });
+    });
+}
+
+#[gpui::test]
+async fn background_tool_approval_request_does_not_trigger_autoscroll(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    let active_conversation_id = Uuid::new_v4();
+    let background_conversation_id = Uuid::new_v4();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.set_conversation_id(active_conversation_id);
+            view.state.chat_autoscroll_enabled = true;
+            view.maybe_scroll_chat_to_bottom_invocations.set(0);
+
+            view.handle_command(
+                ViewCommand::ToolApprovalRequest {
+                    conversation_id: background_conversation_id,
+                    request_id: "req-background".into(),
+                    context: make_shell_context("echo background"),
+                },
+                cx,
+            );
+
+            assert_eq!(
+                view.maybe_scroll_chat_to_bottom_invocations.get(),
+                0,
+                "background conversation approval must not scroll active chat"
+            );
+            assert_eq!(
+                view.state
+                    .approval_bubbles
+                    .get(&background_conversation_id)
+                    .map_or(0, Vec::len),
+                1
+            );
+        });
+    });
+}
+
+#[gpui::test]
 async fn resolving_one_bubble_retains_other_pending_bubbles(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();

@@ -136,15 +136,9 @@ pub(super) fn finalize_stream_for_target(inner: &mut AppStoreInner, conversation
         return false;
     };
 
-    if inner.active_streaming_target != Some(target) {
+    let Some(state) = inner.streaming_states.get(&target).cloned() else {
         return false;
-    }
-
-    let state = inner
-        .streaming_states
-        .get(&target)
-        .cloned()
-        .unwrap_or_default();
+    };
 
     if inner.snapshot.chat.selected_conversation_id == Some(target)
         && !state.stream_buffer.is_empty()
@@ -168,7 +162,9 @@ pub(super) fn finalize_stream_for_target(inner: &mut AppStoreInner, conversation
         inner.finalized_stream_guards.remove(&target);
     }
 
-    inner.active_streaming_target = None;
+    if inner.active_streaming_target == Some(target) {
+        inner.active_streaming_target = None;
+    }
     inner.streaming_states.remove(&target);
     clear_streaming_ephemera_only(inner);
     true
