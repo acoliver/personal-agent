@@ -242,3 +242,96 @@ fn begin_selection_clears_previous_transcript_in_snapshot() {
     assert_eq!(after_reload_a.chat.transcript.len(), 1);
     assert_eq!(after_reload_a.chat.transcript[0].content, "hello from A");
 }
+
+#[test]
+fn deleting_selected_conversation_resets_transcript_and_load_state() {
+    let conversation_a = Uuid::new_v4();
+    let conversation_b = Uuid::new_v4();
+    let profile_id = Uuid::new_v4();
+
+    let store = GpuiAppStore::from_startup_inputs(StartupInputs {
+        profiles: vec![profile_summary(profile_id)],
+        selected_profile_id: Some(profile_id),
+        conversations: vec![
+            conversation_summary(conversation_a, "Conversation A", 1),
+            conversation_summary(conversation_b, "Conversation B", 0),
+        ],
+        selected_conversation: None,
+    });
+
+    let generation_a =
+        match store.begin_selection(conversation_a, BeginSelectionMode::BatchNoPublish) {
+            BeginSelectionResult::NoOpSameSelection => panic!("expected selection switch"),
+            BeginSelectionResult::BeganSelection { generation } => generation,
+        };
+    store.reduce_batch(vec![ViewCommand::ConversationMessagesLoaded {
+        conversation_id: conversation_a,
+        selection_generation: generation_a,
+        messages: vec![user_message("message in A")],
+    }]);
+
+    let before_delete = store.current_snapshot();
+    assert_eq!(
+        before_delete.chat.selected_conversation_id,
+        Some(conversation_a)
+    );
+    assert_eq!(before_delete.chat.transcript.len(), 1);
+
+    assert!(store.reduce_batch(vec![ViewCommand::ConversationDeleted {
+        id: conversation_a,
+    }]));
+
+    let after_delete = store.current_snapshot();
+    assert_eq!(
+        after_delete.chat.selected_conversation_id,
+        Some(conversation_b),
+        "deleting selected A must retarget selection to the remaining conversation B"
+    );
+    assert!(
+        after_delete.chat.transcript.is_empty(),
+        "deleting the selected conversation must reset the transcript so A's messages do not render under B"
+    );
+    assert_eq!(
+        after_delete.chat.load_state,
+        ConversationLoadState::Idle,
+        "retargeted selection must not be left in a stale Ready state"
+    );
+    assert_eq!(
+        after_delete.chat.selected_conversation_title, "Conversation B",
+        "selected title must follow the retargeted conversation"
+    );
+}
+
+#[test]
+fn deleting_selected_last_conversation_leaves_empty_idle_state() {
+    let conversation_a = Uuid::new_v4();
+    let profile_id = Uuid::new_v4();
+
+    let store = GpuiAppStore::from_startup_inputs(StartupInputs {
+        profiles: vec![profile_summary(profile_id)],
+        selected_profile_id: Some(profile_id),
+        conversations: vec![conversation_summary(conversation_a, "Only", 1)],
+        selected_conversation: None,
+    });
+
+    let generation_a =
+        match store.begin_selection(conversation_a, BeginSelectionMode::BatchNoPublish) {
+            BeginSelectionResult::NoOpSameSelection => panic!("expected selection switch"),
+            BeginSelectionResult::BeganSelection { generation } => generation,
+        };
+    store.reduce_batch(vec![ViewCommand::ConversationMessagesLoaded {
+        conversation_id: conversation_a,
+        selection_generation: generation_a,
+        messages: vec![user_message("only msg")],
+    }]);
+
+    assert!(store.reduce_batch(vec![ViewCommand::ConversationDeleted {
+        id: conversation_a,
+    }]));
+
+    let after = store.current_snapshot();
+    assert_eq!(after.chat.selected_conversation_id, None);
+    assert!(after.chat.transcript.is_empty());
+    assert_eq!(after.chat.load_state, ConversationLoadState::Idle);
+    assert_eq!(after.chat.selected_conversation_title, "New Conversation");
+}

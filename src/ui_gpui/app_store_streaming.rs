@@ -191,12 +191,11 @@ pub(super) fn clear_streaming_ephemera_for_target(
         state.stream_buffer.clear();
         state.thinking_buffer.clear();
         state.last_error = Some(error_message);
-        inner.active_streaming_target = None;
     } else {
         inner.streaming_states.remove(&target);
-        if inner.active_streaming_target == Some(target) {
-            inner.active_streaming_target = None;
-        }
+    }
+    if inner.active_streaming_target == Some(target) {
+        inner.active_streaming_target = None;
     }
 
     true

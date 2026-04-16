@@ -160,13 +160,13 @@ pub(super) fn mutate_history_and_selected_selection_if_targeted(
             .map(|conversation| conversation.id);
         inner.snapshot.history.selected_conversation_id =
             inner.snapshot.chat.selected_conversation_id;
+        inner.snapshot.chat.transcript.clear();
+        inner.snapshot.chat.load_state = ConversationLoadState::Idle;
+        clear_streaming_ephemera_only(inner);
         if let Some(next_selected) = inner.snapshot.chat.selected_conversation_id {
             apply_selected_title_from_history(inner, next_selected);
         } else {
             inner.snapshot.chat.selected_conversation_title = "New Conversation".to_string();
-            inner.snapshot.chat.load_state = ConversationLoadState::Idle;
-            inner.snapshot.chat.transcript.clear();
-            clear_streaming_ephemera_only(inner);
         }
         true
     } else {

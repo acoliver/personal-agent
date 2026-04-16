@@ -329,3 +329,51 @@ fn background_stream_error_preserves_selected_projection_and_is_scoped() {
     );
     assert_eq!(snapshot_a.chat.streaming.active_target, None);
 }
+
+#[test]
+fn background_error_preserves_foreground_active_streaming_target() {
+    let conversation_a = Uuid::new_v4();
+    let conversation_b = Uuid::new_v4();
+    let selected_profile_id = Uuid::new_v4();
+
+    let store = GpuiAppStore::from_startup_inputs(startup_inputs(
+        conversation_a,
+        conversation_b,
+        selected_profile_id,
+    ));
+
+    begin_and_ready(&store, conversation_a);
+    assert!(store.reduce_batch(vec![ViewCommand::AppendStream {
+        conversation_id: conversation_a,
+        chunk: "a-chunk".to_string(),
+    }]));
+    begin_and_ready(&store, conversation_b);
+    assert!(store.reduce_batch(vec![ViewCommand::AppendStream {
+        conversation_id: conversation_b,
+        chunk: "b-chunk".to_string(),
+    }]));
+
+    let active_b = store.current_snapshot();
+    assert_eq!(
+        active_b.chat.streaming.active_target,
+        Some(conversation_b),
+        "B should be the active streaming target"
+    );
+
+    assert!(store.reduce_batch(vec![ViewCommand::StreamError {
+        conversation_id: conversation_a,
+        error: "background A failed".to_string(),
+        recoverable: false,
+    }]));
+
+    let after_background_error = store.current_snapshot();
+    assert_eq!(
+        after_background_error.chat.streaming.active_target,
+        Some(conversation_b),
+        "background error on A must not clear B's active_streaming_target"
+    );
+    assert_eq!(
+        after_background_error.chat.streaming.stream_buffer, "b-chunk",
+        "B's stream buffer must remain intact"
+    );
+}
