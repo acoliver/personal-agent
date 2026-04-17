@@ -24,7 +24,7 @@ use std::ops::Range;
 /// @plan:PLAN-20260402-MARKDOWN.P05
 /// @requirement:REQ-MD-PARSE-001
 /// @pseudocode parse-markdown-blocks.md lines 1-10
-pub(crate) fn parse_markdown_blocks(content: &str) -> Vec<MarkdownBlock> {
+pub fn parse_markdown_blocks(content: &str) -> Vec<MarkdownBlock> {
     let mut parsed = ParseState::new().parse(content);
     if parsed
         .iter()

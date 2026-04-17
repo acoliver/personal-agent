@@ -10,19 +10,49 @@ use crate::presentation::view_command::{
     ConversationSearchResult, ConversationSummary, ProfileSummary, ToolApprovalContext,
     ToolCategory,
 };
+use crate::ui_gpui::components::markdown_content::{parse_markdown_blocks, MarkdownBlock};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Represents a single message in the chat (for UI display)
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Uses `Arc<String>` for content and thinking to avoid expensive heap
+/// allocations when cloning messages during render. Finalized messages
+/// also cache their parsed markdown blocks to avoid re-parsing on every
+/// re-render.
+///
+/// @plan PLAN-20260407-ISSUE172.P01
+#[derive(Clone, Debug)]
 pub struct ChatMessage {
     pub role: MessageRole,
-    pub content: String,
-    pub thinking: Option<String>,
+    /// Arc-wrapped content for cheap cloning during render.
+    pub content: Arc<String>,
+    /// Optional thinking content, also Arc-wrapped.
+    pub thinking: Option<Arc<String>>,
     pub model_label: Option<String>,
     pub timestamp: Option<u64>,
+    /// Cached parsed markdown blocks. Only set for finalized messages.
+    /// Streaming messages should NOT cache since content changes.
+    /// Uses `OnceCell` for lazy initialization with interior mutability.
+    markdown_cache: OnceCell<Arc<Vec<MarkdownBlock>>>,
 }
+
+impl PartialEq for ChatMessage {
+    fn eq(&self, other: &Self) -> bool {
+        self.role == other.role
+            && self.content == other.content
+            && self.thinking == other.thinking
+            && self.model_label == other.model_label
+            && self.timestamp == other.timestamp
+        // Intentionally exclude markdown_cache from equality check
+        // since it's derived from content
+    }
+}
+
+impl Eq for ChatMessage {}
 
 /// Message role enum
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,26 +65,28 @@ impl ChatMessage {
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::User,
-            content: content.into(),
+            content: Arc::new(content.into()),
             thinking: None,
             model_label: None,
             timestamp: None,
+            markdown_cache: OnceCell::new(),
         }
     }
 
     pub fn assistant(content: impl Into<String>, model_label: impl Into<String>) -> Self {
         Self {
             role: MessageRole::Assistant,
-            content: content.into(),
+            content: Arc::new(content.into()),
             thinking: None,
             model_label: Some(model_label.into()),
             timestamp: None,
+            markdown_cache: OnceCell::new(),
         }
     }
 
     #[must_use]
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
-        self.thinking = Some(thinking.into());
+        self.thinking = Some(Arc::new(thinking.into()));
         self
     }
 
@@ -62,6 +94,32 @@ impl ChatMessage {
     pub const fn with_timestamp(mut self, timestamp: u64) -> Self {
         self.timestamp = Some(timestamp);
         self
+    }
+
+    /// Get or parse markdown blocks for this message.
+    ///
+    /// Finalized messages cache their parsed blocks on first access.
+    /// This avoids re-parsing markdown on every re-render, which was
+    /// a major source of sluggishness in long conversations.
+    ///
+    /// @plan PLAN-20260407-ISSUE172.P02
+    #[must_use]
+    pub fn get_or_parse_markdown(&self) -> Arc<Vec<MarkdownBlock>> {
+        self.markdown_cache
+            .get_or_init(|| Arc::new(parse_markdown_blocks(&self.content)))
+            .clone()
+    }
+
+    /// Get the raw content string slice for this message.
+    #[must_use]
+    pub fn content_str(&self) -> &str {
+        &self.content
+    }
+
+    /// Returns a reference to the Arc-wrapped content string.
+    #[must_use]
+    pub fn content_arc(&self) -> Arc<String> {
+        Arc::clone(&self.content)
     }
 }
 
@@ -249,6 +307,11 @@ impl ChatState {
 
     #[must_use]
     pub fn with_messages(mut self, messages: Vec<ChatMessage>) -> Self {
+        // Prime the markdown cache on each message so that
+        // clones produced during render share the cached Arc.
+        for msg in &messages {
+            let _ = msg.get_or_parse_markdown();
+        }
         self.messages = messages;
         self
     }
@@ -267,6 +330,10 @@ impl ChatState {
     }
 
     pub fn add_message(&mut self, message: ChatMessage) {
+        // Prime the markdown cache on the original message before storage.
+        // This ensures that clones produced during render share the cached Arc.
+        // @plan PLAN-20260407-ISSUE172.P06
+        let _ = message.get_or_parse_markdown();
         self.messages.push(message);
     }
 
@@ -344,7 +411,7 @@ mod tests {
     fn chat_message_user_sets_role_and_content() {
         let msg = ChatMessage::user("hello");
         assert_eq!(msg.role, MessageRole::User);
-        assert_eq!(msg.content, "hello");
+        assert_eq!(&*msg.content, "hello");
         assert!(msg.thinking.is_none());
         assert!(msg.model_label.is_none());
     }
@@ -353,14 +420,14 @@ mod tests {
     fn chat_message_assistant_sets_model_label() {
         let msg = ChatMessage::assistant("response", "gpt-4o");
         assert_eq!(msg.role, MessageRole::Assistant);
-        assert_eq!(msg.content, "response");
+        assert_eq!(&*msg.content, "response");
         assert_eq!(msg.model_label.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
     fn chat_message_with_thinking_attaches_thinking_content() {
         let msg = ChatMessage::assistant("answer", "model").with_thinking("step 1");
-        assert_eq!(msg.thinking.as_deref(), Some("step 1"));
+        assert_eq!(msg.thinking.as_deref().map(String::as_str), Some("step 1"));
     }
 
     #[test]

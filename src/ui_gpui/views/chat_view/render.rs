@@ -10,9 +10,7 @@ use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
-use crate::ui_gpui::components::markdown_content::{
-    blocks_to_elements_with_color, parse_markdown_blocks, MarkdownBlock,
-};
+use crate::ui_gpui::components::markdown_content::{blocks_to_elements_with_color, MarkdownBlock};
 use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
@@ -20,6 +18,7 @@ use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels,
     ScrollWheelEvent, SharedString,
 };
+use std::sync::Arc;
 
 /// Strip emojis from a string, replacing them with empty string.
 /// This only affects display, not the underlying database storage.
@@ -382,10 +381,10 @@ impl ChatView {
             }
             _ => (String::new(), false),
         };
-        let display_content = if filter_emoji {
-            strip_emojis(&content)
+        let display_content: Arc<String> = if filter_emoji {
+            Arc::new(strip_emojis(&content))
         } else {
-            content
+            Arc::new(content)
         };
         let mut bubble = AssistantBubble::new(display_content)
             .model_id("streaming")
@@ -401,13 +400,14 @@ impl ChatView {
 
     /// Render a single message
     /// @plan PLAN-20250130-GPUIREDUX.P03
+    /// @plan PLAN-20260407-ISSUE172.P03 (markdown caching)
     pub(super) fn render_message(
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
     ) -> impl IntoElement {
         match msg.role {
-            MessageRole::User => Self::render_user_message(&msg.content),
+            MessageRole::User => Self::render_user_message(msg),
             MessageRole::Assistant => {
                 Self::render_assistant_message(msg, show_thinking, filter_emoji)
             }
@@ -416,16 +416,17 @@ impl ChatView {
 
     /// Render user message - right aligned, green bubble
     /// @plan:PLAN-20260402-ISSUE153.P02
+    /// @plan:PLAN-20260407-ISSUE172.P04 (markdown caching)
     /// @requirement:REQ-MSG-LINK-001
-    pub(super) fn render_user_message(content: &str) -> gpui::AnyElement {
-        // Use markdown pipeline for user messages to support clickable links
-        let blocks = parse_markdown_blocks(content);
+    pub(super) fn render_user_message(msg: &ChatMessage) -> gpui::AnyElement {
+        // Use cached markdown blocks for finalized messages
+        let blocks = msg.get_or_parse_markdown();
         // Use user_bubble_text() for proper contrast on green background
         let text_color = Theme::user_bubble_text();
         let rendered = blocks_to_elements_with_color(&blocks, text_color);
         let has_links = has_any_links(&blocks);
 
-        let raw_content = content.to_string();
+        let raw_content = Arc::clone(&msg.content);
         let mut bubble = div()
             .max_w(px(300.0))
             .px(px(10.0))
@@ -439,7 +440,7 @@ impl ChatView {
             bubble = bubble
                 .cursor_pointer()
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(raw_content.clone()));
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string((*raw_content).clone()));
                 });
         }
 
@@ -453,19 +454,25 @@ impl ChatView {
 
     /// Render assistant message - left aligned, dark bubble with model label
     /// @plan:PLAN-20260402-MARKDOWN.P11
+    /// @plan:PLAN-20260407-ISSUE172.P05 (markdown caching)
+    /// @plan:PLAN-20260407-ISSUE172.P10 (Arc<String> + cached blocks)
     /// @requirement:REQ-MD-INTEGRATE-010
     pub(super) fn render_assistant_message(
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
     ) -> gpui::AnyElement {
-        let content = if filter_emoji {
-            strip_emojis(&msg.content)
+        let bubble = if filter_emoji {
+            // When filtering emojis, we need a new string - no cache can be used
+            AssistantBubble::new(strip_emojis(&msg.content))
         } else {
-            msg.content.clone()
+            // Pass Arc clone directly - no heap allocation
+            // Also pass cached markdown blocks for finalized messages
+            AssistantBubble::new(Arc::clone(&msg.content))
+                .with_cached_blocks(msg.get_or_parse_markdown())
         };
 
-        let mut bubble = AssistantBubble::new(content);
+        let mut bubble = bubble;
 
         if let Some(ref model_label) = msg.model_label {
             bubble = bubble.model_id(model_label.clone());
@@ -475,7 +482,7 @@ impl ChatView {
 
         if show_thinking {
             if let Some(ref thinking) = msg.thinking {
-                bubble = bubble.thinking(thinking.clone()).show_thinking(true);
+                bubble = bubble.thinking((**thinking).clone()).show_thinking(true);
             }
         }
 

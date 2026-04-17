@@ -27,8 +27,8 @@ use gpui::{div, prelude::*, px};
 /// @plan:PLAN-20260402-MARKDOWN.P03
 /// @requirement:REQ-MD-PARSE-061
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct MarkdownInline {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownInline {
     /// The text content of this span.
     pub text: String,
 
@@ -74,8 +74,8 @@ impl MarkdownInline {
 ///
 /// @plan:PLAN-20260402-MARKDOWN.P03
 /// @requirement:REQ-MD-PARSE-062
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum MarkdownBlock {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarkdownBlock {
     /// A paragraph containing inline spans.
     Paragraph {
         /// The inline content of the paragraph.
@@ -146,8 +146,8 @@ pub(crate) enum MarkdownBlock {
 /// A single table cell containing inline content.
 ///
 /// @plan:PLAN-20260402-MARKDOWN.P03
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TableCell {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableCell {
     /// The inline content of the cell.
     pub spans: Vec<MarkdownInline>,
     /// Clickable link ranges with their URLs.
@@ -159,8 +159,8 @@ pub(crate) struct TableCell {
 /// Maps to pulldown-cmark's Alignment type.
 ///
 /// @plan:PLAN-20260402-MARKDOWN.P03
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Alignment {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Alignment {
     /// Default/no alignment specified.
     None,
     /// Left-aligned (:|:---).
@@ -703,7 +703,7 @@ mod autolink;
 mod markdown_parser;
 
 pub(crate) use autolink::apply_autolinks;
-pub(crate) use markdown_parser::parse_markdown_blocks;
+pub use markdown_parser::parse_markdown_blocks;
 
 #[cfg(test)]
 mod markdown_content_tests;

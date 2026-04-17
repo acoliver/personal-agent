@@ -95,6 +95,15 @@ impl ChatView {
         self.refresh_autoscroll_state_from_handle();
     }
 
+    /// Scroll to bottom if autoscroll is enabled.
+    ///
+    /// Before issue #172 fix: This method triggered 4 re-renders via 3 nested
+    /// `cx.defer` chains, each calling `cx.notify()`.
+    ///
+    /// After fix: Single deferred scroll without extra notify. The caller's
+    /// `cx.notify()` is sufficient to trigger the needed re-render.
+    ///
+    /// @plan PLAN-20260407-ISSUE172.P06
     pub(super) fn maybe_scroll_chat_to_bottom(&self, cx: &mut gpui::Context<Self>) {
         if self.state.chat_autoscroll_enabled {
             #[cfg(test)]
@@ -102,31 +111,17 @@ impl ChatView {
                 .set(self.maybe_scroll_chat_to_bottom_invocations.get() + 1);
 
             self.chat_scroll_handle.scroll_to_bottom();
-            let entity = cx.entity();
-            cx.defer(move |cx| {
-                entity.update(cx, |this, cx| {
-                    this.chat_scroll_handle.scroll_to_bottom();
-                    cx.notify();
-                });
-                let entity = entity.clone();
-                cx.defer(move |cx| {
-                    entity.update(cx, |this, cx| {
-                        this.chat_scroll_handle.scroll_to_bottom();
-                        cx.notify();
-                    });
-                    let entity = entity.clone();
-                    cx.defer(move |cx| {
-                        entity.update(cx, |this, cx| {
-                            this.chat_scroll_handle.scroll_to_bottom();
-                            cx.notify();
-                        });
-                    });
-                });
+            // Single deferred scroll without extra notify.
+            // The caller's cx.notify() handles the re-render.
+            let scroll_handle = self.chat_scroll_handle.clone();
+            cx.defer(move |_| {
+                scroll_handle.scroll_to_bottom();
             });
         }
     }
 
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
+    /// @plan PLAN-20260407-ISSUE172.P07 (cache priming)
     pub(super) fn messages_from_payload(
         messages: Vec<ConversationMessagePayload>,
     ) -> Vec<ChatMessage> {
@@ -157,6 +152,10 @@ impl ChatView {
                 if let Some(timestamp) = message.timestamp {
                     chat_message = chat_message.with_timestamp(timestamp);
                 }
+
+                // Prime the markdown cache on the original message so that
+                // clones produced during render share the cached Arc.
+                let _ = chat_message.get_or_parse_markdown();
 
                 chat_message
             })
@@ -796,3 +795,7 @@ mod approval_tests;
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod mod_tests;
+
+#[cfg(test)]
+#[path = "performance_tests.rs"]
+mod performance_tests;

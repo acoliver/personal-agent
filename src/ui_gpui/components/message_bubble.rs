@@ -7,6 +7,7 @@ use crate::ui_gpui::components::markdown_content::{
     blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
 };
 use gpui::{div, prelude::*, px, IntoElement, MouseButton};
+use std::sync::Arc;
 
 pub struct UserBubble {
     content: String,
@@ -41,8 +42,20 @@ impl IntoElement for UserBubble {
     }
 }
 
+/// Assistant message bubble with markdown rendering.
+///
+/// Stores `Arc<String>` to allow cheap sharing of message content
+/// via `Arc::clone()` without heap allocation during renders.
+/// Also accepts optional pre-parsed markdown blocks to avoid
+/// re-parsing finalized messages on every render.
+///
+/// @plan PLAN-20260407-ISSUE172.P10
 pub struct AssistantBubble {
-    content: String,
+    /// Arc-wrapped content for cheap sharing across renders.
+    content: Arc<String>,
+    /// Optional pre-parsed markdown blocks for finalized messages.
+    /// Streaming messages should NOT provide this since content changes.
+    cached_blocks: Option<Arc<Vec<MarkdownBlock>>>,
     model_id: Option<String>,
     thinking: Option<String>,
     show_thinking: bool,
@@ -50,9 +63,16 @@ pub struct AssistantBubble {
 }
 
 impl AssistantBubble {
-    pub fn new(content: impl Into<String>) -> Self {
+    /// Create a new assistant bubble with the given content.
+    ///
+    /// Accepts `Arc<String>` or any type that can be converted to it,
+    /// allowing callers to pass `Arc::clone()` without allocation.
+    ///
+    /// @plan PLAN-20260407-ISSUE172.P10
+    pub fn new(content: impl Into<Arc<String>>) -> Self {
         Self {
             content: content.into(),
+            cached_blocks: None,
             model_id: None,
             thinking: None,
             show_thinking: false,
@@ -82,6 +102,24 @@ impl AssistantBubble {
     pub const fn streaming(mut self, is_streaming: bool) -> Self {
         self.is_streaming = is_streaming;
         self
+    }
+
+    /// Provide pre-parsed markdown blocks to avoid re-parsing.
+    ///
+    /// Only use this for finalized messages where content won't change.
+    /// Streaming messages should NOT provide cached blocks.
+    ///
+    /// @plan PLAN-20260407-ISSUE172.P10
+    #[must_use]
+    pub fn with_cached_blocks(mut self, blocks: Arc<Vec<MarkdownBlock>>) -> Self {
+        self.cached_blocks = Some(blocks);
+        self
+    }
+
+    /// Returns a reference to the content string slice.
+    #[must_use]
+    pub fn content_str(&self) -> &str {
+        &self.content
     }
 }
 
@@ -155,8 +193,19 @@ impl IntoElement for AssistantBubble {
         let content_text = rendered_content_text(&self.content, self.is_streaming);
 
         // @plan:PLAN-20260402-MARKDOWN.P11
+        // @plan:PLAN-20260407-ISSUE172.P10 (cached blocks)
         // @requirement:REQ-MD-INTEGRATE-002
-        let blocks = parse_markdown_blocks(&content_text);
+        let blocks: Vec<MarkdownBlock> = if self.is_streaming {
+            // Streaming: parse fresh since content changes
+            parse_markdown_blocks(&content_text)
+        } else if let Some(cached) = &self.cached_blocks {
+            // Finalized with cache: use cached blocks
+            // Dereference Arc<Vec<_>> to &Vec<_>, then clone the Vec
+            cached.as_ref().clone()
+        } else {
+            // No cache available: parse fresh
+            parse_markdown_blocks(&content_text)
+        };
         let rendered = blocks_to_elements(&blocks);
 
         let mut main_content = Theme::assistant_bubble(
@@ -169,13 +218,14 @@ impl IntoElement for AssistantBubble {
         );
 
         if should_enable_bubble_copy(&blocks, self.is_streaming) {
-            let raw_markdown = self.content.clone();
+            // Clone the Arc, not the String - defer allocation to click time
+            let raw_markdown = Arc::clone(&self.content);
             main_content =
                 main_content
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                            raw_markdown.clone(),
+                            (*raw_markdown).clone(),
                         ));
                     });
         }

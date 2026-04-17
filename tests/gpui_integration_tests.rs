@@ -102,10 +102,10 @@ fn test_chat_state_message_persistence() {
     state.add_message(ChatMessage::assistant("Second response", "test-model"));
 
     assert_eq!(state.messages.len(), 4);
-    assert_eq!(state.messages[0].content, "First message");
-    assert_eq!(state.messages[1].content, "First response");
-    assert_eq!(state.messages[2].content, "Second message");
-    assert_eq!(state.messages[3].content, "Second response");
+    assert_eq!(state.messages[0].content.as_str(), "First message");
+    assert_eq!(state.messages[1].content.as_str(), "First response");
+    assert_eq!(state.messages[2].content.as_str(), "Second message");
+    assert_eq!(state.messages[3].content.as_str(), "Second response");
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn test_chat_message_with_metadata() {
     let msg = ChatMessage::assistant("Response", "claude-3").with_timestamp(1_234_567_890);
 
     assert_eq!(msg.role, MessageRole::Assistant);
-    assert_eq!(msg.content, "Response");
+    assert_eq!(msg.content.as_str(), "Response");
     assert_eq!(msg.timestamp, Some(1_234_567_890));
     assert_eq!(msg.model_label, Some("claude-3".to_string()));
 }

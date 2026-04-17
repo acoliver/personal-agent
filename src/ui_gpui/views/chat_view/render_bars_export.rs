@@ -44,10 +44,15 @@ pub(super) fn build_conversation_export_content(
             };
 
             let mut export_message = match role {
-                ConversationMessageRole::User => Message::user(message.content.clone()),
+                ConversationMessageRole::User => Message::user((*message.content).clone()),
                 ConversationMessageRole::Assistant => message.thinking.clone().map_or_else(
-                    || Message::assistant(message.content.clone()),
-                    |thinking| Message::assistant_with_thinking(message.content.clone(), thinking),
+                    || Message::assistant((*message.content).clone()),
+                    |thinking| {
+                        Message::assistant_with_thinking(
+                            (*message.content).clone(),
+                            (*thinking).clone(),
+                        )
+                    },
                 ),
                 ConversationMessageRole::System => {
                     unreachable!("chat view never renders system messages")
