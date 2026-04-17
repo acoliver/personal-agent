@@ -132,7 +132,10 @@ async fn apply_store_and_settings_snapshots_seed_visible_chat_state(cx: &mut Tes
         assert_eq!(view.state.messages[0].content.as_str(), "hi");
         assert_eq!(view.state.messages[1].role, MessageRole::Assistant);
         assert_eq!(view.state.messages[1].content.as_str(), "hello");
-        assert_eq!(view.state.messages[1].thinking.as_deref().map(|s| &**s), Some("reasoned"));
+        assert_eq!(
+            view.state.messages[1].thinking.as_deref().map(|s| &**s),
+            Some("reasoned")
+        );
         assert_eq!(view.state.messages[1].timestamp, Some(200));
         assert_eq!(
             view.state.messages[1].model_label.as_deref(),
@@ -720,8 +723,14 @@ async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestA
     view.read_with(cx, |view, _| {
         assert_eq!(view.state.messages.len(), 2);
         assert_eq!(view.state.messages[0].content.as_str(), "partial");
-        assert_eq!(view.state.messages[0].thinking.as_deref().map(|s| &**s), Some("plan"));
-        assert_eq!(view.state.messages[1].content.as_str(), "leftover [cancelled]");
+        assert_eq!(
+            view.state.messages[0].thinking.as_deref().map(|s| &**s),
+            Some("plan")
+        );
+        assert_eq!(
+            view.state.messages[1].content.as_str(),
+            "leftover [cancelled]"
+        );
         assert_eq!(
             view.state.streaming,
             StreamingState::Error("boom".to_string())
