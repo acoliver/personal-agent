@@ -325,6 +325,10 @@ impl ChatState {
     }
 
     pub fn add_message(&mut self, message: ChatMessage) {
+        // Prime the markdown cache on the original message before storage.
+        // This ensures that clones produced during render share the cached Arc.
+        // @plan PLAN-20260407-ISSUE172.P06
+        let _ = message.get_or_parse_markdown();
         self.messages.push(message);
     }
 
@@ -418,7 +422,7 @@ mod tests {
     #[test]
     fn chat_message_with_thinking_attaches_thinking_content() {
         let msg = ChatMessage::assistant("answer", "model").with_thinking("step 1");
-        assert_eq!(msg.thinking.as_deref().map(|s| &**s), Some("step 1"));
+        assert_eq!(msg.thinking.as_deref().map(String::as_str), Some("step 1"));
     }
 
     #[test]

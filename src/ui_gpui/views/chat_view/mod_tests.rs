@@ -80,7 +80,7 @@ fn messages_from_payload_preserves_thinking_and_timestamp() {
 
     assert_eq!(result.len(), 1);
     assert_eq!(
-        result[0].thinking.as_deref().map(|s| &**s),
+        result[0].thinking.as_deref().map(String::as_str),
         Some("Let me think...")
     );
     assert_eq!(result[0].timestamp, Some(1_234_567_890));

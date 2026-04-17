@@ -455,19 +455,23 @@ impl ChatView {
     /// Render assistant message - left aligned, dark bubble with model label
     /// @plan:PLAN-20260402-MARKDOWN.P11
     /// @plan:PLAN-20260407-ISSUE172.P05 (markdown caching)
+    /// @plan:PLAN-20260407-ISSUE172.P09 (Arc<str> sharing)
     /// @requirement:REQ-MD-INTEGRATE-010
     pub(super) fn render_assistant_message(
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
     ) -> gpui::AnyElement {
-        let content = if filter_emoji {
-            strip_emojis(&msg.content)
+        let bubble = if filter_emoji {
+            // When filtering emojis, we need a new string
+            AssistantBubble::new(strip_emojis(&msg.content))
         } else {
-            (*msg.content).clone()
+            // Pass Arc clone directly - no heap allocation
+            // Convert Arc<String> to Arc<str> by dereferencing
+            AssistantBubble::new(&*msg.content as &str)
         };
 
-        let mut bubble = AssistantBubble::new(content);
+        let mut bubble = bubble;
 
         if let Some(ref model_label) = msg.model_label {
             bubble = bubble.model_id(model_label.clone());

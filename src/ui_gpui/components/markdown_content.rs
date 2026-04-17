@@ -74,7 +74,7 @@ impl MarkdownInline {
 ///
 /// @plan:PLAN-20260402-MARKDOWN.P03
 /// @requirement:REQ-MD-PARSE-062
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MarkdownBlock {
     /// A paragraph containing inline spans.
     Paragraph {

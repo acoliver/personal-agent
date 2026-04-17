@@ -7,6 +7,7 @@ use crate::ui_gpui::components::markdown_content::{
     blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
 };
 use gpui::{div, prelude::*, px, IntoElement, MouseButton};
+use std::sync::Arc;
 
 pub struct UserBubble {
     content: String,
@@ -41,8 +42,15 @@ impl IntoElement for UserBubble {
     }
 }
 
+/// Assistant message bubble with markdown rendering.
+///
+/// Accepts `Arc<str>` for content to allow cheap sharing of message content
+/// without heap allocation when cloning during renders.
+///
+/// @plan PLAN-20260407-ISSUE172.P08
 pub struct AssistantBubble {
-    content: String,
+    /// Arc-wrapped content for cheap sharing across renders.
+    content: Arc<str>,
     model_id: Option<String>,
     thinking: Option<String>,
     show_thinking: bool,
@@ -50,7 +58,13 @@ pub struct AssistantBubble {
 }
 
 impl AssistantBubble {
-    pub fn new(content: impl Into<String>) -> Self {
+    /// Create a new assistant bubble with the given content.
+    ///
+    /// Accepts `Arc<str>` or any type that can be converted to it,
+    /// allowing callers to pass shared content without allocation.
+    ///
+    /// @plan PLAN-20260407-ISSUE172.P08
+    pub fn new(content: impl Into<Arc<str>>) -> Self {
         Self {
             content: content.into(),
             model_id: None,
@@ -82,6 +96,12 @@ impl AssistantBubble {
     pub const fn streaming(mut self, is_streaming: bool) -> Self {
         self.is_streaming = is_streaming;
         self
+    }
+
+    /// Returns a reference to the content string slice.
+    #[must_use]
+    pub fn content_str(&self) -> &str {
+        &self.content
     }
 }
 
@@ -169,7 +189,7 @@ impl IntoElement for AssistantBubble {
         );
 
         if should_enable_bubble_copy(&blocks, self.is_streaming) {
-            let raw_markdown = self.content.clone();
+            let raw_markdown: String = self.content.to_string();
             main_content =
                 main_content
                     .cursor_pointer()

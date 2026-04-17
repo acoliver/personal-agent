@@ -121,6 +121,7 @@ impl ChatView {
     }
 
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
+    /// @plan PLAN-20260407-ISSUE172.P07 (cache priming)
     pub(super) fn messages_from_payload(
         messages: Vec<ConversationMessagePayload>,
     ) -> Vec<ChatMessage> {
@@ -151,6 +152,10 @@ impl ChatView {
                 if let Some(timestamp) = message.timestamp {
                     chat_message = chat_message.with_timestamp(timestamp);
                 }
+
+                // Prime the markdown cache on the original message so that
+                // clones produced during render share the cached Arc.
+                let _ = chat_message.get_or_parse_markdown();
 
                 chat_message
             })

@@ -133,7 +133,10 @@ async fn apply_store_and_settings_snapshots_seed_visible_chat_state(cx: &mut Tes
         assert_eq!(view.state.messages[1].role, MessageRole::Assistant);
         assert_eq!(view.state.messages[1].content.as_str(), "hello");
         assert_eq!(
-            view.state.messages[1].thinking.as_deref().map(|s| &**s),
+            view.state.messages[1]
+                .thinking
+                .as_deref()
+                .map(String::as_str),
             Some("reasoned")
         );
         assert_eq!(view.state.messages[1].timestamp, Some(200));
@@ -491,7 +494,10 @@ async fn apply_store_snapshot_renders_active_transcript_ignoring_inactive_conver
         assert_eq!(view.state.messages[0].content.as_str(), "hi");
         assert_eq!(view.state.messages[1].content.as_str(), "hello");
         assert_eq!(
-            view.state.messages[1].thinking.as_deref().map(|s| &**s),
+            view.state.messages[1]
+                .thinking
+                .as_deref()
+                .map(String::as_str),
             Some("reasoning")
         );
         assert_eq!(view.state.messages[1].timestamp, Some(20));
@@ -724,7 +730,10 @@ async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestA
         assert_eq!(view.state.messages.len(), 2);
         assert_eq!(view.state.messages[0].content.as_str(), "partial");
         assert_eq!(
-            view.state.messages[0].thinking.as_deref().map(|s| &**s),
+            view.state.messages[0]
+                .thinking
+                .as_deref()
+                .map(String::as_str),
             Some("plan")
         );
         assert_eq!(
