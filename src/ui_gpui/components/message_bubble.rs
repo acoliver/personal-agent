@@ -195,13 +195,16 @@ impl IntoElement for AssistantBubble {
         // @plan:PLAN-20260402-MARKDOWN.P11
         // @plan:PLAN-20260407-ISSUE172.P10 (cached blocks)
         // @requirement:REQ-MD-INTEGRATE-002
-        let blocks: Vec<MarkdownBlock> = if self.is_streaming || self.cached_blocks.is_none() {
-            // Streaming or no cache: parse fresh
+        let blocks: Vec<MarkdownBlock> = if self.is_streaming {
+            // Streaming: parse fresh since content changes
             parse_markdown_blocks(&content_text)
+        } else if let Some(cached) = &self.cached_blocks {
+            // Finalized with cache: use cached blocks
+            // Dereference Arc<Vec<_>> to &Vec<_>, then clone the Vec
+            cached.as_ref().clone()
         } else {
-            // Finalized with cache: use cached blocks (only if no emoji filtering)
-            // Since content_text is same as self.content, we can use cache
-            (*self.cached_blocks.unwrap()).clone()
+            // No cache available: parse fresh
+            parse_markdown_blocks(&content_text)
         };
         let rendered = blocks_to_elements(&blocks);
 
