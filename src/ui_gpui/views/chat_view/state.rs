@@ -307,6 +307,11 @@ impl ChatState {
 
     #[must_use]
     pub fn with_messages(mut self, messages: Vec<ChatMessage>) -> Self {
+        // Prime the markdown cache on each message so that
+        // clones produced during render share the cached Arc.
+        for msg in &messages {
+            let _ = msg.get_or_parse_markdown();
+        }
         self.messages = messages;
         self
     }

@@ -381,10 +381,10 @@ impl ChatView {
             }
             _ => (String::new(), false),
         };
-        let display_content = if filter_emoji {
-            strip_emojis(&content)
+        let display_content: Arc<String> = if filter_emoji {
+            Arc::new(strip_emojis(&content))
         } else {
-            content
+            Arc::new(content)
         };
         let mut bubble = AssistantBubble::new(display_content)
             .model_id("streaming")
@@ -455,7 +455,7 @@ impl ChatView {
     /// Render assistant message - left aligned, dark bubble with model label
     /// @plan:PLAN-20260402-MARKDOWN.P11
     /// @plan:PLAN-20260407-ISSUE172.P05 (markdown caching)
-    /// @plan:PLAN-20260407-ISSUE172.P09 (Arc<str> sharing)
+    /// @plan:PLAN-20260407-ISSUE172.P10 (Arc<String> + cached blocks)
     /// @requirement:REQ-MD-INTEGRATE-010
     pub(super) fn render_assistant_message(
         msg: &ChatMessage,
@@ -463,12 +463,13 @@ impl ChatView {
         filter_emoji: bool,
     ) -> gpui::AnyElement {
         let bubble = if filter_emoji {
-            // When filtering emojis, we need a new string
+            // When filtering emojis, we need a new string - no cache can be used
             AssistantBubble::new(strip_emojis(&msg.content))
         } else {
             // Pass Arc clone directly - no heap allocation
-            // Convert Arc<String> to Arc<str> by dereferencing
-            AssistantBubble::new(&*msg.content as &str)
+            // Also pass cached markdown blocks for finalized messages
+            AssistantBubble::new(Arc::clone(&msg.content))
+                .with_cached_blocks(msg.get_or_parse_markdown())
         };
 
         let mut bubble = bubble;
