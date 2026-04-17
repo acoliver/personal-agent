@@ -129,10 +129,10 @@ async fn apply_store_and_settings_snapshots_seed_visible_chat_state(cx: &mut Tes
         assert_eq!(view.state.conversation_title, "Loaded Chat");
         assert_eq!(view.state.messages.len(), 2);
         assert_eq!(view.state.messages[0].role, MessageRole::User);
-        assert_eq!(view.state.messages[0].content, "hi");
+        assert_eq!(view.state.messages[0].content.as_str(), "hi");
         assert_eq!(view.state.messages[1].role, MessageRole::Assistant);
-        assert_eq!(view.state.messages[1].content, "hello");
-        assert_eq!(view.state.messages[1].thinking.as_deref(), Some("reasoned"));
+        assert_eq!(view.state.messages[1].content.as_str(), "hello");
+        assert_eq!(view.state.messages[1].thinking.as_deref().map(|s| &**s), Some("reasoned"));
         assert_eq!(view.state.messages[1].timestamp, Some(200));
         assert_eq!(
             view.state.messages[1].model_label.as_deref(),
@@ -485,14 +485,14 @@ async fn apply_store_snapshot_renders_active_transcript_ignoring_inactive_conver
 
     view.read_with(cx, |view, _| {
         assert_eq!(view.state.messages.len(), 3);
-        assert_eq!(view.state.messages[0].content, "hi");
-        assert_eq!(view.state.messages[1].content, "hello");
+        assert_eq!(view.state.messages[0].content.as_str(), "hi");
+        assert_eq!(view.state.messages[1].content.as_str(), "hello");
         assert_eq!(
-            view.state.messages[1].thinking.as_deref(),
+            view.state.messages[1].thinking.as_deref().map(|s| &**s),
             Some("reasoning")
         );
         assert_eq!(view.state.messages[1].timestamp, Some(20));
-        assert_eq!(view.state.messages[2].content, "follow-up");
+        assert_eq!(view.state.messages[2].content.as_str(), "follow-up");
         assert_eq!(
             view.state.messages[2].model_label.as_deref(),
             Some("unknown")
@@ -543,8 +543,8 @@ async fn apply_store_snapshot_uses_freshest_generation_transcript(cx: &mut TestA
 
     view.read_with(cx, |view, _| {
         assert_eq!(view.state.messages.len(), 2);
-        assert_eq!(view.state.messages[0].content, "fresh user");
-        assert_eq!(view.state.messages[1].content, "fresh assistant");
+        assert_eq!(view.state.messages[0].content.as_str(), "fresh user");
+        assert_eq!(view.state.messages[1].content.as_str(), "fresh assistant");
     });
 }
 
@@ -719,9 +719,9 @@ async fn streaming_and_profile_updates_arrive_via_store_snapshots(cx: &mut TestA
 
     view.read_with(cx, |view, _| {
         assert_eq!(view.state.messages.len(), 2);
-        assert_eq!(view.state.messages[0].content, "partial");
-        assert_eq!(view.state.messages[0].thinking.as_deref(), Some("plan"));
-        assert_eq!(view.state.messages[1].content, "leftover [cancelled]");
+        assert_eq!(view.state.messages[0].content.as_str(), "partial");
+        assert_eq!(view.state.messages[0].thinking.as_deref().map(|s| &**s), Some("plan"));
+        assert_eq!(view.state.messages[1].content.as_str(), "leftover [cancelled]");
         assert_eq!(
             view.state.streaming,
             StreamingState::Error("boom".to_string())
