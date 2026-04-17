@@ -112,9 +112,11 @@ async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(),
         )),
         ToolApprovalDecision::AskUser => {
             let request_id = uuid::Uuid::new_v4().to_string();
-            let waiter = tool_context
-                .approval_gate
-                .wait_for_approval(request_id.clone(), "WriteFile".to_string());
+            let waiter = tool_context.approval_gate.wait_for_approval(
+                request_id.clone(),
+                "WriteFile".to_string(),
+                tool_context.conversation_id,
+            );
 
             // Build rich context for approval UI
             let context = ToolApprovalContext::new("WriteFile", ToolCategory::FileWrite, path);
@@ -122,6 +124,7 @@ async fn check_approval(tool_context: &McpToolContext, path: &str) -> Result<(),
             if tool_context
                 .view_tx
                 .try_send(ViewCommand::ToolApprovalRequest {
+                    conversation_id: tool_context.conversation_id,
                     request_id: request_id.clone(),
                     context,
                 })
@@ -247,6 +250,7 @@ mod tests {
         }));
 
         let context = McpToolContext {
+            conversation_id: uuid::Uuid::nil(),
             view_tx,
             approval_gate,
             policy,
@@ -299,6 +303,7 @@ mod tests {
         }));
 
         let context = McpToolContext {
+            conversation_id: uuid::Uuid::nil(),
             view_tx,
             approval_gate,
             policy,
@@ -338,6 +343,7 @@ mod tests {
         }));
 
         let context = McpToolContext {
+            conversation_id: uuid::Uuid::nil(),
             view_tx,
             approval_gate,
             policy,
@@ -370,6 +376,7 @@ mod tests {
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
         let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default()));
         let context = McpToolContext {
+            conversation_id: uuid::Uuid::nil(),
             view_tx,
             approval_gate,
             policy,
@@ -394,6 +401,7 @@ mod tests {
         let approval_gate = std::sync::Arc::new(crate::llm::client_agent::ApprovalGate::new());
         let policy = std::sync::Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default()));
         let context = McpToolContext {
+            conversation_id: uuid::Uuid::nil(),
             view_tx,
             approval_gate,
             policy,
@@ -422,6 +430,7 @@ mod tests {
             ..Default::default()
         }));
         let context = McpToolContext {
+            conversation_id: uuid::Uuid::nil(),
             view_tx,
             approval_gate,
             policy,

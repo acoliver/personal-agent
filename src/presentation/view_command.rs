@@ -308,12 +308,17 @@ pub enum ViewCommand {
     // ===== Tool Approval Commands =====
     /// Display an inline approval bubble for a tool call.
     ToolApprovalRequest {
+        conversation_id: Uuid,
         request_id: String,
         context: ToolApprovalContext,
     },
 
     /// Update an existing approval bubble to reflect the user's decision.
-    ToolApprovalResolved { request_id: String, approved: bool },
+    ToolApprovalResolved {
+        conversation_id: Uuid,
+        request_id: String,
+        approved: bool,
+    },
 
     /// Inform the UI whether YOLO mode is currently active.
     YoloModeChanged { active: bool },

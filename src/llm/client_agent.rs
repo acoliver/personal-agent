@@ -14,6 +14,7 @@ use serdes_ai_tools::ToolDefinition;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use uuid::Uuid;
 // Use std Result to avoid conflict with serdes_ai::prelude::Result
 type StdResult<T, E> = std::result::Result<T, E>;
 
@@ -30,6 +31,7 @@ pub struct ApprovalGate {
 struct PendingApproval {
     tx: oneshot::Sender<bool>,
     tool_identifiers: Vec<String>,
+    conversation_id: Uuid,
 }
 #[derive(Debug)]
 pub struct ApprovalWaiter {
@@ -91,8 +93,13 @@ impl ApprovalGate {
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
     #[must_use]
-    pub fn wait_for_approval(&self, request_id: String, tool_identifier: String) -> ApprovalWaiter {
-        self.wait_for_approvals(request_id, vec![tool_identifier])
+    pub fn wait_for_approval(
+        &self,
+        request_id: String,
+        tool_identifier: String,
+        conversation_id: Uuid,
+    ) -> ApprovalWaiter {
+        self.wait_for_approvals(request_id, vec![tool_identifier], conversation_id)
     }
 
     /// Register a pending approval with multiple identifiers and return a waiter.
@@ -105,6 +112,7 @@ impl ApprovalGate {
         &self,
         request_id: String,
         tool_identifiers: Vec<String>,
+        conversation_id: Uuid,
     ) -> ApprovalWaiter {
         let (tx, rx) = oneshot::channel();
         {
@@ -114,6 +122,7 @@ impl ApprovalGate {
                 PendingApproval {
                     tx,
                     tool_identifiers,
+                    conversation_id,
                 },
             );
         }
@@ -136,14 +145,17 @@ impl ApprovalGate {
         &self,
         request_id: &str,
         approved: bool,
-    ) -> Option<Vec<String>> {
+    ) -> Option<(Uuid, Vec<String>)> {
         let pending_approval = {
             let mut pending = self.pending.lock().unwrap();
             pending.remove(request_id)
         }?;
 
         if pending_approval.tx.send(approved).is_ok() {
-            Some(pending_approval.tool_identifiers)
+            Some((
+                pending_approval.conversation_id,
+                pending_approval.tool_identifiers,
+            ))
         } else {
             None
         }
@@ -155,9 +167,18 @@ impl ApprovalGate {
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
     #[must_use]
-    pub fn resolve_and_take_identifier(&self, request_id: &str, approved: bool) -> Option<String> {
+    pub fn resolve_and_take_identifier(
+        &self,
+        request_id: &str,
+        approved: bool,
+    ) -> Option<(Uuid, String)> {
         self.resolve_and_take_identifiers(request_id, approved)
-            .and_then(|tool_identifiers| tool_identifiers.into_iter().next())
+            .and_then(|(conversation_id, tool_identifiers)| {
+                tool_identifiers
+                    .into_iter()
+                    .next()
+                    .map(|identifier| (conversation_id, identifier))
+            })
     }
 
     /// Resolve a pending approval with the user's decision.
@@ -166,7 +187,7 @@ impl ApprovalGate {
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
     #[must_use]
-    pub fn resolve(&self, request_id: &str, approved: bool) -> Option<String> {
+    pub fn resolve(&self, request_id: &str, approved: bool) -> Option<(Uuid, String)> {
         self.resolve_and_take_identifier(request_id, approved)
     }
 
@@ -178,19 +199,19 @@ impl ApprovalGate {
     ///
     /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
     #[must_use]
-    pub fn resolve_all(&self, approved: bool) -> Vec<String> {
+    pub fn resolve_all(&self, approved: bool) -> Vec<(Uuid, String)> {
         let pending_approvals = {
             let mut pending = self.pending.lock().unwrap();
             pending.drain().collect::<Vec<_>>()
         };
 
-        let mut request_ids = Vec::with_capacity(pending_approvals.len());
+        let mut resolved = Vec::with_capacity(pending_approvals.len());
         for (request_id, pending_approval) in pending_approvals {
             let _ = pending_approval.tx.send(approved);
-            request_ids.push(request_id);
+            resolved.push((pending_approval.conversation_id, request_id));
         }
 
-        request_ids
+        resolved
     }
 }
 
@@ -206,6 +227,8 @@ impl Default for ApprovalGate {
 /// as well as the approval gate and view channel for tool approval flow.
 #[derive(Clone)]
 pub struct McpToolContext {
+    /// Conversation that owns the current stream/tool execution context.
+    pub conversation_id: Uuid,
     /// Channel for sending view commands to the UI layer
     pub view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     /// Approval gate for coordinating user approval of tool execution
@@ -235,6 +258,7 @@ impl Default for McpToolContext {
                 .expect("default McpToolContext skills service should initialize"),
         ) as Arc<dyn crate::services::SkillsService>;
         Self {
+            conversation_id: Uuid::nil(),
             view_tx,
             approval_gate: Arc::new(ApprovalGate::new()),
             policy: Arc::new(AsyncMutex::new(ToolApprovalPolicy::default())),

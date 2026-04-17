@@ -81,7 +81,7 @@ impl BackupServiceImpl {
         }
 
         // Sort by timestamp (newest first)
-        backups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        backups.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
         Ok(backups)
     }
@@ -364,7 +364,7 @@ impl BackupServiceImpl {
         let mut backups = self.list_backups_internal(&backup_dir).await?;
 
         // Sort by timestamp (oldest first)
-        backups.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        backups.sort_by_key(|a| a.timestamp);
 
         // Delete oldest backups beyond max_copies
         if backups.len() > max_copies as usize {
@@ -412,7 +412,7 @@ impl BackupServiceImpl {
         }
 
         // Sort by timestamp (newest first)
-        backups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        backups.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
         Ok(backups)
     }

@@ -10,6 +10,7 @@ use crate::presentation::view_command::{
     ConversationSearchResult, ConversationSummary, ProfileSummary, ToolApprovalContext,
     ToolCategory,
 };
+use std::collections::HashMap;
 use std::ops::Range;
 use uuid::Uuid;
 
@@ -182,8 +183,8 @@ pub struct ChatState {
     pub chat_autoscroll_enabled: bool,
     /// IME marked (composing) text range in UTF-16 offsets, if any.
     pub marked_range: Option<Range<usize>>,
-    /// Inline tool approval bubbles pending or resolved in this session.
-    pub approval_bubbles: Vec<ToolApprovalBubble>,
+    /// Inline tool approval bubbles pending or resolved in this session, keyed by conversation.
+    pub approval_bubbles: HashMap<Uuid, Vec<ToolApprovalBubble>>,
     /// Whether YOLO mode (auto-approve all) is currently active.
     pub yolo_mode: bool,
     /// Whether the sidebar is visible (popout mode only).
@@ -219,7 +220,7 @@ impl Default for ChatState {
             rename_replace_on_next_char: false,
             chat_autoscroll_enabled: true,
             marked_range: None,
-            approval_bubbles: Vec::new(),
+            approval_bubbles: HashMap::new(),
             yolo_mode: false,
             sidebar_visible: true,
             sidebar_search_query: String::new(),
@@ -570,6 +571,7 @@ mod tests {
     #[test]
     fn approval_bubbles_can_be_pushed_to_state() {
         let mut state = ChatState::default();
+        let conversation_id = Uuid::new_v4();
         let pending = ToolApprovalBubble::new(
             "r1",
             ToolApprovalContext::new("shell", ToolCategory::Shell, "ls"),
@@ -579,17 +581,16 @@ mod tests {
             ToolApprovalContext::new("write", ToolCategory::FileWrite, "/tmp/a.txt"),
         );
         approved.state = ApprovalBubbleState::Approved;
-        state.approval_bubbles.push(pending);
-        state.approval_bubbles.push(approved);
-        assert_eq!(state.approval_bubbles.len(), 2);
-        assert_eq!(
-            state.approval_bubbles[0].state,
-            ApprovalBubbleState::Pending
-        );
-        assert_eq!(
-            state.approval_bubbles[1].state,
-            ApprovalBubbleState::Approved
-        );
+        state
+            .approval_bubbles
+            .insert(conversation_id, vec![pending, approved]);
+        let bubbles = state
+            .approval_bubbles
+            .get(&conversation_id)
+            .expect("conversation bucket should exist");
+        assert_eq!(bubbles.len(), 2);
+        assert_eq!(bubbles[0].state, ApprovalBubbleState::Pending);
+        assert_eq!(bubbles[1].state, ApprovalBubbleState::Approved);
     }
 
     #[test]

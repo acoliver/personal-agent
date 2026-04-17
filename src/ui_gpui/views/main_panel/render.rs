@@ -193,10 +193,8 @@ impl MainPanel {
     fn handle_non_modifier_key(&mut self, key: &str, modifiers: gpui::Modifiers) {
         match self.navigation.current() {
             ViewId::Settings => self.handle_settings_shortcuts(key, modifiers),
-            ViewId::ModelSelector => {
-                if key == "escape" {
-                    self.navigation.navigate_back();
-                }
+            ViewId::ModelSelector if key == "escape" => {
+                self.navigation.navigate_back();
             }
             _ => {}
         }

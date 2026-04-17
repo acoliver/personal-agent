@@ -69,7 +69,7 @@ impl NormalizingSseModel {
             api_key: config.api_key,
             base_url: config.base_url,
             model_name: config.model_name,
-            default_timeout: Duration::from_secs(120),
+            default_timeout: Duration::from_mins(2),
             enable_thinking: config.enable_thinking,
             thinking_budget: config.thinking_budget,
             max_tokens_field_name: config.max_tokens_field_name,

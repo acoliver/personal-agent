@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::hash::BuildHasher;
+
 use uuid::Uuid;
 
 use crate::presentation::view_command::{
@@ -33,6 +36,33 @@ pub struct StreamingStoreSnapshot {
     pub model_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConversationStreamingState {
+    pub thinking_visible: bool,
+    pub thinking_buffer: String,
+    pub stream_buffer: String,
+    pub last_error: Option<String>,
+    pub model_id: Option<String>,
+}
+
+impl ConversationStreamingState {
+    #[must_use]
+    pub fn project_for_snapshot(
+        self,
+        active: bool,
+        conversation_id: Uuid,
+    ) -> StreamingStoreSnapshot {
+        StreamingStoreSnapshot {
+            thinking_visible: self.thinking_visible,
+            thinking_buffer: self.thinking_buffer,
+            stream_buffer: self.stream_buffer,
+            last_error: self.last_error,
+            active_target: active.then_some(conversation_id),
+            model_id: self.model_id,
+        }
+    }
+}
+
 /// Store-owned chat snapshot slice used by mounted GPUI views.
 ///
 /// @plan PLAN-20260304-GPUIREMEDIATE.P05
@@ -65,6 +95,24 @@ impl Default for ChatStoreSnapshot {
             conversations: Vec::new(),
         }
     }
+}
+
+#[must_use]
+pub fn project_streaming_snapshot<S: BuildHasher>(
+    streaming_states: &HashMap<Uuid, ConversationStreamingState, S>,
+    selected_conversation_id: Option<Uuid>,
+    active_streaming_target: Option<Uuid>,
+) -> StreamingStoreSnapshot {
+    let Some(conversation_id) = selected_conversation_id else {
+        return StreamingStoreSnapshot::default();
+    };
+
+    let active = active_streaming_target == Some(conversation_id);
+    streaming_states
+        .get(&conversation_id)
+        .cloned()
+        .unwrap_or_default()
+        .project_for_snapshot(active, conversation_id)
 }
 
 /// Store-owned history snapshot slice used by mounted GPUI views.

@@ -280,15 +280,11 @@ impl LlmClient {
             ModelResponseStreamEvent::PartStart(start) => {
                 use serdes_ai::core::ModelResponsePart;
                 match &start.part {
-                    ModelResponsePart::Text(t) => {
-                        if !t.content.is_empty() {
-                            on_event(StreamEvent::TextDelta(t.content.clone()));
-                        }
+                    ModelResponsePart::Text(t) if !t.content.is_empty() => {
+                        on_event(StreamEvent::TextDelta(t.content.clone()));
                     }
-                    ModelResponsePart::Thinking(t) => {
-                        if !t.content.is_empty() {
-                            on_event(StreamEvent::ThinkingDelta(t.content.clone()));
-                        }
+                    ModelResponsePart::Thinking(t) if !t.content.is_empty() => {
+                        on_event(StreamEvent::ThinkingDelta(t.content.clone()));
                     }
                     ModelResponsePart::ToolCall(tc) => {
                         let id = tc.tool_call_id.as_deref().unwrap_or("").to_string();
@@ -405,7 +401,7 @@ impl LlmClient {
     }
 
     const fn request_timeout() -> Duration {
-        Duration::from_secs(120)
+        Duration::from_mins(2)
     }
 
     fn quirks_header_map(&self) -> StdResult<Option<reqwest::header::HeaderMap>, LlmError> {

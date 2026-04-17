@@ -308,7 +308,7 @@ fn select_kimi_profile_then_send_uses_kimi_model() {
                 "Global MCP runtime initialized",
                 "Global MCP initialization failed"
             ],
-            Duration::from_secs(120),
+            Duration::from_mins(2),
         ),
         "MCP initialization never completed. Log tail:\n{}",
         last_n_lines(&read_log(), 20)

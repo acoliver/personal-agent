@@ -247,8 +247,7 @@ fn newest_conversation_after(cutoff: SystemTime) -> Option<PathBuf> {
         .filter(|e| {
             e.metadata()
                 .and_then(|m| m.modified())
-                .map(|t| t >= cutoff)
-                .unwrap_or(false)
+                .is_ok_and(|t| t >= cutoff)
         })
         .collect();
     entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
@@ -300,7 +299,7 @@ fn kimi_ui_streaming_e2e() {
                 "Global MCP runtime initialized",
                 "Global MCP initialization failed"
             ],
-            Duration::from_secs(120),
+            Duration::from_mins(2),
         ),
         "MCP initialization never completed. Log tail:
 {}",

@@ -15,6 +15,7 @@
 //! @requirement REQ-ARCH-006.7
 //! @pseudocode analysis/pseudocode/01-app-store.md:001-405
 //! @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-087
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use uuid::Uuid;
@@ -24,13 +25,19 @@ use crate::presentation::view_command::{
 };
 
 use crate::ui_gpui::app_store_streaming::{
-    append_stream_buffer_if_target_matches_selected_or_nil,
-    append_thinking_buffer_if_target_matches_selected_or_nil, clear_streaming_ephemera_for_target,
-    clear_streaming_visible_state, finalize_stream_if_target_matches_selected_or_nil,
-    hide_thinking_if_target_matches_selected_or_nil,
-    show_thinking_if_target_matches_selected_or_nil,
+    append_stream_buffer_for_target, append_thinking_buffer_for_target,
+    clear_streaming_ephemera_for_target, finalize_stream_for_target, hide_thinking_for_target,
+    show_thinking_for_target,
 };
 pub use crate::ui_gpui::app_store_types::*;
+use selection_helpers::{
+    append_persisted_message_if_target_matches_selected, apply_selected_title_from_history,
+    load_state_targets_different_conversation, maybe_sync_selected_title,
+    maybe_upgrade_selected_title_from_history, mutate_history_and_selected_selection_if_targeted,
+    mutate_history_and_selected_title_if_targeted, mutate_profiles_snapshot,
+};
+
+mod selection_helpers;
 
 /// Startup hydration inputs.
 ///
@@ -118,9 +125,11 @@ pub enum BeginSelectionResult {
 #[derive(Default)]
 pub(super) struct AppStoreInner {
     pub(super) snapshot: GpuiAppSnapshot,
+    pub(super) streaming_states: HashMap<Uuid, ConversationStreamingState>,
+    pub(super) active_streaming_target: Option<Uuid>,
     pub(super) subscribers: Vec<flume::Sender<GpuiAppSnapshot>>,
     pub(super) title_provenance: SelectedTitleProvenance,
-    pub(super) last_finalized_stream_guard: Option<FinalizedStreamGuard>,
+    pub(super) finalized_stream_guards: HashMap<Uuid, FinalizedStreamGuard>,
 }
 
 /// Process-lifetime authoritative store handle.
@@ -397,13 +406,12 @@ fn begin_selection_locked(
         conversation_id,
         generation: next_generation,
     };
-    let should_restore_thinking =
-        inner.snapshot.chat.streaming.active_target == Some(conversation_id);
-    clear_streaming_visible_state(inner);
-    if should_restore_thinking {
-        inner.snapshot.chat.streaming.thinking_visible = true;
-    }
-    inner.last_finalized_stream_guard = None;
+    // The selected conversation's transcript is part of the selected-projection;
+    // clear it here so snapshot subscribers never see the previous conversation's
+    // messages while the new conversation is in the Loading state.
+    // reduce_messages_loaded repopulates it when the transcript arrives.
+    inner.snapshot.chat.transcript.clear();
+    project_selected_streaming_state(inner);
 
     if !apply_selected_title_from_history(inner, conversation_id) {
         inner.snapshot.chat.selected_conversation_title = "Untitled Conversation".to_string();
@@ -417,6 +425,14 @@ fn begin_selection_locked(
     BeginSelectionResult::BeganSelection {
         generation: next_generation,
     }
+}
+
+fn project_selected_streaming_state(inner: &mut AppStoreInner) {
+    inner.snapshot.chat.streaming = project_streaming_snapshot(
+        &inner.streaming_states,
+        inner.snapshot.chat.selected_conversation_id,
+        inner.active_streaming_target,
+    );
 }
 
 fn reduce_view_command_without_publish(inner: &mut AppStoreInner, command: ViewCommand) -> bool {
@@ -561,11 +577,8 @@ fn reduce_messages_loaded(
         conversation_id,
         generation: selection_generation,
     };
-    clear_streaming_visible_state(inner);
-    if inner.snapshot.chat.streaming.active_target == Some(conversation_id) {
-        inner.snapshot.chat.streaming.thinking_visible = true;
-    }
-    inner.last_finalized_stream_guard = None;
+    inner.finalized_stream_guards.remove(&conversation_id);
+    project_selected_streaming_state(inner);
     true
 }
 fn reduce_conversation_load_failed(
@@ -592,10 +605,7 @@ fn reduce_conversation_load_failed(
         return false;
     }
     inner.snapshot.chat.load_state = next_state;
-    clear_streaming_visible_state(inner);
-    if inner.snapshot.chat.streaming.active_target == Some(conversation_id) {
-        inner.snapshot.chat.streaming.thinking_visible = true;
-    }
+    project_selected_streaming_state(inner);
     true
 }
 
@@ -608,11 +618,10 @@ fn reduce_message_appended(
 ) -> bool {
     if role == MessageRole::Assistant
         && inner
-            .last_finalized_stream_guard
-            .as_ref()
+            .finalized_stream_guards
+            .get(&conversation_id)
             .is_some_and(|guard| {
-                conversation_id == guard.conversation_id
-                    && inner.snapshot.chat.transcript.len() == guard.transcript_len_after_finalize
+                inner.snapshot.chat.transcript.len() == guard.transcript_len_after_finalize
                     && inner.snapshot.chat.transcript.last().is_some_and(|tail| {
                         tail.role == MessageRole::Assistant && tail.content == content
                     })
@@ -634,35 +643,59 @@ fn reduce_show_thinking(
     conversation_id: Uuid,
     model_id: String,
 ) -> bool {
-    let changed = show_thinking_if_target_matches_selected_or_nil(inner, conversation_id);
+    let changed = show_thinking_for_target(inner, conversation_id, model_id);
     if changed {
-        inner.snapshot.chat.streaming.model_id = Some(model_id);
+        project_selected_streaming_state(inner);
     }
     changed
 }
 
 fn reduce_hide_thinking(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
-    hide_thinking_if_target_matches_selected_or_nil(inner, conversation_id)
+    let changed = hide_thinking_for_target(inner, conversation_id);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_append_thinking(inner: &mut AppStoreInner, conversation_id: Uuid, content: &str) -> bool {
-    append_thinking_buffer_if_target_matches_selected_or_nil(inner, conversation_id, content)
+    let changed = append_thinking_buffer_for_target(inner, conversation_id, content);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_append_stream(inner: &mut AppStoreInner, conversation_id: Uuid, chunk: &str) -> bool {
-    append_stream_buffer_if_target_matches_selected_or_nil(inner, conversation_id, chunk)
+    let changed = append_stream_buffer_for_target(inner, conversation_id, chunk);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_finalize_stream(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
-    finalize_stream_if_target_matches_selected_or_nil(inner, conversation_id)
+    let changed = finalize_stream_for_target(inner, conversation_id);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_stream_cancelled(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
-    clear_streaming_ephemera_for_target(inner, conversation_id, None)
+    let changed = clear_streaming_ephemera_for_target(inner, conversation_id, None);
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_stream_error(inner: &mut AppStoreInner, conversation_id: Uuid, error: String) -> bool {
-    clear_streaming_ephemera_for_target(inner, conversation_id, Some(error))
+    let changed = clear_streaming_ephemera_for_target(inner, conversation_id, Some(error));
+    if changed {
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_chat_profiles_updated(
@@ -707,7 +740,33 @@ fn reduce_conversation_title_updated(inner: &mut AppStoreInner, id: Uuid, title:
 }
 
 fn reduce_conversation_deleted(inner: &mut AppStoreInner, id: Uuid) -> bool {
-    mutate_history_and_selected_selection_if_targeted(inner, id)
+    let outcome = mutate_history_and_selected_selection_if_targeted(inner, id);
+    let changed = match outcome {
+        selection_helpers::DeletedConversationOutcome::NoChange => false,
+        selection_helpers::DeletedConversationOutcome::ListsChanged => true,
+        selection_helpers::DeletedConversationOutcome::SelectedDeleted { next_selected } => {
+            // The currently-selected conversation was removed. For any
+            // replacement we must follow the standard selection protocol so
+            // snapshot subscribers observe a Loading state with an
+            // incremented generation and initiate a transcript load, matching
+            // the behaviour of a user-driven selection change.
+            if let Some(next) = next_selected {
+                begin_selection_locked(inner, next, BeginSelectionMode::BatchNoPublish);
+            } else {
+                selection_helpers::reset_selection_to_idle_after_deletion(inner);
+            }
+            true
+        }
+    };
+    if changed {
+        inner.streaming_states.remove(&id);
+        inner.finalized_stream_guards.remove(&id);
+        if inner.active_streaming_target == Some(id) {
+            inner.active_streaming_target = None;
+        }
+        project_selected_streaming_state(inner);
+    }
+    changed
 }
 
 fn reduce_conversation_created(inner: &mut AppStoreInner, id: Uuid) -> bool {
@@ -767,233 +826,6 @@ fn prune_disconnected_subscribers_locked(inner: &mut AppStoreInner) {
 
 pub(super) fn clear_streaming_ephemera_only(inner: &mut AppStoreInner) {
     inner.snapshot.chat.streaming = StreamingStoreSnapshot::default();
-}
-
-fn maybe_sync_selected_title(inner: &mut AppStoreInner) -> bool {
-    let Some(conversation_id) = inner.snapshot.chat.selected_conversation_id else {
-        return false;
-    };
-    maybe_upgrade_selected_title_from_history(inner, conversation_id)
-}
-
-fn maybe_upgrade_selected_title_from_history(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-) -> bool {
-    if inner.snapshot.chat.selected_conversation_id != Some(conversation_id) {
-        return false;
-    }
-
-    if let Some(history_title) =
-        authoritative_history_title(&inner.snapshot.history.conversations, conversation_id)
-    {
-        if matches!(
-            inner.title_provenance,
-            SelectedTitleProvenance::LiteralFallback
-        ) && inner.snapshot.chat.selected_conversation_title != history_title
-        {
-            inner.snapshot.chat.selected_conversation_title = history_title;
-            inner.title_provenance = SelectedTitleProvenance::HistoryBacked;
-            return true;
-        }
-    }
-
-    false
-}
-
-fn apply_selected_title_from_history(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
-    if let Some(history_title) =
-        authoritative_history_title(&inner.snapshot.history.conversations, conversation_id)
-    {
-        inner.snapshot.chat.selected_conversation_title = history_title;
-        inner.title_provenance = SelectedTitleProvenance::HistoryBacked;
-        return true;
-    }
-    false
-}
-
-fn authoritative_history_title(
-    conversations: &[ConversationSummary],
-    conversation_id: Uuid,
-) -> Option<String> {
-    conversations
-        .iter()
-        .find(|conversation| conversation.id == conversation_id)
-        .map(|conversation| normalize_title(&conversation.title))
-}
-fn load_state_targets_different_conversation(
-    load_state: &ConversationLoadState,
-    conversation_id: Uuid,
-) -> bool {
-    match load_state {
-        ConversationLoadState::Loading {
-            conversation_id: active_id,
-            ..
-        }
-        | ConversationLoadState::Ready {
-            conversation_id: active_id,
-            ..
-        }
-        | ConversationLoadState::Error {
-            conversation_id: active_id,
-            ..
-        } => *active_id != conversation_id,
-        ConversationLoadState::Idle => false,
-    }
-}
-
-fn append_persisted_message_if_target_matches_selected(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-    role: MessageRole,
-    content: String,
-    model_id: Option<String>,
-) -> bool {
-    if matches!(role, MessageRole::User | MessageRole::Assistant)
-        && inner.snapshot.chat.selected_conversation_id != Some(conversation_id)
-    {
-        return false;
-    }
-
-    inner
-        .snapshot
-        .chat
-        .transcript
-        .push(ConversationMessagePayload {
-            role,
-            content,
-            thinking_content: None,
-            timestamp: None,
-            model_id,
-        });
-    true
-}
-
-fn mutate_profiles_snapshot(
-    inner: &mut AppStoreInner,
-    profiles: Vec<ProfileSummary>,
-    selected_profile_id: Option<Uuid>,
-) -> bool {
-    if inner.snapshot.settings.profiles == profiles
-        && inner.snapshot.settings.selected_profile_id == selected_profile_id
-    {
-        return false;
-    }
-    inner.snapshot.settings.profiles = profiles;
-    inner.snapshot.settings.selected_profile_id = selected_profile_id;
-    true
-}
-
-fn mutate_history_and_selected_title_if_targeted(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-    title: &str,
-) -> bool {
-    update_conversation_title(inner, conversation_id, title)
-}
-
-fn mutate_history_and_selected_selection_if_targeted(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-) -> bool {
-    let previous_history_len = inner.snapshot.history.conversations.len();
-    let previous_chat_len = inner.snapshot.chat.conversations.len();
-    inner
-        .snapshot
-        .history
-        .conversations
-        .retain(|conversation| conversation.id != conversation_id);
-    inner
-        .snapshot
-        .chat
-        .conversations
-        .retain(|conversation| conversation.id != conversation_id);
-
-    let changed = if inner.snapshot.chat.selected_conversation_id == Some(conversation_id) {
-        inner.snapshot.chat.selected_conversation_id = inner
-            .snapshot
-            .history
-            .conversations
-            .first()
-            .map(|conversation| conversation.id);
-        inner.snapshot.history.selected_conversation_id =
-            inner.snapshot.chat.selected_conversation_id;
-        if let Some(next_selected) = inner.snapshot.chat.selected_conversation_id {
-            apply_selected_title_from_history(inner, next_selected);
-        } else {
-            inner.snapshot.chat.selected_conversation_title = "New Conversation".to_string();
-            inner.snapshot.chat.load_state = ConversationLoadState::Idle;
-            inner.snapshot.chat.transcript.clear();
-            clear_streaming_ephemera_only(inner);
-        }
-        true
-    } else {
-        inner.snapshot.history.conversations.len() != previous_history_len
-            || inner.snapshot.chat.conversations.len() != previous_chat_len
-    };
-
-    changed
-}
-
-fn update_conversation_title(
-    inner: &mut AppStoreInner,
-    conversation_id: Uuid,
-    title: &str,
-) -> bool {
-    let normalized = normalize_title(title);
-    let mut changed = false;
-
-    if let Some(conversation) = inner
-        .snapshot
-        .history
-        .conversations
-        .iter_mut()
-        .find(|conversation| conversation.id == conversation_id)
-    {
-        if conversation.title != normalized {
-            conversation.title.clone_from(&normalized);
-            changed = true;
-        }
-    }
-
-    if let Some(conversation) = inner
-        .snapshot
-        .chat
-        .conversations
-        .iter_mut()
-        .find(|conversation| conversation.id == conversation_id)
-    {
-        if conversation.title != normalized {
-            conversation.title.clone_from(&normalized);
-            changed = true;
-        }
-    }
-
-    if inner.snapshot.chat.selected_conversation_id == Some(conversation_id)
-        && inner.snapshot.chat.selected_conversation_title != normalized
-    {
-        inner.snapshot.chat.selected_conversation_title = normalized;
-        inner.title_provenance = SelectedTitleProvenance::HistoryBacked;
-        changed = true;
-    }
-
-    changed
-}
-
-pub(super) fn non_empty_or_none(value: &str) -> Option<String> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn normalize_title(title: &str) -> String {
-    if title.trim().is_empty() {
-        "Untitled Conversation".to_string()
-    } else {
-        title.to_string()
-    }
 }
 
 #[cfg(test)]

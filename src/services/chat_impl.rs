@@ -219,8 +219,9 @@ impl ChatServiceImpl {
         }
 
         let resolved_requests = self.approval_gate.resolve_all(false);
-        for request_id in resolved_requests {
+        for (resolved_conversation_id, request_id) in resolved_requests {
             let _ = self.view_tx.try_send(ViewCommand::ToolApprovalResolved {
+                conversation_id: resolved_conversation_id,
                 request_id,
                 approved: false,
             });
@@ -542,7 +543,7 @@ impl ChatServiceImpl {
         decision: ToolApprovalResponseAction,
     ) -> ServiceResult<()> {
         let approved = !matches!(decision, ToolApprovalResponseAction::Denied);
-        let tool_identifiers = self
+        let (conversation_id, tool_identifiers) = self
             .approval_gate
             .resolve_and_take_identifiers(&request_id, approved)
             .ok_or_else(|| {
@@ -573,6 +574,7 @@ impl ChatServiceImpl {
         }
 
         let _ = self.view_tx.try_send(ViewCommand::ToolApprovalResolved {
+            conversation_id,
             request_id,
             approved,
         });
@@ -610,6 +612,7 @@ struct PreparedMessageContext {
 
 #[allow(clippy::missing_const_for_fn)]
 fn build_stream_context(
+    conversation_id: Uuid,
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     approval_gate: Arc<ApprovalGate>,
     policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
@@ -617,6 +620,7 @@ fn build_stream_context(
     filter_emoji: bool,
 ) -> crate::llm::client_agent::McpToolContext {
     crate::llm::client_agent::McpToolContext {
+        conversation_id,
         view_tx,
         approval_gate,
         policy,

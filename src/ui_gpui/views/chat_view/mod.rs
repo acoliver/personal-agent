@@ -215,11 +215,6 @@ impl ChatView {
         let previous_conversation_id = self.conversation_id;
         let previous_selection_generation = self.selection_generation;
 
-        // Clear approval bubbles when switching to a different conversation.
-        if previous_conversation_id != selected_conversation_id {
-            self.state.approval_bubbles.clear();
-        }
-
         self.state.conversations = conversations;
         self.state.active_conversation_id = selected_conversation_id;
         self.conversation_id = selected_conversation_id;
@@ -258,17 +253,13 @@ impl ChatView {
             self.maybe_scroll_chat_to_bottom(cx);
         }
 
-        match &load_state {
-            ConversationLoadState::Ready { .. } => {
-                self.state.messages = Self::messages_from_payload(transcript);
-            }
-            ConversationLoadState::Loading { .. } | ConversationLoadState::Error { .. } => {}
-            ConversationLoadState::Idle => {
-                if selected_conversation_id.is_none() {
-                    self.state.messages.clear();
-                }
-            }
-        }
+        // The store now guarantees that `snapshot.chat.transcript` is always
+        // scoped to the currently selected conversation: it is cleared on
+        // selection change in `begin_selection_locked` and repopulated by
+        // `reduce_messages_loaded`. Mirror it unconditionally so we never
+        // render the previous conversation's messages during a
+        // selection -> Loading -> Ready transition.
+        self.state.messages = Self::messages_from_payload(transcript);
 
         let was_streaming = matches!(self.state.streaming, StreamingState::Streaming { .. });
         let was_thinking = self

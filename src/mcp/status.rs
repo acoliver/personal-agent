@@ -120,8 +120,7 @@ impl McpStatusManager {
     pub fn count_running(&self) -> usize {
         self.statuses
             .read()
-            .map(|s| s.values().filter(|v| v.is_running()).count())
-            .unwrap_or(0)
+            .map_or(0, |s| s.values().filter(|v| v.is_running()).count())
     }
 
     /// Count MCPs in error state (thread-safe)
@@ -129,8 +128,7 @@ impl McpStatusManager {
     pub fn count_errors(&self) -> usize {
         self.statuses
             .read()
-            .map(|s| s.values().filter(|v| v.is_error()).count())
-            .unwrap_or(0)
+            .map_or(0, |s| s.values().filter(|v| v.is_error()).count())
     }
 }
 

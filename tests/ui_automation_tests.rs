@@ -396,8 +396,7 @@ fn newest_conversation_after(cutoff: SystemTime) -> Option<PathBuf> {
             entry
                 .metadata()
                 .and_then(|m| m.modified())
-                .map(|modified| modified >= cutoff)
-                .unwrap_or(false)
+                .is_ok_and(|modified| modified >= cutoff)
         })
         .collect();
 
@@ -551,7 +550,7 @@ fn scn_003_five_message_context_flow_records_turns_or_reports_auth_blocker() {
             stream_starts_seen,
             count_occurrences(&final_log, "StreamCompleted"),
             count_occurrences(&final_log, "StreamError"),
-            Duration::from_secs(120),
+            Duration::from_mins(2),
         ),
         "timed out waiting for final stream completion"
     );
@@ -658,8 +657,7 @@ fn take_screenshot(dest: &Path) -> bool {
         .args(["-x", "-t", "png"])
         .arg(dest.as_os_str())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 /// Press `ctrl-s` inside the running app to navigate to the Settings panel.
@@ -752,7 +750,7 @@ fn scn_004_theme_default_screenshot() {
         "expected artifact to exist: {}",
         dest.display()
     );
-    let size = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    let size = fs::metadata(&dest).map_or(0, |m| m.len());
     assert!(size > 0, "expected non-empty artifact: {}", dest.display());
 
     println!(
@@ -846,7 +844,7 @@ fn scn_005_theme_switching_screenshots() {
             continue;
         }
 
-        let size = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+        let size = fs::metadata(&dest).map_or(0, |m| m.len());
         if size == 0 {
             assertion_failures += 1;
             let _ = writeln!(
@@ -925,7 +923,7 @@ fn theme_artifacts_exist_and_are_nonempty() {
         let path = theme_artifact_path(name);
         if !path.exists() {
             missing.push(name);
-        } else if fs::metadata(&path).map(|m| m.len()).unwrap_or(0) == 0 {
+        } else if fs::metadata(&path).map_or(0, |m| m.len()) == 0 {
             empty.push(name);
         }
     }

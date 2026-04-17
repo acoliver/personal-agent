@@ -28,6 +28,7 @@ impl ChatView {
 
     fn handle_tool_approval_request(
         &mut self,
+        conversation_id: uuid::Uuid,
         request_id: String,
         context: ToolApprovalContext,
         cx: &mut gpui::Context<Self>,
@@ -41,26 +42,31 @@ impl ChatView {
             return;
         }
 
-        // Try to find an existing pending bubble to group with
-        if let Some(existing) = self
+        let is_visible_conversation = self.state.active_conversation_id == Some(conversation_id);
+
+        let bubbles = self
             .state
             .approval_bubbles
-            .iter_mut()
-            .find(|b| b.can_group_with(&context))
-        {
+            .entry(conversation_id)
+            .or_default();
+
+        // Try to find an existing pending bubble to group with
+        if let Some(existing) = bubbles.iter_mut().find(|b| b.can_group_with(&context)) {
             // Group with existing bubble
             let details = context.details.clone();
             existing.add_operation(request_id, details);
-            cx.notify();
+            if is_visible_conversation {
+                cx.notify();
+            }
             return;
         }
 
         // Create new bubble
-        self.state
-            .approval_bubbles
-            .push(ToolApprovalBubble::new(request_id, context));
-        self.maybe_scroll_chat_to_bottom(cx);
-        cx.notify();
+        bubbles.push(ToolApprovalBubble::new(request_id, context));
+        if is_visible_conversation {
+            self.maybe_scroll_chat_to_bottom(cx);
+            cx.notify();
+        }
     }
 
     /// Handle YOLO mode activation - auto-approve any pending tool approval bubbles.
@@ -72,7 +78,8 @@ impl ChatView {
             let pending_ids: Vec<String> = self
                 .state
                 .approval_bubbles
-                .iter()
+                .values()
+                .flat_map(|bubbles| bubbles.iter())
                 .filter(|b| b.state == ApprovalBubbleState::Pending)
                 .flat_map(|b| b.request_ids.clone())
                 .collect();
@@ -85,14 +92,18 @@ impl ChatView {
             }
 
             // Drop all pending bubbles — they've been auto-approved
+            for bubbles in self.state.approval_bubbles.values_mut() {
+                bubbles.retain(|b| b.state != ApprovalBubbleState::Pending);
+            }
             self.state
                 .approval_bubbles
-                .retain(|b| b.state != ApprovalBubbleState::Pending);
+                .retain(|_, bubbles| !bubbles.is_empty());
         }
         cx.notify();
     }
 
     fn handle_conversation_cleared(&mut self, cx: &mut gpui::Context<Self>) {
+        let cleared_conversation_id = self.state.active_conversation_id;
         self.state.messages.clear();
         self.state.streaming = super::state::StreamingState::Idle;
         self.state.thinking_content = None;
@@ -102,7 +113,9 @@ impl ChatView {
         self.state.export_feedback_message = None;
         self.state.export_feedback_is_error = false;
         self.state.export_feedback_path = None;
-        self.state.approval_bubbles.clear();
+        if let Some(conversation_id) = cleared_conversation_id {
+            self.state.approval_bubbles.remove(&conversation_id);
+        }
         self.state.chat_autoscroll_enabled = true;
         self.chat_scroll_handle.scroll_to_bottom();
         self.state.sync_conversation_title_from_active();
@@ -155,53 +168,52 @@ impl ChatView {
                 self.state.export_feedback_path = Some(path);
                 cx.notify();
             }
-            ViewCommand::ShowNotification { message } => {
-                if Self::is_export_notification(&message) {
-                    self.state.export_feedback_message = Some(message);
-                    self.state.export_feedback_is_error = false;
-                    self.state.export_feedback_path = None;
-                    cx.notify();
-                }
+            ViewCommand::ShowNotification { message } if Self::is_export_notification(&message) => {
+                self.state.export_feedback_message = Some(message);
+                self.state.export_feedback_is_error = false;
+                self.state.export_feedback_path = None;
+                cx.notify();
             }
             ViewCommand::ShowError {
                 title,
                 message,
                 severity: _,
-            } => {
-                if Self::is_export_error(&title) {
-                    self.state.export_feedback_message = Some(format!("{title}: {message}"));
-                    self.state.export_feedback_is_error = true;
-                    self.state.export_feedback_path = None;
-                    cx.notify();
-                }
+            } if Self::is_export_error(&title) => {
+                self.state.export_feedback_message = Some(format!("{title}: {message}"));
+                self.state.export_feedback_is_error = true;
+                self.state.export_feedback_path = None;
+                cx.notify();
             }
             ViewCommand::ToolApprovalRequest {
+                conversation_id,
                 request_id,
                 context,
             } => {
-                self.handle_tool_approval_request(request_id, context, cx);
+                self.handle_tool_approval_request(conversation_id, request_id, context, cx);
             }
             ViewCommand::ToolApprovalResolved {
+                conversation_id,
                 request_id,
                 approved,
             } => {
-                // Find the bubble containing this request_id
-                if let Some(bubble) = self
-                    .state
-                    .approval_bubbles
-                    .iter_mut()
-                    .find(|b| b.request_ids.contains(&request_id))
-                {
-                    bubble.state = if approved {
-                        ApprovalBubbleState::Approved
-                    } else {
-                        ApprovalBubbleState::Denied
-                    };
+                // Find the bubble containing this request_id in the owning conversation bucket.
+                if let Some(bubbles) = self.state.approval_bubbles.get_mut(&conversation_id) {
+                    if let Some(bubble) = bubbles
+                        .iter_mut()
+                        .find(|b| b.request_ids.contains(&request_id))
+                    {
+                        bubble.state = if approved {
+                            ApprovalBubbleState::Approved
+                        } else {
+                            ApprovalBubbleState::Denied
+                        };
+                    }
+                    // Remove resolved bubbles so they don't accumulate.
+                    bubbles.retain(|b| b.state == ApprovalBubbleState::Pending);
+                    if bubbles.is_empty() {
+                        self.state.approval_bubbles.remove(&conversation_id);
+                    }
                 }
-                // Remove resolved bubbles so they don't accumulate.
-                self.state
-                    .approval_bubbles
-                    .retain(|b| b.state == ApprovalBubbleState::Pending);
                 cx.notify();
             }
             ViewCommand::YoloModeChanged { active } => {

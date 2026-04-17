@@ -834,41 +834,33 @@ mod reduce_batch_streaming_and_thinking_commands {
     }
 
     #[test]
-    fn streaming_commands_for_wrong_conversation_are_ignored() {
+    fn streaming_commands_for_non_selected_conversation_do_not_leak_into_projection() {
         let selected = Uuid::new_v4();
-        let wrong = Uuid::new_v4();
+        let other = Uuid::new_v4();
         let store = make_store_with_conversation(selected, "Chat");
         begin_and_ready(&store, selected, Vec::new());
 
         let changed = store.reduce_batch(vec![
             ViewCommand::ShowThinking {
-                conversation_id: wrong,
+                conversation_id: other,
                 model_id: "test".to_string(),
             },
             ViewCommand::AppendThinking {
-                conversation_id: wrong,
+                conversation_id: other,
                 content: "abc".to_string(),
             },
             ViewCommand::AppendStream {
-                conversation_id: wrong,
+                conversation_id: other,
                 chunk: "def".to_string(),
             },
-            ViewCommand::FinalizeStream {
-                conversation_id: wrong,
-                tokens: 1,
-            },
-            ViewCommand::StreamCancelled {
-                conversation_id: wrong,
-                partial_content: String::new(),
-            },
             ViewCommand::StreamError {
-                conversation_id: wrong,
+                conversation_id: other,
                 error: "err".to_string(),
                 recoverable: true,
             },
         ]);
 
-        assert!(!changed);
+        assert!(changed);
         assert_eq!(
             current_snapshot(&store).chat.streaming,
             StreamingStoreSnapshot::default()
@@ -975,6 +967,86 @@ mod reduce_batch_message_append {
 
         assert!(!changed);
         assert_eq!(current_snapshot(&store).chat.transcript.len(), 1);
+    }
+
+    #[test]
+    fn reselection_clears_transcript_and_conversation_messages_loaded_is_authoritative() {
+        // Prior to the per-conversation isolation fix, the finalize-guard was
+        // relied upon to survive a switch-away-and-back in order to dedup a
+        // stale MessageAppended. That invariant was an artifact of the old
+        // design where the transcript was not re-scoped to the selected
+        // conversation on switch. Now `begin_selection_locked` clears the
+        // snapshot transcript, and `ConversationMessagesLoaded` is the sole
+        // authoritative repopulation path for the previously-selected
+        // conversation. This test pins the new contract.
+        let conversation_a = Uuid::new_v4();
+        let conversation_b = Uuid::new_v4();
+        let store = GpuiAppStore::from_startup_inputs(StartupInputs {
+            profiles: Vec::new(),
+            selected_profile_id: None,
+            conversations: vec![
+                make_summary(conversation_a, "Conversation A", 0),
+                make_summary(conversation_b, "Conversation B", 0),
+            ],
+            selected_conversation: None,
+        });
+
+        begin_and_ready(&store, conversation_a, Vec::new());
+        assert!(store.reduce_batch(vec![
+            ViewCommand::AppendStream {
+                conversation_id: conversation_a,
+                chunk: "same".to_string(),
+            },
+            ViewCommand::FinalizeStream {
+                conversation_id: conversation_a,
+                tokens: 1,
+            },
+        ]));
+        assert_eq!(current_snapshot(&store).chat.transcript.len(), 1);
+
+        let switched_to_b =
+            store.begin_selection(conversation_b, BeginSelectionMode::BatchNoPublish);
+        assert!(matches!(
+            switched_to_b,
+            BeginSelectionResult::BeganSelection { .. }
+        ));
+        assert!(
+            current_snapshot(&store).chat.transcript.is_empty(),
+            "switching to B must clear the snapshot transcript"
+        );
+
+        let switched_back_to_a =
+            store.begin_selection(conversation_a, BeginSelectionMode::BatchNoPublish);
+        let generation_a = match switched_back_to_a {
+            BeginSelectionResult::BeganSelection { generation } => generation,
+            BeginSelectionResult::NoOpSameSelection => {
+                panic!("expected begin_selection to switch back to conversation A")
+            }
+        };
+        assert!(
+            current_snapshot(&store).chat.transcript.is_empty(),
+            "switching back to A must also clear the snapshot transcript during Loading"
+        );
+
+        // The authoritative repopulation path is ConversationMessagesLoaded.
+        let persisted_assistant = ConversationMessagePayload {
+            role: MessageRole::Assistant,
+            content: "same".to_string(),
+            thinking_content: None,
+            timestamp: None,
+            model_id: None,
+        };
+        assert!(
+            store.reduce_batch(vec![ViewCommand::ConversationMessagesLoaded {
+                conversation_id: conversation_a,
+                selection_generation: generation_a,
+                messages: vec![persisted_assistant],
+            }])
+        );
+
+        let snapshot = current_snapshot(&store);
+        assert_eq!(snapshot.chat.transcript.len(), 1);
+        assert_eq!(snapshot.chat.transcript[0].content, "same");
     }
 }
 

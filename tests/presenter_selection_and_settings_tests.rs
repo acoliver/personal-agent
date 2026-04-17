@@ -454,10 +454,8 @@ async fn select_conversation_emits_activation_and_replays_messages() {
             ViewCommand::ConversationActivated {
                 id,
                 selection_generation: _,
-            } => {
-                if id == selected_id {
-                    saw_activation = true;
-                }
+            } if id == selected_id => {
+                saw_activation = true;
             }
             ViewCommand::ConversationMessagesLoaded {
                 conversation_id,
@@ -880,13 +878,11 @@ async fn edit_profile_emits_profile_editor_load_with_existing_data() {
                 provider_id,
                 model_id,
                 ..
-            } => {
-                if id == profile_id {
-                    assert_eq!(name, "Existing Profile");
-                    assert_eq!(provider_id, "anthropic");
-                    assert_eq!(model_id, "claude-sonnet-4-20250514");
-                    saw_prefill = true;
-                }
+            } if id == profile_id => {
+                assert_eq!(name, "Existing Profile");
+                assert_eq!(provider_id, "anthropic");
+                assert_eq!(model_id, "claude-sonnet-4-20250514");
+                saw_prefill = true;
             }
             ViewCommand::NavigateTo { view } => {
                 if matches!(view, ViewId::ProfileEditor) {

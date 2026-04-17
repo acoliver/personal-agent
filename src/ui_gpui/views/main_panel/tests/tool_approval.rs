@@ -6,6 +6,7 @@ use crate::ui_gpui::views::main_panel::{
     MainPanel,
 };
 use gpui::{AppContext, TestAppContext};
+use uuid::Uuid;
 
 #[gpui::test]
 async fn route_tool_approval_policy_updated_increments_counter(cx: &mut TestAppContext) {
@@ -108,8 +109,10 @@ async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestApp
     panel.update(cx, |panel: &mut MainPanel, cx| {
         panel.init(cx);
 
+        let conversation_id = Uuid::new_v4();
         panel.handle_command(
             ViewCommand::ToolApprovalRequest {
+                conversation_id,
                 request_id: "req-1".to_string(),
                 context: ToolApprovalContext::new(
                     "WriteFile",
@@ -122,24 +125,24 @@ async fn handle_command_forwards_tool_approval_commands_to_chat(cx: &mut TestApp
 
         let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
         chat_view.read_with(cx, |view, _| {
-            assert_eq!(view.state.approval_bubbles.len(), 1);
-            assert_eq!(view.state.approval_bubbles[0].request_id, "req-1");
+            let bubbles = view
+                .state
+                .approval_bubbles
+                .get(&conversation_id)
+                .expect("conversation bucket should exist");
+            assert_eq!(bubbles.len(), 1);
+            assert_eq!(bubbles[0].request_id, "req-1");
+            assert_eq!(bubbles[0].context.tool_name, "WriteFile");
+            assert_eq!(bubbles[0].context.primary_target, "/tmp/example.txt");
             assert_eq!(
-                view.state.approval_bubbles[0].context.tool_name,
-                "WriteFile"
-            );
-            assert_eq!(
-                view.state.approval_bubbles[0].context.primary_target,
-                "/tmp/example.txt"
-            );
-            assert_eq!(
-                view.state.approval_bubbles[0].state,
+                bubbles[0].state,
                 crate::ui_gpui::views::chat_view::ApprovalBubbleState::Pending
             );
         });
 
         panel.handle_command(
             ViewCommand::ToolApprovalResolved {
+                conversation_id,
                 request_id: "req-1".to_string(),
                 approved: false,
             },
