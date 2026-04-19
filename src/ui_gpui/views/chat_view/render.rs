@@ -293,6 +293,7 @@ impl ChatView {
             .min_h_0()
             .w_full()
             .bg(Theme::bg_base())
+            .overflow_x_hidden()
             .overflow_y_scroll()
             .track_scroll(&self.chat_scroll_handle)
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
@@ -826,6 +827,7 @@ impl ChatView {
         div()
             .flex_1()
             .min_w(px(0.0))
+            .overflow_hidden()
             .flex()
             .flex_col()
             // Title bar (32px)
