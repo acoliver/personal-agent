@@ -126,6 +126,7 @@ impl ChatView {
                 div()
                     .flex_1()
                     .min_w(px(0.0))
+                    .overflow_hidden()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -208,6 +209,7 @@ impl ChatView {
 
         div()
             .flex_shrink_0()
+            .min_w(px(0.0))
             .flex()
             .items_center()
             .gap(px(8.0))
@@ -472,6 +474,7 @@ impl ChatView {
                 div()
                     .flex_1()
                     .min_w(px(0.0))
+                    .overflow_hidden()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
