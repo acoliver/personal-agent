@@ -209,7 +209,6 @@ impl ChatView {
 
         div()
             .flex_shrink_0()
-            .min_w(px(0.0))
             .flex()
             .items_center()
             .gap(px(8.0))
@@ -442,42 +441,43 @@ impl ChatView {
             .px(px(12.0))
             .flex()
             .items_center()
+            .justify_between()
             .gap(px(8.0))
-            // Sidebar toggle (popout mode only)
-            .when(is_popout, |d| {
-                d.child(
-                    div()
-                        .id("btn-sidebar-toggle")
-                        .size(px(28.0))
-                        .rounded(px(4.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor_pointer()
-                        .when(sidebar_visible, |d| d.bg(Theme::bg_dark()))
-                        .when(!sidebar_visible, |d| {
-                            d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
-                        })
-                        .child(
-                            crate::ui_gpui::components::window_icons::sidebar_icon(16.0)
-                                .text_color(Theme::text_primary()),
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _window, cx| {
-                                this.toggle_sidebar(cx);
-                            }),
-                        ),
-                )
-            })
             .child(
+                // Left group: sidebar toggle (popout only) + conversation/profile selectors.
+                // flex_shrink_0 + justify_between on the parent keeps the bug icon
+                // anchored to the right regardless of any selector width changes.
                 div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .overflow_hidden()
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
+                    .when(is_popout, |d| {
+                        d.child(
+                            div()
+                                .id("btn-sidebar-toggle")
+                                .size(px(28.0))
+                                .rounded(px(4.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .when(sidebar_visible, |d| d.bg(Theme::bg_dark()))
+                                .when(!sidebar_visible, |d| {
+                                    d.bg(Theme::bg_darker()).hover(|s| s.bg(Theme::bg_dark()))
+                                })
+                                .child(
+                                    crate::ui_gpui::components::window_icons::sidebar_icon(16.0)
+                                        .text_color(Theme::text_primary()),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _window, cx| {
+                                        this.toggle_sidebar(cx);
+                                    }),
+                                ),
+                        )
+                    })
                     // Conversation selector: always shown in popup; shown in popout when sidebar hidden
                     .when(!is_popout || !sidebar_visible, |d| {
                         d.child(self.render_conversation_selector(cx))
