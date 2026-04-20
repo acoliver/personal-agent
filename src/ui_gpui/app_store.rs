@@ -15,7 +15,7 @@
 //! @requirement REQ-ARCH-006.7
 //! @pseudocode analysis/pseudocode/01-app-store.md:001-405
 //! @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:001-087
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use uuid::Uuid;
@@ -122,11 +122,13 @@ pub enum BeginSelectionResult {
     BeganSelection { generation: u64 },
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.1
 #[derive(Default)]
 pub(super) struct AppStoreInner {
     pub(super) snapshot: GpuiAppSnapshot,
     pub(super) streaming_states: HashMap<Uuid, ConversationStreamingState>,
-    pub(super) active_streaming_target: Option<Uuid>,
+    pub(super) active_streaming_targets: HashSet<Uuid>,
     pub(super) subscribers: Vec<flume::Sender<GpuiAppSnapshot>>,
     pub(super) title_provenance: SelectedTitleProvenance,
     pub(super) finalized_stream_guards: HashMap<Uuid, FinalizedStreamGuard>,
@@ -427,11 +429,13 @@ fn begin_selection_locked(
     }
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.2
 fn project_selected_streaming_state(inner: &mut AppStoreInner) {
     inner.snapshot.chat.streaming = project_streaming_snapshot(
         &inner.streaming_states,
         inner.snapshot.chat.selected_conversation_id,
-        inner.active_streaming_target,
+        &inner.active_streaming_targets,
     );
 }
 
@@ -758,12 +762,12 @@ fn reduce_conversation_deleted(inner: &mut AppStoreInner, id: Uuid) -> bool {
             true
         }
     };
+    // @plan PLAN-20260416-ISSUE173.P09
+    // @requirement REQ-173-004.1
     if changed {
         inner.streaming_states.remove(&id);
         inner.finalized_stream_guards.remove(&id);
-        if inner.active_streaming_target == Some(id) {
-            inner.active_streaming_target = None;
-        }
+        inner.active_streaming_targets.remove(&id);
         project_selected_streaming_state(inner);
     }
     changed
@@ -803,6 +807,9 @@ fn reduce_conversation_created(inner: &mut AppStoreInner, id: Uuid) -> bool {
 }
 
 fn bump_revision_and_publish(inner: &mut AppStoreInner) {
+    // @plan PLAN-20260416-ISSUE173.P11
+    // @requirement REQ-173-004.3
+    inner.snapshot.history.streaming_conversation_ids = inner.active_streaming_targets.clone();
     inner.snapshot.revision += 1;
     publish_snapshot_to_subscribers(inner);
 }
@@ -830,3 +837,40 @@ pub(super) fn clear_streaming_ephemera_only(inner: &mut AppStoreInner) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+impl GpuiAppStore {
+    /// Returns a clone of the active streaming targets `HashSet` for test verification.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P08
+    /// @requirement REQ-173-004.1
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
+    pub(crate) fn active_streaming_targets_for_test(&self) -> std::collections::HashSet<Uuid> {
+        self.inner
+            .lock()
+            .expect("gpui app store mutex poisoned")
+            .active_streaming_targets
+            .clone()
+    }
+
+    /// Returns a clone of the streaming conversation IDs from the history snapshot.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P10
+    /// @requirement REQ-173-004.3
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
+    pub(crate) fn streaming_conversation_ids_for_test(&self) -> std::collections::HashSet<Uuid> {
+        self.inner
+            .lock()
+            .expect("gpui app store mutex poisoned")
+            .snapshot
+            .history
+            .streaming_conversation_ids
+            .clone()
+    }
+}

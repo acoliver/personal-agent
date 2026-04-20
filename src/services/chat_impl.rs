@@ -14,11 +14,12 @@ use crate::presentation::view_command::ViewCommand;
 use crate::services::template::{build_skills_prompt_block, expand_system_prompt, TemplateContext};
 use crate::services::{ConversationService, SkillsService};
 use futures::{stream, Stream};
+use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod streaming;
@@ -30,14 +31,24 @@ use streaming::{clear_streaming_state, emit_stream_error, run_stream_task, STREA
 use streaming::persist_context_state;
 
 const COMPRESSION_SETTINGS_KEY: &str = "compression";
+
+/// Active stream state for a single conversation.
+/// @plan PLAN-20260416-ISSUE173.P03
+/// @requirement REQ-173-001.1
+pub(super) struct ActiveStream {
+    pub(super) task: JoinHandle<()>,
+    pub(super) cancel: CancellationToken,
+}
+
 pub struct ChatServiceImpl {
     conversation_service: Arc<dyn ConversationService>,
     profile_service: Arc<dyn super::ProfileService>,
     app_settings_service: Arc<dyn super::AppSettingsService>,
     skills_service: Arc<dyn SkillsService>,
-    is_streaming: Arc<AtomicBool>,
-    current_conversation_id: Arc<StdMutex<Option<Uuid>>>,
-    stream_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
+    /// Per-conversation active streams. Replaces `is_streaming`/`current_conversation_id`/`stream_task`.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
+    active_streams: Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
     /// Channel for sending view commands (used for tool approval UI)
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     /// Approval gate for coordinating user approval of tool execution
@@ -64,9 +75,9 @@ impl ChatServiceImpl {
             profile_service,
             app_settings_service,
             skills_service,
-            is_streaming: Arc::new(AtomicBool::new(false)),
-            current_conversation_id: Arc::new(StdMutex::new(None)),
-            stream_task: Arc::new(StdMutex::new(None)),
+            // @plan PLAN-20260416-ISSUE173.P03
+            // @requirement REQ-173-001.1
+            active_streams: Arc::new(StdMutex::new(HashMap::new())),
             view_tx,
             approval_gate,
             policy,
@@ -155,23 +166,19 @@ impl ChatServiceImpl {
         }
     }
 
+    /// Begin a stream for a specific conversation.
+    /// Returns error if the conversation already has an active stream.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.2
     async fn begin_stream(&self, conversation_id: Uuid) -> ServiceResult<()> {
-        if self
-            .is_streaming
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
-            .is_err()
-        {
+        let already_streaming = {
+            let map = self.active_streams.lock().expect("active_streams poisoned");
+            map.contains_key(&conversation_id)
+        };
+        if already_streaming {
             return Err(ServiceError::Internal(
-                "Stream already in progress".to_string(),
+                "Stream already in progress for this conversation".to_string(),
             ));
-        }
-
-        {
-            let mut current = self
-                .current_conversation_id
-                .lock()
-                .expect("current conversation mutex poisoned");
-            *current = Some(conversation_id);
         }
         Ok(())
     }
@@ -201,25 +208,34 @@ impl ChatServiceImpl {
         }
     }
 
-    fn cancel_active_stream(&self) {
-        self.is_streaming.store(false, Ordering::Release);
+    /// Cancel the active stream for a specific conversation.
+    ///
+    /// Always resolves any pending approvals for the target conversation and emits
+    /// a scoped `StreamCancelled` event. If a spawned task exists for the
+    /// conversation it is aborted and its cancellation token is fired.
+    /// Phase 7 replaces `resolve_all(false)` with a conversation-scoped variant;
+    /// until then, pending approvals for other conversations are still drained
+    /// here to preserve prior semantics — the narrower scope is the explicit
+    /// deliverable of P07.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-002.1, REQ-173-002.2
+    fn cancel_active_stream(&self, conversation_id: Uuid) {
+        let removed = {
+            let mut map = self.active_streams.lock().expect("active_streams poisoned");
+            map.remove(&conversation_id)
+        };
 
-        let conversation_id = *self
-            .current_conversation_id
-            .lock()
-            .expect("current conversation mutex poisoned");
-
-        let task_to_abort = self
-            .stream_task
-            .lock()
-            .expect("stream task mutex poisoned")
-            .take();
-        if let Some(task) = task_to_abort {
-            task.abort();
+        if let Some(active) = removed {
+            active.cancel.cancel();
+            active.task.abort();
         }
 
-        let resolved_requests = self.approval_gate.resolve_all(false);
-        for (resolved_conversation_id, request_id) in resolved_requests {
+        // @plan PLAN-20260416-ISSUE173.P07
+        // @requirement REQ-173-003.3
+        let resolved = self
+            .approval_gate
+            .resolve_all_for_conversation(conversation_id, false);
+        for (resolved_conversation_id, request_id) in resolved {
             let _ = self.view_tx.try_send(ViewCommand::ToolApprovalResolved {
                 conversation_id: resolved_conversation_id,
                 request_id,
@@ -227,21 +243,11 @@ impl ChatServiceImpl {
             });
         }
 
-        if let Some(conversation_id) = conversation_id {
-            let _ = emit(AppEvent::Chat(ChatEvent::StreamCancelled {
-                conversation_id,
-                message_id: Uuid::new_v4(),
-                partial_content: String::new(),
-            }));
-        }
-
-        {
-            let mut current = self
-                .current_conversation_id
-                .lock()
-                .expect("current conversation mutex poisoned");
-            *current = None;
-        }
+        let _ = emit(AppEvent::Chat(ChatEvent::StreamCancelled {
+            conversation_id,
+            message_id: Uuid::new_v4(),
+            partial_content: String::new(),
+        }));
     }
 
     async fn prepare_message_context(
@@ -495,6 +501,9 @@ impl ChatServiceImpl {
         }));
     }
 
+    /// Spawn a stream task for a conversation and track it in `active_streams`.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
     async fn spawn_stream_task(
         &self,
         conversation_id: Uuid,
@@ -502,20 +511,21 @@ impl ChatServiceImpl {
         mcp_tools: Vec<crate::llm::tools::Tool>,
         tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     ) {
-        let is_streaming = self.is_streaming.clone();
-        let current_conversation_id = self.current_conversation_id.clone();
+        let active_streams = self.active_streams.clone();
         let conversation_service = self.conversation_service.clone();
         let view_tx = self.view_tx.clone();
         let approval_gate = self.approval_gate.clone();
         let policy = self.policy.clone();
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
 
         let handle = tokio::spawn(async move {
             run_stream_task(
                 prepared,
                 mcp_tools,
                 tx,
-                is_streaming,
-                current_conversation_id,
+                active_streams.clone(),
+                cancel_clone,
                 conversation_service,
                 conversation_id,
                 view_tx,
@@ -525,10 +535,12 @@ impl ChatServiceImpl {
             .await;
         });
 
-        let mut stream_task = self.stream_task.lock().expect("stream task mutex poisoned");
-        if let Some(previous_task) = stream_task.replace(handle) {
-            previous_task.abort();
-        }
+        let active = ActiveStream {
+            task: handle,
+            cancel,
+        };
+        let mut map = self.active_streams.lock().expect("active_streams poisoned");
+        map.insert(conversation_id, active);
     }
 
     /// Resolve an in-flight tool approval request from UI input.
@@ -569,7 +581,7 @@ impl ChatServiceImpl {
             }
             ToolApprovalResponseAction::ProceedOnce => {}
             ToolApprovalResponseAction::Denied => {
-                self.cancel_active_stream();
+                self.cancel_active_stream(conversation_id);
             }
         }
 
@@ -629,6 +641,9 @@ fn build_stream_context(
     }
 }
 
+/// Create a stream agent for a conversation.
+/// @plan PLAN-20260416-ISSUE173.P03
+/// @requirement REQ-173-001.1
 #[allow(clippy::too_many_arguments)]
 async fn create_stream_agent(
     client: &LlmClient,
@@ -636,8 +651,8 @@ async fn create_stream_agent(
     system_prompt: &str,
     conversation_id: Uuid,
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
-    is_streaming: &Arc<AtomicBool>,
-    current_conversation_id: &Arc<StdMutex<Option<Uuid>>>,
+    active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    _cancel: &tokio_util::sync::CancellationToken,
 ) -> Option<serdes_ai_agent::Agent<crate::llm::client_agent::McpToolContext>> {
     match client.create_agent(mcp_tools, system_prompt).await {
         Ok(agent) => Some(agent),
@@ -648,7 +663,7 @@ async fn create_stream_agent(
                 "Failed to create agent for chat stream"
             );
             emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
-            clear_streaming_state(is_streaming, current_conversation_id, conversation_id);
+            clear_streaming_state(active_streams, conversation_id);
             None
         }
     }
@@ -685,15 +700,27 @@ impl ChatService for ChatServiceImpl {
         Ok(Box::new(message_stream))
     }
 
-    /// Cancel the current streaming operation
-    fn cancel(&self) {
-        // Force-cancel the active stream task so tool loops stop immediately.
-        self.cancel_active_stream();
+    /// Cancel the streaming operation for a specific conversation.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-002.1
+    fn cancel(&self, conversation_id: Uuid) {
+        self.cancel_active_stream(conversation_id);
     }
 
-    /// Check if currently streaming
+    /// Check if any stream is currently active.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
     fn is_streaming(&self) -> bool {
-        self.is_streaming.load(Ordering::Acquire)
+        let map = self.active_streams.lock().expect("active_streams poisoned");
+        !map.is_empty()
+    }
+
+    /// Check if a specific conversation has an active stream.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
+    fn is_streaming_for(&self, conversation_id: Uuid) -> bool {
+        let map = self.active_streams.lock().expect("active_streams poisoned");
+        map.contains_key(&conversation_id)
     }
 
     async fn resolve_tool_approval(
@@ -702,6 +729,41 @@ impl ChatService for ChatServiceImpl {
         decision: ToolApprovalResponseAction,
     ) -> ServiceResult<()> {
         Self::resolve_tool_approval(self, request_id, decision).await
+    }
+}
+
+#[cfg(test)]
+impl ChatServiceImpl {
+    /// Test-only shim to begin a stream for a specific conversation.
+    /// Exposes the internal `begin_stream` method for testing concurrent streams.
+    pub(crate) async fn begin_stream_for_test(&self, conversation_id: Uuid) -> ServiceResult<()> {
+        self.begin_stream(conversation_id).await
+    }
+
+    /// Test-only helper to insert a mock active stream for a conversation.
+    /// This allows testing concurrent stream behavior without running real streams.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
+    pub(crate) fn insert_mock_stream_for_test(&self, conversation_id: Uuid) {
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(async move {
+            // Mock task that just sleeps - will be aborted when stream is cancelled
+            tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+        });
+        let active = crate::services::chat_impl::ActiveStream { task, cancel };
+        let mut map = self.active_streams.lock().expect("active_streams poisoned");
+        map.insert(conversation_id, active);
+    }
+
+    /// Test-only helper to clear all mock streams.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.3
+    pub(crate) fn clear_all_streams_for_test(&self) {
+        let mut map = self.active_streams.lock().expect("active_streams poisoned");
+        for (_, active) in map.drain() {
+            active.cancel.cancel();
+            active.task.abort();
+        }
     }
 }
 

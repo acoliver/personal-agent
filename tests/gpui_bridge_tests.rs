@@ -93,11 +93,12 @@ fn test_gpui_bridge_emit_non_blocking_when_full() {
     let bridge = GpuiBridge::new(user_tx, view_rx);
 
     // Fill the channel
-    let _ = bridge.emit(UserEvent::StopStreaming);
+    let conversation_id = Uuid::new_v4();
+    let _ = bridge.emit(UserEvent::StopStreaming { conversation_id });
 
     // Next emit should fail but NOT block
     let start = std::time::Instant::now();
-    let result = bridge.emit(UserEvent::StopStreaming);
+    let result = bridge.emit(UserEvent::StopStreaming { conversation_id });
     let elapsed = start.elapsed();
 
     assert!(!result, "emit should return false when full");

@@ -93,9 +93,15 @@ impl MainPanel {
         if let Some(ref chat_view) = self.chat_view {
             let chat_snapshot = snapshot.chat.clone();
             let settings_snapshot = snapshot.settings.clone();
+            // @plan PLAN-20260416-ISSUE173.P11
+            // @requirement REQ-173-004.3
+            let streaming_ids = snapshot.history.streaming_conversation_ids.clone();
             chat_view.update(cx, |view, cx| {
                 view.apply_store_snapshot(chat_snapshot, cx);
                 view.apply_settings_snapshot(settings_snapshot);
+                // @plan PLAN-20260416-ISSUE173.P11
+                // @requirement REQ-173-004.3
+                view.state.streaming_conversation_ids = streaming_ids;
             });
         }
 

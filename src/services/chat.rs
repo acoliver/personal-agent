@@ -32,11 +32,20 @@ pub trait ChatService: Send + Sync {
         content: String,
     ) -> ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>>;
 
-    /// Cancel the current streaming operation
-    fn cancel(&self);
+    /// Cancel the streaming operation for a specific conversation.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-002.1
+    fn cancel(&self, conversation_id: Uuid);
 
-    /// Check if currently streaming a response
+    /// Check if any stream is currently active (any conversation).
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
     fn is_streaming(&self) -> bool;
+
+    /// Check if a specific conversation has an active stream.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
+    fn is_streaming_for(&self, conversation_id: Uuid) -> bool;
 
     /// Resolve a pending tool approval request from user interaction.
     async fn resolve_tool_approval(

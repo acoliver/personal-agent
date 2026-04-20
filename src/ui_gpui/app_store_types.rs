@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 
 use uuid::Uuid;
@@ -97,17 +97,19 @@ impl Default for ChatStoreSnapshot {
     }
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.2
 #[must_use]
-pub fn project_streaming_snapshot<S: BuildHasher>(
+pub fn project_streaming_snapshot<S: BuildHasher, H: BuildHasher>(
     streaming_states: &HashMap<Uuid, ConversationStreamingState, S>,
     selected_conversation_id: Option<Uuid>,
-    active_streaming_target: Option<Uuid>,
+    active_streaming_targets: &HashSet<Uuid, H>,
 ) -> StreamingStoreSnapshot {
     let Some(conversation_id) = selected_conversation_id else {
         return StreamingStoreSnapshot::default();
     };
 
-    let active = active_streaming_target == Some(conversation_id);
+    let active = active_streaming_targets.contains(&conversation_id);
     streaming_states
         .get(&conversation_id)
         .cloned()
@@ -125,6 +127,11 @@ pub fn project_streaming_snapshot<S: BuildHasher>(
 pub struct HistoryStoreSnapshot {
     pub conversations: Vec<ConversationSummary>,
     pub selected_conversation_id: Option<Uuid>,
+    /// Conversation ids currently streaming in the background.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P11
+    /// @requirement REQ-173-004.3
+    pub streaming_conversation_ids: HashSet<Uuid>,
 }
 
 /// Store-owned settings/profile snapshot slice.

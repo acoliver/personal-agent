@@ -213,6 +213,51 @@ impl ApprovalGate {
 
         resolved
     }
+
+    /// Resolve all pending approvals owned by `conversation_id`.
+    ///
+    /// Used for per-conversation cancellation so cancelling conversation A
+    /// does not wake waiters belonging to conversation B.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P07
+    /// @requirement REQ-173-003.1
+    /// @requirement REQ-173-003.2
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    #[must_use]
+    pub fn resolve_all_for_conversation(
+        &self,
+        conversation_id: Uuid,
+        approved: bool,
+    ) -> Vec<(Uuid, String)> {
+        // Collect keys under a short-lived lock to minimize contention
+        let keys_to_remove: Vec<String> = {
+            let pending = self.pending.lock().unwrap();
+            pending
+                .iter()
+                .filter(|(_, p)| p.conversation_id == conversation_id)
+                .map(|(k, _)| k.clone())
+                .collect()
+        };
+
+        // Remove items under a new lock
+        let matching: Vec<(String, PendingApproval)> = {
+            let mut pending = self.pending.lock().unwrap();
+            keys_to_remove
+                .into_iter()
+                .filter_map(|k| pending.remove(&k).map(|p| (k, p)))
+                .collect()
+        };
+
+        let mut resolved = Vec::with_capacity(matching.len());
+        for (request_id, pending_approval) in matching {
+            let _ = pending_approval.tx.send(approved);
+            resolved.push((pending_approval.conversation_id, request_id));
+        }
+        resolved
+    }
 }
 
 impl Default for ApprovalGate {

@@ -427,6 +427,8 @@ impl gpui::Render for HistoryView {
 mod tests {
     #![allow(clippy::future_not_send)]
 
+    use std::collections::HashSet;
+
     use super::*;
     use chrono::{Duration, Utc};
     use flume;
@@ -474,6 +476,7 @@ mod tests {
                 ),
             ],
             selected_conversation_id: Some(selected_id),
+            streaming_conversation_ids: HashSet::new(),
         };
         let view = cx.new(HistoryView::new);
 
@@ -514,6 +517,7 @@ mod tests {
                     ),
                 ],
                 selected_conversation_id: None,
+                streaming_conversation_ids: HashSet::new(),
             };
             view.apply_store_snapshot(&snapshot, cx);
 
@@ -529,6 +533,7 @@ mod tests {
             let snapshot_with_selection = HistoryStoreSnapshot {
                 conversations: snapshot.conversations,
                 selected_conversation_id: Some(selected_id),
+                streaming_conversation_ids: HashSet::new(),
             };
             view.apply_store_snapshot(&snapshot_with_selection, cx);
             assert_eq!(view.state.selected_conversation_id, Some(selected_id));
@@ -553,6 +558,7 @@ mod tests {
             let initial_snapshot = HistoryStoreSnapshot {
                 conversations: vec![conversation_summary(selected_id, "Selected", Utc::now(), 0)],
                 selected_conversation_id: Some(selected_id),
+                streaming_conversation_ids: HashSet::new(),
             };
             view.apply_store_snapshot(&initial_snapshot, cx);
             assert_eq!(view.conversations().len(), 1);
@@ -565,6 +571,7 @@ mod tests {
                     conversation_summary(selected_id, "Selected", Utc::now(), 0),
                 ],
                 selected_conversation_id: Some(created_id),
+                streaming_conversation_ids: HashSet::new(),
             };
             view.apply_store_snapshot(&created_snapshot, cx);
             assert_eq!(view.conversations()[0].id, created_id);
@@ -578,6 +585,7 @@ mod tests {
                     conversation_summary(selected_id, "Selected", Utc::now(), 0),
                 ],
                 selected_conversation_id: Some(created_id),
+                streaming_conversation_ids: HashSet::new(),
             };
             view.apply_store_snapshot(&renamed_snapshot, cx);
             assert_eq!(view.conversations()[0].title, "Renamed conversation");
@@ -591,6 +599,7 @@ mod tests {
                     0,
                 )],
                 selected_conversation_id: Some(created_id),
+                streaming_conversation_ids: HashSet::new(),
             };
             view.apply_store_snapshot(&deleted_snapshot, cx);
             assert_eq!(view.state.selected_conversation_id, Some(created_id));

@@ -148,9 +148,13 @@ impl ChatService for MockChatService {
         >()))
     }
 
-    fn cancel(&self) {}
+    fn cancel(&self, _conversation_id: Uuid) {}
 
     fn is_streaming(&self) -> bool {
+        false
+    }
+
+    fn is_streaming_for(&self, _conversation_id: Uuid) -> bool {
         false
     }
 

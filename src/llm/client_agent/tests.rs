@@ -1,5 +1,6 @@
 use super::*;
 use serdes_ai::core::messages::parts::ToolCallArgs;
+use std::time::Duration;
 use uuid::Uuid;
 
 #[test]
@@ -247,4 +248,43 @@ fn build_agent_message_history_preserves_assistant_tool_results() {
         }
         other => panic!("expected second tool return part, got {other:?}"),
     }
+}
+
+/// @plan PLAN-20260416-ISSUE173.P06
+/// @requirement REQ-173-003.2
+#[tokio::test]
+async fn resolve_all_for_conversation_resolves_only_target() {
+    let gate = ApprovalGate::new();
+    let conv_a = Uuid::new_v4();
+    let conv_b = Uuid::new_v4();
+
+    let waiter_a = gate.wait_for_approvals("req-a".into(), vec!["tool".into()], conv_a);
+    let waiter_b = gate.wait_for_approvals("req-b".into(), vec!["tool".into()], conv_b);
+
+    let resolved = gate.resolve_all_for_conversation(conv_a, false);
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0].0, conv_a);
+    assert_eq!(resolved[0].1, "req-a");
+
+    assert!(!waiter_a.wait().await.unwrap());
+
+    let _ = gate.resolve("req-b", true);
+    assert!(waiter_b.wait().await.unwrap());
+}
+
+/// @plan PLAN-20260416-ISSUE173.P06
+/// @requirement REQ-173-003.1
+#[tokio::test]
+async fn resolving_one_conversation_does_not_wake_another() {
+    let gate = ApprovalGate::new();
+    let conv_a = Uuid::new_v4();
+    let conv_b = Uuid::new_v4();
+
+    let _waiter_a = gate.wait_for_approvals("req-a".into(), vec!["tool".into()], conv_a);
+    let waiter_b = gate.wait_for_approvals("req-b".into(), vec!["tool".into()], conv_b);
+
+    let _ = gate.resolve_all_for_conversation(conv_a, false);
+
+    let result = tokio::time::timeout(Duration::from_millis(50), waiter_b.wait()).await;
+    assert!(result.is_err(), "waiter B should still be pending");
 }
