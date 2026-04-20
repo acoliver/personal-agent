@@ -528,7 +528,7 @@ fn start_backup_scheduler(
 
 async fn runtime_keepalive_loop() {
     loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+        tokio::time::sleep(tokio::time::Duration::from_hours(1)).await;
     }
 }
 

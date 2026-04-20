@@ -748,7 +748,7 @@ impl ChatServiceImpl {
         let cancel = CancellationToken::new();
         let task = tokio::spawn(async move {
             // Mock task that just sleeps - will be aborted when stream is cancelled
-            tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+            tokio::time::sleep(tokio::time::Duration::from_hours(1)).await;
         });
         let active = crate::services::chat_impl::ActiveStream { task, cancel };
         let mut map = self.active_streams.lock().expect("active_streams poisoned");
