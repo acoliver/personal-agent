@@ -12,7 +12,7 @@
 //!
 //! ## How the test works
 //!
-//! 1. Stage a synthetic conversation file in the user's PersonalAgent data
+//! 1. Stage a synthetic conversation file in the user's `PersonalAgent` data
 //!    directory containing a single assistant turn with a wide, multi-line
 //!    `thinking_content` block. A guard restores the original conversations
 //!    list on drop.
@@ -27,7 +27,7 @@
 //!    polling for the `ToggleThinkingVisibility` log marker.
 //! 5. Capture the top bar again.
 //! 6. Crop both screenshots to the *rightmost* slice (where the trailing
-//!    toolbar buttons live) and run ImageMagick `magick compare -metric AE`.
+//!    toolbar buttons live) and run `ImageMagick` `magick compare -metric AE`.
 //!    The rightmost buttons should be pinned to the right edge of the bar
 //!    and therefore pixel-identical across the toggle. With the bug present
 //!    the entire toolbar slides left, producing a large diff count.
