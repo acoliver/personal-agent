@@ -118,13 +118,14 @@ impl ChatView {
             .border_b_1()
             .border_color(Theme::border())
             .overflow_hidden()
-            .relative()
+            .pr(px(12.0))
+            .pl(px(if is_popout { 72.0 } else { 12.0 }))
+            .flex()
+            .items_center()
+            .justify_between()
             .child(
                 div()
-                    .absolute()
-                    .left(px(if is_popout { 72.0 } else { 12.0 }))
-                    .top(px(0.0))
-                    .h_full()
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -137,16 +138,7 @@ impl ChatView {
                     )
                     .when(yolo_active, |d| d.child(Self::render_yolo_badge())),
             )
-            .child(
-                div()
-                    .absolute()
-                    .right(px(12.0))
-                    .top(px(0.0))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .child(self.render_toolbar_buttons(cx)),
-            )
+            .child(self.render_toolbar_buttons(cx))
     }
 
     /// Persistent YOLO mode indicator badge.
@@ -446,16 +438,15 @@ impl ChatView {
             .w_full()
             .bg(Theme::bg_darker())
             .px(px(12.0))
-            .overflow_hidden()
-            .relative()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(8.0))
             .child(
                 // Left group: sidebar toggle (popout only) + conversation/profile selectors.
                 // Keep the bug icon anchored on the right regardless of selector width changes.
                 div()
-                    .absolute()
-                    .left(px(12.0))
-                    .top(px(0.0))
-                    .h_full()
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -492,16 +483,7 @@ impl ChatView {
                     })
                     .child(self.render_profile_selector(cx)),
             )
-            .child(
-                div()
-                    .absolute()
-                    .right(px(12.0))
-                    .top(px(0.0))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .child(self.render_bug_icon_btn(unviewed, cx)),
-            )
+            .child(self.render_bug_icon_btn(unviewed, cx))
     }
 
     /// Bug icon button with unviewed error count badge.
