@@ -122,11 +122,10 @@ impl ChatView {
             .pl(px(if is_popout { 72.0 } else { 12.0 }))
             .flex()
             .items_center()
+            .justify_between()
             .child(
                 div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .overflow_hidden()
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -445,8 +444,7 @@ impl ChatView {
             .gap(px(8.0))
             .child(
                 // Left group: sidebar toggle (popout only) + conversation/profile selectors.
-                // flex_shrink_0 + justify_between on the parent keeps the bug icon
-                // anchored to the right regardless of any selector width changes.
+                // Keep the bug icon anchored on the right regardless of selector width changes.
                 div()
                     .flex_shrink_0()
                     .flex()
