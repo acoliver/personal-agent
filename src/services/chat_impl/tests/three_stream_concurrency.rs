@@ -55,6 +55,153 @@ impl ChatServiceImpl {
     }
 }
 
+/// Begin three concurrent streams (A, B, C), assert duplicate-begin(A) rejects,
+/// then clear and verify all slots are free.
+///
+/// Exercises REQ-173-001.1 (per-conversation guard, not global) and
+/// REQ-173-001.2 (duplicate begin rejected).
+async fn verify_per_conversation_guard_allows_three(
+    service: &ChatServiceImpl,
+    conversation_a: Uuid,
+    conversation_b: Uuid,
+    conversation_c: Uuid,
+) {
+    service
+        .begin_stream_for_test(conversation_a)
+        .expect("begin_stream(A) should succeed");
+    service
+        .begin_stream_for_test(conversation_b)
+        .expect("begin_stream(B) should succeed (per-conversation guard, not global)");
+    service
+        .begin_stream_for_test(conversation_c)
+        .expect("begin_stream(C) should succeed (per-conversation guard, not global)");
+
+    for (label, id) in [
+        ("A", conversation_a),
+        ("B", conversation_b),
+        ("C", conversation_c),
+    ] {
+        assert!(
+            service.is_streaming_for(id),
+            "{label} should be streaming after begin_stream_for_test"
+        );
+    }
+
+    let dup_err = service
+        .begin_stream_for_test(conversation_a)
+        .expect_err("begin_stream(A) duplicate must fail");
+    assert!(
+        dup_err.to_string().contains("Stream already in progress"),
+        "expected per-conversation CAS error, got: {dup_err}"
+    );
+
+    service.clear_all_streams_for_test();
+    for (label, id) in [
+        ("A", conversation_a),
+        ("B", conversation_b),
+        ("C", conversation_c),
+    ] {
+        assert!(
+            !service.is_streaming_for(id),
+            "{label} should not be streaming after clear_all_streams_for_test"
+        );
+    }
+}
+
+/// Drain cancellation events from the shared bus and count `StreamCancelled`
+/// events per conversation id.
+fn count_stream_cancelled_events(
+    event_rx: &mut tokio::sync::broadcast::Receiver<AppEvent>,
+    a: Uuid,
+    b: Uuid,
+    c: Uuid,
+) -> (usize, usize, usize) {
+    let mut counts = (0usize, 0usize, 0usize);
+    while let Ok(event) = event_rx.try_recv() {
+        if let AppEvent::Chat(ChatEvent::StreamCancelled {
+            conversation_id, ..
+        }) = &event
+        {
+            if conversation_id == &a {
+                counts.0 += 1;
+            } else if conversation_id == &b {
+                counts.1 += 1;
+            } else if conversation_id == &c {
+                counts.2 += 1;
+            }
+        }
+    }
+    counts
+}
+
+/// Start three concurrent mock streams, cancel B mid-flight, and verify A
+/// and C remain streaming while exactly one `StreamCancelled` event is
+/// emitted for B and none for A or C.
+async fn verify_cancel_scopes_to_single_conversation(
+    service: &ChatServiceImpl,
+    conversation_a: Uuid,
+    conversation_b: Uuid,
+    conversation_c: Uuid,
+) {
+    let mut event_rx = subscribe();
+
+    service
+        .begin_stream_for_test(conversation_a)
+        .expect("begin_stream(A) should succeed");
+    service
+        .begin_stream_for_test(conversation_b)
+        .expect("begin_stream(B) should succeed");
+    service
+        .begin_stream_for_test(conversation_c)
+        .expect("begin_stream(C) should succeed");
+
+    for (label, id) in [
+        ("A", conversation_a),
+        ("B", conversation_b),
+        ("C", conversation_c),
+    ] {
+        assert!(
+            ChatService::is_streaming_for(service, id),
+            "{label} should be streaming after begin_stream_for_test"
+        );
+    }
+
+    ChatService::cancel(service, conversation_b);
+    sleep(Duration::from_millis(20)).await;
+
+    assert!(
+        !ChatService::is_streaming_for(service, conversation_b),
+        "B should not be streaming after cancel(B)"
+    );
+    assert!(
+        ChatService::is_streaming_for(service, conversation_a),
+        "A should still be streaming after cancel(B) - cancel should scope to B only"
+    );
+    assert!(
+        ChatService::is_streaming_for(service, conversation_c),
+        "C should still be streaming after cancel(B) - cancel should scope to B only"
+    );
+
+    let (a_count, b_count, c_count) = count_stream_cancelled_events(
+        &mut event_rx,
+        conversation_a,
+        conversation_b,
+        conversation_c,
+    );
+    assert_eq!(
+        b_count, 1,
+        "Should have exactly ONE StreamCancelled event for B (got {b_count})"
+    );
+    assert_eq!(
+        a_count, 0,
+        "A should NOT have any StreamCancelled events (cancel should be scoped to B)"
+    );
+    assert_eq!(
+        c_count, 0,
+        "C should NOT have any StreamCancelled events (cancel should be scoped to B)"
+    );
+}
+
 /// Test that three conversations can have active streams in parallel and that `cancel` scopes correctly.
 /// This test exercises the `begin_stream` CAS guard and verifies that `cancel(B)` only affects B and not A or C.
 /// @plan PLAN-20260416-ISSUE173.P12
@@ -62,163 +209,27 @@ impl ChatServiceImpl {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn three_conversations_stream_in_parallel_and_cancel_scopes_correctly() {
     let outer_result = timeout(Duration::from_secs(5), async {
-        // Create ChatServiceImpl
         let service = make_test_service().await;
-
-        // Create three conversation IDs
         let conversation_a = Uuid::new_v4();
         let conversation_b = Uuid::new_v4();
         let conversation_c = Uuid::new_v4();
 
-        // ==========================================
-        // Issue (a): Exercise begin_stream CAS guard
-        // ==========================================
-        // REQ-173-001.1 — verify the per-conversation guard allows three concurrent begins.
-        // This test proves that the CAS guard is per-conversation (not global) by showing
-        // that three DIFFERENT conversations can all begin streams simultaneously.
+        verify_per_conversation_guard_allows_three(
+            &service,
+            conversation_a,
+            conversation_b,
+            conversation_c,
+        )
+        .await;
 
-        // First: All three different conversations should succeed with begin_stream
-        // (proving per-conversation guard, NOT a global lock)
-        service
-            .begin_stream_for_test(conversation_a)
-            .await
-            .expect("begin_stream(A) should succeed");
-        service
-            .begin_stream_for_test(conversation_b)
-            .await
-            .expect("begin_stream(B) should succeed (per-conversation guard, not global)");
-        service
-            .begin_stream_for_test(conversation_c)
-            .await
-            .expect("begin_stream(C) should succeed (per-conversation guard, not global)");
+        verify_cancel_scopes_to_single_conversation(
+            &service,
+            conversation_a,
+            conversation_b,
+            conversation_c,
+        )
+        .await;
 
-        // Now insert a mock stream for A to simulate it being active
-        service.insert_mock_stream_for_test(conversation_a);
-
-        // Second: Duplicate begin for SAME conversation (A) must fail
-        // This distinguishes per-conversation CAS from global CAS
-        let dup_err = service
-            .begin_stream_for_test(conversation_a)
-            .await
-            .expect_err("begin_stream(A) duplicate must fail");
-        assert!(
-            dup_err.to_string().contains("Stream already in progress"),
-            "expected per-conversation CAS error, got: {dup_err}"
-        );
-
-        // Verify A is streaming (has mock stream), B and C are not yet streaming
-        assert!(
-            service.is_streaming_for(conversation_a),
-            "A should be streaming after insert_mock_stream_for_test"
-        );
-        assert!(
-            !service.is_streaming_for(conversation_b),
-            "B should NOT be streaming yet (only called begin_stream, no stream inserted)"
-        );
-        assert!(
-            !service.is_streaming_for(conversation_c),
-            "C should NOT be streaming yet (only called begin_stream, no stream inserted)"
-        );
-
-        // Clear all streams to reset state before using mock streams for the controlled test
-        service.clear_all_streams_for_test();
-
-        // Verify streams are cleared
-        assert!(
-            !service.is_streaming_for(conversation_a),
-            "A should not be streaming after clear_all_streams_for_test"
-        );
-        assert!(
-            !service.is_streaming_for(conversation_b),
-            "B should not be streaming after clear_all_streams_for_test"
-        );
-        assert!(
-            !service.is_streaming_for(conversation_c),
-            "C should not be streaming after clear_all_streams_for_test"
-        );
-
-        // Subscribe to events BEFORE inserting streams
-        let mut event_rx = subscribe();
-
-        // Insert mock active streams for all three conversations using the test helper
-        // This simulates streams that are actively running (like real LLM streams)
-        service.insert_mock_stream_for_test(conversation_a);
-        service.insert_mock_stream_for_test(conversation_b);
-        service.insert_mock_stream_for_test(conversation_c);
-
-        // Assert: All three are streaming
-        assert!(
-            ChatService::is_streaming_for(&service, conversation_a),
-            "A should be streaming after insert_mock_stream_for_test"
-        );
-        assert!(
-            ChatService::is_streaming_for(&service, conversation_b),
-            "B should be streaming after insert_mock_stream_for_test"
-        );
-        assert!(
-            ChatService::is_streaming_for(&service, conversation_c),
-            "C should be streaming after insert_mock_stream_for_test"
-        );
-
-        // Mid-flight: Cancel conversation B using the ChatService cancel API
-        ChatService::cancel(&service, conversation_b);
-
-        // Small delay to allow cancellation to propagate
-        sleep(Duration::from_millis(20)).await;
-
-        // Assert: B is no longer streaming
-        assert!(
-            !ChatService::is_streaming_for(&service, conversation_b),
-            "B should not be streaming after cancel(B)"
-        );
-
-        // Assert: A and C are still streaming (not affected by cancel on B)
-        assert!(
-            ChatService::is_streaming_for(&service, conversation_a),
-            "A should still be streaming after cancel(B) - cancel should scope to B only"
-        );
-        assert!(
-            ChatService::is_streaming_for(&service, conversation_c),
-            "C should still be streaming after cancel(B) - cancel should scope to B only"
-        );
-
-        // Drain events and verify exactly one StreamCancelled for B, none for A/C
-        let mut a_cancel_count = 0usize;
-        let mut b_cancel_count = 0usize;
-        let mut c_cancel_count = 0usize;
-
-        while let Ok(event) = event_rx.try_recv() {
-            if let AppEvent::Chat(ChatEvent::StreamCancelled {
-                conversation_id, ..
-            }) = &event
-            {
-                if conversation_id == &conversation_a {
-                    a_cancel_count += 1;
-                } else if conversation_id == &conversation_b {
-                    b_cancel_count += 1;
-                } else if conversation_id == &conversation_c {
-                    c_cancel_count += 1;
-                }
-            }
-        }
-
-        // Assert: Exactly one StreamCancelled for B
-        assert_eq!(
-            b_cancel_count, 1,
-            "Should have exactly ONE StreamCancelled event for B (got {b_cancel_count})"
-        );
-
-        // Assert: Zero StreamCancelled for A and C
-        assert_eq!(
-            a_cancel_count, 0,
-            "A should NOT have any StreamCancelled events (cancel should be scoped to B)"
-        );
-        assert_eq!(
-            c_cancel_count, 0,
-            "C should NOT have any StreamCancelled events (cancel should be scoped to B)"
-        );
-
-        // Cleanup
         service.clear_all_streams_for_test();
         let _ = crate::services::secure_store::api_keys::delete("_test_concurrent_streams");
     })

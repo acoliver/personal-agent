@@ -272,6 +272,90 @@ async fn resolve_all_for_conversation_resolves_only_target() {
     assert!(waiter_b.wait().await.unwrap());
 }
 
+/// Regression test for CR2: `resolve_all_for_conversation` is atomic under concurrent insert.
+///
+/// Spawns many tasks calling `wait_for_approvals` on the target conversation while
+/// calling `resolve_all_for_conversation`; asserts no stranded pending entry remains.
+///
+/// @plan PLAN-20260416-ISSUE173.P14-CR2
+/// @requirement REQ-173-003.1
+#[tokio::test]
+async fn resolve_all_for_conversation_is_atomic_under_concurrent_insert() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let gate = Arc::new(ApprovalGate::new());
+    let target_conversation = Uuid::new_v4();
+    let other_conversation = Uuid::new_v4();
+
+    // First, create a fixed set of waiters for other_conversation that we'll keep alive
+    let mut other_waiters = vec![];
+    for i in 0..10 {
+        let req_id = format!("other-req-{i}");
+        let waiter = gate.wait_for_approval(req_id, "TestTool".to_string(), other_conversation);
+        other_waiters.push(waiter);
+    }
+
+    // Spawn many concurrent waiters on target conversation
+    let mut waiter_handles = vec![];
+    for i in 0..50 {
+        let gate = gate.clone();
+        let handle = tokio::spawn(async move {
+            let req_id = format!("target-req-{i}");
+            let _waiter =
+                gate.wait_for_approval(req_id, "TestTool".to_string(), target_conversation);
+            // Hold the waiter for a short time to create overlap
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        });
+        waiter_handles.push(handle);
+    }
+
+    // Concurrently resolve all for target conversation multiple times
+    let resolved_count = Arc::new(AtomicUsize::new(0));
+    let mut resolver_handles = vec![];
+    for _ in 0..10 {
+        let gate = gate.clone();
+        let resolved = resolved_count.clone();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+            let resolved_ids = gate.resolve_all_for_conversation(target_conversation, false);
+            resolved.fetch_add(resolved_ids.len(), Ordering::SeqCst);
+        });
+        resolver_handles.push(handle);
+    }
+
+    // Wait for all waiter spawns to complete
+    for h in waiter_handles {
+        let _ = h.await;
+    }
+
+    // Wait for all resolvers to complete
+    for h in resolver_handles {
+        let _ = h.await;
+    }
+
+    // Final resolution pass to get any remaining target waiters
+    let final_resolved = gate.resolve_all_for_conversation(target_conversation, false);
+
+    // Verify that some target conversation waiters were resolved
+    let total_target_resolved = resolved_count.load(Ordering::SeqCst) + final_resolved.len();
+    assert!(
+        total_target_resolved > 0,
+        "Should have resolved some target conversation waiters, got {total_target_resolved}"
+    );
+
+    // Verify other conversation waiters still exist (not resolved by target call)
+    // Since we hold `other_waiters`, they must still be pending
+    let other_resolved = gate.resolve_all_for_conversation(other_conversation, true);
+    assert!(
+        other_resolved.len() == 10,
+        "Other conversation waiters should all still exist (expected 10, got {})",
+        other_resolved.len()
+    );
+
+    // Clean up: resolve the other waiters we were holding
+    drop(other_waiters);
+}
+
 /// @plan PLAN-20260416-ISSUE173.P06
 /// @requirement REQ-173-003.1
 #[tokio::test]

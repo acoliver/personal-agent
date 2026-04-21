@@ -848,8 +848,7 @@ async fn cancel_clears_current_conversation_and_pending_approvals() {
 
     let conversation_id = Uuid::new_v4();
     service
-        .begin_stream(conversation_id)
-        .await
+        .begin_stream_for_test(conversation_id)
         .expect("begin_stream should succeed");
 
     let pending_request_id = Uuid::new_v4().to_string();

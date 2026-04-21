@@ -173,12 +173,19 @@ impl ChatView {
             "enter" => self.handle_enter(cx),
             "escape" => {
                 if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
+                    // @plan PLAN-20260416-ISSUE173.P14-CR7
+                    // @requirement REQ-173-002.3
+                    // Emit the StopStreaming event only when we have a
+                    // conversation id to target, but always reset the local
+                    // composer state so the UI exits Stop mode even if we
+                    // have no active conversation id (the event and the
+                    // local composer state are independent concerns).
                     if let Some(conversation_id) = self.state.active_conversation_id {
                         println!(">>> Escape pressed - stopping stream <<<");
                         self.emit(UserEvent::StopStreaming { conversation_id });
-                        self.state.streaming = StreamingState::Idle;
-                        cx.notify();
                     }
+                    self.state.streaming = StreamingState::Idle;
+                    cx.notify();
                 }
             }
             _ => {}

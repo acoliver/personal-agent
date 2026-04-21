@@ -12,6 +12,14 @@ use gpui::{div, prelude::*, px, AnyElement, FontWeight, MouseButton, SharedStrin
 use std::collections::HashSet;
 use uuid::Uuid;
 
+/// Leading indent (px) for conversation meta and detail rows so they line up
+/// beneath the title text, past the delete icon and streaming indicator
+/// rendered in the title row.
+///
+/// @plan PLAN-20260416-ISSUE173.P14-CR6
+/// @requirement REQ-173-005.1
+const SIDEBAR_TITLE_LEADING_INDENT: f32 = 34.0;
+
 /// Returns true if this conversation should display a streaming indicator.
 ///
 /// @plan PLAN-20260416-ISSUE173.P11
@@ -482,7 +490,7 @@ fn render_title_row(
 
 fn render_meta_row(updated: &str, msg_count: usize, color: gpui::Hsla) -> impl IntoElement {
     div()
-        .pl(px(22.0))
+        .pl(px(SIDEBAR_TITLE_LEADING_INDENT))
         .text_size(px(10.0))
         .text_color(color)
         .child(SharedString::from(format!(
@@ -492,7 +500,7 @@ fn render_meta_row(updated: &str, msg_count: usize, color: gpui::Hsla) -> impl I
 
 fn render_detail_row(text: String, color: gpui::Hsla) -> impl IntoElement {
     div()
-        .pl(px(22.0))
+        .pl(px(SIDEBAR_TITLE_LEADING_INDENT))
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis()

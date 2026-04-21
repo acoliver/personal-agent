@@ -71,11 +71,13 @@ pub(super) async fn stream_agent_response(
 
 /// Finalize a stream task and clean up state for the conversation.
 /// @plan PLAN-20260416-ISSUE173.P03
+/// @plan PLAN-20260416-ISSUE173.P14-CR4
 /// @requirement REQ-173-001.3
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn finalize_stream_task(
     conversation_service: &Arc<dyn ConversationService>,
     conversation_id: Uuid,
+    stream_id: Uuid,
     compression_result: CompressionResult,
     transcript: StreamTranscript,
     active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
@@ -108,11 +110,12 @@ pub(super) async fn finalize_stream_task(
             .input_tokens
             .and_then(|input| transcript.output_tokens.map(|output| input + output)),
     }));
-    clear_streaming_state(active_streams, conversation_id);
+    clear_streaming_state(active_streams, conversation_id, stream_id);
 }
 
 /// Run a stream task for a conversation.
 /// @plan PLAN-20260416-ISSUE173.P03
+/// @plan PLAN-20260416-ISSUE173.P14-CR4
 /// @requirement REQ-173-001.1, REQ-173-001.3
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_stream_task(
@@ -123,6 +126,7 @@ pub(super) async fn run_stream_task(
     cancel: CancellationToken,
     conversation_service: Arc<dyn ConversationService>,
     conversation_id: Uuid,
+    stream_id: Uuid,
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     approval_gate: Arc<ApprovalGate>,
     policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
@@ -142,6 +146,7 @@ pub(super) async fn run_stream_task(
         mcp_tools,
         &system_prompt,
         conversation_id,
+        stream_id,
         &tx,
         &active_streams,
         &cancel,
@@ -166,6 +171,7 @@ pub(super) async fn run_stream_task(
     finalize_stream_task(
         &conversation_service,
         conversation_id,
+        stream_id,
         compression_result,
         transcript,
         &active_streams,
@@ -317,15 +323,29 @@ pub(super) async fn persist_assistant_response(
     let _ = conversation_service.add_message(conversation_id, msg).await;
 }
 
-/// Clear streaming state for a specific conversation.
+/// Clear streaming state for a specific conversation, but only if the
+/// stored entry still corresponds to the caller's `stream_id`.
+///
+/// This guards against a stale spawned task (e.g. one whose `cancel()` has
+/// already fired and which is now unwinding) removing the entry for a
+/// brand-new stream that a later `begin_stream` call has reserved for the
+/// same conversation id. Without this epoch check the old task would evict
+/// the new reservation as soon as it finished its own cleanup.
+///
 /// @plan PLAN-20260416-ISSUE173.P03
+/// @plan PLAN-20260416-ISSUE173.P14-CR4
 /// @requirement REQ-173-001.3
 pub(super) fn clear_streaming_state(
     active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
     conversation_id: Uuid,
+    stream_id: Uuid,
 ) {
     let mut map = active_streams.lock().expect("active_streams poisoned");
-    map.remove(&conversation_id);
+    if let Some(entry) = map.get(&conversation_id) {
+        if entry.stream_id == stream_id {
+            map.remove(&conversation_id);
+        }
+    }
 }
 
 pub(super) async fn persist_context_state(
