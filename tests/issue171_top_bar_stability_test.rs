@@ -143,9 +143,29 @@ fn wait_for_log_substring(needle: &str, timeout: Duration) -> bool {
     false
 }
 
+/// Abort the test if a `personal_agent_gpui` process is already running. The
+/// test launches its own instance against the real user data directory, so
+/// clashing with a developer's own session would be both destructive and
+/// confusing. Prefer a loud failure over silently pkill'ing the user's work.
+fn assert_no_existing_gpui_instance() {
+    let output = Command::new("pgrep").arg("-f").arg(APP_PROCESS).output();
+    if let Ok(out) = output {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let pids: Vec<&str> = stdout
+            .split_whitespace()
+            .filter(|p| !p.is_empty())
+            .collect();
+        assert!(
+            pids.is_empty(),
+            "a `{APP_PROCESS}` instance is already running (PIDs: {pids:?}). \
+             Close it before running this test; this harness refuses to \
+             pkill arbitrary matching processes."
+        );
+    }
+}
+
 fn launch_gpui() -> Child {
-    let _ = Command::new("pkill").arg("-f").arg(APP_PROCESS).status();
-    thread::sleep(Duration::from_millis(400));
+    assert_no_existing_gpui_instance();
 
     let bin = gpui_bin_path();
     let log_file = fs::OpenOptions::new()
@@ -170,7 +190,36 @@ fn launch_gpui() -> Child {
 fn stop_gpui(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
-    let _ = Command::new("pkill").arg("-f").arg(APP_PROCESS).status();
+}
+
+/// RAII guard that kills the launched GPUI child on drop, so a panic in any
+/// assertion before the explicit `stop_gpui()` call still cleans up the
+/// spawned process. Only the `Child` we started is touched — this never
+/// `pkill`s arbitrary `personal_agent_gpui` instances a developer might
+/// have running.
+struct GpuiChildGuard {
+    child: Option<Child>,
+}
+
+impl GpuiChildGuard {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn stop(mut self) {
+        if let Some(mut child) = self.child.take() {
+            stop_gpui(&mut child);
+        }
+    }
+}
+
+impl Drop for GpuiChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// RAII guard that drops a synthetic conversation file into the user's
@@ -319,11 +368,45 @@ fn click_at(x: u32, y: u32) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// Query the physical (pixel) dimensions of an image via `magick identify`.
+/// Returns `(width_px, height_px)` or `None` on failure.
+fn image_pixel_dimensions(src: &Path) -> Option<(u32, u32)> {
+    let output = Command::new("magick")
+        .args(["identify", "-format", "%w %h", src.to_str()?])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut parts = stdout.split_whitespace();
+    let w = parts.next()?.parse::<u32>().ok()?;
+    let h = parts.next()?.parse::<u32>().ok()?;
+    Some((w, h))
+}
+
+/// Derive the capture scale (physical pixels per logical point) by comparing
+/// the captured image's physical width to the logical width we asked for.
+/// Returns `1` on standard displays, `2` on Retina, etc. Falls back to `2`
+/// (macOS Retina) if dimensions can't be queried.
+fn capture_scale(src: &Path, requested_logical_width: u32) -> u32 {
+    image_pixel_dimensions(src)
+        .and_then(|(w_px, _h_px)| {
+            if requested_logical_width == 0 {
+                None
+            } else {
+                Some((w_px / requested_logical_width).max(1))
+            }
+        })
+        .unwrap_or(2)
+}
+
 /// Crop `src` to the rightmost `crop_w` *logical* pixels (full height) and
-/// write to `dest`. macOS Retina captures are 2× physical pixels per logical
-/// pixel, so we double the crop width before passing to ImageMagick.
-fn crop_right(src: &Path, crop_w: u32, dest: &Path) -> bool {
-    let crop = format!("{}x+0+0", crop_w * 2);
+/// write to `dest`. Scale is derived from the actual image dimensions so
+/// this works on both Retina (2×) and standard (1×) displays.
+fn crop_right(src: &Path, crop_w_logical: u32, logical_src_width: u32, dest: &Path) -> bool {
+    let scale = capture_scale(src, logical_src_width);
+    let crop = format!("{}x+0+0", crop_w_logical * scale);
     Command::new("magick")
         .args([
             src.to_str().expect("src path utf8"),
@@ -375,6 +458,7 @@ fn count_diff_pixels(a: &Path, b: &Path, diff_dest: &Path) -> Option<u64> {
 /// across the toggle.
 #[test]
 #[ignore = "Requires GPUI launch + macOS Accessibility permissions + ImageMagick"]
+#[allow(clippy::too_many_lines)]
 fn issue_171_top_bar_does_not_shift_when_thinking_toggles() {
     clear_log();
 
@@ -392,7 +476,7 @@ fn issue_171_top_bar_does_not_shift_when_thinking_toggles() {
     let after_right = dir.join("topbar_right_after.png");
     let diff = dir.join("topbar_right_diff.png");
 
-    let mut child = launch_gpui();
+    let child_guard = GpuiChildGuard::new(launch_gpui());
     assert!(
         wait_for_log_substring("All 9 presenters started", Duration::from_secs(20)),
         "GPUI app did not start within timeout"
@@ -439,23 +523,38 @@ fn issue_171_top_bar_does_not_shift_when_thinking_toggles() {
         "screencapture failed for AFTER state"
     );
 
-    stop_gpui(&mut child);
+    child_guard.stop();
 
     // ── COMPARE. ─────────────────────────────────────────────────────────────
     assert!(
-        crop_right(&before_full, RIGHT_TOOLBAR_CROP_WIDTH, &before_right),
+        crop_right(
+            &before_full,
+            RIGHT_TOOLBAR_CROP_WIDTH,
+            POPUP_WIDTH,
+            &before_right,
+        ),
         "right-crop failed for BEFORE"
     );
     assert!(
-        crop_right(&after_full, RIGHT_TOOLBAR_CROP_WIDTH, &after_right),
+        crop_right(
+            &after_full,
+            RIGHT_TOOLBAR_CROP_WIDTH,
+            POPUP_WIDTH,
+            &after_right,
+        ),
         "right-crop failed for AFTER"
     );
 
     let diff_count = count_diff_pixels(&before_right, &after_right, &diff)
         .expect("ImageMagick `magick compare` failed (is `imagemagick` installed?)");
 
-    let crop_total_pixels: u64 =
-        u64::from(RIGHT_TOOLBAR_CROP_WIDTH) * 2 * u64::from(TOP_BAR_HEIGHT) * 2; // Retina
+    // Derive scale dynamically from the captured image so the crop-area math
+    // is correct on both Retina (2×) and standard (1×) displays.
+    let scale = capture_scale(&before_full, POPUP_WIDTH);
+    let crop_total_pixels: u64 = u64::from(RIGHT_TOOLBAR_CROP_WIDTH)
+        * u64::from(scale)
+        * u64::from(TOP_BAR_HEIGHT)
+        * u64::from(scale);
     let diff_permille = diff_count.saturating_mul(1000) / crop_total_pixels.max(1);
 
     eprintln!(
