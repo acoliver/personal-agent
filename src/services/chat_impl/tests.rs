@@ -11,6 +11,8 @@ mod approval_persistence;
 #[path = "support.rs"]
 mod chat_test_support;
 mod compression_persistence;
+mod concurrent_streams;
+mod three_stream_concurrency;
 
 use chat_test_support::*;
 
@@ -724,7 +726,8 @@ async fn make_basic_chat_service() -> ChatServiceImpl {
 #[tokio::test]
 async fn test_cancel() {
     let chat_service = make_basic_chat_service().await;
-    chat_service.cancel();
+    let conversation_id = Uuid::new_v4();
+    chat_service.cancel(conversation_id);
     assert!(!chat_service.is_streaming());
 }
 
@@ -845,8 +848,7 @@ async fn cancel_clears_current_conversation_and_pending_approvals() {
 
     let conversation_id = Uuid::new_v4();
     service
-        .begin_stream(conversation_id)
-        .await
+        .begin_stream_for_test(conversation_id)
         .expect("begin_stream should succeed");
 
     let pending_request_id = Uuid::new_v4().to_string();
@@ -856,22 +858,14 @@ async fn cancel_clears_current_conversation_and_pending_approvals() {
         conversation_id,
     );
 
-    service.cancel();
+    service.cancel(conversation_id);
 
     assert!(!waiter
         .wait()
         .await
         .expect("pending waiter should be resolved as denied on cancel"));
+    assert!(!service.is_streaming_for(conversation_id));
     assert!(!service.is_streaming());
-
-    let current_conversation = *service
-        .current_conversation_id
-        .lock()
-        .expect("current conversation mutex poisoned");
-    assert!(
-        current_conversation.is_none(),
-        "cancel should clear active conversation tracking"
-    );
 
     let resolved_command = view_rx
         .recv()

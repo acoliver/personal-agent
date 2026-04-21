@@ -620,7 +620,7 @@ async fn chat_service_streaming_flag_prevents_overlapping_send_message_calls() {
         .await;
     assert!(matches!(
         second,
-        Err(ServiceError::Internal(message)) if message == "Stream already in progress"
+        Err(ServiceError::Internal(message)) if message.contains("Stream already in progress")
     ));
 
     let events: Vec<_> = first.take(4).collect().await;
@@ -635,7 +635,7 @@ async fn chat_service_streaming_flag_prevents_overlapping_send_message_calls() {
         }
         tokio::task::yield_now().await;
     }
-    chat_service.cancel();
+    chat_service.cancel(conversation_id);
     assert!(!chat_service.is_streaming());
 
     personal_agent::services::secure_store::api_keys::delete(&label).unwrap();

@@ -9,6 +9,28 @@ use crate::events::types::UserEvent;
 use crate::presentation::view_command::ConversationSummary;
 use crate::ui_gpui::theme::Theme;
 use gpui::{div, prelude::*, px, AnyElement, FontWeight, MouseButton, SharedString};
+use std::collections::HashSet;
+use uuid::Uuid;
+
+/// Leading indent (px) for conversation meta and detail rows so they line up
+/// beneath the title text, past the delete icon and streaming indicator
+/// rendered in the title row.
+///
+/// @plan PLAN-20260416-ISSUE173.P14-CR6
+/// @requirement REQ-173-005.1
+const SIDEBAR_TITLE_LEADING_INDENT: f32 = 34.0;
+
+/// Returns true if this conversation should display a streaming indicator.
+///
+/// @plan PLAN-20260416-ISSUE173.P11
+/// @requirement REQ-173-005.1
+#[must_use]
+pub fn conversation_has_streaming_indicator(
+    conversation_id: Uuid,
+    streaming_ids: &HashSet<Uuid>,
+) -> bool {
+    streaming_ids.contains(&conversation_id)
+}
 
 impl ChatView {
     /// Render the sidebar panel (~260px) with search and conversation list.
@@ -198,12 +220,18 @@ impl ChatView {
         let msg_count = conv.message_count;
         let preview = conv.preview.clone().unwrap_or_default();
 
+        // @plan PLAN-20260416-ISSUE173.P11
+        // @requirement REQ-173-005.1
+        let has_streaming_indicator =
+            conversation_has_streaming_indicator(conv_id, &self.state.streaming_conversation_ids);
+
         Self::render_conv_item_body(conv_id, is_selected)
             .child(render_title_row(
                 self.render_delete_x(conv_id, cx),
                 title,
                 title_color,
                 is_renaming,
+                has_streaming_indicator,
             ))
             .child(render_meta_row(&updated, msg_count, meta_color))
             .when(!preview.is_empty(), |d| {
@@ -256,12 +284,18 @@ impl ChatView {
             Theme::accent()
         };
 
+        // @plan PLAN-20260416-ISSUE173.P11
+        // @requirement REQ-173-005.1
+        let has_streaming_indicator =
+            conversation_has_streaming_indicator(conv_id, &self.state.streaming_conversation_ids);
+
         Self::render_conv_item_body(conv_id, is_selected)
             .child(render_title_row(
                 self.render_delete_x(conv_id, cx),
                 title,
                 title_color,
                 false,
+                has_streaming_indicator,
             ))
             .child(render_meta_row(&updated, msg_count, meta_color))
             .when(!context.is_empty(), |d| {
@@ -408,17 +442,35 @@ fn selection_colors(is_selected: bool) -> (gpui::Hsla, gpui::Hsla) {
     }
 }
 
+/// Render a streaming indicator dot for sidebar conversation items.
+///
+/// @plan PLAN-20260416-ISSUE173.P11
+/// @requirement REQ-173-005.1
+fn render_streaming_indicator(show: bool) -> impl IntoElement {
+    div()
+        .size(px(6.0))
+        .rounded(px(3.0))
+        .flex_shrink_0()
+        .when(show, |d| d.bg(Theme::accent()))
+        .when(!show, |d| d.bg(gpui::transparent_black()))
+}
+
 fn render_title_row(
     delete_x: impl IntoElement,
     title: String,
     title_color: gpui::Hsla,
     is_renaming: bool,
+    has_streaming_indicator: bool,
 ) -> impl IntoElement {
     div()
         .flex()
         .items_center()
         .gap(px(6.0))
         .child(delete_x)
+        // @plan PLAN-20260416-ISSUE173.P11
+        // @requirement REQ-173-005.2
+        // @requirement REQ-173-005.3
+        .child(render_streaming_indicator(has_streaming_indicator))
         .child(
             div()
                 .flex_1()
@@ -438,7 +490,7 @@ fn render_title_row(
 
 fn render_meta_row(updated: &str, msg_count: usize, color: gpui::Hsla) -> impl IntoElement {
     div()
-        .pl(px(22.0))
+        .pl(px(SIDEBAR_TITLE_LEADING_INDENT))
         .text_size(px(10.0))
         .text_color(color)
         .child(SharedString::from(format!(
@@ -448,7 +500,7 @@ fn render_meta_row(updated: &str, msg_count: usize, color: gpui::Hsla) -> impl I
 
 fn render_detail_row(text: String, color: gpui::Hsla) -> impl IntoElement {
     div()
-        .pl(px(22.0))
+        .pl(px(SIDEBAR_TITLE_LEADING_INDENT))
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
@@ -471,5 +523,55 @@ fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
         format!("{}d ago", diff.num_days())
     } else {
         dt.format("%b %d").to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use uuid::Uuid;
+
+    use super::conversation_has_streaming_indicator;
+
+    /// @plan PLAN-20260416-ISSUE173.P10
+    /// @requirement REQ-173-005.1
+    #[test]
+    fn conversation_has_streaming_indicator_true_when_in_set() {
+        let conversation_id = Uuid::new_v4();
+        let mut streaming_ids = HashSet::new();
+        streaming_ids.insert(conversation_id);
+
+        assert!(
+            conversation_has_streaming_indicator(conversation_id, &streaming_ids),
+            "conversation should have streaming indicator when its id is in the set"
+        );
+    }
+
+    /// @plan PLAN-20260416-ISSUE173.P10
+    /// @requirement REQ-173-005.1
+    #[test]
+    fn conversation_has_streaming_indicator_false_when_not_in_set() {
+        let conversation_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        let mut streaming_ids = HashSet::new();
+        streaming_ids.insert(other_id);
+
+        assert!(
+            !conversation_has_streaming_indicator(conversation_id, &streaming_ids),
+            "conversation should NOT have streaming indicator when its id is NOT in the set"
+        );
+    }
+
+    /// @plan PLAN-20260416-ISSUE173.P10
+    /// @requirement REQ-173-005.1
+    #[test]
+    fn conversation_has_streaming_indicator_false_for_empty_set() {
+        let conversation_id = Uuid::new_v4();
+        let streaming_ids = HashSet::new();
+
+        assert!(
+            !conversation_has_streaming_indicator(conversation_id, &streaming_ids),
+            "conversation should NOT have streaming indicator when the set is empty"
+        );
     }
 }

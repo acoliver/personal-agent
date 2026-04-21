@@ -309,11 +309,15 @@ impl ChatService for MockChatService {
         Ok(Box::new(stream::empty::<ChatStreamEvent>()))
     }
 
-    fn cancel(&self) {
+    fn cancel(&self, _conversation_id: Uuid) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
     fn is_streaming(&self) -> bool {
+        false
+    }
+
+    fn is_streaming_for(&self, _conversation_id: Uuid) -> bool {
         false
     }
 
@@ -710,7 +714,7 @@ async fn stop_streaming_invokes_chat_service_cancel() {
     let _ = collect_commands(&mut view_rx).await;
 
     event_bus
-        .publish(AppEvent::User(UserEvent::StopStreaming))
+        .publish(AppEvent::User(UserEvent::StopStreaming { conversation_id }))
         .expect("publish stop event");
     let _ = collect_commands(&mut view_rx).await;
 

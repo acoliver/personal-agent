@@ -336,13 +336,14 @@ async fn chat_service_send_message_reports_add_user_message_failures() {
 #[tokio::test]
 async fn chat_service_cancel_clears_streaming_flag() {
     let profile = profile_with_label("chat-service-cancel");
+    let conversation_id = Uuid::new_v4();
     let conversation_service = Arc::new(InMemoryConversationService::new(vec![Conversation::new(
         profile.id,
     )]));
     let profile_service = Arc::new(MockProfileService::new(Some(profile)));
     let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
 
-    chat_service.cancel();
+    chat_service.cancel(conversation_id);
 
     assert!(!chat_service.is_streaming());
 }

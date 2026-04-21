@@ -213,6 +213,56 @@ impl ApprovalGate {
 
         resolved
     }
+
+    /// Resolve all pending approvals owned by `conversation_id`.
+    ///
+    /// Used for per-conversation cancellation so cancelling conversation A
+    /// does not wake waiters belonging to conversation B.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P07
+    /// @plan PLAN-20260416-ISSUE173.P14-CR2
+    /// @requirement REQ-173-003.1
+    /// @requirement REQ-173-003.2
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (which should never happen in normal operation).
+    #[must_use]
+    pub fn resolve_all_for_conversation(
+        &self,
+        conversation_id: Uuid,
+        approved: bool,
+    ) -> Vec<(Uuid, String)> {
+        // Use a single lock scope: extract matching entries atomically using `drain` + partition.
+        // This prevents the race where a new waiter is inserted between key collection and removal.
+        let extracted: Vec<(String, PendingApproval)>;
+        {
+            let mut pending = self.pending.lock().unwrap();
+            let drained: Vec<_> = pending.drain().collect();
+            // Partition into (matching, non-matching) without cloning
+            let mut matching = Vec::new();
+            let mut non_matching = Vec::new();
+            for item in drained {
+                if item.1.conversation_id == conversation_id {
+                    matching.push(item);
+                } else {
+                    non_matching.push(item);
+                }
+            }
+            extracted = matching;
+            // Re-insert non-matching entries
+            for (k, v) in non_matching {
+                pending.insert(k, v);
+            }
+        } // guard dropped here
+
+        let mut resolved = Vec::with_capacity(extracted.len());
+        for (request_id, pending_approval) in extracted {
+            let _ = pending_approval.tx.send(approved);
+            resolved.push((pending_approval.conversation_id, request_id));
+        }
+        resolved
+    }
 }
 
 impl Default for ApprovalGate {

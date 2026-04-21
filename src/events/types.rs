@@ -48,8 +48,11 @@ pub enum UserEvent {
     /// User clicked send or pressed Enter
     SendMessage { text: String },
 
-    /// User clicked stop during streaming
-    StopStreaming,
+    /// User requested to stop a conversation's active stream.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P05
+    /// @requirement REQ-173-002.3
+    StopStreaming { conversation_id: Uuid },
 
     /// User clicked new conversation
     NewConversation,

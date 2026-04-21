@@ -14,11 +14,12 @@ use crate::presentation::view_command::ViewCommand;
 use crate::services::template::{build_skills_prompt_block, expand_system_prompt, TemplateContext};
 use crate::services::{ConversationService, SkillsService};
 use futures::{stream, Stream};
+use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod streaming;
@@ -30,14 +31,43 @@ use streaming::{clear_streaming_state, emit_stream_error, run_stream_task, STREA
 use streaming::persist_context_state;
 
 const COMPRESSION_SETTINGS_KEY: &str = "compression";
+
+/// Lifecycle state of an active stream.
+/// @plan PLAN-20260416-ISSUE173.P14-CR3
+pub(super) enum StreamLifecycle {
+    /// Stream reservation held, but task not yet spawned.
+    /// This prevents race conditions where concurrent sends could duplicate
+    /// messages before the stream is tracked.
+    Starting,
+    /// Stream task is running and handling the LLM response.
+    Running,
+}
+
+/// Active stream state for a single conversation.
+/// @plan PLAN-20260416-ISSUE173.P03
+/// @plan PLAN-20260416-ISSUE173.P14-CR3
+/// @requirement REQ-173-001.1
+pub(super) struct ActiveStream {
+    /// Unique epoch identifier for this stream instance.
+    /// Used to prevent stale task cleanup from evicting newer streams.
+    pub(super) stream_id: Uuid,
+    /// The spawned task handle. None while in Starting state.
+    pub(super) task: Option<JoinHandle<()>>,
+    /// Cancellation token for cooperative cancellation.
+    pub(super) cancel: CancellationToken,
+    /// Current lifecycle state of the stream.
+    pub(super) state: StreamLifecycle,
+}
+
 pub struct ChatServiceImpl {
     conversation_service: Arc<dyn ConversationService>,
     profile_service: Arc<dyn super::ProfileService>,
     app_settings_service: Arc<dyn super::AppSettingsService>,
     skills_service: Arc<dyn SkillsService>,
-    is_streaming: Arc<AtomicBool>,
-    current_conversation_id: Arc<StdMutex<Option<Uuid>>>,
-    stream_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
+    /// Per-conversation active streams. Replaces `is_streaming`/`current_conversation_id`/`stream_task`.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
+    active_streams: Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
     /// Channel for sending view commands (used for tool approval UI)
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     /// Approval gate for coordinating user approval of tool execution
@@ -64,9 +94,9 @@ impl ChatServiceImpl {
             profile_service,
             app_settings_service,
             skills_service,
-            is_streaming: Arc::new(AtomicBool::new(false)),
-            current_conversation_id: Arc::new(StdMutex::new(None)),
-            stream_task: Arc::new(StdMutex::new(None)),
+            // @plan PLAN-20260416-ISSUE173.P03
+            // @requirement REQ-173-001.1
+            active_streams: Arc::new(StdMutex::new(HashMap::new())),
             view_tx,
             approval_gate,
             policy,
@@ -155,25 +185,64 @@ impl ChatServiceImpl {
         }
     }
 
-    async fn begin_stream(&self, conversation_id: Uuid) -> ServiceResult<()> {
-        if self
-            .is_streaming
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
-            .is_err()
+    /// Reserve a slot for a new stream for a specific conversation.
+    ///
+    /// Returns `(stream_id, cancel_token)` on success, or
+    /// `ServiceError::Internal` when the conversation already has an entry.
+    ///
+    /// The check-and-insert is performed atomically under a single lock
+    /// acquisition, so concurrent calls on the same `conversation_id` cannot
+    /// both pass the guard (which previously allowed duplicate user messages
+    /// to be written during `prepare_message_context` before either stream
+    /// was tracked).
+    ///
+    /// The reservation is inserted in `StreamLifecycle::Starting` with
+    /// `task = None`. `spawn_stream_task` later upgrades the entry to
+    /// `StreamLifecycle::Running` with the task handle, matching by
+    /// `stream_id` so a superseded reservation cannot overwrite a newer one.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @plan PLAN-20260416-ISSUE173.P14-CR3
+    /// @plan PLAN-20260416-ISSUE173.P14-CR4
+    /// @requirement REQ-173-001.1
+    /// @requirement REQ-173-001.2
+    fn begin_stream(&self, conversation_id: Uuid) -> ServiceResult<(Uuid, CancellationToken)> {
+        let stream_id = Uuid::new_v4();
+        let cancel = CancellationToken::new();
         {
-            return Err(ServiceError::Internal(
-                "Stream already in progress".to_string(),
-            ));
+            let mut map = self.active_streams.lock().expect("active_streams poisoned");
+            if map.contains_key(&conversation_id) {
+                return Err(ServiceError::Internal(
+                    "Stream already in progress for this conversation".to_string(),
+                ));
+            }
+            map.insert(
+                conversation_id,
+                ActiveStream {
+                    stream_id,
+                    task: None,
+                    cancel: cancel.clone(),
+                    state: StreamLifecycle::Starting,
+                },
+            );
         }
+        Ok((stream_id, cancel))
+    }
 
-        {
-            let mut current = self
-                .current_conversation_id
-                .lock()
-                .expect("current conversation mutex poisoned");
-            *current = Some(conversation_id);
+    /// Clear a reservation made by `begin_stream` if it has not been upgraded
+    /// to `Running` and the `stream_id` still matches. Used when prep-work
+    /// fails between `begin_stream` and `spawn_stream_task`, so the slot
+    /// does not stay held by a stream that never spawned.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P14-CR3
+    /// @requirement REQ-173-001.2
+    fn clear_reservation(&self, conversation_id: Uuid, stream_id: Uuid) {
+        let mut map = self.active_streams.lock().expect("active_streams poisoned");
+        if let Some(entry) = map.get(&conversation_id) {
+            if entry.stream_id == stream_id && matches!(entry.state, StreamLifecycle::Starting) {
+                map.remove(&conversation_id);
+            }
         }
-        Ok(())
     }
 
     async fn load_compression_config(&self) -> CompressionConfig {
@@ -201,25 +270,36 @@ impl ChatServiceImpl {
         }
     }
 
-    fn cancel_active_stream(&self) {
-        self.is_streaming.store(false, Ordering::Release);
+    /// Cancel the active stream for a specific conversation.
+    ///
+    /// Always resolves any pending approvals for the target conversation and emits
+    /// a scoped `StreamCancelled` event. If a spawned task exists for the
+    /// conversation it is aborted and its cancellation token is fired.
+    /// Phase 7 replaces `resolve_all(false)` with a conversation-scoped variant;
+    /// until then, pending approvals for other conversations are still drained
+    /// here to preserve prior semantics — the narrower scope is the explicit
+    /// deliverable of P07.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-002.1, REQ-173-002.2
+    fn cancel_active_stream(&self, conversation_id: Uuid) {
+        let removed = {
+            let mut map = self.active_streams.lock().expect("active_streams poisoned");
+            map.remove(&conversation_id)
+        };
 
-        let conversation_id = *self
-            .current_conversation_id
-            .lock()
-            .expect("current conversation mutex poisoned");
-
-        let task_to_abort = self
-            .stream_task
-            .lock()
-            .expect("stream task mutex poisoned")
-            .take();
-        if let Some(task) = task_to_abort {
-            task.abort();
+        if let Some(active) = removed {
+            active.cancel.cancel();
+            if let Some(handle) = active.task {
+                handle.abort();
+            }
         }
 
-        let resolved_requests = self.approval_gate.resolve_all(false);
-        for (resolved_conversation_id, request_id) in resolved_requests {
+        // @plan PLAN-20260416-ISSUE173.P07
+        // @requirement REQ-173-003.3
+        let resolved = self
+            .approval_gate
+            .resolve_all_for_conversation(conversation_id, false);
+        for (resolved_conversation_id, request_id) in resolved {
             let _ = self.view_tx.try_send(ViewCommand::ToolApprovalResolved {
                 conversation_id: resolved_conversation_id,
                 request_id,
@@ -227,21 +307,11 @@ impl ChatServiceImpl {
             });
         }
 
-        if let Some(conversation_id) = conversation_id {
-            let _ = emit(AppEvent::Chat(ChatEvent::StreamCancelled {
-                conversation_id,
-                message_id: Uuid::new_v4(),
-                partial_content: String::new(),
-            }));
-        }
-
-        {
-            let mut current = self
-                .current_conversation_id
-                .lock()
-                .expect("current conversation mutex poisoned");
-            *current = None;
-        }
+        let _ = emit(AppEvent::Chat(ChatEvent::StreamCancelled {
+            conversation_id,
+            message_id: Uuid::new_v4(),
+            partial_content: String::new(),
+        }));
     }
 
     async fn prepare_message_context(
@@ -495,15 +565,31 @@ impl ChatServiceImpl {
         }));
     }
 
+    /// Spawn a stream task for a conversation and upgrade its reservation
+    /// from `Starting` to `Running` in `active_streams`.
+    ///
+    /// The reservation (created by `begin_stream`) already holds the cancel
+    /// token that was handed to this method. The upgrade is guarded by
+    /// `stream_id`: if the entry in the map belongs to a newer stream
+    /// (superseded reservation), the spawned task is aborted and no change
+    /// is made. If the entry has been removed (e.g. by `cancel_active_stream`
+    /// between `begin_stream` and spawn), the spawned task is aborted.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @plan PLAN-20260416-ISSUE173.P14-CR3
+    /// @plan PLAN-20260416-ISSUE173.P14-CR4
+    /// @requirement REQ-173-001.1
+    #[allow(clippy::too_many_arguments)]
     async fn spawn_stream_task(
         &self,
         conversation_id: Uuid,
+        stream_id: Uuid,
+        cancel: CancellationToken,
         prepared: PreparedMessageContext,
         mcp_tools: Vec<crate::llm::tools::Tool>,
         tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     ) {
-        let is_streaming = self.is_streaming.clone();
-        let current_conversation_id = self.current_conversation_id.clone();
+        let active_streams = self.active_streams.clone();
         let conversation_service = self.conversation_service.clone();
         let view_tx = self.view_tx.clone();
         let approval_gate = self.approval_gate.clone();
@@ -514,10 +600,11 @@ impl ChatServiceImpl {
                 prepared,
                 mcp_tools,
                 tx,
-                is_streaming,
-                current_conversation_id,
+                active_streams,
+                cancel,
                 conversation_service,
                 conversation_id,
+                stream_id,
                 view_tx,
                 approval_gate,
                 policy,
@@ -525,9 +612,18 @@ impl ChatServiceImpl {
             .await;
         });
 
-        let mut stream_task = self.stream_task.lock().expect("stream task mutex poisoned");
-        if let Some(previous_task) = stream_task.replace(handle) {
-            previous_task.abort();
+        let mut map = self.active_streams.lock().expect("active_streams poisoned");
+        match map.get_mut(&conversation_id) {
+            Some(entry) if entry.stream_id == stream_id => {
+                entry.task = Some(handle);
+                entry.state = StreamLifecycle::Running;
+            }
+            // Entry was superseded by a newer reservation, or was removed
+            // (e.g. by a concurrent cancel). Abort the spawned task so it
+            // does not keep running untracked.
+            _ => {
+                handle.abort();
+            }
         }
     }
 
@@ -569,7 +665,7 @@ impl ChatServiceImpl {
             }
             ToolApprovalResponseAction::ProceedOnce => {}
             ToolApprovalResponseAction::Denied => {
-                self.cancel_active_stream();
+                self.cancel_active_stream(conversation_id);
             }
         }
 
@@ -629,15 +725,19 @@ fn build_stream_context(
     }
 }
 
+/// Create a stream agent for a conversation.
+/// @plan PLAN-20260416-ISSUE173.P03
+/// @requirement REQ-173-001.1
 #[allow(clippy::too_many_arguments)]
 async fn create_stream_agent(
     client: &LlmClient,
     mcp_tools: Vec<crate::llm::tools::Tool>,
     system_prompt: &str,
     conversation_id: Uuid,
+    stream_id: Uuid,
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
-    is_streaming: &Arc<AtomicBool>,
-    current_conversation_id: &Arc<StdMutex<Option<Uuid>>>,
+    active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    _cancel: &tokio_util::sync::CancellationToken,
 ) -> Option<serdes_ai_agent::Agent<crate::llm::client_agent::McpToolContext>> {
     match client.create_agent(mcp_tools, system_prompt).await {
         Ok(agent) => Some(agent),
@@ -648,7 +748,7 @@ async fn create_stream_agent(
                 "Failed to create agent for chat stream"
             );
             emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
-            clear_streaming_state(is_streaming, current_conversation_id, conversation_id);
+            clear_streaming_state(active_streams, conversation_id, stream_id);
             None
         }
     }
@@ -663,18 +763,29 @@ impl ChatService for ChatServiceImpl {
         conversation_id: Uuid,
         content: String,
     ) -> ServiceResult<Box<dyn futures::Stream<Item = ChatStreamEvent> + Send + Unpin>> {
-        self.begin_stream(conversation_id).await?;
+        // Reserve the slot atomically BEFORE any await, so two concurrent
+        // sends on the same conversation cannot both pass the guard and
+        // both write a user message via prepare_message_context.
+        //
+        // @plan PLAN-20260416-ISSUE173.P14-CR3
+        // @requirement REQ-173-001.2
+        let (stream_id, cancel) = self.begin_stream(conversation_id)?;
+
         self.refresh_tool_approval_policy_from_settings().await;
 
-        let prepared = self
-            .prepare_message_context(conversation_id, content)
-            .await?;
+        let prepared = match self.prepare_message_context(conversation_id, content).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.clear_reservation(conversation_id, stream_id);
+                return Err(error);
+            }
+        };
         Self::emit_stream_started(conversation_id, prepared.profile.model_id.clone());
 
         let mcp_tools = self.load_mcp_tools().await;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ChatStreamEvent>();
-        self.spawn_stream_task(conversation_id, prepared, mcp_tools, tx)
+        self.spawn_stream_task(conversation_id, stream_id, cancel, prepared, mcp_tools, tx)
             .await;
 
         let message_stream: Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>> =
@@ -685,15 +796,30 @@ impl ChatService for ChatServiceImpl {
         Ok(Box::new(message_stream))
     }
 
-    /// Cancel the current streaming operation
-    fn cancel(&self) {
-        // Force-cancel the active stream task so tool loops stop immediately.
-        self.cancel_active_stream();
+    /// Cancel the streaming operation for a specific conversation.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-002.1
+    fn cancel(&self, conversation_id: Uuid) {
+        self.cancel_active_stream(conversation_id);
     }
 
-    /// Check if currently streaming
+    /// Check if any stream is currently active.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.1
     fn is_streaming(&self) -> bool {
-        self.is_streaming.load(Ordering::Acquire)
+        let map = self.active_streams.lock().expect("active_streams poisoned");
+        !map.is_empty()
+    }
+
+    /// Check if a specific conversation has an active stream.
+    /// Only considers streams in `Running` state as "streaming" (not `Starting` reservations).
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @plan PLAN-20260416-ISSUE173.P14-CR3
+    /// @requirement REQ-173-001.1
+    fn is_streaming_for(&self, conversation_id: Uuid) -> bool {
+        let map = self.active_streams.lock().expect("active_streams poisoned");
+        map.get(&conversation_id)
+            .is_some_and(|a| matches!(a.state, StreamLifecycle::Running))
     }
 
     async fn resolve_tool_approval(
@@ -702,6 +828,90 @@ impl ChatService for ChatServiceImpl {
         decision: ToolApprovalResponseAction,
     ) -> ServiceResult<()> {
         Self::resolve_tool_approval(self, request_id, decision).await
+    }
+}
+
+#[cfg(test)]
+impl ChatServiceImpl {
+    /// Test-only shim to begin a stream for a specific conversation.
+    ///
+    /// Exercises the real `begin_stream` guard path (same synchronous
+    /// reservation used in production `send_message`), then promotes the
+    /// reservation from `Starting` to `Running` by attaching a long-sleeping
+    /// mock task. This matches what `spawn_stream_task` does for real
+    /// streams, so tests see `is_streaming_for` return `true` without
+    /// driving an actual LLM stream.
+    ///
+    /// Returns `Err` with the real error message if `begin_stream`
+    /// rejects the reservation (e.g. duplicate conversation).
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P14-CR5
+    /// @requirement REQ-173-001.1
+    /// @requirement REQ-173-001.2
+    pub(crate) fn begin_stream_for_test(&self, conversation_id: Uuid) -> ServiceResult<()> {
+        let (stream_id, cancel) = self.begin_stream(conversation_id)?;
+
+        // Mock long-running task. When the stream is cancelled or cleared,
+        // the `CancellationToken` is cancelled (and `task.abort()` is called
+        // by `cancel_active_stream` / `clear_all_streams_for_test`), which
+        // wakes this sleep and lets the task exit cleanly.
+        let mut task = Some(tokio::spawn(async move {
+            tokio::select! {
+                () = cancel.cancelled() => {}
+                () = tokio::time::sleep(tokio::time::Duration::from_hours(1)) => {}
+            }
+        }));
+
+        let promoted = {
+            let mut map = self.active_streams.lock().expect("active_streams poisoned");
+            if let Some(entry) = map.get_mut(&conversation_id) {
+                if entry.stream_id == stream_id {
+                    entry.task = task.take();
+                    entry.state = StreamLifecycle::Running;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if promoted {
+            Ok(())
+        } else {
+            // Entry was replaced or removed between reserve and promotion —
+            // drop the spawned task to avoid leaking it.
+            if let Some(handle) = task {
+                handle.abort();
+            }
+            Err(ServiceError::Internal(
+                "Stream reservation lost before promotion".to_string(),
+            ))
+        }
+    }
+
+    /// Test-only helper to read back the `stream_id` of the active entry for
+    /// a conversation, if any. Used by CR #4 regression tests that verify
+    /// a stale task cannot evict a newer stream.
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P14-CR4
+    /// @requirement REQ-173-001.3
+    pub(crate) fn stream_id_for_test(&self, conversation_id: Uuid) -> Option<Uuid> {
+        let map = self.active_streams.lock().expect("active_streams poisoned");
+        map.get(&conversation_id).map(|a| a.stream_id)
+    }
+
+    /// Test-only helper to clear all mock streams.
+    /// @plan PLAN-20260416-ISSUE173.P03
+    /// @requirement REQ-173-001.3
+    pub(crate) fn clear_all_streams_for_test(&self) {
+        let mut map = self.active_streams.lock().expect("active_streams poisoned");
+        for (_, active) in map.drain() {
+            active.cancel.cancel();
+            if let Some(handle) = active.task {
+                handle.abort();
+            }
+        }
     }
 }
 

@@ -154,8 +154,9 @@ impl ChatPresenter {
                 )
                 .await;
             }
-            UserEvent::StopStreaming => {
-                Self::handle_stop_streaming(chat_service, view_tx).await;
+            // @plan PLAN-20260416-ISSUE173.P05
+            UserEvent::StopStreaming { conversation_id } => {
+                Self::handle_stop_streaming(chat_service, view_tx, conversation_id).await;
             }
             UserEvent::NewConversation => {
                 Self::handle_new_conversation(conversation_service, profile_service, view_tx).await;
@@ -642,13 +643,14 @@ impl ChatPresenter {
 
     /// Handle `StopStreaming` user event
     ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
+    /// @plan PLAN-20260416-ISSUE173.P05
+    /// @requirement REQ-173-002.3
     async fn handle_stop_streaming(
         chat_service: &Arc<dyn ChatService>,
         _view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
     ) {
-        chat_service.cancel();
+        chat_service.cancel(conversation_id);
         // StreamCancelled event will be emitted by the service
     }
 

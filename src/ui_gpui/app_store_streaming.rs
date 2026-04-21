@@ -37,6 +37,8 @@ fn remove_empty_state_for_target(inner: &mut AppStoreInner, target: Uuid) {
     }
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.3
 pub(super) fn resolve_nil_or_explicit_target(
     inner: &AppStoreInner,
     conversation_id: Uuid,
@@ -45,14 +47,21 @@ pub(super) fn resolve_nil_or_explicit_target(
         tracing::warn!(
             "Received nil conversation_id for streaming event; falling back to active/selected target"
         );
-        inner
-            .active_streaming_target
-            .or(inner.snapshot.chat.selected_conversation_id)
+        // Prefer the selected conversation if it is currently active; otherwise any
+        // one from the set (arbitrary but stable is unimportant — this is a legacy
+        // fallback for nil ids).
+        let selected = inner.snapshot.chat.selected_conversation_id;
+        selected
+            .filter(|id| inner.active_streaming_targets.contains(id))
+            .or_else(|| inner.active_streaming_targets.iter().copied().next())
+            .or(selected)
     } else {
         Some(conversation_id)
     }
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.1
 pub(super) fn show_thinking_for_target(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
@@ -68,7 +77,7 @@ pub(super) fn show_thinking_for_target(
     state.model_id = Some(model_id);
 
     if changed {
-        inner.active_streaming_target = Some(target);
+        inner.active_streaming_targets.insert(target);
     }
 
     changed
@@ -92,6 +101,8 @@ pub(super) fn hide_thinking_for_target(inner: &mut AppStoreInner, conversation_i
     true
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.1
 pub(super) fn append_thinking_buffer_for_target(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
@@ -108,10 +119,12 @@ pub(super) fn append_thinking_buffer_for_target(
     let state = streaming_state_mut(inner, target);
     state.thinking_visible = true;
     state.thinking_buffer.push_str(content);
-    inner.active_streaming_target = Some(target);
+    inner.active_streaming_targets.insert(target);
     true
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.1
 pub(super) fn append_stream_buffer_for_target(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
@@ -127,10 +140,12 @@ pub(super) fn append_stream_buffer_for_target(
 
     let state = streaming_state_mut(inner, target);
     state.stream_buffer.push_str(chunk);
-    inner.active_streaming_target = Some(target);
+    inner.active_streaming_targets.insert(target);
     true
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.1
 pub(super) fn finalize_stream_for_target(inner: &mut AppStoreInner, conversation_id: Uuid) -> bool {
     let Some(target) = resolve_nil_or_explicit_target(inner, conversation_id) else {
         return false;
@@ -162,14 +177,14 @@ pub(super) fn finalize_stream_for_target(inner: &mut AppStoreInner, conversation
         inner.finalized_stream_guards.remove(&target);
     }
 
-    if inner.active_streaming_target == Some(target) {
-        inner.active_streaming_target = None;
-    }
+    inner.active_streaming_targets.remove(&target);
     inner.streaming_states.remove(&target);
     clear_streaming_ephemera_only(inner);
     true
 }
 
+/// @plan PLAN-20260416-ISSUE173.P09
+/// @requirement REQ-173-004.1
 pub(super) fn clear_streaming_ephemera_for_target(
     inner: &mut AppStoreInner,
     conversation_id: Uuid,
@@ -180,7 +195,7 @@ pub(super) fn clear_streaming_ephemera_for_target(
     };
 
     let has_state = inner.streaming_states.contains_key(&target);
-    let was_active = inner.active_streaming_target == Some(target);
+    let was_active = inner.active_streaming_targets.contains(&target);
     if !has_state && !was_active {
         return false;
     }
@@ -194,12 +209,12 @@ pub(super) fn clear_streaming_ephemera_for_target(
     } else {
         inner.streaming_states.remove(&target);
     }
-    if inner.active_streaming_target == Some(target) {
-        inner.active_streaming_target = None;
-    }
+    inner.active_streaming_targets.remove(&target);
 
     true
 }
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_concurrent;

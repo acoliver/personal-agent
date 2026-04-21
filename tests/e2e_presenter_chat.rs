@@ -366,8 +366,11 @@ async fn test_chat_presenter_error_handling() {
             ))
         }
 
-        fn cancel(&self) {}
+        fn cancel(&self, _conversation_id: Uuid) {}
         fn is_streaming(&self) -> bool {
+            false
+        }
+        fn is_streaming_for(&self, _conversation_id: Uuid) -> bool {
             false
         }
 

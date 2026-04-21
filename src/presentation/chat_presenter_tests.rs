@@ -135,11 +135,15 @@ impl ChatService for MockChatService {
         Ok(Box::new(stream))
     }
 
-    fn cancel(&self) {
+    fn cancel(&self, _conversation_id: Uuid) {
         // Mock cancel does nothing
     }
 
     fn is_streaming(&self) -> bool {
+        false
+    }
+
+    fn is_streaming_for(&self, _conversation_id: Uuid) -> bool {
         false
     }
 
@@ -289,15 +293,17 @@ async fn test_handle_send_message_emits_events() {
 }
 
 /// Test handle stop streaming
-/// @plan PLAN-20250125-REFACTOR.P12
-/// @requirement REQ-027.1
+/// @plan PLAN-20260416-ISSUE173.P05
+/// @requirement REQ-173-002.3
 #[tokio::test]
 async fn test_handle_stop_streaming() {
     let chat_service = Arc::new(MockChatService) as Arc<dyn ChatService>;
     let (view_tx, _) = mpsc::channel::<ViewCommand>(100);
+    let conversation_id = Uuid::new_v4();
 
-    // Stop should call cancel on chat service
-    ChatPresenter::handle_stop_streaming(&chat_service, &mut view_tx.clone()).await;
+    // Stop should call cancel on chat service with provided conversation id
+    ChatPresenter::handle_stop_streaming(&chat_service, &mut view_tx.clone(), conversation_id)
+        .await;
 
     // If we get here without panic, test passes
     assert!(!chat_service.is_streaming());
@@ -876,3 +882,6 @@ fn test_conversation_search_result_fields() {
     let clone = result.clone();
     assert_eq!(result, clone);
 }
+
+#[path = "chat_presenter_cancel_tests.rs"]
+mod cancel_tests;

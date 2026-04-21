@@ -1,7 +1,7 @@
 //! Streaming helper functions for `ChatServiceImpl`.
 
 use super::{
-    AgentClientExt, ApprovalGate, AsyncMutex, AtomicBool, ChatEvent, ChatStreamEvent,
+    ActiveStream, AgentClientExt, ApprovalGate, AsyncMutex, ChatEvent, ChatStreamEvent,
     CompressionResult, LlmMessage, PreparedMessageContext, ServiceError, StdMutex,
     ToolApprovalPolicy, ViewCommand,
 };
@@ -10,8 +10,9 @@ use crate::llm::error::debug_error_message;
 use crate::llm::{LlmClient, StreamEvent as LlmStreamEvent};
 use crate::models::{ContextState, Message};
 use crate::services::ConversationService;
-use std::sync::atomic::Ordering;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{build_stream_context, create_stream_agent};
@@ -68,14 +69,18 @@ pub(super) async fn stream_agent_response(
     transcript
 }
 
+/// Finalize a stream task and clean up state for the conversation.
+/// @plan PLAN-20260416-ISSUE173.P03
+/// @plan PLAN-20260416-ISSUE173.P14-CR4
+/// @requirement REQ-173-001.3
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn finalize_stream_task(
     conversation_service: &Arc<dyn ConversationService>,
     conversation_id: Uuid,
+    stream_id: Uuid,
     compression_result: CompressionResult,
     transcript: StreamTranscript,
-    is_streaming: &Arc<AtomicBool>,
-    current_conversation_id: &Arc<StdMutex<Option<Uuid>>>,
+    active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
     model_label: &str,
 ) {
     persist_assistant_response(
@@ -105,18 +110,23 @@ pub(super) async fn finalize_stream_task(
             .input_tokens
             .and_then(|input| transcript.output_tokens.map(|output| input + output)),
     }));
-    clear_streaming_state(is_streaming, current_conversation_id, conversation_id);
+    clear_streaming_state(active_streams, conversation_id, stream_id);
 }
 
+/// Run a stream task for a conversation.
+/// @plan PLAN-20260416-ISSUE173.P03
+/// @plan PLAN-20260416-ISSUE173.P14-CR4
+/// @requirement REQ-173-001.1, REQ-173-001.3
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_stream_task(
     prepared: PreparedMessageContext,
     mcp_tools: Vec<crate::llm::tools::Tool>,
     tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
-    is_streaming: Arc<AtomicBool>,
-    current_conversation_id: Arc<StdMutex<Option<Uuid>>>,
+    active_streams: Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    cancel: CancellationToken,
     conversation_service: Arc<dyn ConversationService>,
     conversation_id: Uuid,
+    stream_id: Uuid,
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     approval_gate: Arc<ApprovalGate>,
     policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
@@ -136,9 +146,10 @@ pub(super) async fn run_stream_task(
         mcp_tools,
         &system_prompt,
         conversation_id,
+        stream_id,
         &tx,
-        &is_streaming,
-        &current_conversation_id,
+        &active_streams,
+        &cancel,
     )
     .await
     else {
@@ -160,10 +171,10 @@ pub(super) async fn run_stream_task(
     finalize_stream_task(
         &conversation_service,
         conversation_id,
+        stream_id,
         compression_result,
         transcript,
-        &is_streaming,
-        &current_conversation_id,
+        &active_streams,
         &profile.name,
     )
     .await;
@@ -312,17 +323,28 @@ pub(super) async fn persist_assistant_response(
     let _ = conversation_service.add_message(conversation_id, msg).await;
 }
 
+/// Clear streaming state for a specific conversation, but only if the
+/// stored entry still corresponds to the caller's `stream_id`.
+///
+/// This guards against a stale spawned task (e.g. one whose `cancel()` has
+/// already fired and which is now unwinding) removing the entry for a
+/// brand-new stream that a later `begin_stream` call has reserved for the
+/// same conversation id. Without this epoch check the old task would evict
+/// the new reservation as soon as it finished its own cleanup.
+///
+/// @plan PLAN-20260416-ISSUE173.P03
+/// @plan PLAN-20260416-ISSUE173.P14-CR4
+/// @requirement REQ-173-001.3
 pub(super) fn clear_streaming_state(
-    is_streaming: &Arc<AtomicBool>,
-    current_conversation_id: &Arc<StdMutex<Option<Uuid>>>,
+    active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
     conversation_id: Uuid,
+    stream_id: Uuid,
 ) {
-    is_streaming.store(false, Ordering::Release);
-    let mut current = current_conversation_id
-        .lock()
-        .expect("current conversation mutex poisoned");
-    if *current == Some(conversation_id) {
-        *current = None;
+    let mut map = active_streams.lock().expect("active_streams poisoned");
+    if let Some(entry) = map.get(&conversation_id) {
+        if entry.stream_id == stream_id {
+            map.remove(&conversation_id);
+        }
     }
 }
 

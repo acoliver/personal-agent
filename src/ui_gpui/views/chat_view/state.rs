@@ -257,6 +257,11 @@ pub struct ChatState {
     pub delete_confirming_id: Option<Uuid>,
     /// When true, emojis are stripped from assistant message display.
     pub filter_emoji: bool,
+    /// Conversation ids currently streaming in the background (for sidebar indicator).
+    ///
+    /// @plan PLAN-20260416-ISSUE173.P11
+    /// @requirement REQ-173-004.3
+    pub streaming_conversation_ids: std::collections::HashSet<Uuid>,
 }
 
 impl Default for ChatState {
@@ -295,6 +300,7 @@ impl Default for ChatState {
             export_feedback_is_error: false,
             export_feedback_path: None,
             filter_emoji: false,
+            streaming_conversation_ids: std::collections::HashSet::new(),
         }
     }
 }
