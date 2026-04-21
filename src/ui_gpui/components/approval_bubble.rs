@@ -315,8 +315,6 @@ impl IntoElement for ApprovalBubble {
             div()
                 .id(bubble_id)
                 .w_full()
-                .min_w(px(0.0))
-                .overflow_hidden()
                 .px(px(Theme::SPACING_MD))
                 .py(px(Theme::SPACING_SM))
                 .rounded(px(Theme::RADIUS_LG))

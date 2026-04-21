@@ -538,16 +538,7 @@ fn render_code_block(language: Option<&String>, code: &str) -> gpui::AnyElement 
         );
     }
 
-    block
-        .overflow_x_hidden()
-        .child(
-            div()
-                .w_full()
-                .min_w(px(0.0))
-                .overflow_hidden()
-                .child(code.to_string()),
-        )
-        .into_any_element()
+    block.child(code.to_string()).into_any_element()
 }
 
 /// @plan:PLAN-20260402-ISSUE153.P02
@@ -685,12 +676,7 @@ fn render_table_with_color(
         }
     }
 
-    div()
-        .w_full()
-        .min_w(px(0.0))
-        .overflow_x_hidden()
-        .child(table_grid)
-        .into_any_element()
+    div().w_full().child(table_grid).into_any_element()
 }
 
 /// @plan:PLAN-20260402-MARKDOWN.P06

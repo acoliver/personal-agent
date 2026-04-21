@@ -174,8 +174,6 @@ impl IntoElement for AssistantBubble {
             .flex_col()
             .items_start()
             .w_full()
-            .min_w(px(0.0))
-            .overflow_x_hidden()
             .gap(px(Theme::SPACING_SM));
 
         if self.show_thinking {
@@ -183,8 +181,6 @@ impl IntoElement for AssistantBubble {
                 bubble = bubble.child(Theme::badge(
                     div()
                         .w_full()
-                        .min_w(px(0.0))
-                        .overflow_hidden()
                         .px(px(Theme::SPACING_MD))
                         .py(px(Theme::SPACING_SM))
                         .rounded(px(Theme::RADIUS_MD))
@@ -215,8 +211,6 @@ impl IntoElement for AssistantBubble {
         let mut main_content = Theme::assistant_bubble(
             div()
                 .w_full()
-                .min_w(px(0.0))
-                .overflow_hidden()
                 .px(px(Theme::SPACING_MD))
                 .py(px(Theme::SPACING_SM))
                 .rounded(px(Theme::RADIUS_LG))
