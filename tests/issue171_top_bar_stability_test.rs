@@ -391,14 +391,8 @@ fn image_pixel_dimensions(src: &Path) -> Option<(u32, u32)> {
 /// (macOS Retina) if dimensions can't be queried.
 fn capture_scale(src: &Path, requested_logical_width: u32) -> u32 {
     image_pixel_dimensions(src)
-        .and_then(|(w_px, _h_px)| {
-            if requested_logical_width == 0 {
-                None
-            } else {
-                Some((w_px / requested_logical_width).max(1))
-            }
-        })
-        .unwrap_or(2)
+        .and_then(|(w_px, _h_px)| w_px.checked_div(requested_logical_width))
+        .map_or(2, |s| s.max(1))
 }
 
 /// Crop `src` to the rightmost `crop_w` *logical* pixels (full height) and
