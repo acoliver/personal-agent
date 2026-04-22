@@ -23,3 +23,10 @@ tmp/
 .tmp/
 .tmp_*
 resources/llxprt-code
+
+# Issue #171 test outputs and debug screenshots (regenerated; not fixtures)
+artifacts/issue171/
+/issue171_before.png
+/issue171_after.png
+/issue171_diff_from_user.png
+artifacts/issue171-analysis/

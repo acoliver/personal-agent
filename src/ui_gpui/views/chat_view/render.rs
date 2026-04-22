@@ -302,6 +302,7 @@ impl ChatView {
             .min_h_0()
             .w_full()
             .bg(Theme::bg_base())
+            .overflow_x_hidden()
             .overflow_y_scroll()
             .track_scroll(&self.chat_scroll_handle)
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
@@ -837,6 +838,7 @@ impl ChatView {
         div()
             .flex_1()
             .min_w(px(0.0))
+            .overflow_hidden()
             .flex()
             .flex_col()
             // Title bar (32px)
@@ -889,13 +891,29 @@ impl gpui::Render for ChatView {
                 }),
             )
             .relative()
-            // Top bar (44px)
-            .child(self.render_top_bar(cx))
-            // Body: sidebar (optional) + main content
+            // Top bar (44px) — absolutely positioned so its width cannot be
+            // affected by chat content's intrinsic size. Spans full window
+            // width regardless of what's below. See issue #171.
             .child(
                 div()
-                    .flex_1()
-                    .min_h(px(0.0))
+                    .absolute()
+                    .top(px(0.0))
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .h(px(44.0 * Theme::ui_scale()))
+                    .overflow_hidden()
+                    .child(self.render_top_bar(cx)),
+            )
+            // Body: sidebar (optional) + main content. Absolutely positioned
+            // below the top bar so body width is fixed by the window, not by
+            // a flex sibling relationship with the bar.
+            .child(
+                div()
+                    .absolute()
+                    .top(px(44.0 * Theme::ui_scale()))
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .bottom(px(0.0))
                     .flex()
                     .flex_row()
                     .overflow_hidden()
