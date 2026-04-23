@@ -341,7 +341,28 @@ fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
             }
             non_store_commands.push(cmd.clone());
         }
-        let _changed = app_state.app_store.reduce_batch(commands);
+        // Fixes Issue #178: when the reducer auto-selects a successor
+        // conversation (e.g. after a delete) it records the pending selection
+        // in the `BatchReduceResult`. Emit the corresponding
+        // `UserEvent::SelectConversation` so the presenter loads the
+        // replacement transcript — without this, the sidebar shows the
+        // new selection but the chat view stays empty.
+        let reduce_result = app_state.app_store.reduce_batch_with_result(commands);
+        if let Some((id, selection_generation)) = reduce_result.pending_selection {
+            let sent = app_state.gpui_bridge.emit(UserEvent::SelectConversation {
+                id,
+                selection_generation,
+            });
+            if !sent {
+                app_state
+                    .app_store
+                    .reduce_batch(vec![ViewCommand::ConversationLoadFailed {
+                        conversation_id: id,
+                        selection_generation,
+                        message: "SelectConversation transport enqueue failed".to_string(),
+                    }]);
+            }
+        }
         forward_runtime_commands_to_main_panel(non_store_commands, cx);
         if toggle_window_mode_count % 2 == 1 {
             let _ = cx.update_global::<SystemTray, _>(|tray, cx| {

@@ -1160,6 +1160,116 @@ mod reduce_batch_conversation_lifecycle {
         assert_eq!(snapshot.history.conversations[0].id, selected);
     }
 
+    /// Regression for Issue #178: deleting the selected conversation must
+    /// surface a pending `SelectConversation` event so the runtime pump can
+    /// trigger transcript loading for the auto-selected successor.
+    #[test]
+    fn deleting_selected_conversation_produces_pending_selection_event() {
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let store = GpuiAppStore::from_startup_inputs(StartupInputs {
+            profiles: Vec::new(),
+            selected_profile_id: None,
+            conversations: vec![
+                make_summary(first, "First", 0),
+                make_summary(second, "Second", 0),
+            ],
+            selected_conversation: None,
+        });
+        begin_and_ready(&store, first, vec![make_message(MessageRole::User, "keep")]);
+
+        let result =
+            store.reduce_batch_with_result(vec![ViewCommand::ConversationDeleted { id: first }]);
+
+        assert!(result.changed, "deletion must mark snapshot as changed");
+        let (pending_id, pending_generation) = result
+            .pending_selection
+            .expect("deleting selected conversation must produce pending selection event");
+        assert_eq!(
+            pending_id, second,
+            "pending selection must target the auto-selected successor"
+        );
+
+        let snapshot = current_snapshot(&store);
+        assert_eq!(snapshot.chat.selected_conversation_id, Some(second));
+        match snapshot.chat.load_state {
+            ConversationLoadState::Loading {
+                conversation_id,
+                generation,
+            } => {
+                assert_eq!(conversation_id, second);
+                assert_eq!(
+                    generation, pending_generation,
+                    "pending selection generation must match the snapshot Loading generation"
+                );
+                assert_eq!(generation, snapshot.chat.selection_generation);
+            }
+            other => panic!("auto-selected successor must enter Loading state, got {other:?}"),
+        }
+    }
+
+    /// Regression for Issue #178: deleting a non-selected conversation must
+    /// not produce a pending selection event — the selected conversation and
+    /// its transcript remain untouched.
+    #[test]
+    fn deleting_non_selected_conversation_produces_no_pending_selection() {
+        let selected = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let store = GpuiAppStore::from_startup_inputs(StartupInputs {
+            profiles: Vec::new(),
+            selected_profile_id: None,
+            conversations: vec![
+                make_summary(selected, "Selected", 0),
+                make_summary(other, "Other", 0),
+            ],
+            selected_conversation: None,
+        });
+        begin_and_ready(
+            &store,
+            selected,
+            vec![make_message(MessageRole::User, "keep")],
+        );
+
+        let result =
+            store.reduce_batch_with_result(vec![ViewCommand::ConversationDeleted { id: other }]);
+
+        assert!(result.changed);
+        assert!(
+            result.pending_selection.is_none(),
+            "deleting a non-selected conversation must not produce a pending selection event"
+        );
+
+        let snapshot = current_snapshot(&store);
+        assert_eq!(snapshot.chat.selected_conversation_id, Some(selected));
+        assert_eq!(
+            snapshot.chat.transcript,
+            vec![make_message(MessageRole::User, "keep")],
+            "the selected conversation's transcript must remain intact"
+        );
+    }
+
+    /// Regression for Issue #178: deleting the only conversation leaves the
+    /// snapshot idle and must not produce a spurious pending selection event
+    /// (there is no successor to load).
+    #[test]
+    fn deleting_last_conversation_produces_no_pending_selection() {
+        let only = Uuid::new_v4();
+        let store = make_store_with_conversation(only, "Only");
+        begin_and_ready(&store, only, vec![make_message(MessageRole::User, "msg")]);
+
+        let result =
+            store.reduce_batch_with_result(vec![ViewCommand::ConversationDeleted { id: only }]);
+
+        assert!(result.changed);
+        assert!(
+            result.pending_selection.is_none(),
+            "deleting the last conversation must not produce a pending selection event"
+        );
+        let snapshot = current_snapshot(&store);
+        assert_eq!(snapshot.chat.selected_conversation_id, None);
+        assert_eq!(snapshot.chat.load_state, ConversationLoadState::Idle);
+    }
+
     #[test]
     fn conversation_renamed_updates_history_chat_and_selected_title() {
         let id = Uuid::new_v4();

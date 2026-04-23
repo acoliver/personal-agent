@@ -132,6 +132,29 @@ pub(super) struct AppStoreInner {
     pub(super) subscribers: Vec<flume::Sender<GpuiAppSnapshot>>,
     pub(super) title_provenance: SelectedTitleProvenance,
     pub(super) finalized_stream_guards: HashMap<Uuid, FinalizedStreamGuard>,
+    /// Pending conversation-selection event produced by the reducer that must
+    /// be surfaced to the runtime pump so the presenter can load the
+    /// replacement transcript. Populated by `reduce_conversation_deleted` when
+    /// it auto-selects a successor via `BatchNoPublish` `begin_selection`.
+    ///
+    /// Fixes: Issue #178 — delete-and-auto-select left the chat view empty
+    /// because the snapshot changed but no `UserEvent::SelectConversation`
+    /// was ever emitted.
+    pub(super) pending_selection_event: Option<(Uuid, u64)>,
+}
+
+/// Result of reducing a batch of runtime commands.
+///
+/// `changed` preserves the historical boolean indicating whether the snapshot
+/// mutated. `pending_selection` surfaces any auto-selection (e.g. after a
+/// delete) that still needs a `UserEvent::SelectConversation` emitted by the
+/// runtime pump to trigger transcript loading.
+///
+/// Fixes: Issue #178.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatchReduceResult {
+    pub changed: bool,
+    pub pending_selection: Option<(Uuid, u64)>,
 }
 
 /// Process-lifetime authoritative store handle.
@@ -262,19 +285,41 @@ impl GpuiAppStore {
     ///
     /// Panics if the store mutex is poisoned.
     pub fn reduce_batch(&self, commands: Vec<ViewCommand>) -> bool {
+        self.reduce_batch_with_result(commands).changed
+    }
+
+    /// Reduce a batch and return the rich `BatchReduceResult`, including any
+    /// pending selection event the runtime pump must emit.
+    ///
+    /// Fixes Issue #178: auto-selection after a delete needs to surface a
+    /// `UserEvent::SelectConversation` so the presenter loads the new
+    /// transcript. Callers that need to observe those pending selections
+    /// (notably `spawn_runtime_bridge_pump`) should prefer this method over
+    /// `reduce_batch`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the store mutex is poisoned.
+    pub fn reduce_batch_with_result(&self, commands: Vec<ViewCommand>) -> BatchReduceResult {
         if commands.is_empty() {
-            return false;
+            return BatchReduceResult::default();
         }
 
-        let mut inner = self.inner.lock().expect("gpui app store mutex poisoned");
-        let mut changed = false;
-        for command in commands {
-            changed = reduce_view_command_without_publish(&mut inner, command) || changed;
+        let (changed, pending_selection) = {
+            let mut inner = self.inner.lock().expect("gpui app store mutex poisoned");
+            let mut changed = false;
+            for command in commands {
+                changed = reduce_view_command_without_publish(&mut inner, command) || changed;
+            }
+            if changed {
+                bump_revision_and_publish(&mut inner);
+            }
+            (changed, inner.pending_selection_event.take())
+        };
+        BatchReduceResult {
+            changed,
+            pending_selection,
         }
-        if changed {
-            bump_revision_and_publish(&mut inner);
-        }
-        changed
     }
 
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
@@ -755,7 +800,15 @@ fn reduce_conversation_deleted(inner: &mut AppStoreInner, id: Uuid) -> bool {
             // incremented generation and initiate a transcript load, matching
             // the behaviour of a user-driven selection change.
             if let Some(next) = next_selected {
-                begin_selection_locked(inner, next, BeginSelectionMode::BatchNoPublish);
+                // Fixes Issue #178: record the pending selection so the
+                // runtime pump emits a `UserEvent::SelectConversation`. The
+                // snapshot update alone is not enough — the presenter's
+                // transcript-loading path is driven by that user event.
+                if let BeginSelectionResult::BeganSelection { generation } =
+                    begin_selection_locked(inner, next, BeginSelectionMode::BatchNoPublish)
+                {
+                    inner.pending_selection_event = Some((next, generation));
+                }
             } else {
                 selection_helpers::reset_selection_to_idle_after_deletion(inner);
             }
