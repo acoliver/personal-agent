@@ -21,6 +21,8 @@ struct AppSettingsStorage {
     theme: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     filter_emoji: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_at_login: Option<bool>,
     #[serde(flatten)]
     extra_settings: HashMap<String, String>,
 }
@@ -187,6 +189,23 @@ impl AppSettingsService for AppSettingsServiceImpl {
     async fn set_filter_emoji(&self, enabled: bool) -> ServiceResult<()> {
         let mut storage = self.load()?;
         storage.filter_emoji = Some(enabled);
+        self.save(&storage)?;
+
+        *self
+            .settings
+            .lock()
+            .map_err(|e| ServiceError::Storage(format!("Failed to acquire lock: {e}")))? = storage;
+        Ok(())
+    }
+
+    async fn get_launch_at_login(&self) -> ServiceResult<Option<bool>> {
+        let storage = self.load()?;
+        Ok(storage.launch_at_login)
+    }
+
+    async fn set_launch_at_login(&self, enabled: bool) -> ServiceResult<()> {
+        let mut storage = self.load()?;
+        storage.launch_at_login = Some(enabled);
         self.save(&storage)?;
 
         *self

@@ -25,6 +25,7 @@ pub mod skills_impl;
 
 pub mod conversation;
 pub mod conversation_sqlite;
+pub mod login_item;
 pub mod mcp;
 pub mod mcp_impl;
 pub mod mcp_registry;

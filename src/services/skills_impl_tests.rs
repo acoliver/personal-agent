@@ -56,6 +56,14 @@ impl AppSettingsService for FailingSetSettingAppSettingsService {
         Ok(())
     }
 
+    async fn get_launch_at_login(&self) -> crate::services::ServiceResult<Option<bool>> {
+        Ok(None)
+    }
+
+    async fn set_launch_at_login(&self, _enabled: bool) -> crate::services::ServiceResult<()> {
+        Ok(())
+    }
+
     async fn get_setting(&self, _key: &str) -> crate::services::ServiceResult<Option<String>> {
         Ok(None)
     }

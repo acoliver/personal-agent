@@ -201,6 +201,17 @@ impl AppSettingsService for MockAppSettingsService {
         Ok(())
     }
 
+    async fn get_launch_at_login(&self) -> Result<Option<bool>, crate::services::ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_launch_at_login(
+        &self,
+        _enabled: bool,
+    ) -> Result<(), crate::services::ServiceError> {
+        Ok(())
+    }
+
     async fn get_setting(
         &self,
         _key: &str,

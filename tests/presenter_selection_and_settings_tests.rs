@@ -807,6 +807,14 @@ impl AppSettingsService for MockAppSettings {
         Ok(())
     }
 
+    async fn get_launch_at_login(&self) -> Result<Option<bool>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_launch_at_login(&self, _enabled: bool) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
     async fn get_setting(&self, _key: &str) -> Result<Option<String>, ServiceError> {
         Ok(None)
     }

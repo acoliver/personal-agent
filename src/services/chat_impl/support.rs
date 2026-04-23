@@ -71,6 +71,14 @@ impl AppSettingsService for InMemoryAppSettingsService {
         Ok(())
     }
 
+    async fn get_launch_at_login(&self) -> ServiceResult<Option<bool>> {
+        Ok(None)
+    }
+
+    async fn set_launch_at_login(&self, _enabled: bool) -> ServiceResult<()> {
+        Ok(())
+    }
+
     async fn get_setting(&self, key: &str) -> ServiceResult<Option<String>> {
         Ok(self.settings.read().await.get(key).cloned())
     }
@@ -131,6 +139,14 @@ impl AppSettingsService for FailingAppSettingsService {
     }
 
     async fn set_filter_emoji(&self, _enabled: bool) -> ServiceResult<()> {
+        Ok(())
+    }
+
+    async fn get_launch_at_login(&self) -> ServiceResult<Option<bool>> {
+        Ok(None)
+    }
+
+    async fn set_launch_at_login(&self, _enabled: bool) -> ServiceResult<()> {
         Ok(())
     }
 

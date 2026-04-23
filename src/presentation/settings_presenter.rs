@@ -17,6 +17,7 @@ use super::view_command::{ProfileSummary, SkillSummary, ThemeSummary};
 use super::{Presenter, PresenterError, ViewCommand};
 
 use crate::events::{types::UserEvent, AppEvent, EventBus};
+use crate::services::login_item::{default_login_item_service, LoginItemService, LoginItemStatus};
 use crate::services::{AppSettingsService, BackupService, ProfileService, SkillsService};
 
 use crate::ui_gpui::theme::{
@@ -55,6 +56,11 @@ pub struct SettingsPresenter {
 
     /// Optional config path override (for testing); `None` → `Config::default_path()`.
     config_path_override: Option<std::path::PathBuf>,
+
+    /// Launch-at-login backend (Issue #177). Defaults to the platform-default
+    /// implementation: `SMAppService` on macOS, an `Unsupported` stub
+    /// elsewhere. Tests inject a fake via `with_login_item_service`.
+    login_item_service: Arc<dyn LoginItemService>,
 }
 
 impl SettingsPresenter {
@@ -80,6 +86,7 @@ impl SettingsPresenter {
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
+            login_item_service: Arc::from(default_login_item_service()),
         }
     }
 
@@ -87,6 +94,14 @@ impl SettingsPresenter {
     #[must_use]
     pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
         self.config_path_override = Some(path);
+        self
+    }
+
+    /// Inject a custom launch-at-login backend (used by tests so they don't
+    /// touch the real `SMAppService` API).
+    #[must_use]
+    pub fn with_login_item_service(mut self, service: Arc<dyn LoginItemService>) -> Self {
+        self.login_item_service = service;
         self
     }
 
@@ -118,6 +133,7 @@ impl SettingsPresenter {
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
+            login_item_service: Arc::from(default_login_item_service()),
         }
     }
 
@@ -148,6 +164,12 @@ impl SettingsPresenter {
         Self::emit_font_settings_snapshot(&self.app_settings_service, &self.view_tx).await;
         Self::emit_tool_approval_policy_snapshot(&self.app_settings_service, &self.view_tx).await;
         Self::emit_skills_snapshot(&self.skills_service, &self.view_tx).await;
+        Self::emit_launch_at_login_snapshot(
+            &self.app_settings_service,
+            &self.login_item_service,
+            &self.view_tx,
+        )
+        .await;
 
         let mut rx = self.rx.resubscribe();
         Self::emit_backup_settings_snapshot(&self.backup_service, &self.view_tx).await;
@@ -158,6 +180,7 @@ impl SettingsPresenter {
         let skills_service = self.skills_service.clone();
         let view_tx = self.view_tx.clone();
         let backup_service = self.backup_service.clone();
+        let login_item_service = self.login_item_service.clone();
 
         let config_path = self.config_path_override.clone();
 
@@ -170,6 +193,7 @@ impl SettingsPresenter {
                             &app_settings_service,
                             &backup_service,
                             &skills_service,
+                            &login_item_service,
                             &view_tx,
                             event,
                             config_path.as_deref(),
@@ -220,6 +244,7 @@ impl SettingsPresenter {
         app_settings_service: &Arc<dyn AppSettingsService>,
         backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
+        login_item_service: &Arc<dyn LoginItemService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
         config_path: Option<&std::path::Path>,
@@ -231,6 +256,7 @@ impl SettingsPresenter {
                     app_settings_service,
                     backup_service,
                     skills_service,
+                    login_item_service,
                     view_tx,
                     user_evt,
                     config_path,
@@ -262,10 +288,22 @@ impl SettingsPresenter {
         app_settings_service: &Arc<dyn AppSettingsService>,
         backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
+        login_item_service: &Arc<dyn LoginItemService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
         config_path: Option<&std::path::Path>,
     ) {
+        if Self::handle_launch_at_login_user_event(
+            app_settings_service,
+            login_item_service,
+            view_tx,
+            &event,
+        )
+        .await
+        {
+            return;
+        }
+
         if Self::handle_profile_user_event(profile_service, app_settings_service, view_tx, &event)
             .await
         {
@@ -488,6 +526,156 @@ impl SettingsPresenter {
             }
             _ => false,
         }
+    }
+
+    /// Handle launch-at-login user events (Issue #177).
+    ///
+    /// Returns `true` if the event was consumed, so the caller can short
+    /// circuit the rest of the dispatcher chain.
+    async fn handle_launch_at_login_user_event(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        login_item_service: &Arc<dyn LoginItemService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        event: &UserEvent,
+    ) -> bool {
+        match event {
+            UserEvent::SetLaunchAtLogin { enabled } => {
+                Self::on_set_launch_at_login(
+                    app_settings_service,
+                    login_item_service,
+                    view_tx,
+                    *enabled,
+                )
+                .await;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Persist the requested preference, then attempt to register or
+    /// unregister the OS-level login item. On failure, roll back the
+    /// persisted preference and surface the error in the view command so the
+    /// settings UI can display it.
+    async fn on_set_launch_at_login(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        login_item_service: &Arc<dyn LoginItemService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        requested: bool,
+    ) {
+        let previous = app_settings_service
+            .get_launch_at_login()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+
+        if let Err(e) = app_settings_service.set_launch_at_login(requested).await {
+            tracing::warn!("Failed to persist launch_at_login={}: {}", requested, e);
+            let _ = view_tx.send(ViewCommand::SetLaunchAtLoginState {
+                enabled: previous,
+                error: Some(format!("Could not save launch-at-login preference: {e}")),
+            });
+            return;
+        }
+
+        let os_result = if requested {
+            login_item_service.register()
+        } else {
+            login_item_service.unregister()
+        };
+
+        match os_result {
+            Ok(status) => {
+                let effective = matches!(
+                    status,
+                    LoginItemStatus::Enabled | LoginItemStatus::RequiresApproval
+                );
+                let error = match status {
+                    LoginItemStatus::RequiresApproval => Some(
+                        "Approval required: open System Settings -> General -> \
+                         Login Items to allow PersonalAgent."
+                            .to_string(),
+                    ),
+                    LoginItemStatus::NotFound => Some(
+                        "macOS could not find PersonalAgent.app. Launch-at-login \
+                         only works for the packaged .app bundle (not raw \
+                         `cargo run` builds)."
+                            .to_string(),
+                    ),
+                    LoginItemStatus::Unsupported => {
+                        Some("Launch-at-login is only supported on macOS 13+.".to_string())
+                    }
+                    _ => None,
+                };
+                // Mirror effective OS state back into the persisted setting,
+                // so a "RequiresApproval" registration is still reflected as
+                // requested-on while NotFound/etc roll the toggle back off.
+                if effective != requested {
+                    let _ = app_settings_service.set_launch_at_login(effective).await;
+                }
+                let _ = view_tx.send(ViewCommand::SetLaunchAtLoginState {
+                    enabled: effective,
+                    error,
+                });
+            }
+            Err(err) => {
+                // Roll the persisted preference back to the previous value so
+                // the toggle does not "stick" on an unrecoverable failure.
+                let _ = app_settings_service.set_launch_at_login(previous).await;
+                let _ = view_tx.send(ViewCommand::SetLaunchAtLoginState {
+                    enabled: previous,
+                    error: Some(err.0),
+                });
+            }
+        }
+    }
+
+    /// Emit the initial launch-at-login state on startup. Combines the
+    /// persisted preference with the actual OS registration status so the UI
+    /// can disagree (e.g. user revoked it in System Settings while the app
+    /// was closed).
+    async fn emit_launch_at_login_snapshot(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        login_item_service: &Arc<dyn LoginItemService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
+        let stored = app_settings_service
+            .get_launch_at_login()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+
+        let (enabled, error) = match login_item_service.status() {
+            Ok(LoginItemStatus::Enabled) => (true, None),
+            Ok(LoginItemStatus::RequiresApproval) => (
+                true,
+                Some(
+                    "Approval required: open System Settings -> General -> \
+                     Login Items to allow PersonalAgent."
+                        .to_string(),
+                ),
+            ),
+            // NotRegistered is the ground-truth "off" state — trust the OS
+            // over any stale preference we may have persisted.
+            Ok(LoginItemStatus::NotRegistered) => (false, None),
+            Ok(LoginItemStatus::NotFound) => (
+                false,
+                Some(
+                    "macOS could not find PersonalAgent.app. Launch-at-login \
+                     only works for the packaged .app bundle."
+                        .to_string(),
+                ),
+            ),
+            Ok(LoginItemStatus::Unsupported) => (
+                false,
+                Some("Launch-at-login is only supported on macOS 13+.".to_string()),
+            ),
+            Err(err) => (stored, Some(err.0)),
+        };
+
+        let _ = view_tx.send(ViewCommand::SetLaunchAtLoginState { enabled, error });
     }
 
     async fn handle_appearance_user_event(

@@ -51,6 +51,16 @@ pub trait AppSettingsService: Send + Sync {
     /// Set emoji filter preference
     async fn set_filter_emoji(&self, enabled: bool) -> ServiceResult<()>;
 
+    /// Get the persisted "launch at login" preference.
+    ///
+    /// Returns `None` if the user has never toggled it. The actual OS
+    /// registration state is authoritative (see `main_gpui::login_item`),
+    /// but this value is what the Settings UI renders.
+    async fn get_launch_at_login(&self) -> ServiceResult<Option<bool>>;
+
+    /// Set the persisted "launch at login" preference.
+    async fn set_launch_at_login(&self, enabled: bool) -> ServiceResult<()>;
+
     /// Get a generic setting value
     async fn get_setting(&self, key: &str) -> ServiceResult<Option<String>>;
 

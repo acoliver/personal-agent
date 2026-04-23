@@ -132,15 +132,21 @@ impl Global for SystemTray {}
 impl SystemTray {
     /// Create a new system tray with menu bar icon.
     pub fn new(mtm: MainThreadMarker) -> Self {
-        // Set activation policy to Regular (normal app with dock icon).
-        // Accessory mode prevents proper event handling in some cases.
+        // Activation policy:
+        // - Packaged builds get LSUIElement=true via Info.plist
+        //   (scripts/release/package_macos_arm64.sh, Issue #177), which Launch
+        //   Services applies before our process starts. We must NOT override
+        //   that here: setting `Regular` would re-add the Dock icon and the
+        //   Cmd-Tab tile, defeating the whole point of the agent app.
+        // - Raw `cargo run` binaries have no Info.plist, so without any policy
+        //   override they show up as a normal app. To match the packaged
+        //   experience for local dev, fall back to `Accessory` (menu-bar
+        //   only, no Dock, but windows can still take focus). Per-window
+        //   `cx.activate(true)` calls in `open_popup` / `open_popout` handle
+        //   the key-window / first-responder routing for accessory apps.
         let app = NSApplication::sharedApplication(mtm);
-        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-        info!("Set activation policy to Regular");
-
-        // Activate the application to ensure it receives events.
-        app.activate();
-        info!("Application activated");
+        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        info!("Set activation policy to Accessory (LSUIElement-equivalent)");
 
         // Create status item.
         let status_bar = NSStatusBar::systemStatusBar();
