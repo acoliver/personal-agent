@@ -65,8 +65,11 @@ pub trait LoginItemService: Send + Sync {
     fn unregister(&self) -> Result<LoginItemStatus, LoginItemError>;
 
     /// Whether this implementation actually controls the OS (false for the
-    /// non-macOS stub). The presenter uses this to decide whether to show
-    /// the toggle at all.
+    /// non-macOS stub). Intended as a cheap probe callers can use to vary
+    /// UX without bouncing through `status()`. The bundled presenter
+    /// currently surfaces unsupported platforms through an error message
+    /// on `status()`/`register()` rather than hiding the toggle, so this
+    /// hook is only used by tests and downstream embedders today.
     fn is_supported(&self) -> bool {
         true
     }

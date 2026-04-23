@@ -324,20 +324,19 @@ fn build_presenter(
 }
 
 async fn recv_launch_at_login(rx: &mut broadcast::Receiver<ViewCommand>) -> (bool, Option<String>) {
-    let deadline = tokio::time::Instant::now() + RECV_TIMEOUT * 4;
-    loop {
-        assert!(
-            tokio::time::Instant::now() <= deadline,
-            "timed out waiting for SetLaunchAtLoginState"
-        );
-        let cmd = timeout(RECV_TIMEOUT, rx.recv())
-            .await
-            .expect("recv timed out")
-            .expect("presenter channel closed");
-        if let ViewCommand::SetLaunchAtLoginState { enabled, error } = cmd {
-            return (enabled, error);
+    // Bound the total wait once at the outside so startup-snapshot bursts
+    // don't trip a per-recv panic on a loaded runner.
+    let total = RECV_TIMEOUT * 4;
+    timeout(total, async {
+        loop {
+            let cmd = rx.recv().await.expect("presenter channel closed");
+            if let ViewCommand::SetLaunchAtLoginState { enabled, error } = cmd {
+                return (enabled, error);
+            }
         }
-    }
+    })
+    .await
+    .expect("timed out waiting for SetLaunchAtLoginState")
 }
 
 // ---------------------------------------------------------------------------

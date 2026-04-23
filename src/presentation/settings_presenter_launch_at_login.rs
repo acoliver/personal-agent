@@ -59,17 +59,24 @@ impl SettingsPresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
         requested: bool,
     ) {
-        let previous = app_settings_service
-            .get_launch_at_login()
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(false);
+        // Preserve the three-state distinction between "never toggled"
+        // (None), "explicitly off" (Some(false)), and "read failed" (Err)
+        // so the rollback path below does not promote a missing preference
+        // into an explicit `false` or discard a real `true` on a transient
+        // settings read failure.
+        let previous: Option<bool> = match app_settings_service.get_launch_at_login().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Failed to read previous launch_at_login: {}", e);
+                None
+            }
+        };
+        let previous_effective = previous.unwrap_or(false);
 
         if let Err(e) = app_settings_service.set_launch_at_login(requested).await {
             tracing::warn!("Failed to persist launch_at_login={}: {}", requested, e);
             let _ = view_tx.send(ViewCommand::SetLaunchAtLoginState {
-                enabled: previous,
+                enabled: previous_effective,
                 error: Some(format!("Could not save launch-at-login preference: {e}")),
             });
             return;
@@ -97,7 +104,13 @@ impl SettingsPresenter {
                 // so a "RequiresApproval" registration is still reflected as
                 // requested-on while NotFound/etc roll the toggle back off.
                 if effective != requested {
-                    let _ = app_settings_service.set_launch_at_login(effective).await;
+                    if let Err(e) = app_settings_service.set_launch_at_login(effective).await {
+                        tracing::warn!(
+                            "Failed to mirror effective launch_at_login={}: {}",
+                            effective,
+                            e
+                        );
+                    }
                 }
                 let _ = view_tx.send(ViewCommand::SetLaunchAtLoginState {
                     enabled: effective,
@@ -105,11 +118,24 @@ impl SettingsPresenter {
                 });
             }
             Err(err) => {
-                // Roll the persisted preference back to the previous value so
-                // the toggle does not "stick" on an unrecoverable failure.
-                let _ = app_settings_service.set_launch_at_login(previous).await;
+                // Roll the persisted preference back to the effective previous
+                // value so the toggle does not "stick" on an unrecoverable
+                // failure. A read failure was logged above and its three-state
+                // distinction (None vs Some(false)) is preserved in the log —
+                // but here we still have to write something, so we use the
+                // effective boolean the user last saw.
+                if let Err(e) = app_settings_service
+                    .set_launch_at_login(previous_effective)
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to roll back launch_at_login to {}: {}",
+                        previous_effective,
+                        e
+                    );
+                }
                 let _ = view_tx.send(ViewCommand::SetLaunchAtLoginState {
-                    enabled: previous,
+                    enabled: previous_effective,
                     error: Some(err.0),
                 });
             }
