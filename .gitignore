@@ -23,3 +23,6 @@ tmp/
 .tmp/
 .tmp_*
 resources/llxprt-code
+
+# Runtime artifacts
+artifacts/

@@ -357,8 +357,14 @@ fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
 // ============================================================================
 
 fn main() {
+    // Allow tests / advanced users to turn on DEBUG logging without editing source.
+    // Honour `PA_LOG_LEVEL` (one of: error, warn, info, debug, trace) with INFO as default.
+    let level = std::env::var("PA_LOG_LEVEL")
+        .ok()
+        .and_then(|v| v.parse::<Level>().ok())
+        .unwrap_or(Level::INFO);
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
+        .with_max_level(level)
         .with_target(false)
         .finish();
     tracing::subscriber::set_global_default(subscriber).ok();
