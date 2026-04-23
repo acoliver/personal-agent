@@ -256,6 +256,33 @@ fn spawn_broadcast_to_mpsc_view_command_bridge(
 // Runtime bridge pump + helpers
 // ============================================================================
 
+/// Emit `UserEvent::SelectConversation` for `(id, generation)` and, if the
+/// transport is full, record a `ConversationLoadFailed` against the same
+/// generation so the presenter does not get stuck in `Loading` forever.
+///
+/// Shared by both manual selection (`handle_select_conversation_intent`) and
+/// reducer-produced auto-selection fed through the runtime pump
+/// (`reduce_batch_with_result().pending_selection`, added for Issue #178).
+fn emit_select_or_record_failure(
+    app_state: &AppState,
+    conversation_id: uuid::Uuid,
+    selection_generation: u64,
+) {
+    let sent = app_state.gpui_bridge.emit(UserEvent::SelectConversation {
+        id: conversation_id,
+        selection_generation,
+    });
+    if !sent {
+        app_state
+            .app_store
+            .reduce_batch(vec![ViewCommand::ConversationLoadFailed {
+                conversation_id,
+                selection_generation,
+                message: "SelectConversation transport enqueue failed".to_string(),
+            }]);
+    }
+}
+
 /// @plan PLAN-20260304-GPUIREMEDIATE.P05
 /// @requirement REQ-ARCH-003.6
 /// @pseudocode analysis/pseudocode/02-selection-loading-protocol.md:004-014
@@ -266,19 +293,7 @@ fn handle_select_conversation_intent(app_state: &AppState, conversation_id: uuid
     {
         BeginSelectionResult::NoOpSameSelection => {}
         BeginSelectionResult::BeganSelection { generation } => {
-            let sent = app_state.gpui_bridge.emit(UserEvent::SelectConversation {
-                id: conversation_id,
-                selection_generation: generation,
-            });
-            if !sent {
-                app_state
-                    .app_store
-                    .reduce_batch(vec![ViewCommand::ConversationLoadFailed {
-                        conversation_id,
-                        selection_generation: generation,
-                        message: "SelectConversation transport enqueue failed".to_string(),
-                    }]);
-            }
+            emit_select_or_record_failure(app_state, conversation_id, generation);
         }
     }
 }
@@ -349,19 +364,7 @@ fn spawn_runtime_bridge_pump(app_state: AppState, cx: &mut App) {
         // new selection but the chat view stays empty.
         let reduce_result = app_state.app_store.reduce_batch_with_result(commands);
         if let Some((id, selection_generation)) = reduce_result.pending_selection {
-            let sent = app_state.gpui_bridge.emit(UserEvent::SelectConversation {
-                id,
-                selection_generation,
-            });
-            if !sent {
-                app_state
-                    .app_store
-                    .reduce_batch(vec![ViewCommand::ConversationLoadFailed {
-                        conversation_id: id,
-                        selection_generation,
-                        message: "SelectConversation transport enqueue failed".to_string(),
-                    }]);
-            }
+            emit_select_or_record_failure(&app_state, id, selection_generation);
         }
         forward_runtime_commands_to_main_panel(non_store_commands, cx);
         if toggle_window_mode_count % 2 == 1 {

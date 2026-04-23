@@ -1105,13 +1105,20 @@ mod reduce_batch_conversation_lifecycle {
         });
         begin_and_ready(&store, first, vec![make_message(MessageRole::User, "keep")]);
 
-        assert!(store.reduce_batch(vec![ViewCommand::ConversationDeleted { id: first }]));
+        // Deleting the selected conversation produces a pending
+        // `SelectConversation` event (Issue #178). Use the rich reducer
+        // entry point so the compat wrapper's debug-assert does not fire.
+        let first_delete =
+            store.reduce_batch_with_result(vec![ViewCommand::ConversationDeleted { id: first }]);
+        assert!(first_delete.changed);
         let snapshot = current_snapshot(&store);
         assert_eq!(snapshot.chat.selected_conversation_id, Some(second));
         assert_eq!(snapshot.history.selected_conversation_id, Some(second));
         assert_eq!(snapshot.chat.selected_conversation_title, "Second");
 
-        assert!(store.reduce_batch(vec![ViewCommand::ConversationDeleted { id: second }]));
+        let second_delete =
+            store.reduce_batch_with_result(vec![ViewCommand::ConversationDeleted { id: second }]);
+        assert!(second_delete.changed);
         let empty_snapshot = current_snapshot(&store);
         assert_eq!(empty_snapshot.chat.selected_conversation_id, None);
         assert_eq!(empty_snapshot.history.selected_conversation_id, None);
@@ -1268,6 +1275,94 @@ mod reduce_batch_conversation_lifecycle {
         let snapshot = current_snapshot(&store);
         assert_eq!(snapshot.chat.selected_conversation_id, None);
         assert_eq!(snapshot.chat.load_state, ConversationLoadState::Idle);
+    }
+
+    /// Regression for Issue #178: `pending_selection_event` is a one-shot
+    /// signal consumed by `reduce_batch_with_result`. A subsequent batch
+    /// must return `pending_selection = None` so the runtime pump does not
+    /// re-emit a stale `SelectConversation` event after the presenter
+    /// already picked it up.
+    #[test]
+    fn pending_selection_event_is_one_shot_per_batch() {
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let store = GpuiAppStore::from_startup_inputs(StartupInputs {
+            profiles: Vec::new(),
+            selected_profile_id: None,
+            conversations: vec![
+                make_summary(first, "First", 0),
+                make_summary(second, "Second", 0),
+            ],
+            selected_conversation: None,
+        });
+        begin_and_ready(&store, first, Vec::new());
+
+        let first_result =
+            store.reduce_batch_with_result(vec![ViewCommand::ConversationDeleted { id: first }]);
+        assert!(
+            first_result.pending_selection.is_some(),
+            "first batch must surface the pending selection"
+        );
+
+        // A follow-up batch that does not touch selection must not replay the
+        // already-consumed pending selection.
+        let follow_up = store.reduce_batch_with_result(vec![ViewCommand::ConversationRenamed {
+            id: second,
+            new_title: "Renamed".to_string(),
+        }]);
+        assert!(
+            follow_up.pending_selection.is_none(),
+            "pending_selection_event must be consumed after the first reduce_batch_with_result call"
+        );
+    }
+
+    /// Regression for Issue #178: when a batch mixes `ConversationDeleted`
+    /// with other commands, the pending selection must still reflect the
+    /// auto-selected successor and not be overwritten or cleared by the
+    /// later non-deleting reducers.
+    #[test]
+    fn pending_selection_survives_additional_commands_in_same_batch() {
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let store = GpuiAppStore::from_startup_inputs(StartupInputs {
+            profiles: Vec::new(),
+            selected_profile_id: None,
+            conversations: vec![
+                make_summary(first, "First", 0),
+                make_summary(second, "Second", 0),
+            ],
+            selected_conversation: None,
+        });
+        begin_and_ready(&store, first, Vec::new());
+
+        let result = store.reduce_batch_with_result(vec![
+            ViewCommand::ConversationDeleted { id: first },
+            ViewCommand::ConversationRenamed {
+                id: second,
+                new_title: "Renamed Successor".to_string(),
+            },
+        ]);
+
+        let (pending_id, pending_generation) = result
+            .pending_selection
+            .expect("deleted-selected batch must still surface pending selection");
+        assert_eq!(pending_id, second);
+        let snapshot = current_snapshot(&store);
+        assert_eq!(snapshot.chat.selected_conversation_id, Some(second));
+        match snapshot.chat.load_state {
+            ConversationLoadState::Loading {
+                conversation_id,
+                generation,
+            } => {
+                assert_eq!(conversation_id, second);
+                assert_eq!(generation, pending_generation);
+            }
+            other => panic!("successor must still be Loading, got {other:?}"),
+        }
+        assert_eq!(
+            snapshot.chat.selected_conversation_title, "Renamed Successor",
+            "subsequent rename in the same batch must still apply to the successor"
+        );
     }
 
     #[test]

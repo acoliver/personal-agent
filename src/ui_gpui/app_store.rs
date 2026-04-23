@@ -285,7 +285,29 @@ impl GpuiAppStore {
     ///
     /// Panics if the store mutex is poisoned.
     pub fn reduce_batch(&self, commands: Vec<ViewCommand>) -> bool {
-        self.reduce_batch_with_result(commands).changed
+        let result = self.reduce_batch_with_result(commands);
+        // If a future caller feeds a `ConversationDeleted` for the currently
+        // selected conversation through this compatibility wrapper, the
+        // reducer will auto-select a successor (snapshot moves to
+        // `Loading`) but the pending `UserEvent::SelectConversation` would
+        // be dropped here — reintroducing the Issue #178 symptom from a
+        // different caller. Today only `spawn_runtime_bridge_pump` reaches
+        // the delete path and it uses `reduce_batch_with_result`, so this
+        // is purely a forward-looking guard.
+        debug_assert!(
+            result.pending_selection.is_none(),
+            "reduce_batch dropped a pending SelectConversation event; callers that can \
+             produce ConversationDeleted must use reduce_batch_with_result (Issue #178)"
+        );
+        if let Some((id, generation)) = result.pending_selection {
+            tracing::warn!(
+                conversation_id = %id,
+                selection_generation = generation,
+                "reduce_batch dropped pending SelectConversation event; \
+                 callers producing ConversationDeleted must use reduce_batch_with_result"
+            );
+        }
+        result.changed
     }
 
     /// Reduce a batch and return the rich `BatchReduceResult`, including any

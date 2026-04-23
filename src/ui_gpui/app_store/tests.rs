@@ -277,9 +277,14 @@ fn deleting_selected_conversation_resets_transcript_and_load_state() {
     );
     assert_eq!(before_delete.chat.transcript.len(), 1);
 
-    assert!(store.reduce_batch(vec![ViewCommand::ConversationDeleted {
+    // Use the rich reducer entry point because deleting the selected
+    // conversation triggers an auto-selection that surfaces a pending
+    // `SelectConversation` event — `reduce_batch` intentionally debug-
+    // asserts when callers drop that event (see Issue #178 guard).
+    let delete_result = store.reduce_batch_with_result(vec![ViewCommand::ConversationDeleted {
         id: conversation_a,
-    }]));
+    }]);
+    assert!(delete_result.changed);
 
     let after_delete = store.current_snapshot();
     assert_eq!(
