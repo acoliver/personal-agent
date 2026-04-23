@@ -88,6 +88,15 @@ pub struct SettingsState {
     pub selected_backup_id: Option<usize>,
     /// When true, emojis are stripped from assistant message display
     pub filter_emoji: bool,
+    /// Launch-at-login toggle (Issue #177; macOS only). Reflects the
+    /// effective OS state most recently reported by the presenter, not just
+    /// the in-memory request, so the toggle never gets out of sync with
+    /// `SMAppService`.
+    pub launch_at_login: bool,
+    /// Last error message returned by the launch-at-login backend (e.g.
+    /// "requires approval", "not in .app bundle"). `None` when the toggle
+    /// is healthy.
+    pub launch_at_login_error: Option<String>,
 }
 
 impl SettingsState {
@@ -138,6 +147,8 @@ impl Default for SettingsState {
             backup_in_progress: false,
             selected_backup_id: None,
             filter_emoji: false,
+            launch_at_login: false,
+            launch_at_login_error: None,
         }
     }
 }
@@ -844,6 +855,20 @@ impl SettingsView {
     pub(super) fn toggle_emoji_filter(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.filter_emoji = !self.state.filter_emoji;
         self.emit(&UserEvent::ToggleEmojiFilter);
+        cx.notify();
+    }
+
+    /// Toggle the launch-at-login preference (Issue #177). The presenter
+    /// drives the OS-level register/unregister and replies via
+    /// `ViewCommand::SetLaunchAtLoginState`, which is what the UI displays.
+    /// We optimistically flip the local state so the toggle feels responsive
+    /// while the `SMAppService` call is in flight; the presenter's reply
+    /// authoritatively re-syncs both `launch_at_login` and any error.
+    pub(super) fn toggle_launch_at_login(&mut self, cx: &mut gpui::Context<Self>) {
+        let requested = !self.state.launch_at_login;
+        self.state.launch_at_login = requested;
+        self.state.launch_at_login_error = None;
+        self.emit(&UserEvent::SetLaunchAtLogin { enabled: requested });
         cx.notify();
     }
 

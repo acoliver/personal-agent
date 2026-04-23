@@ -489,6 +489,14 @@ impl AppSettingsService for MockAppSettingsService {
         Ok(())
     }
 
+    async fn get_launch_at_login(&self) -> Result<Option<bool>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn set_launch_at_login(&self, _enabled: bool) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
     async fn get_setting(&self, key: &str) -> Result<Option<String>, ServiceError> {
         if key == "chat.export.format" {
             return Ok(self.export_format.lock().await.clone());

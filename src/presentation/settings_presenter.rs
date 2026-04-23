@@ -17,6 +17,7 @@ use super::view_command::{ProfileSummary, SkillSummary, ThemeSummary};
 use super::{Presenter, PresenterError, ViewCommand};
 
 use crate::events::{types::UserEvent, AppEvent, EventBus};
+use crate::services::login_item::{default_login_item_service, LoginItemService};
 use crate::services::{AppSettingsService, BackupService, ProfileService, SkillsService};
 
 use crate::ui_gpui::theme::{
@@ -55,6 +56,11 @@ pub struct SettingsPresenter {
 
     /// Optional config path override (for testing); `None` → `Config::default_path()`.
     config_path_override: Option<std::path::PathBuf>,
+
+    /// Launch-at-login backend (Issue #177). Defaults to the platform-default
+    /// implementation: `SMAppService` on macOS, an `Unsupported` stub
+    /// elsewhere. Tests inject a fake via `with_login_item_service`.
+    login_item_service: Arc<dyn LoginItemService>,
 }
 
 impl SettingsPresenter {
@@ -80,6 +86,7 @@ impl SettingsPresenter {
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
+            login_item_service: Arc::from(default_login_item_service()),
         }
     }
 
@@ -87,6 +94,14 @@ impl SettingsPresenter {
     #[must_use]
     pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
         self.config_path_override = Some(path);
+        self
+    }
+
+    /// Inject a custom launch-at-login backend (used by tests so they don't
+    /// touch the real `SMAppService` API).
+    #[must_use]
+    pub fn with_login_item_service(mut self, service: Arc<dyn LoginItemService>) -> Self {
+        self.login_item_service = service;
         self
     }
 
@@ -118,6 +133,7 @@ impl SettingsPresenter {
             view_tx,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
+            login_item_service: Arc::from(default_login_item_service()),
         }
     }
 
@@ -148,6 +164,12 @@ impl SettingsPresenter {
         Self::emit_font_settings_snapshot(&self.app_settings_service, &self.view_tx).await;
         Self::emit_tool_approval_policy_snapshot(&self.app_settings_service, &self.view_tx).await;
         Self::emit_skills_snapshot(&self.skills_service, &self.view_tx).await;
+        Self::emit_launch_at_login_snapshot(
+            &self.app_settings_service,
+            &self.login_item_service,
+            &self.view_tx,
+        )
+        .await;
 
         let mut rx = self.rx.resubscribe();
         Self::emit_backup_settings_snapshot(&self.backup_service, &self.view_tx).await;
@@ -158,6 +180,7 @@ impl SettingsPresenter {
         let skills_service = self.skills_service.clone();
         let view_tx = self.view_tx.clone();
         let backup_service = self.backup_service.clone();
+        let login_item_service = self.login_item_service.clone();
 
         let config_path = self.config_path_override.clone();
 
@@ -170,6 +193,7 @@ impl SettingsPresenter {
                             &app_settings_service,
                             &backup_service,
                             &skills_service,
+                            &login_item_service,
                             &view_tx,
                             event,
                             config_path.as_deref(),
@@ -220,6 +244,7 @@ impl SettingsPresenter {
         app_settings_service: &Arc<dyn AppSettingsService>,
         backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
+        login_item_service: &Arc<dyn LoginItemService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
         config_path: Option<&std::path::Path>,
@@ -231,6 +256,7 @@ impl SettingsPresenter {
                     app_settings_service,
                     backup_service,
                     skills_service,
+                    login_item_service,
                     view_tx,
                     user_evt,
                     config_path,
@@ -262,10 +288,22 @@ impl SettingsPresenter {
         app_settings_service: &Arc<dyn AppSettingsService>,
         backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
+        login_item_service: &Arc<dyn LoginItemService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
         config_path: Option<&std::path::Path>,
     ) {
+        if Self::handle_launch_at_login_user_event(
+            app_settings_service,
+            login_item_service,
+            view_tx,
+            &event,
+        )
+        .await
+        {
+            return;
+        }
+
         if Self::handle_profile_user_event(profile_service, app_settings_service, view_tx, &event)
             .await
         {

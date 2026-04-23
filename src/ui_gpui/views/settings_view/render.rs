@@ -703,7 +703,8 @@ impl SettingsView {
             .child(panel)
     }
 
-    /// General panel: export directory and emoji filter toggle.
+    /// General panel: export directory, emoji filter toggle, and (macOS only)
+    /// the launch-at-login toggle (Issue #177).
     fn render_general_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -711,6 +712,71 @@ impl SettingsView {
             .gap(px(16.0))
             .child(self.render_export_dir_section(cx))
             .child(self.render_emoji_filter_section(cx))
+            .child(self.render_launch_at_login_section(cx))
+    }
+
+    /// Launch-at-login toggle section (Issue #177).
+    ///
+    /// Renders a checkbox styled identically to the emoji-filter toggle so
+    /// the General panel stays visually consistent. On non-macOS the
+    /// presenter emits `error: Some("Launch-at-login is only supported on
+    /// macOS 13+.")` and `enabled: false`; we display the error text below
+    /// the toggle so users understand why nothing happens.
+    fn render_launch_at_login_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let enabled = self.state.launch_at_login;
+        let error = self.state.launch_at_login_error.clone();
+
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_primary())
+                    .child("LAUNCH AT LOGIN"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.toggle_launch_at_login(cx);
+                        }),
+                    )
+                    .child(Self::render_emoji_filter_indicator(enabled))
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(Theme::text_primary())
+                            .child("Start PersonalAgent silently when you log in"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_muted())
+                    .child(
+                        "When enabled, the menu-bar icon appears at login \
+                         with no Dock tile and no window. Requires macOS 13+ \
+                         and the packaged .app bundle.",
+                    ),
+            );
+
+        if let Some(message) = error {
+            section = section.child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::error())
+                    .child(message),
+            );
+        }
+
+        section
     }
 
     /// Emoji filter toggle section.

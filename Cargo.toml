@@ -95,7 +95,11 @@ objc2-app-kit = { version = "0.3", features = [
     "block2",
     "objc2-core-foundation",
 ] }
-objc2-foundation = { version = "0.3", features = ["NSData", "NSGeometry", "NSNotification", "NSString", "NSThread"] }
+objc2-foundation = { version = "0.3", features = ["NSData", "NSError", "NSGeometry", "NSNotification", "NSString", "NSThread"] }
+# Issue #177: SMAppService (macOS 13+) bindings for the Launch-at-Login toggle.
+# Keep this under the macos-only dependency block so Linux/Windows builds do
+# not pull AppKit into their compile graph.
+objc2-service-management = { version = "0.3", features = ["SMAppService", "SMErrors", "block2", "objc2-foundation"] }
 objc2-quartz-core = { version = "0.3", features = ["CALayer", "objc2-core-foundation", "objc2-core-graphics"] }
 objc2-core-graphics = "0.3"
 # Pin core-text to 21.0.0 to avoid core-graphics version conflict (21.1.0 requires core-graphics 0.25 which conflicts)

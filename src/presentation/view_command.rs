@@ -118,6 +118,19 @@ pub enum ViewCommand {
     /// Set emoji filter visibility
     SetEmojiFilterVisibility { enabled: bool },
 
+    /// Report the current "Launch at Login" state to the Settings view.
+    ///
+    /// Emitted on startup (so the toggle reflects persisted/OS state) and
+    /// after every [`UserEvent::SetLaunchAtLogin`]. `error` is `Some(msg)`
+    /// when the OS registration failed (unsigned build, user declined, etc.)
+    /// or when the feature is not supported on the current platform; in that
+    /// case `enabled` reflects the *effective* (rolled-back) state, not the
+    /// attempted one.
+    SetLaunchAtLoginState {
+        enabled: bool,
+        error: Option<String>,
+    },
+
     /// Toggle between popup and popout window modes.
     ToggleWindowMode,
 

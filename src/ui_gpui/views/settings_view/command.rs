@@ -159,6 +159,11 @@ impl SettingsView {
                 self.state.filter_emoji = enabled;
                 true
             }
+            ViewCommand::SetLaunchAtLoginState { enabled, error } => {
+                self.state.launch_at_login = enabled;
+                self.state.launch_at_login_error = error;
+                true
+            }
             ViewCommand::ShowNotification { message } => {
                 self.state.status_message = Some(message);
                 self.state.status_is_error = false;

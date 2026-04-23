@@ -334,6 +334,7 @@ struct MockAppSettingsState {
     set_theme_calls: Vec<String>,
     set_theme_results: VecDeque<Result<(), ServiceError>>,
     settings: HashMap<String, String>,
+    launch_at_login: Option<bool>,
 }
 
 impl MockAppSettingsService {
@@ -348,6 +349,7 @@ impl MockAppSettingsService {
                 set_theme_calls: Vec::new(),
                 set_theme_results: VecDeque::new(),
                 settings: HashMap::new(),
+                launch_at_login: None,
             })),
         }
     }
@@ -455,6 +457,15 @@ impl AppSettingsService for MockAppSettingsService {
     }
 
     async fn set_filter_emoji(&self, _enabled: bool) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    async fn get_launch_at_login(&self) -> Result<Option<bool>, ServiceError> {
+        Ok(self.state.lock().unwrap().launch_at_login)
+    }
+
+    async fn set_launch_at_login(&self, enabled: bool) -> Result<(), ServiceError> {
+        self.state.lock().unwrap().launch_at_login = Some(enabled);
         Ok(())
     }
 
@@ -899,7 +910,7 @@ mod settings_presenter_tests {
 
     /// Drain all 7 startup commands emitted by the settings presenter.
     async fn drain_startup(rx: &mut broadcast::Receiver<ViewCommand>) {
-        for _ in 0..7 {
+        for _ in 0..8 {
             let _ = recv_broadcast_command(rx).await;
         }
     }
@@ -931,7 +942,9 @@ mod settings_presenter_tests {
                 selected_profile_id: Some(profile.id),
             }
         );
-        // Drain ShowSettingsTheme + ShowFontSettings + ToolApprovalPolicyUpdated + YoloModeChanged + BackupSettingsLoaded
+        // Drain ShowSettingsTheme + ShowFontSettings + ToolApprovalPolicyUpdated
+        // + YoloModeChanged + BackupSettingsLoaded + SetLaunchAtLoginState
+        let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;
         let _ = recv_broadcast_command(&mut view_rx).await;

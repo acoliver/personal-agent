@@ -301,6 +301,17 @@ pub enum UserEvent {
     /// User requested to restore a database from a backup file (recovery flow)
     RestoreDatabaseBackup { backup_path: std::path::PathBuf },
 
+    /// User toggled "Launch at login" (macOS only).
+    ///
+    /// @plan PLAN-20260409-ISSUE177
+    /// The presenter persists the preference via `AppSettingsService` and
+    /// attempts to register/unregister the login item via `SMAppService`;
+    /// the resulting state (and any error) is surfaced through
+    /// [`ViewCommand::SetLaunchAtLoginState`]. On non-macOS builds the
+    /// presenter replies with an error explaining that the feature is
+    /// unsupported on this platform.
+    SetLaunchAtLogin { enabled: bool },
+
     /// User requested to quit the application
     QuitApplication,
 

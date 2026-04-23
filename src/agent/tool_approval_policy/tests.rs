@@ -61,6 +61,14 @@ impl AppSettingsService for FailingAppSettingsService {
         Ok(())
     }
 
+    async fn get_launch_at_login(&self) -> ServiceResult<Option<bool>> {
+        Ok(None)
+    }
+
+    async fn set_launch_at_login(&self, _enabled: bool) -> ServiceResult<()> {
+        Ok(())
+    }
+
     async fn get_setting(&self, _key: &str) -> ServiceResult<Option<String>> {
         Ok(None)
     }
