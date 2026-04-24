@@ -186,6 +186,56 @@ async fn ensure_store_subscription_only_subscribes_once_and_applies_published_up
     });
 }
 
+#[gpui::test]
+async fn conversation_search_results_update_history_panel(cx: &mut TestAppContext) {
+    let (app_state, _user_rx, first_conversation_id, _second_conversation_id, _selected_profile_id) =
+        build_app_state();
+    cx.set_global(app_state);
+
+    let panel = cx.new(MainPanel::new);
+
+    panel.update(cx, |panel: &mut MainPanel, cx| {
+        panel.init(cx);
+        let history_panel = panel
+            .history_panel
+            .as_ref()
+            .expect("history panel initialized")
+            .clone();
+        history_panel.update(cx, |view, cx| {
+            view.list_entity().update(cx, |list, _cx| {
+                list.state.sidebar_search_query = "start".to_string();
+            });
+        });
+
+        panel.handle_command(
+            ViewCommand::ConversationSearchResults {
+                results: vec![
+                    crate::presentation::view_command::ConversationSearchResult {
+                        id: first_conversation_id,
+                        title: "Startup Conversation".to_string(),
+                        is_title_match: true,
+                        match_context: "Startup".to_string(),
+                        message_count: 2,
+                        updated_at: chrono::Utc::now(),
+                    },
+                ],
+            },
+            cx,
+        );
+
+        history_panel.read_with(cx, |view, cx| {
+            let list = view.list_entity().read(cx);
+            let results = list
+                .state
+                .sidebar_search_results
+                .as_ref()
+                .expect("history panel should receive search results");
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].id, first_conversation_id);
+        });
+    });
+}
+
 fn remote_model(
     provider_id: &str,
     model_id: &str,

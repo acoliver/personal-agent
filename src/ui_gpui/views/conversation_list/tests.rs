@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use flume;
-use gpui::{AppContext, TestAppContext};
+use gpui::{AppContext, EntityInputHandler, TestAppContext};
 use uuid::Uuid;
 
 use super::{ConversationListMode, ConversationListView};
@@ -201,4 +201,56 @@ async fn apply_search_results_stores_them(cx: &mut TestAppContext) {
             .unwrap()
             .is_empty());
     });
+}
+
+#[gpui::test]
+async fn list_input_handler_types_into_focused_search(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(|cx| ConversationListView::new(ConversationListMode::FullPanel, cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|window, app| {
+        view.update(app, |view, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.state.sidebar_search_focused = true;
+            view.replace_text_in_range(None, "hist", window, cx);
+            assert_eq!(view.state.sidebar_search_query, "hist");
+        });
+    });
+
+    let event = user_rx.recv().expect("expected SearchConversations event");
+    assert!(
+        matches!(event, UserEvent::SearchConversations { ref query } if query == "hist"),
+        "got {event:?}"
+    );
+}
+
+#[gpui::test]
+async fn list_input_handler_supports_backspace_and_escape_for_search(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(|cx| ConversationListView::new(ConversationListMode::FullPanel, cx));
+
+    view.update(cx, |view, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        view.state.sidebar_search_focused = true;
+        view.state.sidebar_search_query = "history".to_string();
+        view.handle_key_down(&key_event("backspace"), cx);
+        assert_eq!(view.state.sidebar_search_query, "histor");
+        view.handle_key_down(&key_event("escape"), cx);
+        assert!(!view.state.sidebar_search_focused);
+    });
+
+    let event = user_rx.recv().expect("expected SearchConversations event");
+    assert!(
+        matches!(event, UserEvent::SearchConversations { ref query } if query == "histor"),
+        "got {event:?}"
+    );
+}
+
+fn key_event(key: &str) -> gpui::KeyDownEvent {
+    gpui::KeyDownEvent {
+        keystroke: gpui::Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),
+        is_held: false,
+        prefer_character_input: false,
+    }
 }

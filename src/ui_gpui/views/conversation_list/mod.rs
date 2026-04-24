@@ -12,6 +12,7 @@
 //! @requirement REQ-180-001
 
 mod history_panel;
+mod ime;
 mod render;
 pub mod state;
 
@@ -207,6 +208,106 @@ impl ConversationListView {
             self.state.sidebar_search_results = Some(results);
         }
         cx.notify();
+    }
+
+    /// Read the input text currently owned by the list's active editor.
+    #[must_use]
+    pub fn active_input_text(&self) -> &str {
+        if self.state.conversation_title_editing {
+            &self.state.conversation_title_input
+        } else {
+            &self.state.sidebar_search_query
+        }
+    }
+
+    /// Cursor position for the list's active editor.
+    #[must_use]
+    pub fn active_cursor_position(&self) -> usize {
+        self.active_input_text().len()
+    }
+
+    /// Handle key input when the list owns focus.
+    pub fn handle_key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut gpui::Context<Self>) {
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
+
+        if modifiers.platform {
+            match key.as_str() {
+                "c" => {
+                    let text = self.active_input_text().to_string();
+                    if !text.is_empty() {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    }
+                }
+                "v" => {
+                    if let Some(item) = cx.read_from_clipboard() {
+                        if let Some(text) = item.text() {
+                            self.handle_paste(&text, cx);
+                        }
+                    }
+                }
+                "x" => {
+                    let text = self.active_input_text().to_string();
+                    if !text.is_empty() {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    }
+                    if self.state.conversation_title_editing {
+                        self.state.conversation_title_input.clear();
+                        self.state.rename_replace_on_next_char = false;
+                    } else {
+                        self.state.sidebar_search_query.clear();
+                        self.state.sidebar_search_results = None;
+                    }
+                    cx.notify();
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        if self.state.conversation_title_editing {
+            match key.as_str() {
+                "escape" => self.cancel_rename_conversation(cx),
+                "backspace" => self.handle_rename_backspace(cx),
+                "enter" => self.submit_rename_conversation(cx),
+                _ => {}
+            }
+            return;
+        }
+
+        if self.state.sidebar_search_focused {
+            match key.as_str() {
+                "escape" => {
+                    self.state.sidebar_search_focused = false;
+                    if self.state.sidebar_search_query.is_empty() {
+                        self.state.sidebar_search_results = None;
+                    }
+                    cx.notify();
+                }
+                "backspace" => {
+                    self.state.sidebar_search_query.pop();
+                    self.trigger_sidebar_search(cx);
+                    cx.notify();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Paste text into the list's active editor.
+    pub fn handle_paste(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
+        if self.state.conversation_title_editing {
+            if self.state.rename_replace_on_next_char {
+                self.state.conversation_title_input.clear();
+                self.state.rename_replace_on_next_char = false;
+            }
+            self.state.conversation_title_input.push_str(text);
+            cx.notify();
+        } else if self.state.sidebar_search_focused {
+            self.state.sidebar_search_query.push_str(text);
+            self.trigger_sidebar_search(cx);
+            cx.notify();
+        }
     }
 }
 

@@ -62,9 +62,11 @@ impl MainPanel {
             | ShowConversationExportFormat { .. }
             | ExportCompleted { .. }
             | ToolApprovalRequest { .. }
-            | ToolApprovalResolved { .. }
-            | ConversationSearchResults { .. } => self.forward_to_chat(cmd, cx),
+            | ToolApprovalResolved { .. } => self.forward_to_chat(cmd, cx),
 
+            ConversationSearchResults { results } => {
+                self.forward_conversation_search_results(results, cx);
+            }
             ErrorLogExportCompleted { .. } => self.forward_to_error_log(cmd, cx),
 
             // ── settings-only forwarding ─────────────────────────────
@@ -143,6 +145,28 @@ impl MainPanel {
         if let Some(ref chat) = self.chat_view {
             chat.update(cx, |view, cx| {
                 view.handle_command(cmd, cx);
+            });
+        }
+    }
+
+    fn forward_conversation_search_results(
+        &self,
+        results: Vec<crate::presentation::view_command::ConversationSearchResult>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(ref chat) = self.chat_view {
+            chat.update(cx, |view, cx| {
+                view.handle_command(
+                    ViewCommand::ConversationSearchResults {
+                        results: results.clone(),
+                    },
+                    cx,
+                );
+            });
+        }
+        if let Some(ref history_panel) = self.history_panel {
+            history_panel.update(cx, |view, cx| {
+                view.apply_search_results(results, cx);
             });
         }
     }

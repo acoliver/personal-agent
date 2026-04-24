@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use gpui::{div, prelude::*, px, Entity, FocusHandle, FontWeight, MouseButton};
+use gpui::{div, prelude::*, px, Entity, FontWeight, MouseButton};
 
 use super::{ConversationListMode, ConversationListView};
 use crate::presentation::view_command::ViewId;
@@ -20,17 +20,13 @@ use crate::ui_gpui::views::main_panel::MainPanelAppState;
 /// Container view used when History is opened as a popin (full panel).
 pub struct HistoryPanelView {
     list: Entity<ConversationListView>,
-    focus_handle: FocusHandle,
 }
 
 impl HistoryPanelView {
     pub fn new(cx: &mut gpui::Context<Self>) -> Self {
         let list =
             cx.new(|child_cx| ConversationListView::new(ConversationListMode::FullPanel, child_cx));
-        Self {
-            list,
-            focus_handle: cx.focus_handle(),
-        }
+        Self { list }
     }
 
     /// Inject the bridge into the embedded list view.
@@ -55,6 +51,17 @@ impl HistoryPanelView {
     #[must_use]
     pub const fn list_entity(&self) -> &Entity<ConversationListView> {
         &self.list
+    }
+
+    /// Apply backend-supplied search results to the embedded list.
+    pub fn apply_search_results(
+        &self,
+        results: Vec<crate::presentation::view_command::ConversationSearchResult>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.list.update(cx, |list, list_cx| {
+            list.apply_search_results(results, list_cx);
+        });
     }
 
     /// Read the current list of conversations from the embedded list view.
@@ -129,8 +136,8 @@ impl HistoryPanelView {
 }
 
 impl gpui::Focusable for HistoryPanelView {
-    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
+        self.list.read(cx).focus_handle(cx)
     }
 }
 

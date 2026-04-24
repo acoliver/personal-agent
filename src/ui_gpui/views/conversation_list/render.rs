@@ -11,7 +11,10 @@
 
 use std::collections::HashSet;
 
-use gpui::{div, prelude::*, px, AnyElement, FontWeight, MouseButton, SharedString};
+use gpui::{
+    canvas, div, prelude::*, px, AnyElement, Bounds, ElementInputHandler, FontWeight, MouseButton,
+    Pixels, SharedString,
+};
 use uuid::Uuid;
 
 use super::{ConversationListMode, ConversationListView};
@@ -79,8 +82,10 @@ impl ConversationListView {
                     })
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
+                        cx.listener(|this, _, window, cx| {
+                            cx.stop_propagation();
                             this.state.sidebar_search_focused = true;
+                            window.focus(&this.focus_handle, cx);
                             cx.notify();
                         }),
                     ),
@@ -510,6 +515,32 @@ impl gpui::Render for ConversationListView {
             .bg(bg)
             .flex()
             .flex_col()
+            .track_focus(&self.focus_handle)
+            .child(
+                canvas(
+                    |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
+                    {
+                        let entity = cx.entity();
+                        let focus = self.focus_handle.clone();
+                        move |bounds: Bounds<Pixels>,
+                              _,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::App| {
+                            window.handle_input(
+                                &focus,
+                                ElementInputHandler::new(bounds, entity),
+                                cx,
+                            );
+                        }
+                    },
+                )
+                .size_0(),
+            )
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                    this.handle_key_down(event, cx);
+                }),
+            )
             .child(self.render_header(cx))
             .child(self.render_list(cx))
     }
