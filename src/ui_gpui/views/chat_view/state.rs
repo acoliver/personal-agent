@@ -248,13 +248,17 @@ pub struct ChatState {
     /// Whether the sidebar is visible (popout mode only).
     pub sidebar_visible: bool,
     /// Current search query typed in the sidebar search box.
+    ///
+    /// Owned by `ChatState` because IME mutations (composing text,
+    /// paste, backspace) flow through `ChatView` keystroke/IME handlers
+    /// before being mirrored to the embedded `ConversationListView`.
+    /// The `sidebar_search_focused` flag and `delete_confirming_id` are
+    /// owned by the embedded list itself (single source of truth) so
+    /// click-driven changes inside the list survive across renders.
+    /// @plan PLAN-20260420-ISSUE180.P03
     pub sidebar_search_query: String,
-    /// Whether the sidebar search box currently has input focus.
-    pub sidebar_search_focused: bool,
     /// Search results from the backend, if a search is active.
     pub sidebar_search_results: Option<Vec<ConversationSearchResult>>,
-    /// Conversation ID pending delete confirmation in the sidebar.
-    pub delete_confirming_id: Option<Uuid>,
     /// When true, emojis are stripped from assistant message display.
     pub filter_emoji: bool,
     /// Conversation ids currently streaming in the background (for sidebar indicator).
@@ -287,9 +291,7 @@ impl Default for ChatState {
             yolo_mode: false,
             sidebar_visible: true,
             sidebar_search_query: String::new(),
-            sidebar_search_focused: false,
             sidebar_search_results: None,
-            delete_confirming_id: None,
             current_model: "No profile selected".to_string(),
             profiles: Vec::new(),
             selected_profile_id: None,

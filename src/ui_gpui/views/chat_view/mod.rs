@@ -32,7 +32,10 @@ use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, Stream
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
 use crate::ui_gpui::theme::Theme;
-use gpui::{point, px, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent};
+use crate::ui_gpui::views::conversation_list::{ConversationListMode, ConversationListView};
+use gpui::{
+    point, prelude::*, px, Entity, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+};
 #[cfg(test)]
 use std::cell::Cell;
 use std::sync::Arc;
@@ -48,12 +51,20 @@ pub struct ChatView {
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
     pub(super) chat_scroll_handle: ScrollHandle,
+    /// Embedded shared conversation list rendered inside the popout sidebar
+    /// (Inline mode). The same component type is used for the popin History
+    /// panel via `HistoryPanelView`.
+    /// @plan PLAN-20260420-ISSUE180.P03
+    /// @requirement REQ-180-001
+    pub(super) conversation_list: Entity<ConversationListView>,
     #[cfg(test)]
     pub(super) maybe_scroll_chat_to_bottom_invocations: Cell<usize>,
 }
 
 impl ChatView {
     pub fn new(state: ChatState, cx: &mut gpui::Context<Self>) -> Self {
+        let conversation_list =
+            cx.new(|child_cx| ConversationListView::new(ConversationListMode::Inline, child_cx));
         Self {
             state,
             focus_handle: cx.focus_handle(),
@@ -61,6 +72,7 @@ impl ChatView {
             conversation_id: None,
             selection_generation: 0,
             chat_scroll_handle: ScrollHandle::new(),
+            conversation_list,
             #[cfg(test)]
             maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
         }
@@ -185,10 +197,32 @@ impl ChatView {
         StreamingState::Idle
     }
 
-    /// Set the bridge for event communication
+    /// Set the bridge for event communication.
+    ///
+    /// **Deprecated**: Production callers must use
+    /// [`set_bridge_with_cx`](Self::set_bridge_with_cx) so the bridge is also
+    /// forwarded to the embedded `ConversationListView`. Without forwarding,
+    /// the sidebar cannot emit events such as `DeleteConversation`,
+    /// `RenameConversation`, or `SearchConversations`. This shim is kept only
+    /// for unit tests that do not exercise the embedded list.
+    ///
     /// @plan PLAN-20250130-GPUIREDUX.P04
+    /// @plan PLAN-20260420-ISSUE180.P03
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use set_bridge_with_cx so the embedded ConversationListView also receives the bridge"
+    )]
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
+    }
+
+    /// Set the bridge and forward it to the embedded `ConversationListView`.
+    /// @plan PLAN-20260420-ISSUE180.P03
+    pub fn set_bridge_with_cx(&mut self, bridge: Arc<GpuiBridge>, cx: &mut gpui::Context<Self>) {
+        self.bridge = Some(Arc::clone(&bridge));
+        self.conversation_list.update(cx, |list, _list_cx| {
+            list.set_bridge(bridge);
+        });
     }
 
     /// @plan PLAN-20260304-GPUIREMEDIATE.P04
@@ -281,7 +315,69 @@ impl ChatView {
             self.maybe_scroll_chat_to_bottom(cx);
         }
 
+        self.sync_conversation_list_state(cx);
+
         cx.notify();
+    }
+
+    /// Mirror the data-ownership fields from `ChatState` onto the embedded
+    /// `ConversationListView`.
+    ///
+    /// This sync intentionally only touches fields that flow from
+    /// store/IME sources: `conversations`, `active_conversation_id`,
+    /// `streaming_conversation_ids`, `sidebar_search_query`,
+    /// `sidebar_search_results`, and the rename buffer
+    /// (`conversation_title_*`, `rename_replace_on_next_char`).
+    ///
+    /// User-interaction state owned by the embedded list itself
+    /// (`sidebar_search_focused`, `delete_confirming_id`) is **not**
+    /// touched here; otherwise listener-driven mutations inside the list
+    /// would be clobbered on every re-render. Callers that need to read
+    /// those values must go through
+    /// [`sidebar_search_focused`](Self::sidebar_search_focused) /
+    /// [`delete_confirming_id`](Self::delete_confirming_id).
+    ///
+    /// @plan PLAN-20260420-ISSUE180.P03
+    /// @requirement REQ-180-001
+    pub(super) fn sync_conversation_list_state(&self, cx: &mut gpui::Context<Self>) {
+        let conversations = self.state.conversations.clone();
+        let active_id = self.state.active_conversation_id;
+        let streaming_ids = self.state.streaming_conversation_ids.clone();
+        let search_query = self.state.sidebar_search_query.clone();
+        let search_results = self.state.sidebar_search_results.clone();
+        let title_editing = self.state.conversation_title_editing;
+        let title_input = self.state.conversation_title_input.clone();
+        let rename_replace = self.state.rename_replace_on_next_char;
+
+        self.conversation_list.update(cx, |list, list_cx| {
+            list.state.conversations = conversations;
+            list.state.active_conversation_id = active_id;
+            list.state.streaming_conversation_ids = streaming_ids;
+            list.state.sidebar_search_query = search_query;
+            list.state.sidebar_search_results = search_results;
+            list.state.conversation_title_editing = title_editing;
+            list.state.conversation_title_input = title_input;
+            list.state.rename_replace_on_next_char = rename_replace;
+            list_cx.notify();
+        });
+    }
+
+    /// Read-only accessor for the sidebar search-focus flag, owned by the
+    /// embedded `ConversationListView`.
+    /// @plan PLAN-20260420-ISSUE180.P03
+    pub(super) fn sidebar_search_focused(&self, cx: &gpui::App) -> bool {
+        self.conversation_list.read(cx).state.sidebar_search_focused
+    }
+
+    /// Toggle / set the sidebar search-focus flag on the embedded list.
+    /// @plan PLAN-20260420-ISSUE180.P03
+    pub(super) fn set_sidebar_search_focused(&self, focused: bool, cx: &mut gpui::Context<Self>) {
+        self.conversation_list.update(cx, |list, list_cx| {
+            if list.state.sidebar_search_focused != focused {
+                list.state.sidebar_search_focused = focused;
+                list_cx.notify();
+            }
+        });
     }
 
     /// Apply settings/profile data from the store snapshot so profiles are
@@ -542,8 +638,15 @@ impl ChatView {
         self.state.profile_dropdown_open
     }
 
-    pub(super) fn active_input_text(&self) -> &str {
-        if self.state.sidebar_search_focused {
+    /// Active input text for IME and clipboard routing.
+    ///
+    /// Sidebar search ownership lives on the embedded
+    /// `ConversationListView`, so we read its query (kept in sync with
+    /// `ChatState.sidebar_search_query` via `sync_conversation_list_state`)
+    /// when the embedded list reports the search box is focused.
+    /// @plan PLAN-20260420-ISSUE180.P03
+    pub(super) fn active_input_text<'a>(&'a self, cx: &'a gpui::App) -> &'a str {
+        if self.sidebar_search_focused(cx) {
             &self.state.sidebar_search_query
         } else if self.state.conversation_title_editing {
             &self.state.conversation_title_input
@@ -552,8 +655,11 @@ impl ChatView {
         }
     }
 
-    pub(super) const fn active_cursor_position(&self) -> usize {
-        if self.state.sidebar_search_focused {
+    /// Cursor position for the currently active input, mirroring
+    /// [`active_input_text`](Self::active_input_text).
+    /// @plan PLAN-20260420-ISSUE180.P03
+    pub(super) fn active_cursor_position(&self, cx: &gpui::App) -> usize {
+        if self.sidebar_search_focused(cx) {
             self.state.sidebar_search_query.len()
         } else if self.state.conversation_title_editing {
             self.state.conversation_title_input.len()
@@ -601,7 +707,7 @@ impl ChatView {
     }
 
     pub fn handle_paste(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
-        if self.state.sidebar_search_focused {
+        if self.sidebar_search_focused(cx) {
             self.state.sidebar_search_query.push_str(text);
             self.trigger_sidebar_search(cx);
             cx.notify();

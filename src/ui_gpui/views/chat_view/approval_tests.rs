@@ -2,6 +2,7 @@
 
 #![allow(clippy::future_not_send)]
 #![allow(unused_imports)]
+#![allow(deprecated)]
 
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::{ToolApprovalContext, ToolCategory, ViewCommand};

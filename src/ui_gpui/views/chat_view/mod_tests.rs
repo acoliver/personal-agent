@@ -1,4 +1,5 @@
 #![allow(clippy::future_not_send)]
+#![allow(deprecated)]
 
 use super::*;
 use crate::events::types::UserEvent;

@@ -1,7 +1,7 @@
 //! `MainPanel::handle_command` — `ViewCommand` dispatch to child views.
 //!
 //! Routes each `ViewCommand` variant to the appropriate child view
-//! (`ChatView`, `HistoryView`, `SettingsView`, etc.) and handles
+//! (`ChatView`, `HistoryPanelView`, `SettingsView`, etc.) and handles
 //! navigation transitions triggered by commands.
 //!
 //! Store-managed commands (conversation lifecycle, streaming, thinking,
