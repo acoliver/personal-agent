@@ -340,12 +340,52 @@ async fn model_selected_preserves_edit_state_for_issue_182(cx: &mut TestAppConte
         assert_eq!(view.state.data.name, "My Anthropic");
         assert_eq!(view.state.data.base_url, "https://api.anthropic.com/v1");
         assert_eq!(view.state.data.system_prompt, "Be helpful.");
+        // A user-customised context_limit (200_000) must not be clobbered by
+        // the newly-selected model's native context length (128_000).
+        assert_eq!(
+            view.state.data.context_limit, 200_000,
+            "user-customised context_limit must survive model Browse"
+        );
 
         // The API key selection must survive, keeping Save enabled.
         assert_eq!(view.state.data.key_label, "anthropic-key");
         assert!(
             view.state.data.can_save(),
             "Save must remain enabled after Browse during an edit"
+        );
+    });
+}
+
+/// Regression test for issue #182 (Bug 1) — new-profile flow still adopts the
+/// model's native context length.
+///
+/// When a user is starting a brand-new profile (editor at defaults), selecting
+/// a model should populate `context_limit` from the model's `context_length`
+/// so the form reflects that model's capabilities out of the box.
+#[gpui::test]
+async fn model_selected_on_blank_editor_adopts_context_length(cx: &mut TestAppContext) {
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        // Sanity: blank editor starts at the default context_limit.
+        assert_eq!(
+            view.state.data.context_limit,
+            ProfileEditorData::DEFAULT_CONTEXT_LIMIT
+        );
+
+        view.handle_command(
+            ViewCommand::ModelSelected {
+                provider_id: "anthropic".to_string(),
+                model_id: "claude-3-5-sonnet".to_string(),
+                provider_api_url: Some("https://api.anthropic.com/v1".to_string()),
+                context_length: Some(200_000),
+            },
+            cx,
+        );
+
+        assert_eq!(
+            view.state.data.context_limit, 200_000,
+            "blank editor should adopt the selected model's native context length"
         );
     });
 }

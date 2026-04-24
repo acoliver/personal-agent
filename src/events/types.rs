@@ -198,6 +198,16 @@ pub enum UserEvent {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     SaveProfileEditor,
 
+    /// User initiated the "create new profile" flow.
+    ///
+    /// Emitted by the `+` button and `Shift+=` shortcut in Settings.
+    /// The presenter responds with [`crate::presentation::ViewCommand::ProfileEditorReset`]
+    /// so the editor view drops any stale state from a prior edit or Browse flow.
+    ///
+    /// Fixes profile editor state-management bugs where the new-profile form
+    /// was pre-populated with a previously-edited profile's fields.
+    OpenNewProfile,
+
     /// Store a new API key in the OS keychain.
     StoreApiKey { label: String, value: String },
 
@@ -324,16 +334,6 @@ pub enum UserEvent {
 
     /// User clicked back
     NavigateBack,
-
-    /// User initiated the "create new profile" flow.
-    ///
-    /// Emitted by the `+` button and `Shift+=` shortcut in Settings.
-    /// The presenter responds with [`crate::presentation::ViewCommand::ProfileEditorReset`]
-    /// so the editor view drops any stale state from a prior edit or Browse flow.
-    ///
-    /// Fixes profile editor state-management bugs where the new-profile form
-    /// was pre-populated with a previously-edited profile's fields.
-    OpenNewProfile,
 }
 
 /// Actions a user can take on a tool approval request.

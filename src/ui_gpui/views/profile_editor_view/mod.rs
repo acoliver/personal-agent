@@ -112,6 +112,10 @@ pub struct ProfileEditorData {
 }
 
 impl ProfileEditorData {
+    /// Default `context_limit` used when no explicit value has been chosen
+    /// (matches the value assigned by [`ProfileEditorData::new`]).
+    pub const DEFAULT_CONTEXT_LIMIT: u32 = 128_000;
+
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -119,7 +123,7 @@ impl ProfileEditorData {
             max_tokens: "4096".to_string(),
             max_tokens_field_name: "max_tokens".to_string(),
             extra_request_fields: "{}".to_string(),
-            context_limit: 128_000,
+            context_limit: Self::DEFAULT_CONTEXT_LIMIT,
             show_thinking: true,
             thinking_budget: 10000,
             system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
@@ -511,31 +515,7 @@ impl ProfileEditorView {
                 provider_api_url,
                 context_length,
             } => {
-                // Preserve `is_new`, `id`, `key_label`, `name`, `system_prompt`, etc.
-                // The Browse button keeps the editor's pre-existing state so that an
-                // edit-flow user does not lose their work (and does not silently
-                // create a duplicate profile) when picking a different model. See
-                // issue #182.
-                self.state.data.model_id.clone_from(&model_id);
-                self.state.data.api_type = match provider_id.as_str() {
-                    "anthropic" => ApiType::Anthropic,
-                    "openai" => ApiType::OpenAI,
-                    _ => ApiType::Custom(provider_id.clone()),
-                };
-                // Only synthesise a name when the user has not already typed one.
-                if self.state.data.name.trim().is_empty() {
-                    self.state.data.name = model_id;
-                }
-                // Only fill base_url when it has not been entered yet.
-                if self.state.data.base_url.trim().is_empty() {
-                    self.state.data.base_url = provider_api_url
-                        .filter(|url| !url.trim().is_empty())
-                        .unwrap_or_else(|| default_api_base_url_for_provider(&provider_id));
-                }
-                if let Some(limit) = context_length {
-                    self.state.data.context_limit = limit;
-                }
-                self.state.active_field = None;
+                self.apply_model_selected(&provider_id, model_id, provider_api_url, context_length);
             }
             ViewCommand::ProfileEditorLoad {
                 id,
@@ -601,6 +581,44 @@ impl ProfileEditorView {
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Apply a `ViewCommand::ModelSelected` payload to the editor state.
+    ///
+    /// Preserves `is_new`, `id`, `key_label`, `name`, `system_prompt`, and any
+    /// user-customised `base_url` / `context_limit`. Only fields that are
+    /// unset (or at their defaults) are filled from the selected model. See
+    /// issue #182 — the Browse flow during an edit must not clobber user
+    /// work or silently spawn duplicate profiles.
+    fn apply_model_selected(
+        &mut self,
+        provider_id: &str,
+        model_id: String,
+        provider_api_url: Option<String>,
+        context_length: Option<u32>,
+    ) {
+        self.state.data.model_id.clone_from(&model_id);
+        self.state.data.api_type = match provider_id {
+            "anthropic" => ApiType::Anthropic,
+            "openai" => ApiType::OpenAI,
+            _ => ApiType::Custom(provider_id.to_string()),
+        };
+        if self.state.data.name.trim().is_empty() {
+            self.state.data.name = model_id;
+        }
+        if self.state.data.base_url.trim().is_empty() {
+            self.state.data.base_url = provider_api_url
+                .filter(|url| !url.trim().is_empty())
+                .unwrap_or_else(|| default_api_base_url_for_provider(provider_id));
+        }
+        if let Some(limit) = context_length {
+            if self.state.data.context_limit == 0
+                || self.state.data.context_limit == ProfileEditorData::DEFAULT_CONTEXT_LIMIT
+            {
+                self.state.data.context_limit = limit;
+            }
+        }
+        self.state.active_field = None;
     }
 
     /// Reset the editor's `state` to a blank new-profile while preserving the
