@@ -153,6 +153,7 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
             } else {
                 None
             },
+            context_window_size: Some(data.context_limit as usize),
         }),
         system_prompt: Some(data.system_prompt.clone()),
     }

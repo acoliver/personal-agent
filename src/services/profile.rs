@@ -70,4 +70,16 @@ pub trait ProfileService: Send + Sync {
 
     /// Set a profile as the default
     async fn set_default(&self, id: Uuid) -> ServiceResult<()>;
+
+    /// Update the profile's `context_window_size` (the editor field labeled
+    /// "CONTEXT LIMIT").
+    ///
+    /// This lives outside `update`'s `parameters` blob because it is stored
+    /// at the profile level on disk, not inside `ModelParameters`. The
+    /// default implementation is a no-op so test doubles don't have to
+    /// implement it; the real [`super::profile_impl::ProfileServiceImpl`]
+    /// overrides it to persist the change. Issue #182.
+    async fn set_context_window_size(&self, _id: Uuid, _size: usize) -> ServiceResult<()> {
+        Ok(())
+    }
 }

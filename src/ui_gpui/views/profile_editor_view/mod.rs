@@ -504,6 +504,9 @@ impl ProfileEditorView {
             } else {
                 None
             },
+            // Issue #182: carry the editor's "CONTEXT LIMIT" field through
+            // to the presenter so it actually gets persisted.
+            context_window_size: Some(self.state.data.context_limit as usize),
         });
 
         self.emit(&UserEvent::SaveProfile {

@@ -524,6 +524,7 @@ async fn profile_editor_handles_save_paths_and_connection_feedback() {
             show_thinking: Some(true),
             enable_thinking: Some(true),
             thinking_budget: Some(512),
+            context_window_size: None,
         }),
         system_prompt: Some("Be helpful".to_string()),
     };

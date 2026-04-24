@@ -608,3 +608,48 @@ fn api_type_from_provider_id_covers_all_known_providers() {
         ApiType::Custom("ollama".to_string()),
     );
 }
+
+/// Regression test for issue #182: the editor's CONTEXT LIMIT field must be
+/// included in the save payload so the presenter can persist it. Before the
+/// fix, `emit_save_profile` built a `ModelProfileParameters` without
+/// `context_window_size`, so any edit to the field was silently dropped.
+#[gpui::test]
+async fn emit_save_profile_carries_context_window_size_for_issue_182(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        view.handle_command(
+            ViewCommand::ModelSelected {
+                provider_id: "openai".to_string(),
+                model_id: "gpt-4.1".to_string(),
+                provider_api_url: None,
+                context_length: Some(128_000),
+            },
+            cx,
+        );
+        view.state.data.key_label = "openai-key".to_string();
+        // Simulate the user typing into the CONTEXT LIMIT field after
+        // selecting the model.
+        view.state.data.context_limit = 64_000;
+        view.emit_save_profile();
+    });
+
+    // Drain the RefreshApiKeys event the bridge always emits first.
+    let _ = user_rx.recv().expect("refresh api keys event");
+
+    let event = user_rx.recv().expect("save profile event");
+    let UserEvent::SaveProfile { profile } = event else {
+        panic!("expected SaveProfile, got {event:?}");
+    };
+    let parameters = profile
+        .parameters
+        .as_ref()
+        .expect("save payload must include parameters");
+    assert_eq!(
+        parameters.context_window_size,
+        Some(64_000),
+        "CONTEXT LIMIT must round-trip through the save payload"
+    );
+}

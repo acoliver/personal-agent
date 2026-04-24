@@ -1177,7 +1177,7 @@ mod settings_presenter_tests {
                 )
                 .expect("extra request fields should serialize"),
 
-                context_limit: None,
+                context_limit: Some(u32::try_from(profile.context_window_size).unwrap_or(u32::MAX)),
                 show_thinking: profile.parameters.show_thinking,
                 enable_thinking: profile.parameters.enable_thinking,
                 thinking_budget: profile.parameters.thinking_budget,
@@ -1226,7 +1226,9 @@ mod settings_presenter_tests {
                 max_tokens: legacy_profile.parameters.max_tokens,
                 max_tokens_field_name: "max_tokens".to_string(),
                 extra_request_fields: "{}".to_string(),
-                context_limit: None,
+                context_limit: Some(
+                    u32::try_from(legacy_profile.context_window_size).unwrap_or(u32::MAX),
+                ),
                 show_thinking: legacy_profile.parameters.show_thinking,
                 enable_thinking: legacy_profile.parameters.enable_thinking,
                 thinking_budget: legacy_profile.parameters.thinking_budget,

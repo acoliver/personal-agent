@@ -16,6 +16,10 @@ struct RecordingProfileService {
     create_calls: Arc<Mutex<Vec<CreateCall>>>,
     update_calls: Arc<Mutex<Vec<UpdateCall>>>,
     update_result: Arc<Mutex<Option<ServiceResult<ModelProfile>>>>,
+    /// Records `(profile_id, size)` pairs each time the presenter persists
+    /// a new context window via [`ProfileService::set_context_window_size`]
+    /// (issue #182).
+    set_context_window_calls: Arc<Mutex<Vec<(uuid::Uuid, usize)>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +59,13 @@ impl RecordingProfileService {
         self.create_calls
             .lock()
             .expect("create calls lock poisoned")
+            .clone()
+    }
+
+    fn set_context_window_calls(&self) -> Vec<(uuid::Uuid, usize)> {
+        self.set_context_window_calls
+            .lock()
+            .expect("set_context_window calls lock poisoned")
             .clone()
     }
 }
@@ -164,6 +175,14 @@ impl ProfileService for RecordingProfileService {
     async fn set_default(&self, _id: uuid::Uuid) -> ServiceResult<()> {
         Ok(())
     }
+
+    async fn set_context_window_size(&self, id: uuid::Uuid, size: usize) -> ServiceResult<()> {
+        self.set_context_window_calls
+            .lock()
+            .expect("set_context_window calls lock poisoned")
+            .push((id, size));
+        Ok(())
+    }
 }
 
 fn payload(max_tokens: Option<u32>, max_tokens_field_name: &str) -> EventModelProfile {
@@ -185,6 +204,7 @@ fn payload(max_tokens: Option<u32>, max_tokens_field_name: &str) -> EventModelPr
             show_thinking: Some(true),
             enable_thinking: Some(true),
             thinking_budget: Some(12000),
+            context_window_size: None,
         }),
         system_prompt: Some("Be concise".to_string()),
     }
@@ -343,5 +363,57 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
         create.parameters.extra_request_fields,
         Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
         "extra_request_fields should survive the fallback create path"
+    );
+}
+
+/// Issue #182: when the editor save payload carries a `context_window_size`,
+/// the presenter must persist it via `ProfileService::set_context_window_size`
+/// after the regular `update`. Before the fix, the field was dropped on the
+/// floor and the on-disk profile kept its previous value.
+#[tokio::test]
+async fn save_profile_payload_persists_context_window_size_for_issue_182() {
+    let event_bus_sender: tokio::sync::broadcast::Sender<personal_agent::events::AppEvent> =
+        tokio::sync::broadcast::channel::<personal_agent::events::AppEvent>(32).0;
+    let (view_tx, mut view_rx) =
+        tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(32);
+
+    let recording = RecordingProfileService::default();
+    let profile_service: Arc<dyn ProfileService> = Arc::new(recording.clone());
+
+    let mut presenter = personal_agent::presentation::ProfileEditorPresenter::new(
+        profile_service,
+        &event_bus_sender,
+        view_tx,
+    );
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let mut save_payload = payload(Some(2048), "max_completion_tokens");
+    if let Some(ref mut params) = save_payload.parameters {
+        params.context_window_size = Some(64_000);
+    }
+    let expected_id = save_payload.id;
+
+    event_bus_sender
+        .send(personal_agent::events::AppEvent::User(
+            personal_agent::events::types::UserEvent::SaveProfile {
+                profile: Box::new(save_payload),
+            },
+        ))
+        .ok();
+
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(250), view_rx.recv())
+        .await
+        .expect("timed out waiting for ProfileUpdated")
+        .expect("view channel closed");
+
+    let calls = recording.set_context_window_calls();
+    assert_eq!(
+        calls,
+        vec![(expected_id, 64_000)],
+        "presenter must persist context_window_size via set_context_window_size"
     );
 }
