@@ -67,7 +67,6 @@ impl MainPanel {
             ConversationSearchResults { results } => {
                 self.forward_conversation_search_results(results, cx);
             }
-
             ErrorLogExportCompleted { .. } => self.forward_to_error_log(cmd, cx),
 
             // ── settings-only forwarding ─────────────────────────────
