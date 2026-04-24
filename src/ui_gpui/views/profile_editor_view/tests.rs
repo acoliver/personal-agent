@@ -537,3 +537,74 @@ async fn reset_to_new_profile_helper_clears_edit_state_for_issue_182(cx: &mut Te
         );
     });
 }
+
+/// Regression test for issue #182 (Bug 3 — local-provider profiles): loading a
+/// profile whose `provider_id` is `"local"` must classify it as
+/// `ApiType::Local` (not `ApiType::Custom`), so the editor knows it does not
+/// require an API key and Save stays enabled even though the profile has no
+/// keychain entry.
+///
+/// User repro: edit "autoshot model remote" (a local profile), change the
+/// model name in the MODEL field, then try to Save → Save was disabled.
+#[gpui::test]
+async fn local_profile_load_keeps_save_enabled_for_issue_182(cx: &mut TestAppContext) {
+    let profile_id = Uuid::new_v4();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.handle_command(
+            ViewCommand::ProfileEditorLoad {
+                id: profile_id,
+                name: "autoshot model remote".to_string(),
+                provider_id: "local".to_string(),
+                model_id: "dpo_merged_q4_k_m.gguf".to_string(),
+                base_url: "http://fed-net.internet-box.ch:8080/".to_string(),
+                // Local profiles have no keychain label.
+                api_key_label: String::new(),
+                temperature: 0.7,
+                max_tokens: Some(4096),
+                max_tokens_field_name: "max_tokens".to_string(),
+                extra_request_fields: "{}".to_string(),
+                context_limit: Some(8_192),
+                show_thinking: true,
+                enable_thinking: false,
+                thinking_budget: None,
+                system_prompt: "Be helpful.".to_string(),
+            },
+            cx,
+        );
+
+        // Provider-id "local" must map to ApiType::Local, not Custom.
+        assert_eq!(view.state.data.api_type, ApiType::Local);
+        assert!(
+            !view.state.data.api_type.requires_api_key(),
+            "local profiles must not require an API key"
+        );
+        assert!(
+            view.state.data.can_save(),
+            "Save must be enabled for a local profile loaded from disk"
+        );
+
+        // The user changes the model name in the MODEL field — Save must
+        // remain enabled.
+        view.state.data.model_id = "different_model.gguf".to_string();
+        assert!(
+            view.state.data.can_save(),
+            "Save must remain enabled after editing the model field on a local profile"
+        );
+    });
+}
+
+/// Regression test: `ApiType::from_provider_id` must round-trip the four
+/// canonical provider ids correctly so that load / model-selection paths can
+/// never drift out of sync again (root cause of the local-profile bug).
+#[test]
+fn api_type_from_provider_id_covers_all_known_providers() {
+    assert_eq!(ApiType::from_provider_id("anthropic"), ApiType::Anthropic);
+    assert_eq!(ApiType::from_provider_id("openai"), ApiType::OpenAI);
+    assert_eq!(ApiType::from_provider_id("local"), ApiType::Local);
+    assert_eq!(
+        ApiType::from_provider_id("ollama"),
+        ApiType::Custom("ollama".to_string()),
+    );
+}

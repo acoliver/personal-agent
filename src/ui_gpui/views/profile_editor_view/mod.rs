@@ -72,6 +72,23 @@ impl ApiType {
             Self::Local => false,
         }
     }
+
+    /// Map a provider id string (as used by the model registry / persisted
+    /// profiles) to the corresponding `ApiType` variant.
+    ///
+    /// Centralised so every load / model-selection path stays in sync — see
+    /// issue #182 where omitting the `"local"` arm caused local-provider
+    /// profiles to be classified as `Custom`, which falsely required an API
+    /// key and disabled Save during an edit.
+    #[must_use]
+    pub fn from_provider_id(provider_id: &str) -> Self {
+        match provider_id {
+            "anthropic" => Self::Anthropic,
+            "openai" => Self::OpenAI,
+            "local" => Self::Local,
+            other => Self::Custom(other.to_string()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -539,11 +556,7 @@ impl ProfileEditorView {
                 self.state.data.name = name;
                 self.state.data.model_id = model_id;
                 self.state.data.base_url = base_url;
-                self.state.data.api_type = match provider_id.as_str() {
-                    "anthropic" => ApiType::Anthropic,
-                    "openai" => ApiType::OpenAI,
-                    _ => ApiType::Custom(provider_id.clone()),
-                };
+                self.state.data.api_type = ApiType::from_provider_id(&provider_id);
                 self.state.data.key_label = api_key_label;
                 #[allow(clippy::cast_possible_truncation)]
                 {
@@ -598,11 +611,7 @@ impl ProfileEditorView {
         context_length: Option<u32>,
     ) {
         self.state.data.model_id.clone_from(&model_id);
-        self.state.data.api_type = match provider_id {
-            "anthropic" => ApiType::Anthropic,
-            "openai" => ApiType::OpenAI,
-            _ => ApiType::Custom(provider_id.to_string()),
-        };
+        self.state.data.api_type = ApiType::from_provider_id(provider_id);
         if self.state.data.name.trim().is_empty() {
             self.state.data.name = model_id;
         }
