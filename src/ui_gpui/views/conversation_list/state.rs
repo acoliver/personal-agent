@@ -81,7 +81,12 @@ impl ConversationListState {
                 self.delete_confirming_id = None;
             }
         }
-        // If the active conversation changed, exit rename mode silently.
+        // Defensive cleanup: if no rename is in flight, drop any leftover
+        // input bytes / replace-on-next-char flag so a previous aborted rename
+        // can't poison the next start_rename_conversation call. We deliberately
+        // do NOT clear the buffer when the user IS renaming, so that snapshot
+        // refreshes (which arrive while typing) leave the in-progress edit
+        // intact.
         if !self.conversation_title_editing {
             self.conversation_title_input.clear();
             self.rename_replace_on_next_char = false;

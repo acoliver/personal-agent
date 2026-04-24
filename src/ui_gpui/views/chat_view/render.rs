@@ -104,10 +104,10 @@ impl ChatView {
             return;
         }
 
-        if self.state.sidebar_search_focused {
+        if self.sidebar_search_focused(cx) {
             match key.as_str() {
                 "escape" => {
-                    self.state.sidebar_search_focused = false;
+                    self.set_sidebar_search_focused(false, cx);
                     if self.state.sidebar_search_query.is_empty() {
                         self.state.sidebar_search_results = None;
                     }
@@ -238,14 +238,14 @@ impl ChatView {
                 }
             }
             "a" => {
-                if self.state.sidebar_search_focused {
+                if self.sidebar_search_focused(cx) {
                     // select-all is a no-op for sidebar search (single-line)
                 } else {
                     self.handle_select_all(cx);
                 }
             }
             "c" => {
-                let text = if self.state.sidebar_search_focused {
+                let text = if self.sidebar_search_focused(cx) {
                     self.state.sidebar_search_query.clone()
                 } else if self.state.conversation_title_editing {
                     self.state.conversation_title_input.clone()
@@ -257,7 +257,7 @@ impl ChatView {
                 }
             }
             "x" => {
-                if self.state.sidebar_search_focused {
+                if self.sidebar_search_focused(cx) {
                     let text = self.state.sidebar_search_query.clone();
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                     self.state.sidebar_search_query.clear();
@@ -689,8 +689,8 @@ impl ChatView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _window, cx| {
-                    if this.state.sidebar_search_focused {
-                        this.state.sidebar_search_focused = false;
+                    if this.sidebar_search_focused(cx) {
+                        this.set_sidebar_search_focused(false, cx);
                         cx.notify();
                     }
                 }),

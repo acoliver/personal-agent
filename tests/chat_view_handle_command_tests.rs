@@ -1,4 +1,5 @@
 #![allow(clippy::future_not_send, clippy::unused_async)]
+#![allow(deprecated)]
 
 use chrono::Utc;
 use gpui::{px, size, AppContext, EntityInputHandler, Render, TestAppContext};

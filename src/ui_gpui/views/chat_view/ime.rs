@@ -40,11 +40,11 @@ impl gpui::EntityInputHandler for ChatView {
         range: Range<usize>,
         _adjusted_range: &mut Option<Range<usize>>,
         _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
+        cx: &mut gpui::Context<Self>,
     ) -> Option<String> {
-        let text = self.active_input_text();
-        let start = utf16_offset_to_utf8(text, range.start);
-        let end = utf16_offset_to_utf8(text, range.end);
+        let text = self.active_input_text(cx).to_string();
+        let start = utf16_offset_to_utf8(&text, range.start);
+        let end = utf16_offset_to_utf8(&text, range.end);
         Some(text[start..end].to_string())
     }
 
@@ -52,11 +52,11 @@ impl gpui::EntityInputHandler for ChatView {
         &mut self,
         _ignore_disabled_input: bool,
         _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
+        cx: &mut gpui::Context<Self>,
     ) -> Option<UTF16Selection> {
-        let text = self.active_input_text();
-        let cursor_utf8 = self.active_cursor_position().min(text.len());
-        let cursor_utf16 = utf8_offset_to_utf16(text, cursor_utf8);
+        let text = self.active_input_text(cx).to_string();
+        let cursor_utf8 = self.active_cursor_position(cx).min(text.len());
+        let cursor_utf16 = utf8_offset_to_utf16(&text, cursor_utf8);
         Some(UTF16Selection {
             range: cursor_utf16..cursor_utf16,
             reversed: false,
@@ -83,7 +83,7 @@ impl gpui::EntityInputHandler for ChatView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.state.sidebar_search_focused {
+        if self.sidebar_search_focused(cx) {
             let query = &mut self.state.sidebar_search_query;
             let effective_range = range.or_else(|| self.state.marked_range.take());
             if let Some(r) = effective_range {
@@ -149,7 +149,7 @@ impl gpui::EntityInputHandler for ChatView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.state.sidebar_search_focused {
+        if self.sidebar_search_focused(cx) {
             let query = &mut self.state.sidebar_search_query;
             let (start_utf8, end_utf8) = if let Some(r) = range {
                 (
@@ -246,9 +246,10 @@ impl gpui::EntityInputHandler for ChatView {
         &mut self,
         _point: gpui::Point<Pixels>,
         _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
+        cx: &mut gpui::Context<Self>,
     ) -> Option<usize> {
-        let text = self.active_input_text();
-        Some(utf8_offset_to_utf16(text, self.active_cursor_position()))
+        let text = self.active_input_text(cx).to_string();
+        let cursor = self.active_cursor_position(cx);
+        Some(utf8_offset_to_utf16(&text, cursor))
     }
 }
