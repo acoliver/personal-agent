@@ -5,8 +5,8 @@
 
 pub mod api_key_manager_view;
 pub mod chat_view;
+pub mod conversation_list;
 pub mod error_log_view;
-pub mod history_view;
 pub mod main_panel;
 pub mod mcp_add_view;
 pub mod mcp_configure_view;
@@ -17,8 +17,10 @@ pub mod settings_view;
 
 pub use api_key_manager_view::ApiKeyManagerView;
 pub use chat_view::{ChatState, ChatView};
+pub use conversation_list::{
+    ConversationListMode, ConversationListState, ConversationListView, HistoryPanelView,
+};
 pub use error_log_view::ErrorLogView;
-pub use history_view::{ConversationItem, HistoryState, HistoryView};
 pub use main_panel::MainPanel;
 pub use mcp_add_view::{McpAddState, McpAddView, McpRegistry, McpSearchResult, SearchState};
 pub use mcp_configure_view::{

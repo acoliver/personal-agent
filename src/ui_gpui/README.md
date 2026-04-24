@@ -64,7 +64,7 @@ fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
 Views provide the main application interfaces:
 
 ```rust
-use personal_agent::ui_gpui::views::{ChatView, MainPanel, HistoryView, SettingsView};
+use personal_agent::ui_gpui::views::{ChatView, ConversationListView, HistoryPanelView, MainPanel, SettingsView};
 
 // In the main app:
 new_entity(|cx| {

@@ -23,8 +23,8 @@ use gpui::{prelude::*, Entity, FocusHandle, Subscription, Task};
 
 use crate::ui_gpui::views::api_key_manager_view::ApiKeyManagerView;
 use crate::ui_gpui::views::chat_view::{ChatState, ChatView};
+use crate::ui_gpui::views::conversation_list::HistoryPanelView;
 use crate::ui_gpui::views::error_log_view::ErrorLogView;
-use crate::ui_gpui::views::history_view::HistoryView;
 use crate::ui_gpui::views::mcp_add_view::McpAddView;
 use crate::ui_gpui::views::mcp_configure_view::McpConfigureView;
 use crate::ui_gpui::views::model_selector_view::ModelSelectorView;
@@ -37,7 +37,7 @@ pub struct MainPanel {
     pub(super) navigation: NavigationState,
     pub focus_handle: FocusHandle,
     pub(super) chat_view: Option<Entity<ChatView>>,
-    pub(super) history_view: Option<Entity<HistoryView>>,
+    pub(super) history_panel: Option<Entity<HistoryPanelView>>,
     pub(super) settings_view: Option<Entity<SettingsView>>,
     pub(super) model_selector_view: Option<Entity<ModelSelectorView>>,
     pub(super) profile_editor_view: Option<Entity<ProfileEditorView>>,
@@ -61,7 +61,7 @@ impl MainPanel {
             navigation: NavigationState::new(),
             focus_handle: cx.focus_handle(),
             chat_view: None,
-            history_view: None,
+            history_panel: None,
             settings_view: None,
             model_selector_view: None,
             profile_editor_view: None,
@@ -105,9 +105,9 @@ impl MainPanel {
             });
         }
 
-        if let Some(ref history_view) = self.history_view {
+        if let Some(ref history_panel) = self.history_panel {
             let history_snapshot = snapshot.history;
-            history_view.update(cx, |view, cx| {
+            history_panel.update(cx, |view, cx| {
                 view.apply_store_snapshot(&history_snapshot, cx);
             });
         }
@@ -139,15 +139,17 @@ impl MainPanel {
             tracing::info!(chat_view_entity_id = ?cx.entity_id(), "MainPanel::init created ChatView");
             let mut view = ChatView::new(chat_state, cx);
             if let Some(ref b) = bridge {
-                view.set_bridge(b.clone());
+                view.set_bridge_with_cx(b.clone(), cx);
             }
             view
         }));
-        // History view
-        self.history_view = Some(cx.new(|cx: &mut gpui::Context<HistoryView>| {
-            let mut view = HistoryView::new(cx);
+        // History panel (popin) wraps the shared ConversationListView in FullPanel mode.
+        // @plan PLAN-20260420-ISSUE180.P03
+        // @requirement REQ-180-001
+        self.history_panel = Some(cx.new(|cx: &mut gpui::Context<HistoryPanelView>| {
+            let view = HistoryPanelView::new(cx);
             if let Some(ref b) = bridge {
-                view.set_bridge(b.clone());
+                view.set_bridge(b.clone(), cx);
             }
             view
         }));
@@ -221,7 +223,7 @@ impl MainPanel {
     /// Check if all views are initialized
     pub(super) const fn is_initialized(&self) -> bool {
         self.chat_view.is_some()
-            && self.history_view.is_some()
+            && self.history_panel.is_some()
             && self.settings_view.is_some()
             && self.model_selector_view.is_some()
             && self.profile_editor_view.is_some()

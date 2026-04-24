@@ -31,10 +31,10 @@ async fn init_and_startup_state_seed_child_views_from_store(cx: &mut TestAppCont
         assert!(panel.store_subscription_task.is_some());
 
         let chat_view = panel.chat_view.as_ref().expect("chat view initialized");
-        let history_view = panel
-            .history_view
+        let history_panel = panel
+            .history_panel
             .as_ref()
-            .expect("history view initialized");
+            .expect("history panel initialized");
 
         chat_view.read_with(cx, |view, _| {
             assert_eq!(
@@ -48,10 +48,11 @@ async fn init_and_startup_state_seed_child_views_from_store(cx: &mut TestAppCont
             assert_eq!(view.state.current_model, "No profile selected");
         });
 
-        history_view.read_with(cx, |view, _| {
-            assert_eq!(view.conversations().len(), 2);
-            assert_eq!(view.conversations()[0].id, first_conversation_id);
-            assert_eq!(view.conversations()[0].title, "Startup Conversation");
+        history_panel.read_with(cx, |view, cx| {
+            let conversations = view.conversation_summaries(cx);
+            assert_eq!(conversations.len(), 2);
+            assert_eq!(conversations[0].id, first_conversation_id);
+            assert_eq!(conversations[0].title, "Startup Conversation");
         });
     });
 }
@@ -167,15 +168,20 @@ async fn ensure_store_subscription_only_subscribes_once_and_applies_published_up
             assert_eq!(view.state.profiles.len(), 1);
         });
 
-        let history_view = panel
-            .history_view
+        let history_panel = panel
+            .history_panel
             .as_ref()
-            .expect("history view initialized");
-        history_view.read_with(cx, |view, _| {
-            assert_eq!(view.conversations().len(), 2);
-            assert_eq!(view.conversations()[1].id, second_conversation_id);
-            assert_eq!(view.conversations()[1].title, "Updated Conversation");
-            assert!(view.conversations()[1].is_selected);
+            .expect("history panel initialized");
+        history_panel.read_with(cx, |view, cx| {
+            let conversations = view.conversation_summaries(cx);
+            assert_eq!(conversations.len(), 2);
+            assert_eq!(conversations[1].id, second_conversation_id);
+            assert_eq!(conversations[1].title, "Updated Conversation");
+            // Selection lives on the embedded ConversationListView.
+            assert_eq!(
+                view.list_entity().read(cx).active_conversation_id(),
+                Some(second_conversation_id)
+            );
         });
     });
 }

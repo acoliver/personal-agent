@@ -114,12 +114,11 @@ impl MainPanel {
             let first_target = this
                 .read_with(cx, |this, cx| {
                     let chat_view = this.chat_view.as_ref()?;
-                    let history_view = this.history_view.as_ref()?;
+                    let history_panel = this.history_panel.as_ref()?;
                     let current_conversation_id = chat_view.read(cx).state.active_conversation_id;
-                    history_view
-                        .read(cx)
-                        .conversations()
-                        .iter()
+                    let conversations = history_panel.read(cx).conversation_summaries(cx);
+                    conversations
+                        .into_iter()
                         .find(|conversation| {
                             Some(conversation.id) != current_conversation_id
                                 && conversation.message_count > 0
@@ -155,12 +154,11 @@ impl MainPanel {
             let second_target = this
                 .read_with(cx, |this, cx| {
                     let chat_view = this.chat_view.as_ref()?;
-                    let history_view = this.history_view.as_ref()?;
+                    let history_panel = this.history_panel.as_ref()?;
                     let current_conversation_id = chat_view.read(cx).state.active_conversation_id;
-                    history_view
-                        .read(cx)
-                        .conversations()
-                        .iter()
+                    let conversations = history_panel.read(cx).conversation_summaries(cx);
+                    conversations
+                        .into_iter()
                         .find(|conversation| Some(conversation.id) != current_conversation_id)
                         .map(|conversation| conversation.id)
                 })

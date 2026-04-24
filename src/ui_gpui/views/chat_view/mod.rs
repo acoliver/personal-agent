@@ -32,7 +32,10 @@ use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, Stream
 use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
 use crate::ui_gpui::theme::Theme;
-use gpui::{point, px, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent};
+use crate::ui_gpui::views::conversation_list::{ConversationListMode, ConversationListView};
+use gpui::{
+    point, prelude::*, px, Entity, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+};
 #[cfg(test)]
 use std::cell::Cell;
 use std::sync::Arc;
@@ -48,12 +51,20 @@ pub struct ChatView {
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
     pub(super) chat_scroll_handle: ScrollHandle,
+    /// Embedded shared conversation list rendered inside the popout sidebar
+    /// (Inline mode). The same component type is used for the popin History
+    /// panel via `HistoryPanelView`.
+    /// @plan PLAN-20260420-ISSUE180.P03
+    /// @requirement REQ-180-001
+    pub(super) conversation_list: Entity<ConversationListView>,
     #[cfg(test)]
     pub(super) maybe_scroll_chat_to_bottom_invocations: Cell<usize>,
 }
 
 impl ChatView {
     pub fn new(state: ChatState, cx: &mut gpui::Context<Self>) -> Self {
+        let conversation_list =
+            cx.new(|child_cx| ConversationListView::new(ConversationListMode::Inline, child_cx));
         Self {
             state,
             focus_handle: cx.focus_handle(),
@@ -61,6 +72,7 @@ impl ChatView {
             conversation_id: None,
             selection_generation: 0,
             chat_scroll_handle: ScrollHandle::new(),
+            conversation_list,
             #[cfg(test)]
             maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
         }
@@ -185,10 +197,23 @@ impl ChatView {
         StreamingState::Idle
     }
 
-    /// Set the bridge for event communication
+    /// Set the bridge for event communication.
+    ///
+    /// Note: this variant cannot forward the bridge to the embedded
+    /// `ConversationListView` because that requires a `&mut Context<Self>`.
+    /// Production callers should prefer [`set_bridge_with_cx`](Self::set_bridge_with_cx).
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
+    }
+
+    /// Set the bridge and forward it to the embedded `ConversationListView`.
+    /// @plan PLAN-20260420-ISSUE180.P03
+    pub fn set_bridge_with_cx(&mut self, bridge: Arc<GpuiBridge>, cx: &mut gpui::Context<Self>) {
+        self.bridge = Some(Arc::clone(&bridge));
+        self.conversation_list.update(cx, |list, _list_cx| {
+            list.set_bridge(bridge);
+        });
     }
 
     /// @plan PLAN-20260304-GPUIREMEDIATE.P04
@@ -281,7 +306,42 @@ impl ChatView {
             self.maybe_scroll_chat_to_bottom(cx);
         }
 
+        self.sync_conversation_list_state(cx);
+
         cx.notify();
+    }
+
+    /// Mirror the relevant `ChatState` fields onto the embedded
+    /// `ConversationListView` so the shared sidebar component renders the
+    /// current conversations, selection, streaming indicators, search state,
+    /// inline rename buffer, and delete-confirmation guard.
+    /// @plan PLAN-20260420-ISSUE180.P03
+    /// @requirement REQ-180-001
+    pub(super) fn sync_conversation_list_state(&self, cx: &mut gpui::Context<Self>) {
+        let conversations = self.state.conversations.clone();
+        let active_id = self.state.active_conversation_id;
+        let streaming_ids = self.state.streaming_conversation_ids.clone();
+        let search_query = self.state.sidebar_search_query.clone();
+        let search_focused = self.state.sidebar_search_focused;
+        let search_results = self.state.sidebar_search_results.clone();
+        let delete_confirming = self.state.delete_confirming_id;
+        let title_editing = self.state.conversation_title_editing;
+        let title_input = self.state.conversation_title_input.clone();
+        let rename_replace = self.state.rename_replace_on_next_char;
+
+        self.conversation_list.update(cx, |list, list_cx| {
+            list.state.conversations = conversations;
+            list.state.active_conversation_id = active_id;
+            list.state.streaming_conversation_ids = streaming_ids;
+            list.state.sidebar_search_query = search_query;
+            list.state.sidebar_search_focused = search_focused;
+            list.state.sidebar_search_results = search_results;
+            list.state.delete_confirming_id = delete_confirming;
+            list.state.conversation_title_editing = title_editing;
+            list.state.conversation_title_input = title_input;
+            list.state.rename_replace_on_next_char = rename_replace;
+            list_cx.notify();
+        });
     }
 
     /// Apply settings/profile data from the store snapshot so profiles are

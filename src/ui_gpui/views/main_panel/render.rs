@@ -84,7 +84,7 @@ impl MainPanel {
         match current {
             ViewId::Chat => focus_child!(self.chat_view),
             ViewId::Settings => focus_child!(self.settings_view),
-            ViewId::History => focus_child!(self.history_view),
+            ViewId::History => focus_child!(self.history_panel),
             ViewId::ProfileEditor => focus_child!(self.profile_editor_view),
             ViewId::McpAdd => focus_child!(self.mcp_add_view),
             ViewId::ModelSelector => focus_child!(self.model_selector_view),
@@ -107,7 +107,7 @@ impl MainPanel {
             .when(current == ViewId::History, |d| {
                 Self::render_child_or_placeholder(
                     d,
-                    self.history_view.as_ref(),
+                    self.history_panel.as_ref(),
                     "Loading history...",
                 )
             })
