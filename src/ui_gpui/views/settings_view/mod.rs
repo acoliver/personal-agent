@@ -627,6 +627,9 @@ impl SettingsView {
         }
 
         if key == "=" && modifiers.shift {
+            // Mirror the `+` button: signal a fresh new-profile flow so the
+            // editor view resets. See issue #182.
+            self.emit(&UserEvent::OpenNewProfile);
             Self::navigate_to_profile_editor();
             return;
         }

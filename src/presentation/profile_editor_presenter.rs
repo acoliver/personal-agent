@@ -206,6 +206,11 @@ impl ProfileEditorPresenter {
                 Self::on_save_profile(profile_service, event_bus_tx, view_tx, *profile).await;
             }
 
+            UserEvent::OpenNewProfile => {
+                tracing::info!("ProfileEditorPresenter: resetting editor for new-profile flow");
+                let _ = view_tx.send(ViewCommand::ProfileEditorReset);
+            }
+
             UserEvent::SaveProfileEditor => {
                 Self::on_save_profile_editor(
                     profile_service,

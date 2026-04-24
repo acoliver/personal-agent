@@ -268,3 +268,232 @@ async fn validate_advanced_request_json_sets_validation_message(cx: &mut TestApp
         );
     });
 }
+
+/// Regression test for issue #182 (Bug 1).
+///
+/// When a user is editing an existing profile and clicks Browse to pick a
+/// different model, the editor must preserve the profile's identity
+/// (`id`, `key_label`, `is_new = false`, `name`, `system_prompt`) so that:
+///
+///   1. The API KEY dropdown remains populated, keeping `can_save()` true.
+///   2. Saving updates the original profile instead of silently creating a
+///      duplicate (because `data.id` is still the original UUID).
+#[gpui::test]
+async fn model_selected_preserves_edit_state_for_issue_182(cx: &mut TestAppContext) {
+    let profile_id = Uuid::new_v4();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        // Simulate the Edit flow: presenter loads an existing profile.
+        view.handle_command(
+            ViewCommand::ProfileEditorLoad {
+                id: profile_id,
+                name: "My Anthropic".to_string(),
+                provider_id: "anthropic".to_string(),
+                model_id: "claude-3-5-sonnet".to_string(),
+                base_url: "https://api.anthropic.com/v1".to_string(),
+                api_key_label: "anthropic-key".to_string(),
+                temperature: 0.7,
+                max_tokens: Some(4096),
+                max_tokens_field_name: "max_tokens".to_string(),
+                extra_request_fields: "{}".to_string(),
+                context_limit: Some(200_000),
+                show_thinking: true,
+                enable_thinking: false,
+                thinking_budget: None,
+                system_prompt: "Be helpful.".to_string(),
+            },
+            cx,
+        );
+
+        assert!(!view.state.is_new, "sanity: starting in edit mode");
+        assert!(view.state.data.can_save(), "sanity: edit form is savable");
+
+        // User clicks Browse → picks a new model. The editor receives
+        // `ModelSelected`.
+        view.handle_command(
+            ViewCommand::ModelSelected {
+                provider_id: "openai".to_string(),
+                model_id: "gpt-4.1".to_string(),
+                provider_api_url: Some("https://api.openai.com/v1".to_string()),
+                context_length: Some(128_000),
+            },
+            cx,
+        );
+
+        // Identity of the profile must be preserved.
+        assert!(
+            !view.state.is_new,
+            "is_new must remain false so Save issues an update, not a create"
+        );
+        assert_eq!(
+            view.state.data.id.as_deref(),
+            Some(profile_id.to_string().as_str()),
+            "profile id must be preserved through model browse"
+        );
+
+        // Model fields must be updated.
+        assert_eq!(view.state.data.model_id, "gpt-4.1");
+        assert_eq!(view.state.data.api_type, ApiType::OpenAI);
+
+        // Fields that had user-entered values must NOT be overwritten.
+        assert_eq!(view.state.data.name, "My Anthropic");
+        assert_eq!(view.state.data.base_url, "https://api.anthropic.com/v1");
+        assert_eq!(view.state.data.system_prompt, "Be helpful.");
+
+        // The API key selection must survive, keeping Save enabled.
+        assert_eq!(view.state.data.key_label, "anthropic-key");
+        assert!(
+            view.state.data.can_save(),
+            "Save must remain enabled after Browse during an edit"
+        );
+    });
+}
+
+/// Regression test for issue #182 (Bug 2).
+///
+/// The `ProfileEditorReset` view command must clear the editor to a blank
+/// new-profile state while preserving the cached `available_keys` list.
+#[gpui::test]
+async fn profile_editor_reset_clears_state_but_preserves_keys_for_issue_182(
+    cx: &mut TestAppContext,
+) {
+    let (bridge, user_rx) = make_bridge();
+    let stale_profile_id = Uuid::new_v4();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        // Drop the `RefreshApiKeys` emitted by `set_bridge` so only the
+        // reset-triggered refresh remains.
+        let _ = user_rx.recv().expect("refresh api keys from set_bridge");
+
+        // Populate editor with stale data as if we had been editing a profile.
+        view.handle_command(
+            ViewCommand::ProfileEditorLoad {
+                id: stale_profile_id,
+                name: "Stale".to_string(),
+                provider_id: "anthropic".to_string(),
+                model_id: "claude".to_string(),
+                base_url: "https://api.anthropic.com/v1".to_string(),
+                api_key_label: "anthropic-key".to_string(),
+                temperature: 0.7,
+                max_tokens: Some(4096),
+                max_tokens_field_name: "max_tokens".to_string(),
+                extra_request_fields: "{}".to_string(),
+                context_limit: Some(200_000),
+                show_thinking: true,
+                enable_thinking: false,
+                thinking_budget: None,
+                system_prompt: "Old prompt".to_string(),
+            },
+            cx,
+        );
+        view.handle_command(
+            ViewCommand::ApiKeysListed {
+                keys: vec![
+                    ApiKeyInfo {
+                        label: "anthropic-key".to_string(),
+                        masked_value: "••••1234".to_string(),
+                        used_by: vec!["Stale".to_string()],
+                    },
+                    ApiKeyInfo {
+                        label: "openai-key".to_string(),
+                        masked_value: "••••5678".to_string(),
+                        used_by: vec![],
+                    },
+                ],
+            },
+            cx,
+        );
+
+        // Fire the reset command — as if the user clicked `+` and the
+        // presenter forwarded `UserEvent::OpenNewProfile` back as
+        // `ProfileEditorReset`.
+        view.handle_command(ViewCommand::ProfileEditorReset, cx);
+
+        assert!(
+            view.state.is_new,
+            "reset must flip back to new-profile mode"
+        );
+        assert!(view.state.data.id.is_none(), "profile id must be cleared");
+        assert_eq!(view.state.data.name, "", "name must be cleared");
+        assert_eq!(view.state.data.model_id, "", "model must be cleared");
+        assert_eq!(view.state.data.base_url, "", "base_url must be cleared");
+        assert_eq!(
+            view.state.data.key_label, "",
+            "key selection must be cleared"
+        );
+        assert_eq!(
+            view.state.data.system_prompt,
+            crate::models::profile::DEFAULT_SYSTEM_PROMPT,
+            "system prompt must fall back to the default"
+        );
+
+        // Available keys must survive so the dropdown doesn't flicker empty.
+        assert_eq!(
+            view.state.data.available_keys,
+            vec!["anthropic-key".to_string(), "openai-key".to_string()],
+        );
+    });
+
+    // Reset requests a refresh so we pick up any newly-stored keys.
+    assert_eq!(
+        user_rx.recv().expect("reset requests api key refresh"),
+        UserEvent::RefreshApiKeys
+    );
+}
+
+/// Regression test for issue #182: Cancel must drop stale editor state so
+/// that the next `+` (new profile) flow starts blank.
+#[gpui::test]
+async fn reset_to_new_profile_helper_clears_edit_state_for_issue_182(cx: &mut TestAppContext) {
+    let profile_id = Uuid::new_v4();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.handle_command(
+            ViewCommand::ProfileEditorLoad {
+                id: profile_id,
+                name: "My Anthropic".to_string(),
+                provider_id: "anthropic".to_string(),
+                model_id: "claude-3-5-sonnet".to_string(),
+                base_url: "https://api.anthropic.com/v1".to_string(),
+                api_key_label: "anthropic-key".to_string(),
+                temperature: 0.7,
+                max_tokens: Some(4096),
+                max_tokens_field_name: "max_tokens".to_string(),
+                extra_request_fields: "{}".to_string(),
+                context_limit: Some(200_000),
+                show_thinking: true,
+                enable_thinking: false,
+                thinking_budget: None,
+                system_prompt: "Be helpful.".to_string(),
+            },
+            cx,
+        );
+        view.handle_command(
+            ViewCommand::ApiKeysListed {
+                keys: vec![ApiKeyInfo {
+                    label: "anthropic-key".to_string(),
+                    masked_value: "••••1234".to_string(),
+                    used_by: vec!["My Anthropic".to_string()],
+                }],
+            },
+            cx,
+        );
+
+        // Cancel handler behaviour: reset before navigating.
+        view.reset_to_new_profile();
+
+        assert!(view.state.is_new);
+        assert!(view.state.data.id.is_none());
+        assert_eq!(view.state.data.name, "");
+        assert_eq!(view.state.data.key_label, "");
+        assert_eq!(
+            view.state.data.available_keys,
+            vec!["anthropic-key".to_string()],
+            "available_keys must survive the reset"
+        );
+    });
+}

@@ -511,16 +511,22 @@ impl ProfileEditorView {
                 provider_api_url,
                 context_length,
             } => {
-                self.state.is_new = true;
+                // Preserve `is_new`, `id`, `key_label`, `name`, `system_prompt`, etc.
+                // The Browse button keeps the editor's pre-existing state so that an
+                // edit-flow user does not lose their work (and does not silently
+                // create a duplicate profile) when picking a different model. See
+                // issue #182.
                 self.state.data.model_id.clone_from(&model_id);
                 self.state.data.api_type = match provider_id.as_str() {
                     "anthropic" => ApiType::Anthropic,
                     "openai" => ApiType::OpenAI,
                     _ => ApiType::Custom(provider_id.clone()),
                 };
+                // Only synthesise a name when the user has not already typed one.
                 if self.state.data.name.trim().is_empty() {
                     self.state.data.name = model_id;
                 }
+                // Only fill base_url when it has not been entered yet.
                 if self.state.data.base_url.trim().is_empty() {
                     self.state.data.base_url = provider_api_url
                         .filter(|url| !url.trim().is_empty())
@@ -584,9 +590,29 @@ impl ProfileEditorView {
                 self.state.data.available_keys = keys.iter().map(|k| k.label.clone()).collect();
             }
 
+            ViewCommand::ProfileEditorReset => {
+                tracing::info!(
+                    "ProfileEditorView: resetting to blank new-profile state (ProfileEditorReset)"
+                );
+                self.reset_to_new_profile();
+                self.request_api_key_refresh();
+            }
+
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Reset the editor's `state` to a blank new-profile while preserving the
+    /// cached list of available API key labels (so the dropdown stays populated
+    /// without waiting for a fresh `ApiKeysListed` command).
+    ///
+    /// Used by both the Cancel/Esc/Cmd-W handlers and the `ProfileEditorReset`
+    /// view command. See issue #182.
+    pub(super) fn reset_to_new_profile(&mut self) {
+        let available_keys = std::mem::take(&mut self.state.data.available_keys);
+        self.state = ProfileEditorState::new_profile();
+        self.state.data.available_keys = available_keys;
     }
 }
 
