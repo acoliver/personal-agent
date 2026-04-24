@@ -218,8 +218,13 @@ impl SettingsView {
                     .child("+")
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
-                            tracing::info!("Add profile clicked - navigating to ModelSelector");
+                        cx.listener(|this, _, _window, _cx| {
+                            tracing::info!(
+                                "Add profile clicked - emitting OpenNewProfile and navigating"
+                            );
+                            // Tell the presenter this is a fresh new-profile flow so the
+                            // editor view resets (clears any stale edit state). See issue #182.
+                            this.emit(&UserEvent::OpenNewProfile);
                             Self::navigate_to_profile_editor();
                         }),
                     ),

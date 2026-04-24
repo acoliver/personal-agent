@@ -298,6 +298,16 @@ pub enum ViewCommand {
         context_length: Option<u32>,
     },
 
+    /// Reset the profile editor to a blank "new profile" state.
+    ///
+    /// Emitted by the presenter in response to
+    /// [`crate::events::types::UserEvent::OpenNewProfile`] so the editor
+    /// view can drop any stale state left over from a previous edit or
+    /// model-browse flow. The view should preserve only the cached list of
+    /// available API key labels (so the key dropdown stays populated) and
+    /// reset everything else via `ProfileEditorState::new_profile`.
+    ProfileEditorReset,
+
     /// Prefill profile editor with existing profile data for edit flow
     ProfileEditorLoad {
         id: Uuid,

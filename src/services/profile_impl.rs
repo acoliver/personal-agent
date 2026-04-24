@@ -615,6 +615,26 @@ impl ProfileService for ProfileServiceImpl {
 
         Ok(())
     }
+
+    /// Persist a new `context_window_size` for an existing profile.
+    ///
+    /// Issue #182 — the profile editor "CONTEXT LIMIT" field is stored on
+    /// `ModelProfile` itself (not inside `ModelParameters`), so it has its
+    /// own setter rather than being smuggled through `update`'s already long
+    /// argument list.
+    async fn set_context_window_size(&self, id: Uuid, size: usize) -> ServiceResult<()> {
+        let mut profiles = self.profiles.write().await;
+        let profile = profiles
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| super::ServiceError::NotFound(format!("Profile {id} not found")))?;
+        profile.context_window_size = size;
+        let updated_profile = profile.clone();
+        drop(profiles);
+
+        self.save_profile_to_disk(&updated_profile)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

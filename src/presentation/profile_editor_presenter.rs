@@ -206,6 +206,11 @@ impl ProfileEditorPresenter {
                 Self::on_save_profile(profile_service, event_bus_tx, view_tx, *profile).await;
             }
 
+            UserEvent::OpenNewProfile => {
+                tracing::info!("ProfileEditorPresenter: resetting editor for new-profile flow");
+                let _ = view_tx.send(ViewCommand::ProfileEditorReset);
+            }
+
             UserEvent::SaveProfileEditor => {
                 Self::on_save_profile_editor(
                     profile_service,
@@ -241,13 +246,57 @@ impl ProfileEditorPresenter {
 
         let auth = Self::profile_auth_from_payload(&profile);
         let parameters = Self::profile_parameters_from_payload(&profile);
+        // The "CONTEXT LIMIT" editor field lives on `ModelProfile` itself,
+        // not inside `ModelParameters`, so we extract it before the payload
+        // gets moved into `persist_profile_from_payload`. Issue #182.
+        let payload_context_window = profile
+            .parameters
+            .as_ref()
+            .and_then(|p| p.context_window_size);
         let updated =
             Self::update_profile_from_payload(profile_service, &profile, &auth, &parameters).await;
         let persisted =
             Self::persist_profile_from_payload(updated, profile_service, profile, auth, parameters)
                 .await;
+        let persisted =
+            Self::apply_context_window_size(profile_service, persisted, payload_context_window)
+                .await;
 
         Self::publish_profile_save_result(event_bus_tx, view_tx, persisted).await;
+    }
+
+    /// Persist a `context_window_size` change separately from `update`.
+    ///
+    /// `ProfileService::update` does not take `context_window_size` (it lives
+    /// on the profile itself, not inside `ModelParameters`), so once the
+    /// rest of the profile is saved we issue a follow-up
+    /// [`ProfileService::set_context_window_size`] when the payload carried
+    /// a value and it differs from what is already persisted. Issue #182.
+    async fn apply_context_window_size(
+        profile_service: &Arc<dyn ProfileService>,
+        persisted: Result<crate::models::ModelProfile, ServiceError>,
+        payload_context_window: Option<usize>,
+    ) -> Result<crate::models::ModelProfile, ServiceError> {
+        let saved = persisted?;
+        let Some(size) = payload_context_window else {
+            return Ok(saved);
+        };
+        if saved.context_window_size == size {
+            return Ok(saved);
+        }
+        if let Err(e) = profile_service
+            .set_context_window_size(saved.id, size)
+            .await
+        {
+            tracing::error!(
+                "Failed to persist context_window_size={size} for profile {}: {e}",
+                saved.id
+            );
+            return Err(e);
+        }
+        let mut updated = saved;
+        updated.context_window_size = size;
+        Ok(updated)
     }
 
     fn profile_auth_from_payload(profile: &crate::events::types::ModelProfile) -> AuthConfig {

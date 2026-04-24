@@ -73,7 +73,10 @@ impl MainPanel {
             | ToolApprovalPolicyUpdated { .. } => self.forward_to_settings(cmd, cx),
 
             // ── model selector + profile editor ─────────────────────────
-            ModelSearchResults { .. } | ModelSelected { .. } | ProfileEditorLoad { .. } => {
+            ModelSearchResults { .. }
+            | ModelSelected { .. }
+            | ProfileEditorLoad { .. }
+            | ProfileEditorReset => {
                 self.handle_model_profile_command(cmd, cx);
             }
 
@@ -250,6 +253,17 @@ impl MainPanel {
                 }
                 self.navigation.navigate(ViewId::ProfileEditor);
                 cx.notify();
+            }
+            ViewCommand::ProfileEditorReset => {
+                // The view navigates to the editor itself (via `+` button or
+                // `Shift+=`). Here we only forward the reset command so the
+                // editor clears any stale state before becoming visible. See
+                // issue #182.
+                if let Some(ref profile_editor) = self.profile_editor_view {
+                    profile_editor.update(cx, |view, cx| {
+                        view.handle_command(ViewCommand::ProfileEditorReset, cx);
+                    });
+                }
             }
             _ => {}
         }

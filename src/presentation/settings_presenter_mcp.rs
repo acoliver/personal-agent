@@ -276,7 +276,12 @@ impl SettingsPresenter {
                         .extra_request_fields
                         .clone()
                         .map_or_else(|| "{}".to_string(), |value| value.to_string()),
-                    context_limit: None,
+                    // Issue #182: surface the persisted context window so the
+                    // editor's "CONTEXT LIMIT" field reflects the actual value
+                    // instead of always defaulting to 128_000.
+                    context_limit: Some(
+                        u32::try_from(profile.context_window_size).unwrap_or(u32::MAX),
+                    ),
                     show_thinking: profile.parameters.show_thinking,
                     enable_thinking: profile.parameters.enable_thinking,
                     thinking_budget: profile.parameters.thinking_budget,

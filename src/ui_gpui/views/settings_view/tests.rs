@@ -435,6 +435,10 @@ async fn key_handling_navigates_and_emits_profile_events(cx: &mut TestAppContext
         user_rx.recv().unwrap(),
         UserEvent::EditProfile { id: profile_b }
     );
+    // `shift-=` now emits `OpenNewProfile` so the presenter can reset the
+    // editor view before the `+`/`Shift+=` flow navigates into it. See
+    // issue #182.
+    assert_eq!(user_rx.recv().unwrap(), UserEvent::OpenNewProfile);
     assert_eq!(
         user_rx.recv().unwrap(),
         UserEvent::SelectTheme {

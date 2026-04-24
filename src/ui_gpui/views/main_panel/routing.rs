@@ -76,6 +76,10 @@ pub struct CommandTargets {
     // Profile prefill state from model selector
     pub profile_prefill_selected_count: usize,
 
+    // Profile editor reset count (new-profile flow clearing stale state).
+    // See issue #182.
+    pub profile_editor_reset_count: usize,
+
     // Tool approval routing counters
     pub tool_approval_policy_count: usize,
     pub yolo_mode_changed_count: usize,
@@ -155,6 +159,11 @@ pub fn route_view_command(cmd: ViewCommand, targets: &mut CommandTargets) {
         // ── Profile prefill ────────────────────────────────────────────────
         ViewCommand::ModelSelected { .. } | ViewCommand::ProfileEditorLoad { .. } => {
             targets.profile_prefill_selected_count += 1;
+        }
+
+        // ── Profile editor reset (new-profile flow, issue #182) ──────────
+        ViewCommand::ProfileEditorReset => {
+            targets.profile_editor_reset_count += 1;
         }
 
         // ── Tool approval ────────────────────────────────────────────────

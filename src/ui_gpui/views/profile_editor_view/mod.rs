@@ -72,6 +72,23 @@ impl ApiType {
             Self::Local => false,
         }
     }
+
+    /// Map a provider id string (as used by the model registry / persisted
+    /// profiles) to the corresponding `ApiType` variant.
+    ///
+    /// Centralised so every load / model-selection path stays in sync — see
+    /// issue #182 where omitting the `"local"` arm caused local-provider
+    /// profiles to be classified as `Custom`, which falsely required an API
+    /// key and disabled Save during an edit.
+    #[must_use]
+    pub fn from_provider_id(provider_id: &str) -> Self {
+        match provider_id {
+            "anthropic" => Self::Anthropic,
+            "openai" => Self::OpenAI,
+            "local" => Self::Local,
+            other => Self::Custom(other.to_string()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +129,10 @@ pub struct ProfileEditorData {
 }
 
 impl ProfileEditorData {
+    /// Default `context_limit` used when no explicit value has been chosen
+    /// (matches the value assigned by [`ProfileEditorData::new`]).
+    pub const DEFAULT_CONTEXT_LIMIT: u32 = 128_000;
+
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -119,7 +140,7 @@ impl ProfileEditorData {
             max_tokens: "4096".to_string(),
             max_tokens_field_name: "max_tokens".to_string(),
             extra_request_fields: "{}".to_string(),
-            context_limit: 128_000,
+            context_limit: Self::DEFAULT_CONTEXT_LIMIT,
             show_thinking: true,
             thinking_budget: 10000,
             system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
@@ -483,6 +504,9 @@ impl ProfileEditorView {
             } else {
                 None
             },
+            // Issue #182: carry the editor's "CONTEXT LIMIT" field through
+            // to the presenter so it actually gets persisted.
+            context_window_size: Some(self.state.data.context_limit as usize),
         });
 
         self.emit(&UserEvent::SaveProfile {
@@ -511,25 +535,7 @@ impl ProfileEditorView {
                 provider_api_url,
                 context_length,
             } => {
-                self.state.is_new = true;
-                self.state.data.model_id.clone_from(&model_id);
-                self.state.data.api_type = match provider_id.as_str() {
-                    "anthropic" => ApiType::Anthropic,
-                    "openai" => ApiType::OpenAI,
-                    _ => ApiType::Custom(provider_id.clone()),
-                };
-                if self.state.data.name.trim().is_empty() {
-                    self.state.data.name = model_id;
-                }
-                if self.state.data.base_url.trim().is_empty() {
-                    self.state.data.base_url = provider_api_url
-                        .filter(|url| !url.trim().is_empty())
-                        .unwrap_or_else(|| default_api_base_url_for_provider(&provider_id));
-                }
-                if let Some(limit) = context_length {
-                    self.state.data.context_limit = limit;
-                }
-                self.state.active_field = None;
+                self.apply_model_selected(&provider_id, model_id, provider_api_url, context_length);
             }
             ViewCommand::ProfileEditorLoad {
                 id,
@@ -553,11 +559,7 @@ impl ProfileEditorView {
                 self.state.data.name = name;
                 self.state.data.model_id = model_id;
                 self.state.data.base_url = base_url;
-                self.state.data.api_type = match provider_id.as_str() {
-                    "anthropic" => ApiType::Anthropic,
-                    "openai" => ApiType::OpenAI,
-                    _ => ApiType::Custom(provider_id.clone()),
-                };
+                self.state.data.api_type = ApiType::from_provider_id(&provider_id);
                 self.state.data.key_label = api_key_label;
                 #[allow(clippy::cast_possible_truncation)]
                 {
@@ -584,9 +586,63 @@ impl ProfileEditorView {
                 self.state.data.available_keys = keys.iter().map(|k| k.label.clone()).collect();
             }
 
+            ViewCommand::ProfileEditorReset => {
+                tracing::info!(
+                    "ProfileEditorView: resetting to blank new-profile state (ProfileEditorReset)"
+                );
+                self.reset_to_new_profile();
+                self.request_api_key_refresh();
+            }
+
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Apply a `ViewCommand::ModelSelected` payload to the editor state.
+    ///
+    /// Preserves `is_new`, `id`, `key_label`, `name`, `system_prompt`, and any
+    /// user-customised `base_url` / `context_limit`. Only fields that are
+    /// unset (or at their defaults) are filled from the selected model. See
+    /// issue #182 — the Browse flow during an edit must not clobber user
+    /// work or silently spawn duplicate profiles.
+    fn apply_model_selected(
+        &mut self,
+        provider_id: &str,
+        model_id: String,
+        provider_api_url: Option<String>,
+        context_length: Option<u32>,
+    ) {
+        self.state.data.model_id.clone_from(&model_id);
+        self.state.data.api_type = ApiType::from_provider_id(provider_id);
+        if self.state.data.name.trim().is_empty() {
+            self.state.data.name = model_id;
+        }
+        if self.state.data.base_url.trim().is_empty() {
+            self.state.data.base_url = provider_api_url
+                .filter(|url| !url.trim().is_empty())
+                .unwrap_or_else(|| default_api_base_url_for_provider(provider_id));
+        }
+        if let Some(limit) = context_length {
+            if self.state.data.context_limit == 0
+                || self.state.data.context_limit == ProfileEditorData::DEFAULT_CONTEXT_LIMIT
+            {
+                self.state.data.context_limit = limit;
+            }
+        }
+        self.state.active_field = None;
+    }
+
+    /// Reset the editor's `state` to a blank new-profile while preserving the
+    /// cached list of available API key labels (so the dropdown stays populated
+    /// without waiting for a fresh `ApiKeysListed` command).
+    ///
+    /// Used by both the Cancel/Esc/Cmd-W handlers and the `ProfileEditorReset`
+    /// view command. See issue #182.
+    pub(super) fn reset_to_new_profile(&mut self) {
+        let available_keys = std::mem::take(&mut self.state.data.available_keys);
+        self.state = ProfileEditorState::new_profile();
+        self.state.data.available_keys = available_keys;
     }
 }
 

@@ -1,6 +1,6 @@
 //! Render implementation for `ProfileEditorView`.
 
-use super::{ActiveField, ApiType, ProfileEditorState, ProfileEditorView};
+use super::{ActiveField, ApiType, ProfileEditorView};
 use crate::config::default_api_base_url_for_provider;
 use crate::ui_gpui::theme::Theme;
 use gpui::{
@@ -47,8 +47,14 @@ impl ProfileEditorView {
                     .child("Cancel")
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
-                            tracing::info!("Cancel clicked - navigating to Settings");
+                        cx.listener(|this, _, _window, _cx| {
+                            tracing::info!(
+                                "Cancel clicked - resetting editor state and navigating to \
+                                 Settings"
+                            );
+                            // Reset so a subsequent `+` new-profile flow doesn't see
+                            // leftover state from the cancelled edit. See issue #182.
+                            this.reset_to_new_profile();
                             crate::ui_gpui::navigation_channel().request_navigate(
                                 crate::presentation::view_command::ViewId::Settings,
                             );
@@ -226,11 +232,14 @@ impl ProfileEditorView {
                                 MouseButton::Left,
                                 cx.listener(|this, _, _window, _cx| {
                                     tracing::info!(
-                                        "Browse model clicked - navigating to ModelSelector"
+                                        "Browse model clicked - navigating to ModelSelector \
+                                         (preserving edit state)"
                                     );
-                                    let available_keys = this.state.data.available_keys.clone();
-                                    this.state = ProfileEditorState::new_profile();
-                                    this.state.data.available_keys = available_keys;
+                                    // Do NOT reset state here — preserve `id`, `key_label`,
+                                    // `name`, `is_new`, `system_prompt`, etc. so that an
+                                    // edit-flow user can swap models without losing their
+                                    // work. `ModelSelected` will only update the model
+                                    // fields on return. See issue #182.
                                     this.request_api_key_refresh();
                                     crate::ui_gpui::navigation_channel().request_navigate(
                                         crate::presentation::view_command::ViewId::ModelSelector,
@@ -894,6 +903,9 @@ impl gpui::Render for ProfileEditorView {
                     let modifiers = &event.keystroke.modifiers;
 
                     if key == "escape" || (modifiers.platform && key == "w") {
+                        // Match the Cancel button: discard any edits so the next
+                        // new-profile flow starts blank. See issue #182.
+                        this.reset_to_new_profile();
                         crate::ui_gpui::navigation_channel()
                             .request_navigate(crate::presentation::view_command::ViewId::Settings);
                         return;
