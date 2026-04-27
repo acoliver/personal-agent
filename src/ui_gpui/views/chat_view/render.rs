@@ -169,7 +169,7 @@ impl ChatView {
             "pageup" => self.scroll_chat_page_up(cx),
             "pagedown" => self.scroll_chat_page_down(cx),
             "backspace" => self.handle_backspace(cx),
-            "enter" => self.handle_enter(cx),
+            "enter" => self.handle_composer_enter(*modifiers, cx),
             "escape" => {
                 if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
                     // @plan PLAN-20260416-ISSUE173.P14-CR7

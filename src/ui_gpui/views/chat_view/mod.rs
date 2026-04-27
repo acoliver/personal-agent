@@ -763,6 +763,26 @@ impl ChatView {
             cx.notify();
             return;
         }
+        self.insert_composer_text(text, cx);
+    }
+
+    pub(super) fn insert_composer_newline(&mut self, cx: &mut gpui::Context<Self>) {
+        self.insert_composer_text("\n", cx);
+    }
+
+    pub(super) fn handle_composer_enter(
+        &mut self,
+        modifiers: gpui::Modifiers,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if modifiers.shift || modifiers.control {
+            self.insert_composer_newline(cx);
+        } else {
+            self.handle_enter(cx);
+        }
+    }
+
+    fn insert_composer_text(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
         if self.state.conversation_dropdown_open || self.state.profile_dropdown_open {
             return;
         }

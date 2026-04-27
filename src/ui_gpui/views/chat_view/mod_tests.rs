@@ -95,6 +95,16 @@ fn chat_key_event(key: &str) -> KeyDownEvent {
     }
 }
 
+fn modified_chat_key_event(key: &str, modifiers: Modifiers) -> KeyDownEvent {
+    KeyDownEvent {
+        keystroke: Keystroke {
+            modifiers,
+            ..chat_key_event(key).keystroke
+        },
+        ..chat_key_event(key)
+    }
+}
+
 fn make_chat_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
     let (user_tx, user_rx) = flume::bounded(8);
     let (_view_tx, view_rx) = flume::bounded(8);
@@ -777,6 +787,86 @@ async fn wheel_scroll_down_reenables_autoscroll_only_when_near_bottom(cx: &mut T
             view.chat_scroll_handle.set_offset(point(px(0.0), px(0.0)));
             view.refresh_autoscroll_state_after_wheel(&downward_event);
             assert!(view.state.chat_autoscroll_enabled);
+        });
+    });
+}
+
+#[gpui::test]
+async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+    let (bridge, user_rx) = make_chat_bridge();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.set_bridge(bridge.clone());
+            view.state.input_text = "firstsecond".to_string();
+            view.state.cursor_position = "first".len();
+
+            view.handle_key_down(
+                &modified_chat_key_event(
+                    "enter",
+                    Modifiers {
+                        shift: true,
+                        ..Modifiers::default()
+                    },
+                ),
+                cx,
+            );
+
+            assert_eq!(view.state.input_text, "first\nsecond");
+            assert_eq!(view.state.cursor_position, "first\n".len());
+            assert!(user_rx.try_recv().is_err());
+            assert_eq!(view.state.streaming, StreamingState::Idle);
+
+            view.handle_key_down(
+                &modified_chat_key_event(
+                    "enter",
+                    Modifiers {
+                        control: true,
+                        ..Modifiers::default()
+                    },
+                ),
+                cx,
+            );
+
+            assert_eq!(view.state.input_text, "first\n\nsecond");
+            assert_eq!(view.state.cursor_position, "first\n\n".len());
+            assert!(user_rx.try_recv().is_err());
+            assert_eq!(view.state.streaming, StreamingState::Idle);
+        });
+    });
+}
+
+#[gpui::test]
+async fn plain_enter_still_submits_message(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+    let (bridge, user_rx) = make_chat_bridge();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.set_bridge(bridge.clone());
+            view.state.input_text = "send me".to_string();
+            view.state.cursor_position = view.state.input_text.len();
+
+            view.handle_key_down(&chat_key_event("enter"), cx);
+
+            assert_eq!(
+                user_rx.try_recv().ok(),
+                Some(UserEvent::SendMessage {
+                    text: "send me".to_string(),
+                })
+            );
+            assert!(view.state.input_text.is_empty());
+            assert_eq!(view.state.cursor_position, 0);
+            assert_eq!(
+                view.state.streaming,
+                StreamingState::Streaming {
+                    content: String::new(),
+                    done: false,
+                }
+            );
         });
     });
 }
