@@ -132,15 +132,9 @@ impl ChatView {
         }
     }
 
-    fn reset_autoscroll_if_needed(
-        &mut self,
-        should_reset_autoscroll: bool,
-        cx: &mut gpui::Context<Self>,
-    ) {
+    const fn reset_autoscroll_if_needed(&mut self, should_reset_autoscroll: bool) {
         if should_reset_autoscroll {
             self.state.chat_autoscroll_enabled = true;
-            self.chat_scroll_handle.scroll_to_bottom();
-            self.maybe_scroll_chat_to_bottom(cx);
         }
     }
 
@@ -156,16 +150,16 @@ impl ChatView {
         should_reset_autoscroll: bool,
         cx: &mut gpui::Context<Self>,
     ) {
-        if !should_reset_autoscroll
-            && self.state.chat_autoscroll_enabled
-            && previous_conversation_id == selected_conversation_id
+        let loaded_messages_scroll = previous_conversation_id == selected_conversation_id
             && previous_selection_generation == self.selection_generation
             && previous_messages_empty
             && !self.state.messages.is_empty()
             && !was_streaming
             && streaming.active_target.is_none()
             && streaming.stream_buffer.is_empty()
-            && streaming.thinking_buffer.is_empty()
+            && streaming.thinking_buffer.is_empty();
+
+        if self.state.chat_autoscroll_enabled && (should_reset_autoscroll || loaded_messages_scroll)
         {
             self.maybe_scroll_chat_to_bottom(cx);
         }
@@ -320,7 +314,7 @@ impl ChatView {
             }
         };
 
-        self.reset_autoscroll_if_needed(should_reset_autoscroll, cx);
+        self.reset_autoscroll_if_needed(should_reset_autoscroll);
 
         let was_streaming = matches!(self.state.streaming, StreamingState::Streaming { .. });
 
