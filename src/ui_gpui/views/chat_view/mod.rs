@@ -132,6 +132,45 @@ impl ChatView {
         }
     }
 
+    fn reset_autoscroll_if_needed(
+        &mut self,
+        should_reset_autoscroll: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if should_reset_autoscroll {
+            self.state.chat_autoscroll_enabled = true;
+            self.chat_scroll_handle.scroll_to_bottom();
+            self.maybe_scroll_chat_to_bottom(cx);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scroll_after_loaded_messages_if_needed(
+        &self,
+        previous_conversation_id: Option<Uuid>,
+        selected_conversation_id: Option<Uuid>,
+        previous_selection_generation: u64,
+        previous_messages_empty: bool,
+        was_streaming: bool,
+        streaming: &StreamingStoreSnapshot,
+        should_reset_autoscroll: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !should_reset_autoscroll
+            && self.state.chat_autoscroll_enabled
+            && previous_conversation_id == selected_conversation_id
+            && previous_selection_generation == self.selection_generation
+            && previous_messages_empty
+            && !self.state.messages.is_empty()
+            && !was_streaming
+            && streaming.active_target.is_none()
+            && streaming.stream_buffer.is_empty()
+            && streaming.thinking_buffer.is_empty()
+        {
+            self.maybe_scroll_chat_to_bottom(cx);
+        }
+    }
+
     /// @plan PLAN-20260304-GPUIREMEDIATE.P05
     /// @plan PLAN-20260407-ISSUE172.P07 (cache priming)
     pub(super) fn messages_from_payload(
@@ -247,6 +286,7 @@ impl ChatView {
 
         let previous_conversation_id = self.conversation_id;
         let previous_selection_generation = self.selection_generation;
+        let previous_messages_empty = self.state.messages.is_empty();
 
         self.state.conversations = conversations;
         self.state.active_conversation_id = selected_conversation_id;
@@ -280,11 +320,9 @@ impl ChatView {
             }
         };
 
-        if should_reset_autoscroll {
-            self.state.chat_autoscroll_enabled = true;
-            self.chat_scroll_handle.scroll_to_bottom();
-            self.maybe_scroll_chat_to_bottom(cx);
-        }
+        self.reset_autoscroll_if_needed(should_reset_autoscroll, cx);
+
+        let was_streaming = matches!(self.state.streaming, StreamingState::Streaming { .. });
 
         // The store now guarantees that `snapshot.chat.transcript` is always
         // scoped to the currently selected conversation: it is cleared on
@@ -293,8 +331,17 @@ impl ChatView {
         // render the previous conversation's messages during a
         // selection -> Loading -> Ready transition.
         self.state.messages = Self::messages_from_payload(transcript);
+        self.scroll_after_loaded_messages_if_needed(
+            previous_conversation_id,
+            selected_conversation_id,
+            previous_selection_generation,
+            previous_messages_empty,
+            was_streaming,
+            &streaming,
+            should_reset_autoscroll,
+            cx,
+        );
 
-        let was_streaming = matches!(self.state.streaming, StreamingState::Streaming { .. });
         let was_thinking = self
             .state
             .thinking_content
