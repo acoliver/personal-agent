@@ -226,6 +226,160 @@ async fn home_pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(cx: &m
     });
 }
 
+fn conversation_ready_scroll_fixture() -> (
+    Uuid,
+    ConversationSummary,
+    impl Fn() -> Vec<ConversationMessagePayload>,
+) {
+    let selected_conversation_id = Uuid::new_v4();
+    let selected_summary = ConversationSummary {
+        id: selected_conversation_id,
+        title: "Long conversation".to_string(),
+        updated_at: Utc::now(),
+        message_count: 2,
+        preview: Some("latest reply".to_string()),
+    };
+    let loaded_messages = || {
+        vec![
+            ConversationMessagePayload {
+                role: MessageRole::User,
+                content: "beginning".to_string(),
+                thinking_content: None,
+                timestamp: None,
+                model_id: None,
+            },
+            ConversationMessagePayload {
+                role: MessageRole::Assistant,
+                content: "latest reply".to_string(),
+                thinking_content: None,
+                timestamp: None,
+                model_id: Some("gpt-5.5".to_string()),
+            },
+        ]
+    };
+
+    (selected_conversation_id, selected_summary, loaded_messages)
+}
+
+fn apply_loading_snapshot_for_scroll_test(
+    view: &mut ChatView,
+    cx: &mut gpui::Context<ChatView>,
+    selected_conversation_id: Uuid,
+    selected_summary: ConversationSummary,
+) {
+    view.apply_store_snapshot(
+        ChatStoreSnapshot {
+            selected_conversation_id: Some(selected_conversation_id),
+            selected_conversation_title: "Long conversation".to_string(),
+            selection_generation: 8,
+            load_state: ConversationLoadState::Loading {
+                conversation_id: selected_conversation_id,
+                generation: 8,
+            },
+            transcript: Vec::new(),
+            streaming: StreamingStoreSnapshot::default(),
+            conversations: vec![selected_summary],
+        },
+        cx,
+    );
+}
+
+fn apply_ready_snapshot_for_scroll_test(
+    view: &mut ChatView,
+    cx: &mut gpui::Context<ChatView>,
+    selected_conversation_id: Uuid,
+    selected_summary: ConversationSummary,
+    messages: Vec<ConversationMessagePayload>,
+) {
+    view.apply_store_snapshot(
+        ChatStoreSnapshot {
+            selected_conversation_id: Some(selected_conversation_id),
+            selected_conversation_title: "Long conversation".to_string(),
+            selection_generation: 8,
+            load_state: ConversationLoadState::Ready {
+                conversation_id: selected_conversation_id,
+                generation: 8,
+            },
+            transcript: messages,
+            streaming: StreamingStoreSnapshot::default(),
+            conversations: vec![selected_summary],
+        },
+        cx,
+    );
+}
+
+#[gpui::test]
+async fn apply_store_snapshot_selected_conversation_ready_scrolls_after_messages_load(
+    cx: &mut TestAppContext,
+) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            let previous_conversation_id = Uuid::new_v4();
+            let (selected_conversation_id, selected_summary, loaded_messages) =
+                conversation_ready_scroll_fixture();
+
+            view.conversation_id = Some(previous_conversation_id);
+            view.selection_generation = 7;
+            view.state.chat_autoscroll_enabled = false;
+            view.maybe_scroll_chat_to_bottom_invocations.set(0);
+
+            apply_loading_snapshot_for_scroll_test(
+                view,
+                cx,
+                selected_conversation_id,
+                selected_summary.clone(),
+            );
+
+            assert!(view.state.chat_autoscroll_enabled);
+            assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 1);
+            assert!(view.state.messages.is_empty());
+
+            apply_ready_snapshot_for_scroll_test(
+                view,
+                cx,
+                selected_conversation_id,
+                selected_summary.clone(),
+                loaded_messages(),
+            );
+
+            assert_eq!(view.state.messages.len(), 2);
+            assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 2);
+
+            view.conversation_id = Some(selected_conversation_id);
+            view.selection_generation = 0;
+            view.state.messages.clear();
+            view.state.chat_autoscroll_enabled = false;
+            view.maybe_scroll_chat_to_bottom_invocations.set(0);
+
+            apply_loading_snapshot_for_scroll_test(
+                view,
+                cx,
+                selected_conversation_id,
+                selected_summary.clone(),
+            );
+
+            assert!(view.state.chat_autoscroll_enabled);
+            assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 1);
+            assert!(view.state.messages.is_empty());
+
+            apply_ready_snapshot_for_scroll_test(
+                view,
+                cx,
+                selected_conversation_id,
+                selected_summary,
+                loaded_messages(),
+            );
+
+            assert!(view.state.chat_autoscroll_enabled);
+            assert_eq!(view.state.messages.len(), 2);
+            assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 2);
+        });
+    });
+}
+
 #[gpui::test]
 async fn apply_store_snapshot_streaming_calls_maybe_scroll_when_autoscroll_enabled(
     cx: &mut TestAppContext,

@@ -72,6 +72,9 @@ jobs:
             -D clippy::type_complexity \
             -D clippy::struct_excessive_bools
 
+      - name: Clear lint artifacts before tests
+        run: cargo clean
+
       - name: Run library and integration tests
         run: cargo test --lib --tests
 
