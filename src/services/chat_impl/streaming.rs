@@ -289,11 +289,15 @@ pub(super) async fn persist_assistant_response(
     tool_results: &[crate::llm::tools::ToolResult],
     model_label: &str,
 ) {
-    if response_text.is_empty()
-        && thinking_text.is_empty()
-        && tool_calls.is_empty()
-        && tool_results.is_empty()
-    {
+    if response_text.is_empty() && thinking_text.is_empty() {
+        if !tool_calls.is_empty() || !tool_results.is_empty() {
+            tracing::warn!(
+                conversation_id = %conversation_id,
+                tool_calls = tool_calls.len(),
+                tool_results = tool_results.len(),
+                "Skipping assistant response with tool transcript but no assistant-visible output"
+            );
+        }
         return;
     }
 

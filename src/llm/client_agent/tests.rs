@@ -191,11 +191,14 @@ fn collect_tool_transcript_extracts_calls_and_results() {
         ToolReturnPart::error("web_search", "request failed").with_tool_call_id("tool-call-2"),
     ));
 
-    let (tool_calls, tool_results) = crate::llm::LlmClient::collect_tool_transcript(&[
-        request_with_tool_call,
-        request_with_tool_return,
-        request_with_tool_error,
-    ]);
+    let (tool_calls, tool_results) = crate::llm::LlmClient::collect_tool_transcript(
+        &[
+            request_with_tool_call,
+            request_with_tool_return,
+            request_with_tool_error,
+        ],
+        0,
+    );
 
     assert_eq!(tool_calls.len(), 1);
     assert_eq!(tool_calls[0].id, "tool-call-1");
@@ -248,6 +251,62 @@ fn build_agent_message_history_preserves_assistant_tool_results() {
         }
         other => panic!("expected second tool return part, got {other:?}"),
     }
+}
+
+#[test]
+fn collect_tool_transcript_skips_existing_history() {
+    let mut historical_response = ModelResponse::new();
+    historical_response.add_part(ModelResponsePart::ToolCall(
+        ToolCallPart::new(
+            "web_search",
+            ToolCallArgs::json(serde_json::json!({"query":"old"})),
+        )
+        .with_tool_call_id("historical-tool-call"),
+    ));
+
+    let mut history_with_tool_call = ModelRequest::new();
+    history_with_tool_call.add_part(ModelRequestPart::ModelResponse(Box::new(
+        historical_response,
+    )));
+
+    let mut history_with_tool_return = ModelRequest::new();
+    history_with_tool_return.add_part(ModelRequestPart::ToolReturn(
+        ToolReturnPart::success("web_search", "old result")
+            .with_tool_call_id("historical-tool-call"),
+    ));
+
+    let mut current_response = ModelResponse::new();
+    current_response.add_part(ModelResponsePart::ToolCall(
+        ToolCallPart::new(
+            "web_search",
+            ToolCallArgs::json(serde_json::json!({"query":"new"})),
+        )
+        .with_tool_call_id("current-tool-call"),
+    ));
+
+    let mut current_tool_call = ModelRequest::new();
+    current_tool_call.add_part(ModelRequestPart::ModelResponse(Box::new(current_response)));
+
+    let mut current_tool_return = ModelRequest::new();
+    current_tool_return.add_part(ModelRequestPart::ToolReturn(
+        ToolReturnPart::success("web_search", "new result").with_tool_call_id("current-tool-call"),
+    ));
+
+    let (tool_calls, tool_results) = crate::llm::LlmClient::collect_tool_transcript(
+        &[
+            history_with_tool_call,
+            history_with_tool_return,
+            current_tool_call,
+            current_tool_return,
+        ],
+        2,
+    );
+
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].id, "current-tool-call");
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0].tool_use_id, "current-tool-call");
+    assert_eq!(tool_results[0].content, "new result");
 }
 
 /// @plan PLAN-20260416-ISSUE173.P06
