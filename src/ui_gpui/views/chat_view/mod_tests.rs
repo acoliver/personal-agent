@@ -834,6 +834,22 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
             assert_eq!(view.state.cursor_position, "first\n\n".len());
             assert!(user_rx.try_recv().is_err());
             assert_eq!(view.state.streaming, StreamingState::Idle);
+
+            view.handle_key_down(
+                &modified_chat_key_event(
+                    "enter",
+                    Modifiers {
+                        alt: true,
+                        ..Modifiers::default()
+                    },
+                ),
+                cx,
+            );
+
+            assert_eq!(view.state.input_text, "first\n\n\nsecond");
+            assert_eq!(view.state.cursor_position, "first\n\n\n".len());
+            assert!(user_rx.try_recv().is_err());
+            assert_eq!(view.state.streaming, StreamingState::Idle);
         });
     });
 }

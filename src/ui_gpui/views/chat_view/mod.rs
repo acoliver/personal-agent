@@ -775,7 +775,7 @@ impl ChatView {
         modifiers: gpui::Modifiers,
         cx: &mut gpui::Context<Self>,
     ) {
-        if modifiers.shift || modifiers.control {
+        if modifiers.shift || modifiers.control || modifiers.alt {
             self.insert_composer_newline(cx);
         } else {
             self.handle_enter(cx);
