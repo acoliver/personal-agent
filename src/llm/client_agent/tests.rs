@@ -306,7 +306,59 @@ fn collect_tool_transcript_skips_existing_history() {
     assert_eq!(tool_calls[0].id, "current-tool-call");
     assert_eq!(tool_results.len(), 1);
     assert_eq!(tool_results[0].tool_use_id, "current-tool-call");
+
     assert_eq!(tool_results[0].content, "new result");
+}
+#[test]
+fn collect_tool_transcript_uses_built_history_request_count_not_message_count() {
+    let mut system_message = Message::system("system prompt");
+    system_message.tool_results = vec![crate::llm::tools::ToolResult::success(
+        "ignored-system-tool",
+        "ignored",
+    )];
+
+    let empty_assistant = Message::assistant("");
+    let historical_assistant =
+        Message::assistant("tool summary").with_tool_uses(vec![crate::llm::tools::ToolUse::new(
+            "historical-tool-call",
+            "web_search",
+            serde_json::json!({"query":"old"}),
+        )]);
+
+    let history_messages = [system_message, empty_assistant, historical_assistant];
+    let message_history = crate::llm::LlmClient::build_agent_message_history(&history_messages);
+
+    assert_eq!(history_messages.len(), 3);
+    assert_eq!(message_history.len(), 1);
+
+    let mut current_response = ModelResponse::new();
+    current_response.add_part(ModelResponsePart::ToolCall(
+        ToolCallPart::new(
+            "web_search",
+            ToolCallArgs::json(serde_json::json!({"query":"new"})),
+        )
+        .with_tool_call_id("current-tool-call"),
+    ));
+
+    let mut current_tool_call = ModelRequest::new();
+    current_tool_call.add_part(ModelRequestPart::ModelResponse(Box::new(current_response)));
+
+    let mut current_tool_return = ModelRequest::new();
+    current_tool_return.add_part(ModelRequestPart::ToolReturn(
+        ToolReturnPart::success("web_search", "new result").with_tool_call_id("current-tool-call"),
+    ));
+
+    let mut run_complete_messages = message_history;
+    run_complete_messages.push(current_tool_call);
+    run_complete_messages.push(current_tool_return);
+
+    let (tool_calls, tool_results) =
+        crate::llm::LlmClient::collect_tool_transcript(&run_complete_messages, 1);
+
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].id, "current-tool-call");
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0].tool_use_id, "current-tool-call");
 }
 
 /// @plan PLAN-20260416-ISSUE173.P06

@@ -573,6 +573,7 @@ impl crate::llm::LlmClient {
             message_history.len()
         );
 
+        let history_request_count = message_history.len();
         let options = if message_history.is_empty() {
             RunOptions::default()
         } else {
@@ -591,7 +592,7 @@ impl crate::llm::LlmClient {
         while let Some(event_result) = stream.next().await {
             match event_result {
                 Ok(event) => {
-                    Self::handle_agent_stream_event(event, history_messages.len(), on_event);
+                    Self::handle_agent_stream_event(event, history_request_count, on_event);
                 }
 
                 Err(e) => {
