@@ -76,7 +76,12 @@ jobs:
         run: cargo clean
 
       - name: Run library and integration tests
-        run: cargo test --lib --tests
+        env:
+          CARGO_BUILD_JOBS: 1
+        run: |
+          cargo test --lib --jobs 1
+          cargo test --tests --jobs 1
+
 
   windows-build:
     name: Windows build/tests

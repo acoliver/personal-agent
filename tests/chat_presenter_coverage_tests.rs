@@ -508,11 +508,13 @@ impl AppSettingsService for MockAppSettingsService {
     }
 
     async fn set_setting(&self, key: &str, value: String) -> Result<(), ServiceError> {
+        if self.fail_set_setting.load(Ordering::Relaxed) {
+            return Err(ServiceError::Internal("persist failed".to_string()));
+        }
         if key == "chat.export.format" {
-            if self.fail_set_setting.load(Ordering::Relaxed) {
-                return Err(ServiceError::Internal("persist failed".to_string()));
-            }
             *self.export_format.lock().await = Some(value);
+        } else if key == "chat.export.dir" {
+            *self.export_dir.lock().await = Some(value);
         }
         Ok(())
     }
@@ -1625,6 +1627,96 @@ async fn save_error_log_exports_txt_and_emits_completion() {
 }
 
 #[tokio::test]
+async fn save_error_log_exports_json_with_sanitized_diagnostics() {
+    let _error_log_lock = ERROR_LOG_TEST_MUTEX.lock().await;
+
+    let default_profile = profile();
+    let profile_id = default_profile.id;
+    let conversation =
+        conversation_with_messages(profile_id, vec![Message::assistant("context".to_string())]);
+
+    let conversation_service = Arc::new(MockConversationService::new(vec![conversation], None));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = mpsc::channel(128);
+
+    let app_settings = Arc::new(MockAppSettingsService::new());
+    let export_dir = tempfile::tempdir().expect("temp export dir");
+    app_settings
+        .set_export_dir(Some(export_dir.path().to_path_buf()))
+        .await;
+    let app_settings_service = app_settings.clone() as Arc<dyn AppSettingsService>;
+
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conversation_service,
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+    presenter.start().await.expect("start presenter");
+    let _ = collect_commands(&mut view_rx).await;
+
+    personal_agent::ui_gpui::error_log::ErrorLogStore::global().clear();
+    personal_agent::ui_gpui::error_log::ErrorLogStore::global().push(|id| {
+        personal_agent::ui_gpui::error_log::ErrorLogEntry {
+            id,
+            timestamp: Utc::now(),
+            severity: personal_agent::ui_gpui::error_log::ErrorSeverityTag::Stream,
+            source: "chat".to_string(),
+            message: "stream failed password=hunter2".to_string(),
+            raw_detail: Some("authorization: Bearer secret".to_string()),
+            conversation_title: None,
+            conversation_id: None,
+            diagnostics: Some(
+                personal_agent::ui_gpui::error_log::ErrorLogDiagnosticContext {
+                    underlying_error: Some("provider failed access_token=abc".to_string()),
+                    subsystem: Some("chat stream".to_string()),
+                    run_status: Some(personal_agent::ui_gpui::error_log::ErrorLogRunStatus::Failed),
+                    recent_events: vec!["http 500".to_string()],
+                    ..personal_agent::ui_gpui::error_log::ErrorLogDiagnosticContext::default()
+                },
+            ),
+        }
+    });
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveErrorLog {
+            format: ConversationExportFormat::Json,
+        }))
+        .expect("publish save error log json");
+    let commands = collect_commands(&mut view_rx).await;
+
+    let export_completed = commands
+        .iter()
+        .find(|command| matches!(command, ViewCommand::ErrorLogExportCompleted { .. }))
+        .expect("error log export completion command");
+    let export_path = match export_completed {
+        ViewCommand::ErrorLogExportCompleted { path } => std::path::PathBuf::from(path),
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        export_path.extension().and_then(|ext| ext.to_str()),
+        Some("json")
+    );
+
+    let body = std::fs::read_to_string(&export_path).expect("read exported error log json");
+    let parsed: serde_json::Value = serde_json::from_str(&body).expect("error log json parses");
+    assert_eq!(parsed[0]["diagnostics"]["subsystem"], "chat stream");
+    assert_eq!(
+        parsed[0]["diagnostics"]["underlying_error"],
+        "provider failed access_token=[REDACTED]"
+    );
+    assert!(!body.contains("hunter2"));
+    assert!(!body.contains("Bearer secret"));
+    assert!(!body.contains("abc"));
+
+    personal_agent::ui_gpui::error_log::ErrorLogStore::global().clear();
+}
+
+#[tokio::test]
 async fn save_error_log_with_empty_store_emits_notification() {
     let _error_log_lock = ERROR_LOG_TEST_MUTEX.lock().await;
 
@@ -1675,4 +1767,80 @@ async fn save_error_log_with_empty_store_emits_notification() {
     }));
 
     personal_agent::ui_gpui::error_log::ErrorLogStore::global().clear();
+}
+
+#[tokio::test]
+async fn set_export_directory_covers_reset_success_invalid_path_and_persist_failure() {
+    let default_profile = profile();
+    let profile_id = default_profile.id;
+    let conversation =
+        conversation_with_messages(profile_id, vec![Message::assistant("context".to_string())]);
+
+    let conversation_service = Arc::new(MockConversationService::new(vec![conversation], None));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = mpsc::channel(128);
+
+    let app_settings = Arc::new(MockAppSettingsService::new());
+    let app_settings_service = app_settings.clone() as Arc<dyn AppSettingsService>;
+
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conversation_service,
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+    presenter.start().await.expect("start presenter");
+    let _ = collect_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SetExportDirectory {
+            path: String::new(),
+        }))
+        .expect("publish reset export directory");
+    let reset_commands = collect_commands(&mut view_rx).await;
+    assert!(reset_commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::ExportDirectoryLoaded { path } if path.is_empty()
+    )));
+    assert!(reset_commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::ShowNotification { message }
+            if message == "Export directory reset to system Downloads"
+    )));
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SetExportDirectory {
+            path: "/path/that/does/not/exist".to_string(),
+        }))
+        .expect("publish invalid export directory");
+    let invalid_commands = collect_commands(&mut view_rx).await;
+    assert!(invalid_commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::ShowError {
+            title,
+            severity: ErrorSeverity::Warning,
+            ..
+        } if title == "Export Directory"
+    )));
+
+    let valid_dir = tempfile::tempdir().expect("valid export dir");
+    app_settings.set_fail_set_setting(true);
+    event_bus
+        .publish(AppEvent::User(UserEvent::SetExportDirectory {
+            path: valid_dir.path().to_string_lossy().to_string(),
+        }))
+        .expect("publish export directory persist failure");
+    let fail_commands = collect_commands(&mut view_rx).await;
+    assert!(fail_commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::ShowError {
+            title,
+            message,
+            severity: ErrorSeverity::Warning,
+        } if title == "Export Directory" && message == "Failed to persist export directory preference"
+    )));
 }

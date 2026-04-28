@@ -261,6 +261,74 @@ fn render_error_log_json_includes_structured_sanitized_diagnostics() {
 }
 
 #[test]
+fn diagnostic_text_covers_status_events_and_persistence_fields() {
+    let conversation_id = uuid::Uuid::new_v4();
+    let profile_id = uuid::Uuid::new_v4();
+    let persisted_id = uuid::Uuid::new_v4();
+    let entry = ErrorLogEntry {
+        id: 45,
+        timestamp: chrono::Utc::now(),
+        severity: ErrorSeverityTag::Stream,
+        source: "chat".to_string(),
+        message: "stream failed".to_string(),
+        raw_detail: None,
+        conversation_title: None,
+        conversation_id: Some(conversation_id),
+        diagnostics: Some(ErrorLogDiagnosticContext {
+            underlying_error: Some("provider error".to_string()),
+            subsystem: Some("chat stream".to_string()),
+            code_path: Some("services::chat_impl::streaming".to_string()),
+            conversation_id: Some(conversation_id),
+            profile_id: Some(profile_id),
+            profile_name: Some("Default".to_string()),
+            provider_id: Some("openai".to_string()),
+            model_id: Some("gpt-4".to_string()),
+            base_url_host: Some("api.openai.com".to_string()),
+            run_status: Some(ErrorLogRunStatus::Completed),
+            stream_lifecycle: Some(ErrorLogStreamLifecycle::Completed),
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+            total_tokens: Some(30),
+            partial_assistant_response_len: Some(40),
+            thinking_len: Some(50),
+            recent_events: vec!["stream completed".to_string()],
+            persisted_message_ids: vec![persisted_id],
+            sequence_numbers: vec![7, 8],
+            ..ErrorLogDiagnosticContext::default()
+        }),
+    };
+
+    let rendered = render_error_entry_text(&entry);
+    assert!(rendered.contains("Run status: completed"));
+    assert!(rendered.contains("Stream lifecycle: completed"));
+    assert!(rendered.contains("Recent events:"));
+    assert!(rendered.contains("Persisted message ids:"));
+    assert!(rendered.contains(&persisted_id.to_string()));
+    assert!(rendered.contains("Sequence numbers: 7, 8"));
+}
+
+#[test]
+fn diagnostic_display_and_sanitization_cover_remaining_variants() {
+    assert_eq!(ErrorLogStreamLifecycle::Starting.to_string(), "starting");
+    assert_eq!(ErrorLogStreamLifecycle::Running.to_string(), "running");
+    assert_eq!(ErrorLogStreamLifecycle::Cancelled.to_string(), "cancelled");
+    assert_eq!(ErrorLogRunStatus::Completed.to_string(), "completed");
+    assert_eq!(ErrorLogRunStatus::Cancelled.to_string(), "cancelled");
+    assert_eq!(ErrorLogRunStatus::Unknown.to_string(), "unknown");
+    assert_eq!(
+        base_url_host("http://localhost:11434/v1"),
+        Some("localhost".to_string())
+    );
+    assert_eq!(base_url_host("not a url"), None);
+    assert_eq!(sanitize_text("password: hunter2"), "password: [REDACTED]");
+    assert_eq!(sanitize_text("api-key=abc"), "api-key=[REDACTED]");
+    assert_eq!(
+        sanitize_text("refresh_token=abc"),
+        "refresh_token=[REDACTED]"
+    );
+}
+
+#[test]
 fn render_error_log_text_joins_entries_with_separator() {
     let first = ErrorLogEntry {
         id: 1,
