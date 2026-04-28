@@ -16,6 +16,9 @@ jobs:
     name: Linux build/lint/tests
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      RUSTFLAGS: -C debuginfo=0
+      CARGO_INCREMENTAL: 0
 
     steps:
       - name: Checkout
