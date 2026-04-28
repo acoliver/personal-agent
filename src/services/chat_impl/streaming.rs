@@ -44,7 +44,7 @@ pub(super) struct StreamDiagnosticContext {
 }
 
 impl StreamDiagnosticContext {
-    fn from_profile(profile: &crate::models::ModelProfile) -> Self {
+    pub(super) fn from_profile(profile: &crate::models::ModelProfile) -> Self {
         Self {
             profile_id: profile.id,
             profile_name: profile.name.clone(),
@@ -193,6 +193,7 @@ pub(super) async fn run_stream_task(
         &tx,
         &active_streams,
         &cancel,
+        &diagnostics_context,
     )
     .await
     else {
@@ -421,7 +422,7 @@ pub(super) fn emit_stream_error(
     let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(error)));
 }
 
-fn build_stream_error_diagnostics(
+pub(super) fn build_stream_error_diagnostics(
     underlying_error: Option<&str>,
     context: &StreamDiagnosticContext,
     transcript: &StreamTranscript,

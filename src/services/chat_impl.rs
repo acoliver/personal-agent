@@ -13,6 +13,7 @@ use crate::models::{Message, MessageRole};
 use crate::presentation::view_command::ViewCommand;
 use crate::services::template::{build_skills_prompt_block, expand_system_prompt, TemplateContext};
 use crate::services::{ConversationService, SkillsService};
+use crate::ui_gpui::error_log::ErrorLogStreamLifecycle;
 use futures::{stream, Stream};
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -24,7 +25,10 @@ use uuid::Uuid;
 
 mod streaming;
 
-use streaming::{clear_streaming_state, emit_stream_error, run_stream_task, STREAM_ERROR_MESSAGE};
+use streaming::{
+    build_stream_error_diagnostics, clear_streaming_state, emit_stream_error, run_stream_task,
+    StreamDiagnosticContext, StreamTranscript, STREAM_ERROR_MESSAGE,
+};
 
 // Re-export for tests
 #[cfg(test)]
@@ -738,6 +742,7 @@ async fn create_stream_agent(
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
     _cancel: &tokio_util::sync::CancellationToken,
+    diagnostics_context: &StreamDiagnosticContext,
 ) -> Option<serdes_ai_agent::Agent<crate::llm::client_agent::McpToolContext>> {
     match client.create_agent(mcp_tools, system_prompt).await {
         Ok(agent) => Some(agent),
@@ -747,11 +752,17 @@ async fn create_stream_agent(
                 error = %e,
                 "Failed to create agent for chat stream"
             );
+            let diagnostics = build_stream_error_diagnostics(
+                Some(&crate::llm::error::debug_error_message(&e)),
+                diagnostics_context,
+                &StreamTranscript::default(),
+                ErrorLogStreamLifecycle::Failed,
+            );
             emit_stream_error(
                 conversation_id,
                 STREAM_ERROR_MESSAGE.to_string(),
                 false,
-                None,
+                Some(Box::new(diagnostics)),
                 tx,
             );
             clear_streaming_state(active_streams, conversation_id, stream_id);
