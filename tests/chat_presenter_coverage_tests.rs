@@ -1279,6 +1279,7 @@ async fn chat_events_surface_errors_and_completion_commands() {
             conversation_id,
             error: "recoverable".to_string(),
             recoverable: true,
+            diagnostics: None,
         }),
         AppEvent::Chat(ChatEvent::MessageSaved {
             conversation_id,
@@ -1587,11 +1588,14 @@ async fn save_error_log_exports_txt_and_emits_completion() {
             raw_detail: Some("invalid_api_key".to_string()),
             conversation_title: Some("Bug report".to_string()),
             conversation_id: None,
+            diagnostics: None,
         }
     });
 
     event_bus
-        .publish(AppEvent::User(UserEvent::SaveErrorLog))
+        .publish(AppEvent::User(UserEvent::SaveErrorLog {
+            format: personal_agent::models::ConversationExportFormat::Txt,
+        }))
         .expect("publish save error log");
     let commands = collect_commands(&mut view_rx).await;
 
@@ -1656,7 +1660,9 @@ async fn save_error_log_with_empty_store_emits_notification() {
     personal_agent::ui_gpui::error_log::ErrorLogStore::global().clear();
 
     event_bus
-        .publish(AppEvent::User(UserEvent::SaveErrorLog))
+        .publish(AppEvent::User(UserEvent::SaveErrorLog {
+            format: personal_agent::models::ConversationExportFormat::Txt,
+        }))
         .expect("publish save error log");
     let commands = collect_commands(&mut view_rx).await;
 

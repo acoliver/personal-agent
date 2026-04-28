@@ -740,6 +740,7 @@ async fn error_presenter_surfaces_system_chat_and_mcp_errors() {
                 conversation_id: Uuid::new_v4(),
                 error: "recoverable issue".to_string(),
                 recoverable: true,
+                diagnostics: None,
             },
         ))
         .expect("send chat error");

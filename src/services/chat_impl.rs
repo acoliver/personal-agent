@@ -747,7 +747,13 @@ async fn create_stream_agent(
                 error = %e,
                 "Failed to create agent for chat stream"
             );
-            emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
+            emit_stream_error(
+                conversation_id,
+                STREAM_ERROR_MESSAGE.to_string(),
+                false,
+                None,
+                tx,
+            );
             clear_streaming_state(active_streams, conversation_id, stream_id);
             None
         }

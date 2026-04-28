@@ -27,6 +27,7 @@ pub struct ErrorLogView {
     export_feedback_message: Option<String>,
     export_feedback_is_error: bool,
     export_feedback_path: Option<String>,
+    expanded_entry_id: Option<u64>,
 }
 
 impl ErrorLogView {
@@ -38,6 +39,7 @@ impl ErrorLogView {
             export_feedback_message: None,
             export_feedback_is_error: false,
             export_feedback_path: None,
+            expanded_entry_id: None,
         }
     }
 
@@ -58,7 +60,16 @@ impl ErrorLogView {
     pub fn handle_command(&mut self, command: ViewCommand, cx: &mut gpui::Context<Self>) {
         match command {
             ViewCommand::ErrorLogExportCompleted { path } => {
-                self.export_feedback_message = Some(format!("Error log saved as {path} (TXT)"));
+                let format_label = if Path::new(&path)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+                {
+                    "JSON"
+                } else {
+                    "TXT"
+                };
+                self.export_feedback_message =
+                    Some(format!("Error log saved as {path} ({format_label})"));
                 self.export_feedback_is_error = false;
                 self.export_feedback_path = Some(path);
                 cx.notify();
@@ -249,7 +260,38 @@ impl ErrorLogView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _window, cx| {
-                    this.emit(&UserEvent::SaveErrorLog);
+                    this.emit(&UserEvent::SaveErrorLog {
+                        format: crate::models::ConversationExportFormat::Txt,
+                    });
+                    this.export_feedback_message = None;
+                    this.export_feedback_is_error = false;
+                    this.export_feedback_path = None;
+                    cx.notify();
+                }),
+            )
+    }
+
+    fn render_save_error_log_json_button(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("btn-save-error-log-json")
+            .h(px(28.0))
+            .px(px(8.0))
+            .rounded(px(Theme::RADIUS_SM))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .bg(Theme::bg_darker())
+            .hover(|s| s.bg(Theme::bg_dark()))
+            .text_size(px(Theme::font_size_ui()))
+            .text_color(Theme::text_primary())
+            .child("JSON")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    this.emit(&UserEvent::SaveErrorLog {
+                        format: crate::models::ConversationExportFormat::Json,
+                    });
                     this.export_feedback_message = None;
                     this.export_feedback_is_error = false;
                     this.export_feedback_path = None;
@@ -299,6 +341,7 @@ impl ErrorLogView {
             .child(Self::render_title())
             .child(Self::render_error_count(entries_len))
             .child(Self::render_save_error_log_button(cx))
+            .child(Self::render_save_error_log_json_button(cx))
             .child(Self::render_clear_all_button(cx))
     }
 
@@ -335,25 +378,25 @@ impl ErrorLogView {
         )
     }
 
-    fn render_entry_card(entry: &ErrorLogEntry) -> gpui::AnyElement {
-        let severity_label = entry.severity.to_string();
-        let source = entry.source.clone();
-        let timestamp = entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string();
-        let message = entry.message.clone();
-        let conversation_label = entry
-            .conversation_title
-            .clone()
-            .or_else(|| entry.conversation_id.as_ref().map(ToString::to_string));
-        let clipboard_text = render_error_entry_text(entry);
+    fn render_entry_card(
+        &self,
+        entry: &ErrorLogEntry,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        let is_expanded = self.expanded_entry_id == Some(entry.id);
+        Self::render_entry_card_shell(entry, cx, is_expanded).into_any_element()
+    }
 
-        // Error tint background: error color with reduced alpha
+    fn render_entry_card_shell(
+        entry: &ErrorLogEntry,
+        cx: &mut gpui::Context<Self>,
+        is_expanded: bool,
+    ) -> impl IntoElement {
+        let entry_id = entry.id;
         let mut bg = Theme::error();
         bg.a = 0.08;
         let mut border_color = Theme::error();
         border_color.a = 0.25;
-
-        let mut severity_bg = Theme::error();
-        severity_bg.a = 0.18;
 
         div()
             .id(gpui::SharedString::from(format!(
@@ -368,59 +411,40 @@ impl ErrorLogView {
             .border_color(border_color)
             .cursor_pointer()
             .hover(|s| s.bg(Theme::bg_dark()))
-            .on_click(move |_event, _window, cx| {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(clipboard_text.clone()));
-            })
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.expanded_entry_id = if this.expanded_entry_id == Some(entry_id) {
+                    None
+                } else {
+                    Some(entry_id)
+                };
+                cx.notify();
+            }))
             .flex()
             .flex_col()
             .gap(px(Theme::SPACING_XS))
-            // Header row: severity tag + source + timestamp
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(Theme::SPACING_SM))
-                    // Severity tag pill
-                    .child(
-                        div()
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(Theme::RADIUS_SM))
-                            .bg(severity_bg)
-                            .text_size(px(Theme::font_size_ui()))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::error())
-                            .child(severity_label),
-                    )
-                    // Source
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_secondary())
-                            .child(source),
-                    )
-                    // Timestamp
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_muted())
-                            .child(timestamp),
-                    ),
-            )
-            // Message row
+            .child(Self::render_entry_summary(entry))
+            .when(is_expanded, |card| {
+                card.child(Self::render_entry_diagnostics(entry))
+            })
+    }
+
+    fn render_entry_summary(entry: &ErrorLogEntry) -> gpui::Div {
+        let conversation_label = entry
+            .conversation_title
+            .clone()
+            .or_else(|| entry.conversation_id.as_ref().map(ToString::to_string));
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(Theme::SPACING_XS))
+            .child(Self::render_entry_header(entry))
             .child(
                 div()
                     .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
-                    .child(message),
+                    .child(entry.message.clone()),
             )
-            // Conversation context (if available)
             .when(conversation_label.is_some(), |d| {
                 d.child(
                     div()
@@ -432,7 +456,109 @@ impl ErrorLogView {
                         )),
                 )
             })
-            .into_any_element()
+    }
+
+    fn render_entry_header(entry: &ErrorLogEntry) -> gpui::Div {
+        let mut severity_bg = Theme::error();
+        severity_bg.a = 0.18;
+
+        div()
+            .flex()
+            .items_center()
+            .gap(px(Theme::SPACING_SM))
+            .child(
+                div()
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(Theme::RADIUS_SM))
+                    .bg(severity_bg)
+                    .text_size(px(Theme::font_size_ui()))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(Theme::error())
+                    .child(entry.severity.to_string()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_secondary())
+                    .child(entry.source.clone()),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_muted())
+                    .child(entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+            )
+    }
+
+    fn render_entry_diagnostics(entry: &ErrorLogEntry) -> gpui::Div {
+        let clipboard_text = render_error_entry_text(entry);
+        let details_text = if entry.diagnostics.is_some() {
+            clipboard_text.clone()
+        } else {
+            "No diagnostic context captured".to_string()
+        };
+
+        div()
+            .mt(px(Theme::SPACING_SM))
+            .p(px(Theme::SPACING_SM))
+            .rounded(px(Theme::RADIUS_SM))
+            .bg(Theme::bg_darker())
+            .border_1()
+            .border_color(Theme::border())
+            .flex()
+            .flex_col()
+            .gap(px(Theme::SPACING_XS))
+            .child(Self::render_entry_diagnostics_header(
+                entry.id,
+                clipboard_text,
+            ))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_mono()))
+                    .text_color(Theme::text_muted())
+                    .child(details_text),
+            )
+    }
+
+    fn render_entry_diagnostics_header(entry_id: u64, clipboard_text: String) -> gpui::Div {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(Theme::SPACING_SM))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(px(Theme::font_size_ui()))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(Theme::text_secondary())
+                    .child("Diagnostics"),
+            )
+            .child(
+                div()
+                    .id(gpui::SharedString::from(format!(
+                        "error-entry-copy-diagnostics-{entry_id}"
+                    )))
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(Theme::RADIUS_SM))
+                    .bg(Theme::bg_dark())
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::accent())
+                    .cursor_pointer()
+                    .child("Copy diagnostics")
+                    .on_click(move |_event, _window, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                            clipboard_text.clone(),
+                        ));
+                    }),
+            )
     }
 }
 
@@ -482,7 +608,11 @@ impl gpui::Render for ErrorLogView {
                         .flex()
                         .flex_col()
                         .gap(px(Theme::SPACING_SM))
-                        .children(entries.iter().map(Self::render_entry_card))
+                        .children(
+                            entries
+                                .iter()
+                                .map(|entry| self.render_entry_card(entry, cx)),
+                        )
                         .into_any_element()
                 }),
         )
@@ -508,6 +638,7 @@ mod tests {
             raw_detail: None,
             conversation_title: None,
             conversation_id: None,
+            diagnostics: None,
         }
     }
 
@@ -549,7 +680,7 @@ mod tests {
     // --- render_entry_card: no-panic smoke tests for all severity variants ---
 
     #[gpui::test]
-    async fn render_entry_card_stream_severity_no_panic(_cx: &mut TestAppContext) {
+    async fn render_entry_card_stream_severity_no_panic(cx: &mut TestAppContext) {
         let entry = ErrorLogEntry {
             id: 0,
             timestamp: chrono::Utc::now(),
@@ -559,12 +690,16 @@ mod tests {
             raw_detail: None,
             conversation_title: None,
             conversation_id: None,
+            diagnostics: None,
         };
-        let _ = ErrorLogView::render_entry_card(&entry);
+        let view_entity = cx.new(ErrorLogView::new);
+        view_entity.update(cx, |view, cx| {
+            let _ = view.render_entry_card(&entry, cx);
+        });
     }
 
     #[gpui::test]
-    async fn render_entry_card_auth_severity_no_panic(_cx: &mut TestAppContext) {
+    async fn render_entry_card_auth_severity_no_panic(cx: &mut TestAppContext) {
         let entry = ErrorLogEntry {
             id: 1,
             timestamp: chrono::Utc::now(),
@@ -574,12 +709,16 @@ mod tests {
             raw_detail: Some("body: error invalid_api_key".to_string()),
             conversation_title: Some("My Chat".to_string()),
             conversation_id: None,
+            diagnostics: None,
         };
-        let _ = ErrorLogView::render_entry_card(&entry);
+        let view_entity = cx.new(ErrorLogView::new);
+        view_entity.update(cx, |view, cx| {
+            let _ = view.render_entry_card(&entry, cx);
+        });
     }
 
     #[gpui::test]
-    async fn render_entry_card_connection_severity_no_panic(_cx: &mut TestAppContext) {
+    async fn render_entry_card_connection_severity_no_panic(cx: &mut TestAppContext) {
         let entry = ErrorLogEntry {
             id: 2,
             timestamp: chrono::Utc::now(),
@@ -589,12 +728,16 @@ mod tests {
             raw_detail: None,
             conversation_title: None,
             conversation_id: Some(uuid::Uuid::new_v4()),
+            diagnostics: None,
         };
-        let _ = ErrorLogView::render_entry_card(&entry);
+        let view_entity = cx.new(ErrorLogView::new);
+        view_entity.update(cx, |view, cx| {
+            let _ = view.render_entry_card(&entry, cx);
+        });
     }
 
     #[gpui::test]
-    async fn render_entry_card_mcp_severity_no_panic(_cx: &mut TestAppContext) {
+    async fn render_entry_card_mcp_severity_no_panic(cx: &mut TestAppContext) {
         let entry = ErrorLogEntry {
             id: 3,
             timestamp: chrono::Utc::now(),
@@ -604,12 +747,16 @@ mod tests {
             raw_detail: None,
             conversation_title: None,
             conversation_id: None,
+            diagnostics: None,
         };
-        let _ = ErrorLogView::render_entry_card(&entry);
+        let view_entity = cx.new(ErrorLogView::new);
+        view_entity.update(cx, |view, cx| {
+            let _ = view.render_entry_card(&entry, cx);
+        });
     }
 
     #[gpui::test]
-    async fn render_entry_card_internal_severity_no_panic(_cx: &mut TestAppContext) {
+    async fn render_entry_card_internal_severity_no_panic(cx: &mut TestAppContext) {
         let entry = ErrorLogEntry {
             id: 4,
             timestamp: chrono::Utc::now(),
@@ -619,12 +766,16 @@ mod tests {
             raw_detail: Some("stack trace here".to_string()),
             conversation_title: None,
             conversation_id: None,
+            diagnostics: None,
         };
-        let _ = ErrorLogView::render_entry_card(&entry);
+        let view_entity = cx.new(ErrorLogView::new);
+        view_entity.update(cx, |view, cx| {
+            let _ = view.render_entry_card(&entry, cx);
+        });
     }
 
     #[gpui::test]
-    async fn render_entry_card_with_both_title_and_id_no_panic(_cx: &mut TestAppContext) {
+    async fn render_entry_card_with_both_title_and_id_no_panic(cx: &mut TestAppContext) {
         let entry = ErrorLogEntry {
             id: 5,
             timestamp: chrono::Utc::now(),
@@ -634,12 +785,16 @@ mod tests {
             raw_detail: None,
             conversation_title: Some("Work Session".to_string()),
             conversation_id: Some(uuid::Uuid::new_v4()),
+            diagnostics: None,
         };
-        let _ = ErrorLogView::render_entry_card(&entry);
+        let view_entity = cx.new(ErrorLogView::new);
+        view_entity.update(cx, |view, cx| {
+            let _ = view.render_entry_card(&entry, cx);
+        });
     }
 
     #[gpui::test]
-    async fn render_entry_card_with_only_conversation_id_no_panic(_cx: &mut TestAppContext) {
+    async fn render_entry_card_with_only_conversation_id_no_panic(cx: &mut TestAppContext) {
         // When title is None but conversation_id is Some, the id's to_string() is shown
         let entry = ErrorLogEntry {
             id: 6,
@@ -650,8 +805,12 @@ mod tests {
             raw_detail: None,
             conversation_title: None,
             conversation_id: Some(uuid::Uuid::new_v4()),
+            diagnostics: None,
         };
-        let _ = ErrorLogView::render_entry_card(&entry);
+        let view_entity = cx.new(ErrorLogView::new);
+        view_entity.update(cx, |view, cx| {
+            let _ = view.render_entry_card(&entry, cx);
+        });
     }
 
     // --- render_empty_state: no-panic ---

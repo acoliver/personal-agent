@@ -16,7 +16,10 @@ use crate::events::{
     types::{ChatEvent, McpEvent, SystemEvent},
     AppEvent,
 };
-use crate::ui_gpui::error_log::{ErrorLogEntry, ErrorLogStore, ErrorSeverityTag};
+use crate::ui_gpui::error_log::{
+    sanitize_text, ErrorLogDiagnosticContext, ErrorLogEntry, ErrorLogRunStatus, ErrorLogStore,
+    ErrorLogStreamLifecycle, ErrorSeverityTag,
+};
 
 /// `ErrorPresenter` - handles error display and logging
 ///
@@ -162,6 +165,7 @@ impl ErrorPresenter {
             context,
         } = event
         {
+            let context_for_diagnostics = context.clone();
             let message = context.map_or_else(
                 || format!("{source}: {error}"),
                 |ctx| format!("{source}: {error}\n\nContext: {ctx}"),
@@ -175,6 +179,18 @@ impl ErrorPresenter {
                 message: message.clone(),
                 raw_detail: None,
                 conversation_title: None,
+                diagnostics: Some(ErrorLogDiagnosticContext {
+                    underlying_error: Some(sanitize_text(&error)),
+                    subsystem: Some("system".to_string()),
+                    code_path: Some(source.clone()),
+                    recent_events: context_for_diagnostics
+                        .into_iter()
+                        .map(|ctx| sanitize_text(&ctx))
+                        .collect(),
+                    run_status: Some(ErrorLogRunStatus::Failed),
+                    ..ErrorLogDiagnosticContext::default()
+                }),
+
                 conversation_id: None,
             });
 
@@ -197,6 +213,7 @@ impl ErrorPresenter {
             conversation_id,
             error,
             recoverable,
+            diagnostics,
         } = event
         {
             let severity = match crate::ui_gpui::error_log::classify_error_severity(&error) {
@@ -212,6 +229,15 @@ impl ErrorPresenter {
                 message: error.clone(),
                 raw_detail: None,
                 conversation_title: None,
+                diagnostics: Some(
+                    diagnostics
+                        .map_or_else(
+                            || Self::fallback_chat_stream_diagnostics(&error),
+                            |diagnostics| *diagnostics,
+                        )
+                        .sanitized(),
+                ),
+
                 conversation_id: Some(conversation_id),
             });
 
@@ -250,6 +276,18 @@ impl ErrorPresenter {
                     raw_detail: None,
                     conversation_title: None,
                     conversation_id: None,
+                    diagnostics: Some(
+                        ErrorLogDiagnosticContext {
+                            underlying_error: Some(error.clone()),
+                            subsystem: Some("mcp".to_string()),
+                            code_path: Some(
+                                "presentation::error_presenter::handle_mcp_error".to_string(),
+                            ),
+                            run_status: Some(ErrorLogRunStatus::Failed),
+                            ..ErrorLogDiagnosticContext::default()
+                        }
+                        .sanitized(),
+                    ),
                 });
 
                 let _ = view_tx
@@ -275,6 +313,18 @@ impl ErrorPresenter {
                     raw_detail: None,
                     conversation_title: None,
                     conversation_id: None,
+                    diagnostics: Some(
+                        ErrorLogDiagnosticContext {
+                            underlying_error: Some(error.clone()),
+                            subsystem: Some("mcp".to_string()),
+                            code_path: Some(
+                                "presentation::error_presenter::handle_mcp_error".to_string(),
+                            ),
+                            run_status: Some(ErrorLogRunStatus::Failed),
+                            ..ErrorLogDiagnosticContext::default()
+                        }
+                        .sanitized(),
+                    ),
                 });
 
                 let _ = view_tx
@@ -286,6 +336,20 @@ impl ErrorPresenter {
                     .await;
             }
             _ => {} // Ignore other MCP events
+        }
+    }
+
+    fn fallback_chat_stream_diagnostics(error: &str) -> ErrorLogDiagnosticContext {
+        ErrorLogDiagnosticContext {
+            underlying_error: Some(error.to_string()),
+            subsystem: Some("chat stream".to_string()),
+            code_path: Some("presentation::error_presenter::handle_chat_error".to_string()),
+            run_status: Some(ErrorLogRunStatus::Failed),
+            stream_lifecycle: Some(ErrorLogStreamLifecycle::Failed),
+            recent_events: vec![
+                "chat stream error received without service diagnostics".to_string()
+            ],
+            ..ErrorLogDiagnosticContext::default()
         }
     }
 }
@@ -369,6 +433,7 @@ mod tests {
             conversation_id: Uuid::new_v4(),
             error: "Stream failed".to_string(),
             recoverable: true,
+            diagnostics: None,
         };
 
         ErrorPresenter::handle_chat_error(&mut view_tx.clone(), event).await;
@@ -502,6 +567,7 @@ mod tests {
             conversation_id: conv_id,
             error: "LLM unavailable".to_string(),
             recoverable: false,
+            diagnostics: None,
         };
 
         ErrorPresenter::handle_chat_error(&mut view_tx.clone(), event).await;
@@ -755,6 +821,7 @@ mod tests {
             conversation_id: conv_id,
             error: "401 Unauthorized: invalid API key".to_string(),
             recoverable: false,
+            diagnostics: None,
         };
 
         ErrorPresenter::handle_chat_error(&mut view_tx.clone(), event).await;
@@ -776,6 +843,7 @@ mod tests {
             conversation_id: Uuid::new_v4(),
             error: "fatal stream failure".to_string(),
             recoverable: false,
+            diagnostics: None,
         };
 
         ErrorPresenter::handle_chat_error(&mut view_tx.clone(), event).await;
