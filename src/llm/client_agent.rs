@@ -416,6 +416,7 @@ impl AgentClientExt for crate::llm::LlmClient {
 impl crate::llm::LlmClient {
     fn collect_tool_transcript(
         messages: &[ModelRequest],
+        history_request_count: usize,
     ) -> (
         Vec<crate::llm::tools::ToolUse>,
         Vec<crate::llm::tools::ToolResult>,
@@ -423,7 +424,7 @@ impl crate::llm::LlmClient {
         let mut tool_calls = Vec::new();
         let mut tool_results = Vec::new();
 
-        for request in messages {
+        for request in messages.iter().skip(history_request_count) {
             for part in &request.parts {
                 match part {
                     ModelRequestPart::ModelResponse(response) => {
@@ -490,8 +491,11 @@ impl crate::llm::LlmClient {
         });
     }
 
-    fn handle_agent_stream_event<F>(event: AgentStreamEvent, on_event: &mut F)
-    where
+    fn handle_agent_stream_event<F>(
+        event: AgentStreamEvent,
+        history_request_count: usize,
+        on_event: &mut F,
+    ) where
         F: FnMut(StreamEvent) + Send,
     {
         match event {
@@ -529,7 +533,8 @@ impl crate::llm::LlmClient {
             }
             AgentStreamEvent::RunComplete { messages, .. } => {
                 tracing::info!("run_agent_stream: RunComplete");
-                let (tool_calls, tool_results) = Self::collect_tool_transcript(&messages);
+                let (tool_calls, tool_results) =
+                    Self::collect_tool_transcript(&messages, history_request_count);
                 on_event(StreamEvent::ToolTranscript {
                     tool_calls,
                     tool_results,
@@ -568,6 +573,7 @@ impl crate::llm::LlmClient {
             message_history.len()
         );
 
+        let history_request_count = message_history.len();
         let options = if message_history.is_empty() {
             RunOptions::default()
         } else {
@@ -585,7 +591,9 @@ impl crate::llm::LlmClient {
 
         while let Some(event_result) = stream.next().await {
             match event_result {
-                Ok(event) => Self::handle_agent_stream_event(event, on_event),
+                Ok(event) => {
+                    Self::handle_agent_stream_event(event, history_request_count, on_event);
+                }
 
                 Err(e) => {
                     let err_msg = debug_error_message(&e);

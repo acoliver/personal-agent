@@ -508,6 +508,39 @@ async fn test_send_message() {
 }
 
 #[tokio::test]
+async fn persist_assistant_response_skips_empty_turn_with_only_tool_transcript() {
+    let conversation_service_impl = Arc::new(MockConversationService::new(Uuid::new_v4()));
+    let conversation_service =
+        conversation_service_impl.clone() as Arc<dyn super::super::ConversationService>;
+    let conversation_id = Uuid::new_v4();
+    let tool_calls = vec![crate::llm::tools::ToolUse::new(
+        "historical-tool-call",
+        "web_search",
+        serde_json::json!({"query":"old"}),
+    )];
+    let tool_results = vec![crate::llm::tools::ToolResult::success(
+        "historical-tool-call",
+        "old result",
+    )];
+
+    streaming::persist_assistant_response(
+        &conversation_service,
+        conversation_id,
+        "",
+        "",
+        &tool_calls,
+        &tool_results,
+        "Test Profile",
+    )
+    .await;
+
+    assert!(
+        conversation_service_impl.messages.read().await.is_empty(),
+        "empty assistant turns must not persist historical tool transcript"
+    );
+}
+
+#[tokio::test]
 async fn support_app_settings_services_cover_success_and_failure_paths() {
     let in_memory = InMemoryAppSettingsService::new();
     let profile_id = Uuid::new_v4();
