@@ -242,10 +242,10 @@ pub fn render_error_entry_text(entry: &ErrorLogEntry) -> String {
         entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
         entry.severity
     );
-    let _ = writeln!(output, "Source: {}", entry.source);
+    let _ = writeln!(output, "Source: {}", sanitize_text(entry.source.trim_end()));
 
     if let Some(conversation) = entry.conversation_title.as_deref() {
-        let _ = writeln!(output, "Conversation: {conversation}");
+        let _ = writeln!(output, "Conversation: {}", sanitize_text(conversation));
     } else if let Some(conversation_id) = entry.conversation_id.as_ref() {
         let _ = writeln!(output, "Conversation: {conversation_id}");
     }

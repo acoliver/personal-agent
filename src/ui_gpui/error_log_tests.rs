@@ -261,6 +261,27 @@ fn render_error_log_json_includes_structured_sanitized_diagnostics() {
 }
 
 #[test]
+fn render_error_entry_text_sanitizes_source_and_conversation_title() {
+    let entry = ErrorLogEntry {
+        id: 7,
+        timestamp: chrono::Utc::now(),
+        severity: ErrorSeverityTag::Internal,
+        source: "provider api_key=source-secret".to_string(),
+        message: "display message".to_string(),
+        raw_detail: None,
+        conversation_title: Some("debug password=title-secret".to_string()),
+        conversation_id: None,
+        diagnostics: None,
+    };
+
+    let rendered = render_error_entry_text(&entry);
+    assert!(rendered.contains("api_key=[REDACTED]"));
+    assert!(rendered.contains("password=[REDACTED]"));
+    assert!(!rendered.contains("source-secret"));
+    assert!(!rendered.contains("title-secret"));
+}
+
+#[test]
 fn diagnostic_text_covers_status_events_and_persistence_fields() {
     let conversation_id = uuid::Uuid::new_v4();
     let profile_id = uuid::Uuid::new_v4();

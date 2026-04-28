@@ -35,6 +35,7 @@ pub(super) struct StreamTranscript {
     pub(super) completed: bool,
 }
 
+#[derive(Clone, Default)]
 pub(super) struct StreamDiagnosticContext {
     pub(super) profile_id: Uuid,
     pub(super) profile_name: String,
@@ -70,6 +71,7 @@ pub(super) async fn stream_agent_response(
     if let Err(error) = client
         .run_agent_stream(agent, messages, context, |event| {
             handle_llm_stream_event(
+                diagnostics_context,
                 event,
                 conversation_id,
                 tx,
@@ -220,6 +222,11 @@ pub(super) async fn run_stream_task(
     )
     .await;
 
+    if !transcript.completed {
+        clear_streaming_state(&active_streams, conversation_id, stream_id);
+        return;
+    }
+
     finalize_stream_task(
         &conversation_service,
         conversation_id,
@@ -234,8 +241,10 @@ pub(super) async fn run_stream_task(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_llm_stream_event(
+    diagnostics_context: &StreamDiagnosticContext,
     event: LlmStreamEvent,
     conversation_id: Uuid,
+
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     response_text: &mut String,
     thinking_text: &mut String,
@@ -288,11 +297,14 @@ pub(super) fn handle_llm_stream_event(
             let snapshot = ErrorSnapshot {
                 response_text,
                 thinking_text,
+                tool_calls,
+                tool_results,
                 input_tokens: *input_tokens,
                 output_tokens: *output_tokens,
             };
-            handle_stream_error_event(conversation_id, tx, &snapshot, &err);
+            handle_stream_error_event(conversation_id, tx, diagnostics_context, &snapshot, &err);
         }
+
         LlmStreamEvent::ToolUse(_tool_use) => {}
     }
 }
@@ -367,6 +379,8 @@ fn handle_stream_complete(
 struct ErrorSnapshot<'a> {
     response_text: &'a str,
     thinking_text: &'a str,
+    tool_calls: &'a [crate::llm::tools::ToolUse],
+    tool_results: &'a [crate::llm::tools::ToolResult],
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,
 }
@@ -374,6 +388,7 @@ struct ErrorSnapshot<'a> {
 fn handle_stream_error_event(
     conversation_id: Uuid,
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    diagnostics_context: &StreamDiagnosticContext,
     snapshot: &ErrorSnapshot<'_>,
     err: &str,
 ) {
@@ -385,18 +400,24 @@ fn handle_stream_error_event(
         "LLM stream event error"
     );
 
-    let diagnostics = ErrorLogDiagnosticContext {
-        underlying_error: Some(sanitize_text(err)),
-        subsystem: Some("chat stream".to_string()),
-        code_path: Some("services::chat_impl::streaming::handle_llm_stream_event".to_string()),
-        run_status: Some(ErrorLogRunStatus::Failed),
-        stream_lifecycle: Some(ErrorLogStreamLifecycle::Failed),
+    let transcript = StreamTranscript {
+        response_text: snapshot.response_text.to_string(),
+        thinking_text: snapshot.thinking_text.to_string(),
+        tool_calls: snapshot.tool_calls.to_vec(),
+        tool_results: snapshot.tool_results.to_vec(),
         input_tokens: snapshot.input_tokens,
         output_tokens: snapshot.output_tokens,
-        partial_assistant_response_len: Some(snapshot.response_text.len()),
-        thinking_len: Some(snapshot.thinking_text.len()),
-        ..ErrorLogDiagnosticContext::default()
+        completed: false,
     };
+    let mut diagnostics = build_stream_error_diagnostics(
+        Some(err),
+        diagnostics_context,
+        &transcript,
+        ErrorLogStreamLifecycle::Failed,
+    );
+    diagnostics.code_path =
+        Some("services::chat_impl::streaming::handle_llm_stream_event".to_string());
+
     emit_stream_error(
         conversation_id,
         STREAM_ERROR_MESSAGE.to_string(),

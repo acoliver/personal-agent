@@ -314,8 +314,9 @@ impl ErrorLogView {
             .child("Clear All")
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|_this, _, _window, cx| {
+                cx.listener(|this, _, _window, cx| {
                     ErrorLogStore::global().clear();
+                    this.expanded_entry_id = None;
                     cx.notify();
                 }),
             )
@@ -367,6 +368,25 @@ impl ErrorLogView {
             self.export_feedback_is_error,
             &self.export_feedback_path,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn expanded_entry_id(&self) -> Option<u64> {
+        self.expanded_entry_id
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn set_expanded_entry_id_for_test(&mut self, entry_id: Option<u64>) {
+        self.expanded_entry_id = entry_id;
+    }
+
+    fn clear_invalid_expanded_entry(&mut self, entries: &[ErrorLogEntry]) {
+        if self
+            .expanded_entry_id
+            .is_some_and(|selected_id| !entries.iter().any(|entry| entry.id == selected_id))
+        {
+            self.expanded_entry_id = None;
+        }
     }
 
     fn render_empty_state() -> impl IntoElement {
@@ -578,6 +598,7 @@ impl gpui::Render for ErrorLogView {
         store.mark_all_viewed();
         let entries = store.entries();
         let entries_len = entries.len();
+        self.clear_invalid_expanded_entry(&entries);
 
         let mut root = div()
             .id("error-log-view")
@@ -678,6 +699,31 @@ mod tests {
     }
 
     // --- render_entry_card: no-panic smoke tests for all severity variants ---
+    #[gpui::test]
+    async fn clear_invalid_expanded_entry_resets_missing_selection(cx: &mut TestAppContext) {
+        let view = cx.new(ErrorLogView::new);
+        view.update(cx, |view, _cx| {
+            view.set_expanded_entry_id_for_test(Some(42));
+            let entries = vec![make_entry(1)];
+
+            view.clear_invalid_expanded_entry(&entries);
+
+            assert_eq!(view.expanded_entry_id(), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn clear_invalid_expanded_entry_keeps_existing_selection(cx: &mut TestAppContext) {
+        let view = cx.new(ErrorLogView::new);
+        view.update(cx, |view, _cx| {
+            view.set_expanded_entry_id_for_test(Some(1));
+            let entries = vec![make_entry(1)];
+
+            view.clear_invalid_expanded_entry(&entries);
+
+            assert_eq!(view.expanded_entry_id(), Some(1));
+        });
+    }
 
     #[gpui::test]
     async fn render_entry_card_stream_severity_no_panic(cx: &mut TestAppContext) {

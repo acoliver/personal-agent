@@ -218,6 +218,7 @@ fn handle_llm_stream_event_records_transcript_and_emits_events() {
     let mut completed = false;
 
     streaming::handle_llm_stream_event(
+        &streaming::StreamDiagnosticContext::default(),
         crate::llm::StreamEvent::TextDelta("hello".to_string()),
         conversation_id,
         &tx,
@@ -230,6 +231,7 @@ fn handle_llm_stream_event_records_transcript_and_emits_events() {
         &mut completed,
     );
     streaming::handle_llm_stream_event(
+        &streaming::StreamDiagnosticContext::default(),
         crate::llm::StreamEvent::ThinkingDelta("think".to_string()),
         conversation_id,
         &tx,
@@ -242,6 +244,7 @@ fn handle_llm_stream_event_records_transcript_and_emits_events() {
         &mut completed,
     );
     streaming::handle_llm_stream_event(
+        &streaming::StreamDiagnosticContext::default(),
         crate::llm::StreamEvent::ToolTranscript {
             tool_calls: vec![crate::llm::ToolUse::new(
                 "call-1",
@@ -261,6 +264,7 @@ fn handle_llm_stream_event_records_transcript_and_emits_events() {
         &mut completed,
     );
     streaming::handle_llm_stream_event(
+        &streaming::StreamDiagnosticContext::default(),
         crate::llm::StreamEvent::Complete {
             input_tokens: Some(7),
             output_tokens: Some(11),
