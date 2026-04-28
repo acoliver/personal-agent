@@ -12,6 +12,9 @@ pub mod app_store_types;
 pub mod bridge;
 pub mod components;
 pub mod error_log;
+pub mod error_log_diagnostics;
+#[cfg(test)]
+mod error_log_tests;
 pub mod mac_native;
 pub mod navigation;
 pub mod navigation_channel;
