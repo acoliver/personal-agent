@@ -141,12 +141,21 @@ pub fn sanitize_text(value: &str) -> String {
         r#"(?i)(\btoken\s*[=:]\s*)[^\s,;&\"]+"#,
         r#"(?i)(secret\s*[=:]\s*)[^\s,;&\"]+"#,
         r#"(?i)(password\s*[=:]\s*)[^\s,;&\"]+"#,
+        r#"(?i)(\"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password)\"\s*:\s*\")[^\"]+(\")"#,
         r"(?i)(authorization\s*:\s*)[^\r\n]+",
+        r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+",
     ];
 
     for pattern in patterns {
         if let Ok(regex) = regex::Regex::new(pattern) {
-            sanitized = regex.replace_all(&sanitized, "${1}[REDACTED]").into_owned();
+            sanitized = regex
+                .replace_all(&sanitized, |captures: &regex::Captures<'_>| {
+                    captures.get(2).map_or_else(
+                        || format!("{}[REDACTED]", &captures[1]),
+                        |suffix| format!("{}[REDACTED]{}", &captures[1], suffix.as_str()),
+                    )
+                })
+                .into_owned();
         }
     }
 

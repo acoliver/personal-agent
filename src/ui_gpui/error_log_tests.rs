@@ -347,6 +347,11 @@ fn diagnostic_display_and_sanitization_cover_remaining_variants() {
         sanitize_text("refresh_token=abc"),
         "refresh_token=[REDACTED]"
     );
+    assert_eq!(
+        sanitize_text(r#"{"api_key":"abc","access_token": "xyz"}"#),
+        r#"{"api_key":"[REDACTED]","access_token": "[REDACTED]"}"#
+    );
+    assert_eq!(sanitize_text("Bearer abc.def-123"), "Bearer [REDACTED]");
 }
 
 #[test]
