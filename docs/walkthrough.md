@@ -1,6 +1,6 @@
 # Personal Agent walkthrough
 
-This walkthrough takes you from installation to your first chat. The example profile uses Z.ai's coding plan with GLM-5.1 because it is a current, sensible OpenAI-compatible model setup.
+This walkthrough takes you from installation to your first chat. Personal Agent is a general desktop AI assistant: use it to draft reports, summarize research, prepare plans, review notes, or work with connected tools from a compact menu-bar or system-tray chat panel.
 
 ## 1. Install Personal Agent
 
@@ -37,26 +37,26 @@ The screenshot above was captured from the real running app.
 
 ## 3. Open settings
 
-Click the gear icon in the chat panel toolbar. Settings contain the profile list, model configuration, API key management, appearance, MCP tools, and security options.
+Click the gear icon in the chat panel toolbar. Settings contain the profile list, model configuration, API key management, appearance, MCP tools, skills, tool approval, and security options.
 
 ## 4. Create a model profile
 
-1. In settings, open the **Models** section.
+1. In settings, open the **Models** or **Profiles** section.
 2. Click **+** to add a profile.
-3. Give it a clear name, for example `Z.ai GLM-5.1 Coding`.
+3. Give it a clear name, for example `Z.ai GLM-5.1 General`.
 4. Choose the provider/model from the registry if available. If you configure it manually, use the values below.
 
-Example Z.ai coding-plan profile:
+Example Z.ai general assistant profile:
 
 | Field | Value |
 | --- | --- |
-| Profile name | `Z.ai GLM-5.1 Coding` |
+| Profile name | `Z.ai GLM-5.1 General` |
 | Provider | `z-ai` or a custom OpenAI-compatible provider entry for Z.ai |
 | Model | `glm-5.1` |
 | Base URL | `https://api.z.ai/api/paas/v4` |
 | API key label | `z-ai` |
-| Temperature | `0.7` |
-| Max tokens | `4096` |
+| Output tokens | `40000` |
+| Context limit | `200000` |
 
 If the UI presents a model picker, prefer selecting the Z.ai GLM-5.1 model from the registry instead of typing provider details by hand. Manual fields are useful when the registry has not yet been refreshed.
 
@@ -77,19 +77,28 @@ Profile files reference the key label; they should not contain the API key itsel
 
 ## 6. Select the profile
 
-Return to the chat panel and select `Z.ai GLM-5.1 Coding` from the profile dropdown. If it does not appear, reopen settings and verify that the profile was saved.
+Return to the chat panel and select `Z.ai GLM-5.1 General` from the profile dropdown. If it does not appear, reopen settings and verify that the profile was saved.
 
 ## 7. Send your first message
 
 Click the input field, type a message, and press Enter or click **Send**.
 
-Try a small coding prompt first, for example:
+Try a general-purpose assistant prompt first, for example:
 
 ```text
-Write a Rust function that returns true when a string is a palindrome. Include a short explanation.
+Write a one-page briefing on the benefits and risks of adopting AI assistants for a small consulting firm. Include an executive summary and practical next steps.
 ```
 
 Responses stream into the chat panel as the model generates them. Conversation history is saved automatically.
+
+## 8. Optional: connect skills and MCP tools
+
+Personal Agent can do more when you enable additional capabilities:
+
+- [Skills](skills.md) provide task-specific instructions or workflows that the assistant can activate when relevant.
+- [MCP tools](mcps.md) connect the assistant to external services, local tools, or data sources through Model Context Protocol servers.
+
+Only enable skills or MCP servers you understand and trust. Tool approval settings let you decide when Personal Agent should ask before using a tool.
 
 ## Troubleshooting
 
@@ -101,7 +110,7 @@ Responses stream into the chat panel as the model generates them. Conversation h
 
 ### The profile dropdown is empty
 
-Open settings, go to **Models**, and create a profile. Save it, then return to chat. If needed, restart the app.
+Open settings, go to **Models** or **Profiles**, and create a profile. Save it, then return to chat. If needed, restart the app.
 
 ### The model call fails with an authentication error
 
@@ -115,6 +124,10 @@ Reopen the profile and confirm:
 ### The model is missing from the picker
 
 Use **Refresh Models** in settings. If it still does not appear, configure the profile manually with the Z.ai GLM-5.1 values above.
+
+### Responses stop early
+
+Reopen the profile and confirm the output-token setting is large enough for the task. For GLM-5.1, the example above uses approximately 40000 output tokens for long-form general assistant work.
 
 ### Linux packages install but no window opens
 
