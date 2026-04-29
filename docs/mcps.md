@@ -67,18 +67,18 @@ If you delete an MCP from Settings, Personal Agent also removes the credentials 
 
 ### The MCP does not start
 
-- Confirm the command, package name, Docker image, or URL is correct.
-- Confirm required runtimes are installed, such as Node.js, npx, or Docker.
-- Confirm your network connection if the MCP uses a remote HTTP or SSE endpoint.
-- Check that required environment variables or API keys are present.
+- Verify the command, package name, Docker image, or URL.
+- Ensure required runtimes are installed, such as Node.js, npx, or Docker.
+- Check network connectivity if the MCP uses a remote HTTP or SSE endpoint.
+- Make sure required environment variables or API keys are present.
 - Toggle the MCP off and on, or restart Personal Agent.
 
 ### Authentication fails
 
 - Re-enter the credential in the MCP configuration screen.
-- Confirm the API key or token is active with the provider.
-- Confirm the credential has permission for the actions you are asking Personal Agent to perform.
-- Confirm the MCP expects the same environment variable name shown in Settings.
+- Verify the API key or token is active with the provider.
+- Ensure the credential has permission for the actions you are asking Personal Agent to perform.
+- Check that the MCP expects the same environment variable name shown in Settings.
 
 ### Tools do not appear in chat
 
