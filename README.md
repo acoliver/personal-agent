@@ -55,7 +55,7 @@ The Linux tray uses the StatusNotifierItem protocol. KDE Plasma supports it out 
 4. Choose a provider/model, enter your API key, and save the profile.
 5. Select the profile in the chat panel and send a message.
 
-For a complete setup guide, including a Z.ai GLM-5.1 coding profile example, see [docs/walkthrough.md](docs/walkthrough.md).
+For a complete setup guide and user documentation for skills and MCP tools, see the [docs index](docs/README.md).
 
 ## Where settings are stored
 
