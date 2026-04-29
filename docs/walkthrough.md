@@ -123,7 +123,7 @@ Make sure your desktop session has tray support and the required system librarie
 ## Configuration locations
 
 - macOS profiles: `~/Library/Application Support/PersonalAgent/profiles/`
-- Windows profiles: `%LOCALAPPDATA%\PersonalAgent\profiles\`
+- Windows profiles: `%APPDATA%\PersonalAgent\profiles\`
 - Linux profiles: `${XDG_CONFIG_HOME:-~/.config}/PersonalAgent/profiles/`
 
 Application data, conversation history, and backups live under the platform data directory for Personal Agent.
