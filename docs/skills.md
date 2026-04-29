@@ -17,6 +17,8 @@ Use skills when you want Personal Agent to follow a known approach for a recurri
 
 Open **Settings**, then choose the **Skills** section.
 
+![Settings Skills section showing discovered skills](../assets/screenshots/skills-settings.png)
+
 From there you can:
 
 - Review discovered skills.
@@ -25,7 +27,7 @@ From there you can:
 - Open the default skills folder.
 - Add extra watched directories that contain skills.
 
-Personal Agent discovers bundled skills, skills in the default user skills folder, and skills from any watched directories you add.
+Personal Agent discovers bundled skills, skills in the default user skills folder, and skills from any watched directories you add. Selecting a skill shows its description, status, and source path so you can verify what will be offered to the assistant.
 
 ## How skills affect assistant behavior
 

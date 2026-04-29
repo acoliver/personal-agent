@@ -19,6 +19,8 @@ Each MCP server exposes its own set of tools. The exact capabilities depend on t
 
 Open **Settings**, then choose **MCP Tools**.
 
+![Settings MCP Tools section showing configured MCPs](../assets/screenshots/mcps-settings.png)
+
 From there you can:
 
 - See configured MCP servers and their status.
@@ -40,6 +42,14 @@ The MCP add flow lets you search registries or enter a manual command, package, 
 7. Add any required credentials or API keys.
 8. Save the configuration.
 9. Enable the MCP and confirm it reaches a running or healthy status.
+
+![Add MCP screen for manual entry and registry search](../assets/screenshots/mcps-add.png)
+
+The add screen lets you paste a package, Docker image, or URL directly, or search an MCP registry before continuing.
+
+![MCP configuration screen for entering server details and credentials](../assets/screenshots/mcps-configure.png)
+
+The configuration screen shows the server name, package or URL, authentication method, and any credential fields required by the selected MCP. Only save a configuration after you understand what the server can access.
 
 If the server requires a separate runtime such as Node.js, npx, Docker, or access to a remote URL, install or configure that dependency before enabling the MCP.
 
