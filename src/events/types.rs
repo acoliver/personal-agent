@@ -75,8 +75,10 @@ pub enum UserEvent {
     /// User requested conversation export with the currently selected format.
     SaveConversation,
 
-    /// User requested error log export as plain text.
-    SaveErrorLog,
+    /// User requested error log export in the selected format.
+    SaveErrorLog {
+        format: crate::models::ConversationExportFormat,
+    },
 
     /// User selected an export format for conversation save.
     SelectConversationExportFormat {
@@ -418,6 +420,7 @@ pub enum ChatEvent {
         conversation_id: Uuid,
         error: String,
         recoverable: bool,
+        diagnostics: Option<Box<crate::ui_gpui::error_log::ErrorLogDiagnosticContext>>,
     },
 
     /// Message was saved to conversation

@@ -134,8 +134,8 @@ async fn test_secrets_service_crud() {
     let secrets_dir = temp_dir.path().join("secrets");
 
     // Create SecretsServiceImpl with temp dir
-    let service =
-        SecretsServiceImpl::new(secrets_dir).expect("Failed to create SecretsServiceImpl");
+    let service = SecretsServiceImpl::new_file_fallback_only(secrets_dir)
+        .expect("Failed to create SecretsServiceImpl");
 
     // Test 1: Store secret
     service

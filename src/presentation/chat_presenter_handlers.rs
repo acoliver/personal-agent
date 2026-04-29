@@ -76,6 +76,7 @@ impl ChatPresenter {
                 conversation_id,
                 error,
                 recoverable,
+                ..
             } => {
                 Self::handle_stream_error(view_tx, conversation_id, error, recoverable).await;
             }

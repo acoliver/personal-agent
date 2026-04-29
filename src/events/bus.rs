@@ -559,6 +559,7 @@ mod tests {
             conversation_id: uuid::Uuid::new_v4(),
             error: "Connection failed".to_string(),
             recoverable: true,
+            diagnostics: None,
         }));
         let _ = bus.publish(AppEvent::Mcp(McpEvent::StartFailed {
             id: uuid::Uuid::new_v4(),

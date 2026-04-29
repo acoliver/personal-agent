@@ -10,6 +10,11 @@ use crate::llm::error::debug_error_message;
 use crate::llm::{LlmClient, StreamEvent as LlmStreamEvent};
 use crate::models::{ContextState, Message};
 use crate::services::ConversationService;
+use crate::ui_gpui::error_log::{
+    base_url_host, sanitize_text, ErrorLogDiagnosticContext, ErrorLogRunStatus,
+    ErrorLogStreamLifecycle, ErrorLogToolContext,
+};
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -27,13 +32,37 @@ pub(super) struct StreamTranscript {
     pub(super) tool_results: Vec<crate::llm::tools::ToolResult>,
     pub(super) input_tokens: Option<u32>,
     pub(super) output_tokens: Option<u32>,
+    pub(super) completed: bool,
 }
 
+#[derive(Clone, Default)]
+pub(super) struct StreamDiagnosticContext {
+    pub(super) profile_id: Uuid,
+    pub(super) profile_name: String,
+    pub(super) provider_id: String,
+    pub(super) model_id: String,
+    pub(super) base_url_host: Option<String>,
+}
+
+impl StreamDiagnosticContext {
+    pub(super) fn from_profile(profile: &crate::models::ModelProfile) -> Self {
+        Self {
+            profile_id: profile.id,
+            profile_name: profile.name.clone(),
+            provider_id: profile.provider_id.clone(),
+            model_id: profile.model_id.clone(),
+            base_url_host: base_url_host(&profile.base_url),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn stream_agent_response(
     client: &LlmClient,
     agent: &serdes_ai_agent::Agent<crate::llm::client_agent::McpToolContext>,
     messages: &[LlmMessage],
     context: crate::llm::client_agent::McpToolContext,
+    diagnostics_context: &StreamDiagnosticContext,
     conversation_id: Uuid,
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
 ) -> StreamTranscript {
@@ -42,6 +71,7 @@ pub(super) async fn stream_agent_response(
     if let Err(error) = client
         .run_agent_stream(agent, messages, context, |event| {
             handle_llm_stream_event(
+                diagnostics_context,
                 event,
                 conversation_id,
                 tx,
@@ -51,6 +81,7 @@ pub(super) async fn stream_agent_response(
                 &mut transcript.tool_results,
                 &mut transcript.input_tokens,
                 &mut transcript.output_tokens,
+                &mut transcript.completed,
             );
         })
         .await
@@ -63,7 +94,19 @@ pub(super) async fn stream_agent_response(
             thinking_chars = transcript.thinking_text.len(),
             "LLM stream task failed"
         );
-        emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
+        let diagnostics = build_stream_error_diagnostics(
+            Some(&err_msg),
+            diagnostics_context,
+            &transcript,
+            ErrorLogStreamLifecycle::Failed,
+        );
+        emit_stream_error(
+            conversation_id,
+            STREAM_ERROR_MESSAGE.to_string(),
+            false,
+            Some(Box::new(diagnostics)),
+            tx,
+        );
     }
 
     transcript
@@ -141,6 +184,8 @@ pub(super) async fn run_stream_task(
         filter_emoji,
     } = prepared;
 
+    let diagnostics_context = StreamDiagnosticContext::from_profile(&profile);
+
     let Some(agent) = create_stream_agent(
         &client,
         mcp_tools,
@@ -150,6 +195,7 @@ pub(super) async fn run_stream_task(
         &tx,
         &active_streams,
         &cancel,
+        &diagnostics_context,
     )
     .await
     else {
@@ -165,8 +211,21 @@ pub(super) async fn run_stream_task(
         filter_emoji,
     );
 
-    let transcript =
-        stream_agent_response(&client, &agent, &messages, context, conversation_id, &tx).await;
+    let transcript = stream_agent_response(
+        &client,
+        &agent,
+        &messages,
+        context,
+        &diagnostics_context,
+        conversation_id,
+        &tx,
+    )
+    .await;
+
+    if !transcript.completed {
+        clear_streaming_state(&active_streams, conversation_id, stream_id);
+        return;
+    }
 
     finalize_stream_task(
         &conversation_service,
@@ -182,8 +241,10 @@ pub(super) async fn run_stream_task(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_llm_stream_event(
+    diagnostics_context: &StreamDiagnosticContext,
     event: LlmStreamEvent,
     conversation_id: Uuid,
+
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     response_text: &mut String,
     thinking_text: &mut String,
@@ -191,30 +252,17 @@ pub(super) fn handle_llm_stream_event(
     tool_results: &mut Vec<crate::llm::tools::ToolResult>,
     input_tokens: &mut Option<u32>,
     output_tokens: &mut Option<u32>,
+    completed: &mut bool,
 ) {
     match event {
         LlmStreamEvent::TextDelta(text) => {
-            tracing::info!("ChatService emitting TextDelta: '{}'", text);
-            let _ = emit(AppEvent::Chat(ChatEvent::TextDelta {
-                conversation_id,
-                text: text.clone(),
-            }));
-            let _ = tx.send(ChatStreamEvent::Token(text.clone()));
-            response_text.push_str(&text);
+            handle_text_delta(conversation_id, tx, response_text, &text);
         }
         LlmStreamEvent::ThinkingDelta(text) => {
-            let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
-                conversation_id,
-                text: text.clone(),
-            }));
-            thinking_text.push_str(&text);
+            handle_thinking_delta(conversation_id, thinking_text, &text);
         }
         LlmStreamEvent::ToolCallStarted { tool_name, call_id } => {
-            let _ = emit(AppEvent::Chat(ChatEvent::ToolCallStarted {
-                conversation_id,
-                tool_call_id: call_id,
-                tool_name,
-            }));
+            handle_tool_call_started(conversation_id, tool_name, call_id);
         }
         LlmStreamEvent::ToolCallCompleted {
             tool_name,
@@ -223,15 +271,7 @@ pub(super) fn handle_llm_stream_event(
             result,
             error,
         } => {
-            let payload = result.or(error).unwrap_or_default();
-            let _ = emit(AppEvent::Chat(ChatEvent::ToolCallCompleted {
-                conversation_id,
-                tool_call_id: call_id,
-                tool_name,
-                success,
-                result: payload,
-                duration_ms: 0,
-            }));
+            handle_tool_call_completed(conversation_id, tool_name, call_id, success, result, error);
         }
         LlmStreamEvent::ToolTranscript {
             tool_calls: completed_tool_calls,
@@ -244,39 +284,224 @@ pub(super) fn handle_llm_stream_event(
             input_tokens: completed_input_tokens,
             output_tokens: completed_output_tokens,
         } => {
-            *input_tokens = completed_input_tokens;
-            *output_tokens = completed_output_tokens;
-            let _ = tx.send(ChatStreamEvent::Complete {
-                input_tokens: completed_input_tokens,
-                output_tokens: completed_output_tokens,
-            });
+            handle_stream_complete(
+                tx,
+                input_tokens,
+                output_tokens,
+                completed,
+                completed_input_tokens,
+                completed_output_tokens,
+            );
         }
         LlmStreamEvent::Error(err) => {
-            tracing::error!(
-                conversation_id = %conversation_id,
-                error = %err,
-                response_chars = response_text.len(),
-                thinking_chars = thinking_text.len(),
-                "LLM stream event error"
-            );
-            emit_stream_error(conversation_id, STREAM_ERROR_MESSAGE.to_string(), false, tx);
+            let snapshot = ErrorSnapshot {
+                response_text,
+                thinking_text,
+                tool_calls,
+                tool_results,
+                input_tokens: *input_tokens,
+                output_tokens: *output_tokens,
+            };
+            handle_stream_error_event(conversation_id, tx, diagnostics_context, &snapshot, &err);
         }
+
         LlmStreamEvent::ToolUse(_tool_use) => {}
     }
+}
+
+fn handle_text_delta(
+    conversation_id: Uuid,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    response_text: &mut String,
+    text: &str,
+) {
+    tracing::info!("ChatService emitting TextDelta: '{}'", text);
+    let _ = emit(AppEvent::Chat(ChatEvent::TextDelta {
+        conversation_id,
+        text: text.to_string(),
+    }));
+    let _ = tx.send(ChatStreamEvent::Token(text.to_string()));
+    response_text.push_str(text);
+}
+
+fn handle_thinking_delta(conversation_id: Uuid, thinking_text: &mut String, text: &str) {
+    let _ = emit(AppEvent::Chat(ChatEvent::ThinkingDelta {
+        conversation_id,
+        text: text.to_string(),
+    }));
+    thinking_text.push_str(text);
+}
+
+fn handle_tool_call_started(conversation_id: Uuid, tool_name: String, call_id: String) {
+    let _ = emit(AppEvent::Chat(ChatEvent::ToolCallStarted {
+        conversation_id,
+        tool_call_id: call_id,
+        tool_name,
+    }));
+}
+
+fn handle_tool_call_completed(
+    conversation_id: Uuid,
+    tool_name: String,
+    call_id: String,
+    success: bool,
+    result: Option<String>,
+    error: Option<String>,
+) {
+    let payload = result.or(error).unwrap_or_default();
+    let _ = emit(AppEvent::Chat(ChatEvent::ToolCallCompleted {
+        conversation_id,
+        tool_call_id: call_id,
+        tool_name,
+        success,
+        result: payload,
+        duration_ms: 0,
+    }));
+}
+
+fn handle_stream_complete(
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    input_tokens: &mut Option<u32>,
+    output_tokens: &mut Option<u32>,
+    completed: &mut bool,
+    completed_input_tokens: Option<u32>,
+    completed_output_tokens: Option<u32>,
+) {
+    *input_tokens = completed_input_tokens;
+    *output_tokens = completed_output_tokens;
+    *completed = true;
+    let _ = tx.send(ChatStreamEvent::Complete {
+        input_tokens: completed_input_tokens,
+        output_tokens: completed_output_tokens,
+    });
+}
+
+struct ErrorSnapshot<'a> {
+    response_text: &'a str,
+    thinking_text: &'a str,
+    tool_calls: &'a [crate::llm::tools::ToolUse],
+    tool_results: &'a [crate::llm::tools::ToolResult],
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+}
+
+fn handle_stream_error_event(
+    conversation_id: Uuid,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    diagnostics_context: &StreamDiagnosticContext,
+    snapshot: &ErrorSnapshot<'_>,
+    err: &str,
+) {
+    tracing::error!(
+        conversation_id = %conversation_id,
+        error = %err,
+        response_chars = snapshot.response_text.len(),
+        thinking_chars = snapshot.thinking_text.len(),
+        "LLM stream event error"
+    );
+
+    let transcript = StreamTranscript {
+        response_text: snapshot.response_text.to_string(),
+        thinking_text: snapshot.thinking_text.to_string(),
+        tool_calls: snapshot.tool_calls.to_vec(),
+        tool_results: snapshot.tool_results.to_vec(),
+        input_tokens: snapshot.input_tokens,
+        output_tokens: snapshot.output_tokens,
+        completed: false,
+    };
+    let mut diagnostics = build_stream_error_diagnostics(
+        Some(err),
+        diagnostics_context,
+        &transcript,
+        ErrorLogStreamLifecycle::Failed,
+    );
+    diagnostics.code_path =
+        Some("services::chat_impl::streaming::handle_llm_stream_event".to_string());
+
+    emit_stream_error(
+        conversation_id,
+        STREAM_ERROR_MESSAGE.to_string(),
+        false,
+        Some(Box::new(diagnostics)),
+        tx,
+    );
 }
 
 pub(super) fn emit_stream_error(
     conversation_id: Uuid,
     error: String,
     recoverable: bool,
+    diagnostics: Option<Box<ErrorLogDiagnosticContext>>,
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
 ) {
     let _ = emit(AppEvent::Chat(ChatEvent::StreamError {
         conversation_id,
         error: error.clone(),
         recoverable,
+        diagnostics,
     }));
     let _ = tx.send(ChatStreamEvent::Error(ServiceError::Internal(error)));
+}
+
+pub(super) fn build_stream_error_diagnostics(
+    underlying_error: Option<&str>,
+    context: &StreamDiagnosticContext,
+    transcript: &StreamTranscript,
+    lifecycle: ErrorLogStreamLifecycle,
+) -> ErrorLogDiagnosticContext {
+    let tool_calls = transcript
+        .tool_calls
+        .iter()
+        .map(|tool| {
+            let result = transcript
+                .tool_results
+                .iter()
+                .find(|result| result.tool_use_id == tool.id);
+            ErrorLogToolContext {
+                tool_name: sanitize_text(&tool.name),
+                tool_call_id: Some(sanitize_text(&tool.id)),
+                success: result.map(|result| !result.is_error),
+                summary: result.map(|result| summarize_tool_output(&result.content)),
+            }
+        })
+        .collect();
+
+    ErrorLogDiagnosticContext {
+        underlying_error: underlying_error.map(sanitize_text),
+        subsystem: Some("chat stream".to_string()),
+        code_path: Some("services::chat_impl::streaming".to_string()),
+        profile_id: Some(context.profile_id),
+        profile_name: Some(sanitize_text(&context.profile_name)),
+        provider_id: Some(sanitize_text(&context.provider_id)),
+        model_id: Some(sanitize_text(&context.model_id)),
+        base_url_host: context.base_url_host.clone(),
+        run_status: Some(ErrorLogRunStatus::Failed),
+        stream_lifecycle: Some(lifecycle),
+        input_tokens: transcript.input_tokens,
+        output_tokens: transcript.output_tokens,
+        partial_assistant_response_len: Some(transcript.response_text.len()),
+        thinking_len: Some(transcript.thinking_text.len()),
+        tool_calls,
+        recent_events: vec!["stream error emitted".to_string()],
+        ..ErrorLogDiagnosticContext::default()
+    }
+}
+
+fn summarize_tool_output(content: &str) -> String {
+    const MAX_SUMMARY_CHARS: usize = 240;
+    let sanitized = sanitize_text(content.trim());
+    let char_count = sanitized.chars().count();
+    if char_count <= MAX_SUMMARY_CHARS {
+        sanitized
+    } else {
+        format!(
+            "{}… ({char_count} chars total)",
+            sanitized
+                .chars()
+                .take(MAX_SUMMARY_CHARS)
+                .collect::<String>()
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
