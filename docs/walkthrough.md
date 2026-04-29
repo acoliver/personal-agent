@@ -70,7 +70,7 @@ If the UI presents a model picker, prefer selecting the Z.ai GLM-5.1 model from 
 
 ![Model selector showing Z.ai-related model results](../assets/screenshots/walkthrough-zai-model-list.png)
 
-If the model list shows a provider entry named **Z.ai Coding Plan**, you can still use it for general Personal Agent conversations. The provider label reflects the upstream model listing; it does not mean Personal Agent is only a coding assistant. Name your Personal Agent profile for how you intend to use it, such as `Z.ai GLM-5.1 General`, even if the provider list entry includes coding-plan wording.
+If the model list shows a provider entry named **Z.ai Coding Plan**, you can still use it for general Personal Agent conversations. The provider label reflects the upstream model listing; it does not mean Personal Agent is only a coding assistant. Name your Personal Agent profile for how you intend to use it, such as `Z.ai GLM-5.1 General`, even if the provider list entry includes coding-plan wording. If the model behavior feels mismatched, rename the profile or switch providers/models in the Personal Agent profile.
 
 ## 5. Add the API key
 

@@ -27,7 +27,7 @@ From there you can:
 - Open the default skills folder.
 - Add extra watched directories that contain skills.
 
-Personal Agent discovers bundled skills, skills in the default user skills folder, and skills from any watched directories you add. Selecting a skill shows its description, status, and source path so you can verify what will be offered to the assistant.
+Personal Agent discovers bundled skills, skills in the default user skills folder, and skills from any watched directories you add. Selecting a skill shows or indicates its description, status, and source path so you can verify what will be offered to the assistant.
 
 ## How skills affect assistant behavior
 

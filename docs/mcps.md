@@ -36,7 +36,7 @@ The MCP add flow lets you search registries or enter a manual command, package, 
 1. Open **Settings**.
 2. Choose **MCP Tools**.
 3. Click **+** to add a server.
-4. Search the registry or enter a manual MCP command or URL.
+4. Search the registry or enter a manual MCP command, package, Docker image, or URL.
 5. Continue to the configuration screen.
 6. Review the server name, command or URL, and required environment variables.
 7. Add any required credentials or API keys.
