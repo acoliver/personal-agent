@@ -41,10 +41,18 @@ Click the gear icon in the chat panel toolbar. Settings contain the profile list
 
 ## 4. Create a model profile
 
-1. In settings, open the **Models** or **Profiles** section.
+1. In settings, open the **Models** section.
 2. Click **+** to add a profile.
 3. Give it a clear name, for example `Z.ai GLM-5.1 General`.
 4. Choose the provider/model from the registry if available. If you configure it manually, use the values below.
+
+![Settings Models section with configured profiles](../assets/screenshots/walkthrough-models-settings.png)
+
+The **Models** section lists saved profiles and includes the **+** button for adding another profile.
+
+![New Profile editor](../assets/screenshots/walkthrough-new-profile.png)
+
+Use the profile editor to name the profile, choose a model, select the API type, set the base URL, choose the API key label, and tune output/context limits.
 
 Example Z.ai general assistant profile:
 
@@ -59,6 +67,10 @@ Example Z.ai general assistant profile:
 | Context limit | `200000` |
 
 If the UI presents a model picker, prefer selecting the Z.ai GLM-5.1 model from the registry instead of typing provider details by hand. Manual fields are useful when the registry has not yet been refreshed.
+
+![Model selector showing Z.ai-related model results](../assets/screenshots/walkthrough-zai-model-list.png)
+
+If the model list shows a provider entry named **Z.ai Coding Plan**, you can still use it for general Personal Agent conversations. The provider label reflects the upstream model listing; it does not mean Personal Agent is only a coding assistant. Name your Personal Agent profile for how you intend to use it, such as `Z.ai GLM-5.1 General`, even if the provider list entry includes coding-plan wording. If the model behavior feels mismatched, rename the profile or switch providers/models in the Personal Agent profile.
 
 ## 5. Add the API key
 
@@ -78,6 +90,10 @@ Profile files reference the key label; they should not contain the API key itsel
 ## 6. Select the profile
 
 Return to the chat panel and select `Z.ai GLM-5.1 General` from the profile dropdown. If it does not appear, reopen settings and verify that the profile was saved.
+
+![Chat profile dropdown with saved profiles](../assets/screenshots/walkthrough-chat-profile-dropdown.png)
+
+Use the profile dropdown in the chat panel to select the saved profile before sending a message.
 
 ## 7. Send your first message
 
@@ -110,7 +126,7 @@ Only enable skills or MCP servers you understand and trust. Tool approval settin
 
 ### The profile dropdown is empty
 
-Open settings, go to **Models** or **Profiles**, and create a profile. Save it, then return to chat. If needed, restart the app.
+Open settings, go to **Models**, and create a profile. Save it, then return to chat. If needed, restart the app.
 
 ### The model call fails with an authentication error
 
