@@ -45,8 +45,16 @@ pub enum AppEvent {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum UserEvent {
     // ===== Chat Actions =====
-    /// User clicked send or pressed Enter
-    SendMessage { text: String },
+    /// User clicked send or pressed Enter.
+    ///
+    /// The optional `conversation_id` is the UI-selected target at send time.
+    /// A `None` target means the composer is intentionally in a new-chat draft
+    /// state, so the presenter must not reuse a stale service-active
+    /// conversation.
+    SendMessage {
+        text: String,
+        conversation_id: Option<Uuid>,
+    },
 
     /// User requested to stop a conversation's active stream.
     ///

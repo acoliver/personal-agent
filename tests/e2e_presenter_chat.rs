@@ -405,6 +405,7 @@ async fn test_chat_presenter_error_handling() {
     let _conversation_id = Uuid::new_v4();
     event_bus
         .publish(AppEvent::User(UserEvent::SendMessage {
+            conversation_id: None,
             text: "This should fail".to_string(),
         }))
         .ok();

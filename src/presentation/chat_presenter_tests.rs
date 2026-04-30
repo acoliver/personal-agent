@@ -263,6 +263,7 @@ async fn test_handle_send_message_emits_events() {
             &profile_svc,
             &mut tx,
             content,
+            None,
         )
         .await;
     });

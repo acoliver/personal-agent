@@ -144,13 +144,17 @@ impl ChatPresenter {
         event: UserEvent,
     ) {
         match event {
-            UserEvent::SendMessage { text } => {
+            UserEvent::SendMessage {
+                text,
+                conversation_id,
+            } => {
                 Self::handle_send_message(
                     conversation_service,
                     chat_service,
                     profile_service,
                     view_tx,
                     text,
+                    conversation_id,
                 )
                 .await;
             }
@@ -485,6 +489,7 @@ impl ChatPresenter {
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         content: String,
+        requested_conversation_id: Option<Uuid>,
     ) {
         // Validate non-empty
         let trimmed = content.trim();
@@ -493,24 +498,28 @@ impl ChatPresenter {
         }
 
         // Get or create conversation
-        let conversation_id =
-            match Self::get_or_create_conversation(conversation_service, profile_service, view_tx)
-                .await
-            {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::error!("Failed to get/create conversation: {}", e);
-                    let error_msg = format!("Failed to create conversation: {e}");
-                    let _ = view_tx
-                        .send(ViewCommand::ShowError {
-                            title: "Conversation Error".to_string(),
-                            message: error_msg.clone(),
-                            severity: ErrorSeverity::Error,
-                        })
-                        .await;
-                    return;
-                }
-            };
+        let conversation_id = match Self::get_or_create_conversation(
+            conversation_service,
+            profile_service,
+            view_tx,
+            requested_conversation_id,
+        )
+        .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!("Failed to get/create conversation: {}", e);
+                let error_msg = format!("Failed to create conversation: {e}");
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Conversation Error".to_string(),
+                        message: error_msg.clone(),
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
+                return;
+            }
+        };
 
         // Emit view commands for user message
         let _ = view_tx
@@ -828,11 +837,26 @@ impl ChatPresenter {
         conversation_service: &Arc<dyn ConversationService>,
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
+        requested_conversation_id: Option<Uuid>,
     ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
-        // Try to get active conversation
-        let active_result = conversation_service.get_active().await;
-        if let Ok(Some(id)) = active_result {
+        if let Some(id) = requested_conversation_id {
+            conversation_service
+                .set_active(id)
+                .await
+                .map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
             return Ok(id);
+        }
+
+        if let Ok(Some(id)) = conversation_service.get_active().await {
+            if let Ok(metadata) = conversation_service.list_metadata(None, None).await {
+                let active_is_empty = metadata
+                    .iter()
+                    .find(|conversation| conversation.id == id)
+                    .is_some_and(|conversation| conversation.message_count == 0);
+                if active_is_empty {
+                    return Ok(id);
+                }
+            }
         }
 
         let default_profile = Self::resolve_default_profile_id(profile_service)

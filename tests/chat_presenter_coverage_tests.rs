@@ -565,6 +565,7 @@ async fn send_message_creates_conversation_and_appends_user_message() {
 
     event_bus
         .publish(AppEvent::User(UserEvent::SendMessage {
+            conversation_id: None,
             text: "hello world".to_string(),
         }))
         .expect("publish send event");
@@ -604,6 +605,123 @@ async fn send_message_creates_conversation_and_appends_user_message() {
 }
 
 #[tokio::test]
+async fn draft_send_does_not_reuse_previous_active_conversation() {
+    let default_profile = profile();
+    let profile_id = default_profile.id;
+    let previous = conversation_with_messages(
+        profile_id,
+        vec![Message::user("previous prompt".to_string())],
+    );
+    let previous_id = previous.id;
+    let conversation_service = Arc::new(MockConversationService::new(
+        vec![previous],
+        Some(previous_id),
+    ));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service =
+        Arc::new(MockAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conversation_service,
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+    presenter.start().await.expect("start presenter");
+    let _ = collect_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SendMessage {
+            conversation_id: None,
+            text: "fresh draft prompt".to_string(),
+        }))
+        .expect("publish draft send event");
+
+    let commands = collect_commands(&mut view_rx).await;
+    let new_conversation_id = commands.iter().find_map(|command| match command {
+        ViewCommand::ConversationCreated { id, .. } => Some(*id),
+        _ => None,
+    });
+    let new_conversation_id = new_conversation_id.expect("draft send creates conversation");
+    assert_ne!(new_conversation_id, previous_id);
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::MessageAppended {
+            conversation_id,
+            role: MessageRole::User,
+            content,
+            ..
+        } if *conversation_id == new_conversation_id && content == "fresh draft prompt"
+    )));
+    assert!(!commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::MessageAppended {
+            conversation_id,
+            content,
+            ..
+        } if *conversation_id == previous_id && content == "fresh draft prompt"
+    )));
+}
+
+#[tokio::test]
+async fn send_message_uses_explicit_selected_conversation() {
+    let default_profile = profile();
+    let profile_id = default_profile.id;
+    let previous = conversation_with_messages(
+        profile_id,
+        vec![Message::user("previous prompt".to_string())],
+    );
+    let previous_id = previous.id;
+    let conversation_service = Arc::new(MockConversationService::new(
+        vec![previous],
+        Some(previous_id),
+    ));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service =
+        Arc::new(MockAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conversation_service,
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+    presenter.start().await.expect("start presenter");
+    let _ = collect_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SendMessage {
+            conversation_id: Some(previous_id),
+            text: "continue selected conversation".to_string(),
+        }))
+        .expect("publish selected send event");
+
+    let commands = collect_commands(&mut view_rx).await;
+    assert!(!commands
+        .iter()
+        .any(|command| matches!(command, ViewCommand::ConversationCreated { .. })));
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::MessageAppended {
+            conversation_id,
+            role: MessageRole::User,
+            content,
+            ..
+        } if *conversation_id == previous_id && content == "continue selected conversation"
+    )));
+}
+
+#[tokio::test]
 async fn send_message_reports_chat_service_errors_and_hides_thinking() {
     let default_profile = profile();
     let profile_id = default_profile.id;
@@ -634,6 +752,7 @@ async fn send_message_reports_chat_service_errors_and_hides_thinking() {
 
     event_bus
         .publish(AppEvent::User(UserEvent::SendMessage {
+            conversation_id: None,
             text: "boom".to_string(),
         }))
         .expect("publish send event");
@@ -680,6 +799,7 @@ async fn send_message_reports_profile_resolution_errors() {
 
     event_bus
         .publish(AppEvent::User(UserEvent::SendMessage {
+            conversation_id: None,
             text: "hello".to_string(),
         }))
         .expect("publish send event");
