@@ -75,6 +75,14 @@ async fn handle_stop_streaming_forwards_conversation_id() {
     let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
     let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
 
+    let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
+    let current_export_format = Arc::new(std::sync::Mutex::new(
+        crate::models::ConversationExportFormat::Md,
+    ));
+
+    let pending_draft_conversation_id = Arc::new(std::sync::Mutex::new(None));
+
     let conversation_id_a = Uuid::new_v4();
 
     // Dispatch StopStreaming with conversation_id A using struct-variant syntax.
@@ -83,19 +91,17 @@ async fn handle_stop_streaming_forwards_conversation_id() {
         conversation_id: conversation_id_a,
     };
 
-    // Process the event through the presenter
-    ChatPresenter::handle_user_event(
-        &conversation_service,
-        &(chat_service.clone() as Arc<dyn ChatService>),
-        &(Arc::new(MockProfileService) as Arc<dyn ProfileService>),
-        &(Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>),
-        &Arc::new(std::sync::Mutex::new(
-            crate::models::ConversationExportFormat::Md,
-        )),
-        &mut view_tx.clone(),
-        event,
-    )
-    .await;
+    let deps = ChatPresenterDeps {
+        conversation_service: &conversation_service,
+        chat_service: &(chat_service.clone() as Arc<dyn ChatService>),
+        profile_service: &profile_service,
+    };
+    let state = ChatPresenterState {
+        app_settings_service: &app_settings_service,
+        current_export_format: &current_export_format,
+        pending_draft_conversation_id: &pending_draft_conversation_id,
+    };
+    ChatPresenter::handle_user_event(&deps, &state, &mut view_tx.clone(), event).await;
 
     // Assert the mock received exactly one cancel(A) call
     let cancelled = chat_service.cancelled_ids();
@@ -114,7 +120,15 @@ async fn handle_stop_streaming_forwards_conversation_id() {
 async fn handle_stop_streaming_does_not_cancel_other_conversations() {
     let chat_service = Arc::new(RecordingChatService::new());
     let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
+    let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
+    let app_settings_service = Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>;
+    let current_export_format = Arc::new(std::sync::Mutex::new(
+        crate::models::ConversationExportFormat::Md,
+    ));
+
     let (view_tx, _view_rx) = mpsc::channel::<ViewCommand>(100);
+
+    let pending_draft_conversation_id = Arc::new(std::sync::Mutex::new(None));
 
     let conversation_id_a = Uuid::new_v4();
     let conversation_id_b = Uuid::new_v4();
@@ -125,19 +139,17 @@ async fn handle_stop_streaming_does_not_cancel_other_conversations() {
         conversation_id: conversation_id_a,
     };
 
-    // Process the event through the presenter
-    ChatPresenter::handle_user_event(
-        &conversation_service,
-        &(chat_service.clone() as Arc<dyn ChatService>),
-        &(Arc::new(MockProfileService) as Arc<dyn ProfileService>),
-        &(Arc::new(MockAppSettingsService) as Arc<dyn AppSettingsService>),
-        &Arc::new(std::sync::Mutex::new(
-            crate::models::ConversationExportFormat::Md,
-        )),
-        &mut view_tx.clone(),
-        event,
-    )
-    .await;
+    let deps = ChatPresenterDeps {
+        conversation_service: &conversation_service,
+        chat_service: &(chat_service.clone() as Arc<dyn ChatService>),
+        profile_service: &profile_service,
+    };
+    let state = ChatPresenterState {
+        app_settings_service: &app_settings_service,
+        current_export_format: &current_export_format,
+        pending_draft_conversation_id: &pending_draft_conversation_id,
+    };
+    ChatPresenter::handle_user_event(&deps, &state, &mut view_tx.clone(), event).await;
 
     // Assert cancel(B) was NEVER called
     let cancelled = chat_service.cancelled_ids();

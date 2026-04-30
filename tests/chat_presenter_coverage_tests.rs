@@ -752,7 +752,8 @@ async fn send_message_reports_chat_service_errors_and_hides_thinking() {
 
     event_bus
         .publish(AppEvent::User(UserEvent::SendMessage {
-            conversation_id: None,
+            conversation_id: Some(conversation_id),
+
             text: "boom".to_string(),
         }))
         .expect("publish send event");
@@ -902,6 +903,77 @@ async fn new_conversation_creates_and_activates_conversation() {
     assert!(commands.iter().any(|command| matches!(
         command,
         ViewCommand::ConversationListRefreshed { conversations } if conversations.iter().any(|c| c.id == created_id)
+    )));
+}
+
+#[tokio::test]
+async fn draft_send_reuses_only_pending_new_conversation() {
+    let default_profile = profile();
+    let profile_id = default_profile.id;
+    let stale_empty = conversation_with_messages(profile_id, vec![]);
+    let stale_empty_id = stale_empty.id;
+    let conversation_service = Arc::new(MockConversationService::new(
+        vec![stale_empty],
+        Some(stale_empty_id),
+    ));
+    let chat_service = Arc::new(MockChatService::new());
+    let profile_service = Arc::new(MockProfileService::new(Some(default_profile)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = mpsc::channel(64);
+    let app_settings_service =
+        Arc::new(MockAppSettingsService::new()) as Arc<dyn AppSettingsService>;
+
+    let mut presenter = ChatPresenter::new(
+        event_bus.clone(),
+        conversation_service,
+        chat_service,
+        profile_service,
+        app_settings_service,
+        view_tx,
+    );
+    presenter.start().await.expect("start presenter");
+    let _ = collect_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::NewConversation))
+        .expect("publish new conversation event");
+    let new_commands = collect_commands(&mut view_rx).await;
+    let pending_id = new_commands
+        .iter()
+        .find_map(|command| match command {
+            ViewCommand::ConversationCreated { id, .. } => Some(*id),
+            _ => None,
+        })
+        .expect("new conversation created");
+    assert_ne!(pending_id, stale_empty_id);
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SendMessage {
+            conversation_id: None,
+            text: "draft goes to pending".to_string(),
+        }))
+        .expect("publish draft send event");
+
+    let send_commands = collect_commands(&mut view_rx).await;
+    assert!(!send_commands
+        .iter()
+        .any(|command| matches!(command, ViewCommand::ConversationCreated { .. })));
+    assert!(send_commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::MessageAppended {
+            conversation_id,
+            role: MessageRole::User,
+            content,
+            ..
+        } if *conversation_id == pending_id && content == "draft goes to pending"
+    )));
+    assert!(!send_commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::MessageAppended {
+            conversation_id,
+            content,
+            ..
+        } if *conversation_id == stale_empty_id && content == "draft goes to pending"
     )));
 }
 
