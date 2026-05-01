@@ -10,14 +10,27 @@ use super::view_command::{
 };
 use super::{Presenter, PresenterError, ViewCommand};
 use crate::events::bus::EventBus;
-use crate::events::{
-    types::{ConversationEvent, UserEvent},
-    AppEvent,
-};
+use crate::events::{types::ConversationEvent, AppEvent};
+
 use crate::models::ConversationExportFormat;
 use crate::services::{
     AppSettingsService, ChatService, ConversationService, ProfileService, ServiceError,
 };
+
+type PendingDraftConversation = Arc<std::sync::Mutex<Option<Uuid>>>;
+
+#[allow(clippy::struct_field_names)]
+pub(super) struct ChatPresenterDeps<'a> {
+    pub(super) conversation_service: &'a Arc<dyn ConversationService>,
+    pub(super) chat_service: &'a Arc<dyn ChatService>,
+    pub(super) profile_service: &'a Arc<dyn ProfileService>,
+}
+
+pub(super) struct ChatPresenterState<'a> {
+    pub(super) app_settings_service: &'a Arc<dyn AppSettingsService>,
+    pub(super) current_export_format: &'a Arc<std::sync::Mutex<ConversationExportFormat>>,
+    pub(super) pending_draft_conversation_id: &'a PendingDraftConversation,
+}
 
 pub struct ChatPresenter {
     event_bus: Arc<EventBus>,
@@ -27,6 +40,8 @@ pub struct ChatPresenter {
     app_settings_service: Arc<dyn AppSettingsService>,
     view_tx: mpsc::Sender<ViewCommand>,
     running: Arc<std::sync::atomic::AtomicBool>,
+    pending_draft_conversation_id: PendingDraftConversation,
+
     current_export_format: Arc<std::sync::Mutex<crate::models::ConversationExportFormat>>,
 }
 
@@ -50,9 +65,9 @@ impl ChatPresenter {
             current_export_format: Arc::new(std::sync::Mutex::new(
                 ConversationExportFormat::default(),
             )),
+            pending_draft_conversation_id: Arc::new(std::sync::Mutex::new(None)),
         }
     }
-
     /// Start the presenter event loop.
     ///
     /// # Errors
@@ -94,30 +109,18 @@ impl ChatPresenter {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn handle_event(
-        conversation_service: &Arc<dyn ConversationService>,
-        chat_service: &Arc<dyn ChatService>,
-        profile_service: &Arc<dyn ProfileService>,
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        current_export_format: &Arc<std::sync::Mutex<ConversationExportFormat>>,
+        deps: &ChatPresenterDeps<'_>,
+        state: &ChatPresenterState<'_>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         event: AppEvent,
     ) {
         tracing::debug!("ChatPresenter::handle_event: {:?}", event);
         match event {
             AppEvent::User(user_evt) => {
-                Self::handle_user_event(
-                    conversation_service,
-                    chat_service,
-                    profile_service,
-                    app_settings_service,
-                    current_export_format,
-                    view_tx,
-                    user_evt,
-                )
-                .await;
+                Self::handle_user_event(deps, state, view_tx, user_evt).await;
             }
+
             AppEvent::Chat(chat_evt) => {
                 tracing::info!("ChatPresenter handling ChatEvent: {:?}", chat_evt);
                 Self::handle_chat_event(view_tx, chat_evt).await;
@@ -129,107 +132,7 @@ impl ChatPresenter {
         }
     }
 
-    /// Handle user events
-    ///
-    /// @plan PLAN-20250125-REFACTOR.P12
-    /// @requirement REQ-027.1
-    #[allow(clippy::too_many_arguments)]
-    async fn handle_user_event(
-        conversation_service: &Arc<dyn ConversationService>,
-        chat_service: &Arc<dyn ChatService>,
-        profile_service: &Arc<dyn ProfileService>,
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        current_export_format: &Arc<std::sync::Mutex<ConversationExportFormat>>,
-        view_tx: &mut mpsc::Sender<ViewCommand>,
-        event: UserEvent,
-    ) {
-        match event {
-            UserEvent::SendMessage { text } => {
-                Self::handle_send_message(
-                    conversation_service,
-                    chat_service,
-                    profile_service,
-                    view_tx,
-                    text,
-                )
-                .await;
-            }
-            // @plan PLAN-20260416-ISSUE173.P05
-            UserEvent::StopStreaming { conversation_id } => {
-                Self::handle_stop_streaming(chat_service, view_tx, conversation_id).await;
-            }
-            UserEvent::NewConversation => {
-                Self::handle_new_conversation(conversation_service, profile_service, view_tx).await;
-            }
-            UserEvent::ToggleThinking => {
-                Self::handle_toggle_thinking(view_tx).await;
-            }
-            UserEvent::ToggleEmojiFilter => {
-                Self::handle_toggle_emoji_filter(app_settings_service, view_tx).await;
-            }
-            UserEvent::ConfirmRenameConversation { id, title } => {
-                Self::handle_rename_conversation(conversation_service, view_tx, id, title).await;
-            }
-            UserEvent::SelectConversation {
-                id,
-                selection_generation,
-            } => {
-                Self::handle_select_conversation(
-                    conversation_service,
-                    view_tx,
-                    id,
-                    selection_generation,
-                )
-                .await;
-            }
-            UserEvent::RefreshHistory | UserEvent::RefreshConversations => {
-                let _ = Self::emit_conversation_list(conversation_service, view_tx).await;
-            }
-            UserEvent::SelectConversationExportFormat { format } => {
-                Self::handle_select_conversation_export_format(
-                    app_settings_service,
-                    current_export_format,
-                    view_tx,
-                    format,
-                )
-                .await;
-            }
-            UserEvent::SaveConversation => {
-                Self::handle_save_conversation(
-                    conversation_service,
-                    app_settings_service,
-                    current_export_format,
-                    view_tx,
-                )
-                .await;
-            }
-            UserEvent::SaveErrorLog { format } => {
-                Self::handle_save_error_log(app_settings_service, view_tx, format).await;
-            }
-            UserEvent::SelectChatProfile { id } => {
-                Self::handle_select_chat_profile(conversation_service, id).await;
-            }
-            UserEvent::SetExportDirectory { path } => {
-                Self::handle_set_export_directory(app_settings_service, view_tx, path).await;
-            }
-            UserEvent::ToolApprovalResponse {
-                request_id,
-                decision,
-            } => {
-                Self::handle_tool_approval_response(chat_service, view_tx, request_id, decision)
-                    .await;
-            }
-            UserEvent::ToggleWindowMode => {
-                let _ = view_tx.send(ViewCommand::ToggleWindowMode).await;
-            }
-            UserEvent::SearchConversations { query } => {
-                Self::handle_search_conversations(conversation_service, view_tx, query).await;
-            }
-            _ => {} // Ignore other user events
-        }
-    }
-
-    async fn handle_tool_approval_response(
+    pub(super) async fn handle_tool_approval_response(
         chat_service: &Arc<dyn ChatService>,
         view_tx: &mpsc::Sender<ViewCommand>,
         request_id: String,
@@ -249,7 +152,7 @@ impl ChatPresenter {
         }
     }
 
-    async fn handle_search_conversations(
+    pub(super) async fn handle_search_conversations(
         conversation_service: &Arc<dyn ConversationService>,
         view_tx: &mpsc::Sender<ViewCommand>,
         query: String,
@@ -379,22 +282,25 @@ impl ChatPresenter {
         let profile_service = self.profile_service.clone();
         let app_settings_service = self.app_settings_service.clone();
         let current_export_format = self.current_export_format.clone();
+        let pending_draft_conversation_id = self.pending_draft_conversation_id.clone();
+
         let mut view_tx = self.view_tx.clone();
 
         tokio::spawn(async move {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 match rx.recv().await {
                     Ok(event) => {
-                        Self::handle_event(
-                            &conversation_service,
-                            &chat_service,
-                            &profile_service,
-                            &app_settings_service,
-                            &current_export_format,
-                            &mut view_tx,
-                            event,
-                        )
-                        .await;
+                        let deps = ChatPresenterDeps {
+                            conversation_service: &conversation_service,
+                            chat_service: &chat_service,
+                            profile_service: &profile_service,
+                        };
+                        let state = ChatPresenterState {
+                            app_settings_service: &app_settings_service,
+                            current_export_format: &current_export_format,
+                            pending_draft_conversation_id: &pending_draft_conversation_id,
+                        };
+                        Self::handle_event(&deps, &state, &mut view_tx, event).await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("ChatPresenter lagged: {} events missed", n);
@@ -409,7 +315,7 @@ impl ChatPresenter {
         });
     }
 
-    async fn emit_conversation_list(
+    pub(super) async fn emit_conversation_list(
         conversation_service: &Arc<dyn ConversationService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
     ) -> Result<(), ServiceError> {
@@ -479,12 +385,15 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
-    async fn handle_send_message(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn handle_send_message(
         conversation_service: &Arc<dyn ConversationService>,
         chat_service: &Arc<dyn ChatService>,
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         content: String,
+        requested_conversation_id: Option<Uuid>,
+        pending_draft_conversation_id: &PendingDraftConversation,
     ) {
         // Validate non-empty
         let trimmed = content.trim();
@@ -493,24 +402,29 @@ impl ChatPresenter {
         }
 
         // Get or create conversation
-        let conversation_id =
-            match Self::get_or_create_conversation(conversation_service, profile_service, view_tx)
-                .await
-            {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::error!("Failed to get/create conversation: {}", e);
-                    let error_msg = format!("Failed to create conversation: {e}");
-                    let _ = view_tx
-                        .send(ViewCommand::ShowError {
-                            title: "Conversation Error".to_string(),
-                            message: error_msg.clone(),
-                            severity: ErrorSeverity::Error,
-                        })
-                        .await;
-                    return;
-                }
-            };
+        let conversation_id = match Self::get_or_create_conversation(
+            conversation_service,
+            profile_service,
+            view_tx,
+            requested_conversation_id,
+            pending_draft_conversation_id,
+        )
+        .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!("Failed to get/create conversation: {}", e);
+                let error_msg = format!("Failed to create conversation: {e}");
+                let _ = view_tx
+                    .send(ViewCommand::ShowError {
+                        title: "Conversation Error".to_string(),
+                        message: error_msg.clone(),
+                        severity: ErrorSeverity::Error,
+                    })
+                    .await;
+                return;
+            }
+        };
 
         // Emit view commands for user message
         let _ = view_tx
@@ -559,7 +473,7 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P01
     /// @requirement REQ-027.1
-    async fn handle_toggle_thinking(view_tx: &mut mpsc::Sender<ViewCommand>) {
+    pub(super) async fn handle_toggle_thinking(view_tx: &mut mpsc::Sender<ViewCommand>) {
         let _ = view_tx.send(ViewCommand::ToggleThinkingVisibility).await;
     }
 
@@ -567,7 +481,7 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P01
     /// @requirement REQ-027.1
-    async fn handle_rename_conversation(
+    pub(super) async fn handle_rename_conversation(
         conversation_service: &Arc<dyn ConversationService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         id: Uuid,
@@ -645,7 +559,7 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20260416-ISSUE173.P05
     /// @requirement REQ-173-002.3
-    async fn handle_stop_streaming(
+    pub(super) async fn handle_stop_streaming(
         chat_service: &Arc<dyn ChatService>,
         _view_tx: &mut mpsc::Sender<ViewCommand>,
         conversation_id: Uuid,
@@ -659,7 +573,7 @@ impl ChatPresenter {
     /// When the user picks a different profile in the chat title-bar dropdown,
     /// update the active conversation's `profile_id` so the next send uses
     /// that profile (and its provider-specific headers/base-URL).
-    async fn handle_select_chat_profile(
+    pub(super) async fn handle_select_chat_profile(
         conversation_service: &Arc<dyn ConversationService>,
         profile_id: Uuid,
     ) {
@@ -681,10 +595,11 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
-    async fn handle_new_conversation(
+    pub(super) async fn handle_new_conversation(
         conversation_service: &Arc<dyn ConversationService>,
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
+        pending_draft_conversation_id: &PendingDraftConversation,
     ) {
         let default_profile = match Self::resolve_default_profile_id(profile_service).await {
             Ok(id) => id,
@@ -708,6 +623,11 @@ impl ChatPresenter {
             Ok(conversation) => {
                 let conversation_id = conversation.id;
                 let _ = conversation_service.set_active(conversation_id).await;
+                Self::set_pending_draft_conversation_id(
+                    pending_draft_conversation_id,
+                    Some(conversation_id),
+                );
+
                 let _ = view_tx
                     .send(ViewCommand::ConversationCreated {
                         id: conversation_id,
@@ -741,7 +661,7 @@ impl ChatPresenter {
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
-    async fn handle_select_conversation(
+    pub(super) async fn handle_select_conversation(
         conversation_service: &Arc<dyn ConversationService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
         id: Uuid,
@@ -820,19 +740,68 @@ impl ChatPresenter {
         }
     }
 
+    pub(super) fn pending_draft_conversation_id(
+        pending_draft_conversation_id: &PendingDraftConversation,
+    ) -> Option<Uuid> {
+        match pending_draft_conversation_id.lock() {
+            Ok(guard) => *guard,
+            Err(e) => {
+                tracing::warn!("Failed to read pending draft conversation id: {e}");
+                None
+            }
+        }
+    }
+
+    pub(super) fn set_pending_draft_conversation_id(
+        pending_draft_conversation_id: &PendingDraftConversation,
+        conversation_id: Option<Uuid>,
+    ) {
+        match pending_draft_conversation_id.lock() {
+            Ok(mut guard) => *guard = conversation_id,
+            Err(e) => tracing::warn!("Failed to update pending draft conversation id: {e}"),
+        }
+    }
+
     /// Get or create active conversation
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
     /// @requirement REQ-027.1
-    async fn get_or_create_conversation(
+    pub(super) async fn get_or_create_conversation(
         conversation_service: &Arc<dyn ConversationService>,
         profile_service: &Arc<dyn ProfileService>,
         view_tx: &mut mpsc::Sender<ViewCommand>,
+        requested_conversation_id: Option<Uuid>,
+        pending_draft_conversation_id: &PendingDraftConversation,
     ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
-        // Try to get active conversation
-        let active_result = conversation_service.get_active().await;
-        if let Ok(Some(id)) = active_result {
+        if let Some(id) = requested_conversation_id {
+            conversation_service
+                .set_active(id)
+                .await
+                .map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
+            Self::set_pending_draft_conversation_id(pending_draft_conversation_id, None);
+
             return Ok(id);
+        }
+
+        if let Ok(Some(id)) = conversation_service.get_active().await {
+            let pending_draft_id =
+                Self::pending_draft_conversation_id(pending_draft_conversation_id);
+            if pending_draft_id == Some(id) {
+                let Ok(metadata) = conversation_service.list_metadata(None, None).await else {
+                    return Err(Box::new(ServiceError::Internal(
+                        "Failed to list conversations for pending draft validation".to_string(),
+                    )));
+                };
+
+                let active_is_empty = metadata
+                    .iter()
+                    .find(|conversation| conversation.id == id)
+                    .is_some_and(|conversation| conversation.message_count == 0);
+                if active_is_empty {
+                    Self::set_pending_draft_conversation_id(pending_draft_conversation_id, None);
+                    return Ok(id);
+                }
+            }
         }
 
         let default_profile = Self::resolve_default_profile_id(profile_service)
@@ -848,6 +817,8 @@ impl ChatPresenter {
                 let conversation_id = conversation.id;
 
                 let _ = conversation_service.set_active(conversation_id).await;
+                Self::set_pending_draft_conversation_id(pending_draft_conversation_id, None);
+
                 let _ = view_tx
                     .send(ViewCommand::ConversationCreated {
                         id: conversation_id,
@@ -868,7 +839,7 @@ impl ChatPresenter {
         }
     }
 
-    async fn resolve_default_profile_id(
+    pub(super) async fn resolve_default_profile_id(
         profile_service: &Arc<dyn ProfileService>,
     ) -> Result<Uuid, String> {
         if let Some(default_profile) = profile_service

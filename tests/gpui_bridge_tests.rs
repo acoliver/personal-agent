@@ -69,6 +69,7 @@ fn test_gpui_bridge_emit_user_event() {
     // Emit a UserEvent
     let result = bridge.emit(UserEvent::SendMessage {
         text: "Hello".to_string(),
+        conversation_id: None,
     });
     assert!(result, "emit should return true on success");
 
@@ -77,7 +78,13 @@ fn test_gpui_bridge_emit_user_event() {
     assert!(received.is_ok(), "Should receive the event");
 
     match received.unwrap() {
-        UserEvent::SendMessage { text } => assert_eq!(text, "Hello"),
+        UserEvent::SendMessage {
+            text,
+            conversation_id,
+        } => {
+            assert_eq!(text, "Hello");
+            assert_eq!(conversation_id, None);
+        }
         _ => panic!("Wrong event type"),
     }
 }
@@ -331,6 +338,7 @@ async fn test_full_bridge_round_trip() {
     // === Simulate GPUI -> tokio ===
     bridge.emit(UserEvent::SendMessage {
         text: "Test".to_string(),
+        conversation_id: None,
     });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -381,6 +389,7 @@ async fn test_e2e_with_state_application() {
     // 1. GPUI emits UserEvent
     bridge.emit(UserEvent::SendMessage {
         text: "Hello".to_string(),
+        conversation_id: None,
     });
 
     // 2. Verify EventBus received it
@@ -389,7 +398,7 @@ async fn test_e2e_with_state_application() {
     assert!(received.is_ok());
     assert!(matches!(
         received.unwrap(),
-        AppEvent::User(UserEvent::SendMessage { text }) if text == "Hello"
+        AppEvent::User(UserEvent::SendMessage { text, conversation_id }) if text == "Hello" && conversation_id.is_none()
     ));
 
     // 3. Simulate presenter sending ViewCommand

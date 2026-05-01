@@ -176,6 +176,7 @@ mod tests {
         let bus = EventBus::new(16);
         let mut rx = bus.subscribe();
         let event = AppEvent::User(UserEvent::SendMessage {
+            conversation_id: None,
             text: "Hello".to_string(),
         });
 
@@ -273,18 +274,23 @@ mod tests {
 
         let events = vec![
             AppEvent::User(UserEvent::SendMessage {
+                conversation_id: None,
                 text: "First".to_string(),
             }),
             AppEvent::User(UserEvent::SendMessage {
+                conversation_id: None,
                 text: "Second".to_string(),
             }),
             AppEvent::User(UserEvent::SendMessage {
+                conversation_id: None,
                 text: "Third".to_string(),
             }),
             AppEvent::User(UserEvent::SendMessage {
+                conversation_id: None,
                 text: "Fourth".to_string(),
             }),
             AppEvent::User(UserEvent::SendMessage {
+                conversation_id: None,
                 text: "Fifth".to_string(),
             }),
         ];
@@ -434,6 +440,7 @@ mod tests {
 
         // When - simulate send message flow
         let _ = bus.publish(AppEvent::User(UserEvent::SendMessage {
+            conversation_id: None,
             text: "Hello".to_string(),
         }));
         let _ = bus.publish(AppEvent::Chat(ChatEvent::StreamStarted {

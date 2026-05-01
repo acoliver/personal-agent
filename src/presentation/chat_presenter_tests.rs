@@ -255,6 +255,7 @@ async fn test_handle_send_message_emits_events() {
     let conv_service = conversation_service.clone();
     let chat_svc = chat_service.clone();
     let profile_svc = profile_service.clone();
+    let pending_draft_conversation_id = Arc::new(std::sync::Mutex::new(None));
 
     tokio::spawn(async move {
         ChatPresenter::handle_send_message(
@@ -263,6 +264,8 @@ async fn test_handle_send_message_emits_events() {
             &profile_svc,
             &mut tx,
             content,
+            None,
+            &pending_draft_conversation_id,
         )
         .await;
     });
@@ -382,11 +385,13 @@ async fn test_handle_new_conversation() {
     let conversation_service = Arc::new(MockConversationService) as Arc<dyn ConversationService>;
     let profile_service = Arc::new(MockProfileService) as Arc<dyn ProfileService>;
     let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let pending_draft_conversation_id = Arc::new(std::sync::Mutex::new(None));
 
     ChatPresenter::handle_new_conversation(
         &conversation_service,
         &profile_service,
         &mut view_tx.clone(),
+        &pending_draft_conversation_id,
     )
     .await;
 

@@ -939,7 +939,10 @@ impl ChatView {
         text: String,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.emit(UserEvent::SendMessage { text });
+        self.emit(UserEvent::SendMessage {
+            text,
+            conversation_id: self.conversation_id,
+        });
         self.state.input_text.clear();
         self.state.cursor_position = 0;
         self.state.chat_autoscroll_enabled = true;
