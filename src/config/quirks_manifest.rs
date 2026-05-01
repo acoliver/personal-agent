@@ -155,6 +155,28 @@ mod tests {
     }
 
     #[test]
+    fn zai_entries_have_openai_transport_and_distinct_plan_endpoints() {
+        let entries: HashMap<String, QuirksEntry> =
+            toml::from_str(BUNDLED_MANIFEST).expect("parse");
+
+        let general = entries.get("zai").expect("zai entry should exist");
+        assert_eq!(general.transport.as_deref(), Some("openai"));
+        assert_eq!(
+            general.base_url.as_deref(),
+            Some("https://api.z.ai/api/paas/v4")
+        );
+
+        let coding = entries
+            .get("zai-coding-plan")
+            .expect("zai coding plan entry should exist");
+        assert_eq!(coding.transport.as_deref(), Some("openai"));
+        assert_eq!(
+            coding.base_url.as_deref(),
+            Some("https://api.z.ai/api/coding/paas/v4")
+        );
+    }
+
+    #[test]
     fn user_overlay_overrides_bundled_entries() {
         let bundled: HashMap<String, QuirksEntry> =
             toml::from_str(BUNDLED_MANIFEST).expect("parse bundled");
@@ -229,6 +251,10 @@ base_url = "https://my-custom.example.com/v1"
         let expected = [
             "anthropic",
             "openai",
+            "zai",
+            "zai-coding-plan",
+            "zhipuai",
+            "zhipuai-coding-plan",
             "kimi-for-coding",
             "openrouter",
             "synthetic",
