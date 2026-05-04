@@ -310,6 +310,10 @@ fn resolve_token_field_selection(
             || TokenFieldSelection::Field(default_token_field_name(model_name, enable_thinking)),
             |name| match name {
                 "omit" | "none" => TokenFieldSelection::Omit,
+                "default" => TokenFieldSelection::Field(default_token_field_name(
+                    model_name,
+                    enable_thinking,
+                )),
                 _ if RESERVED_TOKEN_FIELD_NAMES.contains(&name) => TokenFieldSelection::Field(
                     default_token_field_name(model_name, enable_thinking),
                 ),
@@ -713,6 +717,18 @@ mod tests {
         );
         assert_eq!(
             resolve_token_field("gpt-4.1", true, Some("	")),
+            Some("max_completion_tokens".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_token_field_uses_defaults_for_default_sentinel() {
+        assert_eq!(
+            resolve_token_field("gpt-4.1", false, Some("default")),
+            Some("max_tokens".to_string())
+        );
+        assert_eq!(
+            resolve_token_field("gpt-5.4", false, Some("default")),
             Some("max_completion_tokens".to_string())
         );
     }
