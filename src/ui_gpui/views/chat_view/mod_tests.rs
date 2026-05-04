@@ -872,6 +872,7 @@ async fn plain_enter_still_submits_message(cx: &mut TestAppContext) {
                 user_rx.try_recv().ok(),
                 Some(UserEvent::SendMessage {
                     text: "send me".to_string(),
+                    conversation_id: None,
                 })
             );
             assert!(view.state.input_text.is_empty());
@@ -882,6 +883,33 @@ async fn plain_enter_still_submits_message(cx: &mut TestAppContext) {
                     content: String::new(),
                     done: false,
                 }
+            );
+        });
+    });
+}
+
+#[gpui::test]
+async fn send_message_targets_selected_conversation(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+    let (bridge, user_rx) = make_chat_bridge();
+    let conversation_id = Uuid::new_v4();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.set_bridge(bridge.clone());
+            view.conversation_id = Some(conversation_id);
+            view.state.input_text = "continue here".to_string();
+            view.state.cursor_position = view.state.input_text.len();
+
+            view.handle_key_down(&chat_key_event("enter"), cx);
+
+            assert_eq!(
+                user_rx.try_recv().ok(),
+                Some(UserEvent::SendMessage {
+                    text: "continue here".to_string(),
+                    conversation_id: Some(conversation_id),
+                })
             );
         });
     });

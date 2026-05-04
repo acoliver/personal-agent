@@ -271,6 +271,7 @@ async fn handle_enter_emits_send_message_and_ignores_enter_during_streaming(
         user_rx.recv().expect("send message event"),
         UserEvent::SendMessage {
             text: "hello".to_string(),
+            conversation_id: None,
         }
     );
     assert!(

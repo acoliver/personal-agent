@@ -49,3 +49,24 @@ pub fn provider_api_url_map(
         .filter_map(|provider_id| provider_api_url(&provider_id).map(|url| (provider_id, url)))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_provider_defaults_include_zai_coding_endpoint() {
+        assert_eq!(
+            builtin_provider_api_url("zai-coding-plan").as_deref(),
+            Some("https://api.z.ai/api/coding/paas/v4")
+        );
+    }
+
+    #[test]
+    fn bundled_provider_defaults_include_zai_general_endpoint() {
+        assert_eq!(
+            builtin_provider_api_url("zai").as_deref(),
+            Some("https://api.z.ai/api/paas/v4")
+        );
+    }
+}

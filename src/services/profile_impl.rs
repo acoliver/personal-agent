@@ -368,9 +368,26 @@ impl ProfileServiceImpl {
             super::ServiceError::Io(format!("Failed to read default profile file: {e}"))
         })?;
 
-        serde_json::from_str(&content).map(Some).map_err(|e| {
-            super::ServiceError::Serialization(format!("Failed to parse default profile ID: {e}"))
-        })
+        match serde_json::from_str::<Uuid>(&content) {
+            Ok(id) => Ok(Some(id)),
+            Err(uuid_error) => Self::parse_legacy_default_profile_id(&content)
+                .map(Some)
+                .map_err(|legacy_error| {
+                    super::ServiceError::Serialization(format!(
+                        "Failed to parse default profile ID: {uuid_error}; legacy shape error: \
+                         {legacy_error}"
+                    ))
+                }),
+        }
+    }
+
+    fn parse_legacy_default_profile_id(content: &str) -> Result<Uuid, serde_json::Error> {
+        #[derive(serde::Deserialize)]
+        struct LegacyDefaultProfile {
+            profile_id: Uuid,
+        }
+
+        serde_json::from_str::<LegacyDefaultProfile>(content).map(|profile| profile.profile_id)
     }
 
     /// Save the default profile ID to disk
@@ -865,6 +882,42 @@ mod tests {
             .unwrap();
 
         service.set_default(profile.id).await.unwrap();
+
+        let default = service.get_default().await.unwrap().unwrap();
+        assert_eq!(default.id, profile.id);
+    }
+
+    #[tokio::test]
+    async fn test_get_default_accepts_legacy_profile_id_object() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        service.initialize().await.unwrap();
+
+        let auth = AuthConfig::Keychain {
+            label: "test-key".to_string(),
+        };
+        let params = ModelParameters::default();
+
+        let profile = service
+            .create(
+                "Profile 1".to_string(),
+                "openai".to_string(),
+                "gpt-4".to_string(),
+                None,
+                auth,
+                params,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let legacy_default = serde_json::json!({ "profile_id": profile.id });
+        std::fs::write(
+            service.default_profile_path(),
+            serde_json::to_string_pretty(&legacy_default).unwrap(),
+        )
+        .unwrap();
 
         let default = service.get_default().await.unwrap().unwrap();
         assert_eq!(default.id, profile.id);
