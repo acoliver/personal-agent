@@ -90,7 +90,7 @@ async fn profile_editor_load_and_api_key_listing_replace_visible_editor_state(
                 api_key_label: "anthropic-key".to_string(),
                 temperature: 0.25,
                 max_tokens: Some(8192),
-                max_tokens_field_name: "max_tokens".to_string(),
+                max_tokens_field_name: "default".to_string(),
                 extra_request_fields: "{}".to_string(),
 
                 context_limit: Some(200_000),
@@ -131,7 +131,7 @@ async fn profile_editor_load_and_api_key_listing_replace_visible_editor_state(
         assert_eq!(view.state.data.key_label, "anthropic-key");
         assert!((view.state.data.temperature - 0.25_f32).abs() < f32::EPSILON);
         assert_eq!(view.state.data.max_tokens, "8192");
-        assert_eq!(view.state.data.max_tokens_field_name, "max_tokens");
+        assert_eq!(view.state.data.max_tokens_field_name, "default");
         assert!(!view.state.advanced_request_parameters_expanded);
         assert_eq!(view.state.data.context_limit, 200_000);
         assert!(!view.state.data.show_thinking);
@@ -295,7 +295,7 @@ async fn model_selected_preserves_edit_state_for_issue_182(cx: &mut TestAppConte
                 api_key_label: "anthropic-key".to_string(),
                 temperature: 0.7,
                 max_tokens: Some(4096),
-                max_tokens_field_name: "max_tokens".to_string(),
+                max_tokens_field_name: "default".to_string(),
                 extra_request_fields: "{}".to_string(),
                 context_limit: Some(200_000),
                 show_thinking: true,
@@ -419,7 +419,7 @@ async fn profile_editor_reset_clears_state_but_preserves_keys_for_issue_182(
                 api_key_label: "anthropic-key".to_string(),
                 temperature: 0.7,
                 max_tokens: Some(4096),
-                max_tokens_field_name: "max_tokens".to_string(),
+                max_tokens_field_name: "default".to_string(),
                 extra_request_fields: "{}".to_string(),
                 context_limit: Some(200_000),
                 show_thinking: true,
@@ -502,7 +502,7 @@ async fn reset_to_new_profile_helper_clears_edit_state_for_issue_182(cx: &mut Te
                 api_key_label: "anthropic-key".to_string(),
                 temperature: 0.7,
                 max_tokens: Some(4096),
-                max_tokens_field_name: "max_tokens".to_string(),
+                max_tokens_field_name: "default".to_string(),
                 extra_request_fields: "{}".to_string(),
                 context_limit: Some(200_000),
                 show_thinking: true,
@@ -563,7 +563,7 @@ async fn local_profile_load_keeps_save_enabled_for_issue_182(cx: &mut TestAppCon
                 api_key_label: String::new(),
                 temperature: 0.7,
                 max_tokens: Some(4096),
-                max_tokens_field_name: "max_tokens".to_string(),
+                max_tokens_field_name: "default".to_string(),
                 extra_request_fields: "{}".to_string(),
                 context_limit: Some(8_192),
                 show_thinking: true,
@@ -652,4 +652,68 @@ async fn emit_save_profile_carries_context_window_size_for_issue_182(cx: &mut Te
         Some(64_000),
         "CONTEXT LIMIT must round-trip through the save payload"
     );
+}
+
+#[gpui::test]
+async fn emit_save_profile_can_persist_omit_token_limit_for_issue_205(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        view.handle_command(
+            ViewCommand::ModelSelected {
+                provider_id: "openai".to_string(),
+                model_id: "gpt-5.4".to_string(),
+                provider_api_url: None,
+                context_length: Some(128_000),
+            },
+            cx,
+        );
+        view.state.data.key_label = "openai-key".to_string();
+        view.state.data.max_tokens_field_name = "omit".to_string();
+        view.emit_save_profile();
+    });
+
+    let _ = user_rx.recv().expect("refresh api keys event");
+    let event = user_rx.recv().expect("save profile event");
+    let UserEvent::SaveProfile { profile } = event else {
+        panic!("expected SaveProfile, got {event:?}");
+    };
+    let parameters = profile.parameters.expect("parameters included");
+    assert_eq!(parameters.max_tokens, None);
+    assert_eq!(parameters.max_tokens_field_name.as_deref(), Some("omit"));
+}
+
+#[gpui::test]
+async fn profile_editor_load_preserves_empty_token_field_for_issue_205(cx: &mut TestAppContext) {
+    let profile_id = Uuid::new_v4();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.handle_command(
+            ViewCommand::ProfileEditorLoad {
+                id: profile_id,
+                name: "OpenAI GPT 5".to_string(),
+                provider_id: "openai".to_string(),
+                model_id: "gpt-5.4".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                api_key_label: "openai-key".to_string(),
+                temperature: 1.0,
+                max_tokens: None,
+                max_tokens_field_name: String::new(),
+                extra_request_fields: "{}".to_string(),
+                context_limit: Some(128_000),
+                show_thinking: true,
+                enable_thinking: false,
+                thinking_budget: None,
+                system_prompt: "Be helpful.".to_string(),
+            },
+            cx,
+        );
+
+        assert_eq!(view.state.data.max_tokens, "");
+        assert_eq!(view.state.data.max_tokens_field_name, "");
+        assert!(view.state.advanced_request_parameters_expanded);
+    });
 }

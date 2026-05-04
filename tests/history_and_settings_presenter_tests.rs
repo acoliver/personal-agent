@@ -1224,7 +1224,7 @@ mod settings_presenter_tests {
                 api_key_label: "legacy-editor-key".to_string(),
                 temperature: legacy_profile.parameters.temperature,
                 max_tokens: legacy_profile.parameters.max_tokens,
-                max_tokens_field_name: "max_tokens".to_string(),
+                max_tokens_field_name: "default".to_string(),
                 extra_request_fields: "{}".to_string(),
                 context_limit: Some(
                     u32::try_from(legacy_profile.context_window_size).unwrap_or(u32::MAX),

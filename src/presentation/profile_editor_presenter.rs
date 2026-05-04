@@ -320,7 +320,9 @@ impl ProfileEditorPresenter {
             parameters.max_tokens = payload_parameters.max_tokens;
             if let Some(max_tokens_field_name) = payload_parameters.max_tokens_field_name {
                 let normalized = max_tokens_field_name.trim();
-                if !normalized.is_empty() {
+                if normalized == "default" {
+                    parameters.max_tokens_field_name = None;
+                } else if !normalized.is_empty() {
                     parameters.max_tokens_field_name = Some(normalized.to_string());
                 }
             }
