@@ -180,9 +180,6 @@ const RESERVED_REQUEST_KEYS: [&str; 14] = [
 ];
 
 /// Build a streaming chat request payload.
-///
-/// When `enable_thinking` is set, `max_completion_tokens` is used instead of
-/// `max_tokens` (the `OpenAI` reasoning API requirement).
 #[allow(clippy::too_many_arguments)]
 fn build_chat_request_payload(
     model_name: &str,
@@ -225,7 +222,7 @@ fn build_chat_request_payload(
         .expect("request_value object checked above");
     request_object.insert("messages".to_string(), encoded_messages);
 
-    let token_field = resolve_token_field(enable_thinking, max_tokens_field_name);
+    let token_field = resolve_token_field(max_tokens_field_name);
     apply_token_limit(request_object, token_limit, &token_field);
     merge_extra_fields(request_object, extra_request_fields, &token_field);
 
@@ -280,18 +277,13 @@ const RESERVED_TOKEN_FIELD_NAMES: &[&str] = &[
     "stop",
 ];
 
-/// Resolve the token field based on thinking mode and user override.
-fn resolve_token_field(enable_thinking: bool, max_tokens_field_name: Option<&str>) -> String {
-    let default_name = if enable_thinking {
-        "max_completion_tokens"
-    } else {
-        "max_tokens"
-    };
+/// Resolve the token field from the user override, falling back to `max_tokens`.
+fn resolve_token_field(max_tokens_field_name: Option<&str>) -> String {
     max_tokens_field_name
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .filter(|name| !RESERVED_TOKEN_FIELD_NAMES.contains(name))
-        .map_or_else(|| default_name.to_string(), str::to_string)
+        .map_or_else(|| "max_tokens".to_string(), str::to_string)
 }
 
 /// Apply token limit to the request object using the resolved field name.
@@ -597,61 +589,42 @@ mod tests {
     }
 
     #[test]
-    fn resolve_token_field_uses_defaults_for_empty_string() {
-        assert_eq!(
-            resolve_token_field(false, Some("")),
-            "max_tokens".to_string()
-        );
-        assert_eq!(
-            resolve_token_field(true, Some("")),
-            "max_completion_tokens".to_string()
-        );
+    fn resolve_token_field_uses_max_tokens_for_empty_string() {
+        assert_eq!(resolve_token_field(Some("")), "max_tokens".to_string());
     }
 
     #[test]
-    fn resolve_token_field_uses_defaults_for_whitespace() {
-        assert_eq!(
-            resolve_token_field(false, Some("   ")),
-            "max_tokens".to_string()
-        );
-        assert_eq!(
-            resolve_token_field(true, Some("	")),
-            "max_completion_tokens".to_string()
-        );
+    fn resolve_token_field_uses_max_tokens_for_whitespace() {
+        assert_eq!(resolve_token_field(Some("   ")), "max_tokens".to_string());
+        assert_eq!(resolve_token_field(Some("	")), "max_tokens".to_string());
     }
 
     #[test]
     fn resolve_token_field_keeps_explicit_standard_names() {
         assert_eq!(
-            resolve_token_field(false, Some("max_tokens")),
+            resolve_token_field(Some("max_tokens")),
             "max_tokens".to_string()
         );
         assert_eq!(
-            resolve_token_field(true, Some("max_completion_tokens")),
+            resolve_token_field(Some("max_completion_tokens")),
             "max_completion_tokens".to_string()
         );
     }
 
     #[test]
-    fn resolve_token_field_uses_default_for_reserved_keys() {
+    fn resolve_token_field_uses_max_tokens_for_reserved_keys() {
+        assert_eq!(resolve_token_field(Some("model")), "max_tokens".to_string());
         assert_eq!(
-            resolve_token_field(false, Some("model")),
+            resolve_token_field(Some("messages")),
             "max_tokens".to_string()
         );
         assert_eq!(
-            resolve_token_field(false, Some("messages")),
+            resolve_token_field(Some("stream")),
             "max_tokens".to_string()
         );
+        assert_eq!(resolve_token_field(Some("tools")), "max_tokens".to_string());
         assert_eq!(
-            resolve_token_field(false, Some("stream")),
-            "max_tokens".to_string()
-        );
-        assert_eq!(
-            resolve_token_field(false, Some("tools")),
-            "max_tokens".to_string()
-        );
-        assert_eq!(
-            resolve_token_field(false, Some("temperature")),
+            resolve_token_field(Some("temperature")),
             "max_tokens".to_string()
         );
     }
@@ -659,19 +632,15 @@ mod tests {
     #[test]
     fn resolve_token_field_returns_custom_valid_override() {
         assert_eq!(
-            resolve_token_field(false, Some("custom_tokens")),
+            resolve_token_field(Some("custom_tokens")),
             "custom_tokens".to_string()
-        );
-        assert_eq!(
-            resolve_token_field(true, Some("max_tokens")),
-            "max_tokens".to_string()
         );
     }
 
     #[test]
     fn resolve_token_field_trims_whitespace() {
         assert_eq!(
-            resolve_token_field(false, Some("  custom_field  ")),
+            resolve_token_field(Some("  custom_field  ")),
             "custom_field".to_string()
         );
     }
@@ -755,7 +724,6 @@ mod tests {
             ..ModelSettings::default()
         };
 
-        // Non-thinking mode should use max_tokens
         let payload = build_chat_request_payload(
             "gpt-4.1",
             &[],
@@ -776,7 +744,6 @@ mod tests {
         );
         assert!(payload.get("max_completion_tokens").is_none());
 
-        // Thinking mode should use max_completion_tokens
         let payload_thinking = build_chat_request_payload(
             "gpt-4.1",
             &[],
@@ -791,10 +758,10 @@ mod tests {
 
         assert_eq!(
             payload_thinking
-                .get("max_completion_tokens")
+                .get("max_tokens")
                 .and_then(serde_json::Value::as_u64),
             Some(1024)
         );
-        assert!(payload_thinking.get("max_tokens").is_none());
+        assert!(payload_thinking.get("max_completion_tokens").is_none());
     }
 }
