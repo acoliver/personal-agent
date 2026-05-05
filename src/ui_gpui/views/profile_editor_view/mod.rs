@@ -247,6 +247,9 @@ impl ProfileEditorView {
     pub fn set_profile(&mut self, data: ProfileEditorData, is_new: bool) {
         self.state.data = data;
         self.state.is_new = is_new;
+        self.state.advanced_request_parameters_expanded =
+            ProfileEditorState::has_advanced_request_parameters(&self.state.data);
+
         self.state.active_field = None;
     }
 
