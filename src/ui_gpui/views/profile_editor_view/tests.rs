@@ -653,3 +653,67 @@ async fn emit_save_profile_carries_context_window_size_for_issue_182(cx: &mut Te
         "CONTEXT LIMIT must round-trip through the save payload"
     );
 }
+
+#[gpui::test]
+async fn emit_save_profile_clears_blank_token_field_name_for_issue_205(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        view.handle_command(
+            ViewCommand::ModelSelected {
+                provider_id: "openai".to_string(),
+                model_id: "gpt-4.1".to_string(),
+                provider_api_url: None,
+                context_length: Some(128_000),
+            },
+            cx,
+        );
+        view.state.data.key_label = "openai-key".to_string();
+        view.state.data.max_tokens_field_name.clear();
+        view.emit_save_profile();
+    });
+
+    let _ = user_rx.recv().expect("refresh api keys event");
+    let event = user_rx.recv().expect("save profile event");
+    let UserEvent::SaveProfile { profile } = event else {
+        panic!("expected SaveProfile, got {event:?}");
+    };
+    let parameters = profile.parameters.expect("parameters included");
+    assert_eq!(parameters.max_tokens, Some(4096));
+    assert_eq!(parameters.max_tokens_field_name, None);
+}
+
+#[gpui::test]
+async fn profile_editor_load_preserves_empty_token_field_for_issue_205(cx: &mut TestAppContext) {
+    let profile_id = Uuid::new_v4();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.handle_command(
+            ViewCommand::ProfileEditorLoad {
+                id: profile_id,
+                name: "OpenAI GPT 5".to_string(),
+                provider_id: "openai".to_string(),
+                model_id: "gpt-4.1".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                api_key_label: "openai-key".to_string(),
+                temperature: 1.0,
+                max_tokens: None,
+                max_tokens_field_name: String::new(),
+                extra_request_fields: "{}".to_string(),
+                context_limit: Some(128_000),
+                show_thinking: true,
+                enable_thinking: false,
+                thinking_budget: None,
+                system_prompt: "Be helpful.".to_string(),
+            },
+            cx,
+        );
+
+        assert_eq!(view.state.data.max_tokens, "");
+        assert_eq!(view.state.data.max_tokens_field_name, "");
+        assert!(!view.state.advanced_request_parameters_expanded);
+    });
+}

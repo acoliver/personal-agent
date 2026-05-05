@@ -366,6 +366,50 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
     );
 }
 
+#[tokio::test]
+async fn save_profile_payload_maps_blank_token_field_to_no_persisted_override_issue_205() {
+    let event_bus_sender: tokio::sync::broadcast::Sender<personal_agent::events::AppEvent> =
+        tokio::sync::broadcast::channel::<personal_agent::events::AppEvent>(32).0;
+    let (view_tx, mut view_rx) =
+        tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(32);
+
+    let recording = RecordingProfileService::default();
+    let profile_service: Arc<dyn ProfileService> = Arc::new(recording.clone());
+
+    let mut presenter = personal_agent::presentation::ProfileEditorPresenter::new(
+        profile_service,
+        &event_bus_sender,
+        view_tx,
+    );
+
+    presenter
+        .start()
+        .await
+        .expect("presenter start must succeed");
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    event_bus_sender
+        .send(personal_agent::events::AppEvent::User(
+            personal_agent::events::types::UserEvent::SaveProfile {
+                profile: Box::new(payload(Some(2048), "")),
+            },
+        ))
+        .ok();
+
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(250), view_rx.recv())
+        .await
+        .expect("timed out waiting for ProfileUpdated")
+        .expect("view channel closed");
+
+    let update_calls = recording.update_calls();
+    let params = update_calls[0]
+        .parameters
+        .clone()
+        .expect("parameters should be passed to update");
+    assert_eq!(params.max_tokens, Some(2048));
+    assert_eq!(params.max_tokens_field_name, None);
+}
+
 /// Issue #182: when the editor save payload carries a `context_window_size`,
 /// the presenter must persist it via `ProfileService::set_context_window_size`
 /// after the regular `update`. Before the fix, the field was dropped on the

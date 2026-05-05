@@ -118,10 +118,9 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
 
     let parsed_max_tokens = data.max_tokens.parse::<u32>().ok();
 
-    // Normalize max_tokens_field_name: empty or the default "max_tokens" sentinel means None
     let max_tokens_field_name = {
         let name = data.max_tokens_field_name.trim();
-        if name.is_empty() || name == "max_tokens" {
+        if name.is_empty() {
             None
         } else {
             Some(name.to_string())
@@ -513,8 +512,10 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
     let created_parameters = created_payload.parameters.expect("parameters should exist");
     assert!((created_parameters.temperature.expect("temperature present") - 0.9).abs() < 1e-6);
     assert_eq!(created_parameters.max_tokens, None);
-    // "max_tokens" sentinel is normalized to None
-    assert_eq!(created_parameters.max_tokens_field_name, None);
+    assert_eq!(
+        created_parameters.max_tokens_field_name.as_deref(),
+        Some("max_tokens")
+    );
     assert_eq!(created_parameters.show_thinking, Some(false));
     assert_eq!(created_parameters.enable_thinking, Some(false));
     assert_eq!(created_parameters.thinking_budget, None);
@@ -664,19 +665,18 @@ fn profile_editor_load_with_custom_max_tokens_field_name() {
 }
 
 #[test]
-fn emit_save_payload_normalizes_max_tokens_field_name_sentinel_to_none() {
+fn emit_save_payload_keeps_default_max_tokens_field_name() {
     let mut data = ProfileEditorData::new();
     data.id = Some(Uuid::new_v4().to_string());
     data.name = "Test Profile".to_string();
     data.model_id = "claude-sonnet-4".to_string();
     data.base_url = "https://api.anthropic.com/v1".to_string();
     data.key_label = "anthropic-key".to_string();
-    data.max_tokens_field_name = "max_tokens".to_string(); // sentinel value
+    data.max_tokens_field_name = "max_tokens".to_string();
 
     let payload = emit_save_payload(&data);
     let params = payload.parameters.expect("parameters should exist");
-    // The view normalizes "max_tokens" sentinel to None
-    assert_eq!(params.max_tokens_field_name, None);
+    assert_eq!(params.max_tokens_field_name.as_deref(), Some("max_tokens"));
 }
 
 #[test]
@@ -695,6 +695,21 @@ fn emit_save_payload_keeps_custom_max_tokens_field_name() {
         params.max_tokens_field_name.as_deref(),
         Some("max_completion_tokens")
     );
+}
+
+#[test]
+fn emit_save_payload_keeps_explicit_max_tokens_field_name() {
+    let mut data = ProfileEditorData::new();
+    data.id = Some(Uuid::new_v4().to_string());
+    data.name = "Test Profile".to_string();
+    data.model_id = "gpt-4.1".to_string();
+    data.base_url = "https://api.openai.com/v1".to_string();
+    data.key_label = "openai-key".to_string();
+    data.max_tokens_field_name = "max_tokens".to_string();
+
+    let payload = emit_save_payload(&data);
+    let params = payload.parameters.expect("parameters should exist");
+    assert_eq!(params.max_tokens_field_name.as_deref(), Some("max_tokens"));
 }
 
 #[test]

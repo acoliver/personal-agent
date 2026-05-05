@@ -318,12 +318,13 @@ impl ProfileEditorPresenter {
                 parameters.temperature = temperature;
             }
             parameters.max_tokens = payload_parameters.max_tokens;
-            if let Some(max_tokens_field_name) = payload_parameters.max_tokens_field_name {
-                let normalized = max_tokens_field_name.trim();
-                if !normalized.is_empty() {
-                    parameters.max_tokens_field_name = Some(normalized.to_string());
-                }
-            }
+            parameters.max_tokens_field_name = payload_parameters
+                .max_tokens_field_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string);
+
             if let Some(extra_request_fields) = payload_parameters.extra_request_fields {
                 parameters.extra_request_fields = Some(extra_request_fields);
             }

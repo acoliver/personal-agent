@@ -65,7 +65,7 @@ impl ProfileEditorView {
         div()
             .flex()
             .flex_col()
-            .child(Self::render_label("MAX TOKENS FIELD NAME"))
+            .child(Self::render_label("TOKEN LIMIT FIELD"))
             .child(
                 Self::render_text_field(
                     "field-max-tokens-field-name",
@@ -87,7 +87,7 @@ impl ProfileEditorView {
                     .text_size(px(Theme::font_size_small()))
                     .text_color(Theme::text_muted())
                     .child(
-                        "Use max_completion_tokens for reasoning-style APIs, or leave the default max_tokens.",
+                        "Leave blank to persist no field-name override. Set max_completion_tokens for APIs that require it.",
                     ),
             )
     }
