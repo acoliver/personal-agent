@@ -270,7 +270,7 @@ impl SettingsPresenter {
                         .parameters
                         .max_tokens_field_name
                         .clone()
-                        .unwrap_or_else(|| "default".to_string()),
+                        .unwrap_or_else(|| "max_tokens".to_string()),
                     extra_request_fields: profile
                         .parameters
                         .extra_request_fields

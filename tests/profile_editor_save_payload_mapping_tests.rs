@@ -367,7 +367,7 @@ async fn test_save_profile_payload_fallback_create_uses_payload_provider_and_mod
 }
 
 #[tokio::test]
-async fn save_profile_payload_maps_default_token_field_to_no_persisted_override_issue_205() {
+async fn save_profile_payload_maps_blank_token_field_to_no_persisted_override_issue_205() {
     let event_bus_sender: tokio::sync::broadcast::Sender<personal_agent::events::AppEvent> =
         tokio::sync::broadcast::channel::<personal_agent::events::AppEvent>(32).0;
     let (view_tx, mut view_rx) =
@@ -391,7 +391,7 @@ async fn save_profile_payload_maps_default_token_field_to_no_persisted_override_
     event_bus_sender
         .send(personal_agent::events::AppEvent::User(
             personal_agent::events::types::UserEvent::SaveProfile {
-                profile: Box::new(payload(Some(2048), "default")),
+                profile: Box::new(payload(Some(2048), "")),
             },
         ))
         .ok();

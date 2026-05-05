@@ -121,7 +121,7 @@ impl Default for ModelParameters {
             temperature: 0.7,
             top_p: 1.0,
             max_tokens: Some(4096),
-            max_tokens_field_name: None,
+            max_tokens_field_name: Some("max_tokens".to_string()),
             extra_request_fields: Some(serde_json::json!({})),
             thinking_budget: None,
             enable_thinking: false,

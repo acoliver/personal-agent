@@ -129,9 +129,6 @@ pub struct ProfileEditorData {
 }
 
 impl ProfileEditorData {
-    pub const DEFAULT_MAX_TOKENS_FIELD_NAME: &'static str = "default";
-    pub const OMIT_TOKEN_LIMIT_FIELD_NAME: &'static str = "omit";
-
     /// Default `context_limit` used when no explicit value has been chosen
     /// (matches the value assigned by [`ProfileEditorData::new`]).
     pub const DEFAULT_CONTEXT_LIMIT: u32 = 128_000;
@@ -141,7 +138,7 @@ impl ProfileEditorData {
         Self {
             temperature: 1.0,
             max_tokens: "4096".to_string(),
-            max_tokens_field_name: Self::DEFAULT_MAX_TOKENS_FIELD_NAME.to_string(),
+            max_tokens_field_name: "max_tokens".to_string(),
             extra_request_fields: "{}".to_string(),
             context_limit: Self::DEFAULT_CONTEXT_LIMIT,
             show_thinking: true,
@@ -185,7 +182,8 @@ pub struct ProfileEditorState {
 
 impl ProfileEditorState {
     fn has_advanced_request_parameters(data: &ProfileEditorData) -> bool {
-        data.max_tokens_field_name != ProfileEditorData::DEFAULT_MAX_TOKENS_FIELD_NAME
+        (!data.max_tokens_field_name.trim().is_empty()
+            && data.max_tokens_field_name.trim() != "max_tokens")
             || data.extra_request_fields.trim() != "{}"
     }
 
@@ -283,6 +281,7 @@ impl ProfileEditorView {
             Some(ActiveField::ExtraRequestFields) => {
                 self.state.data.extra_request_fields.push_str(text);
             }
+
             Some(ActiveField::ContextLimit) => {
                 if text.chars().all(|c| c.is_ascii_digit()) {
                     let mut s = self.state.data.context_limit.to_string();
@@ -489,17 +488,11 @@ impl ProfileEditorView {
                 .ok()
                 .filter(serde_json::Value::is_object);
 
-        let max_tokens = if self.state.data.max_tokens_field_name.trim()
-            == ProfileEditorData::OMIT_TOKEN_LIMIT_FIELD_NAME
-        {
-            None
-        } else {
-            self.state.data.max_tokens.parse::<u32>().ok()
-        };
+        let max_tokens = self.state.data.max_tokens.parse::<u32>().ok();
 
         let max_tokens_field_name = {
             let name = self.state.data.max_tokens_field_name.trim();
-            if name.is_empty() || name == ProfileEditorData::DEFAULT_MAX_TOKENS_FIELD_NAME {
+            if name.is_empty() {
                 None
             } else {
                 Some(name.to_string())
@@ -581,13 +574,8 @@ impl ProfileEditorView {
                 }
                 self.state.data.max_tokens =
                     max_tokens.map_or_else(String::new, |value| value.to_string());
-                self.state.data.max_tokens_field_name = if max_tokens_field_name.is_empty() {
-                    String::new()
-                } else if max_tokens_field_name == "max_tokens" {
-                    ProfileEditorData::DEFAULT_MAX_TOKENS_FIELD_NAME.to_string()
-                } else {
-                    max_tokens_field_name
-                };
+                self.state.data.max_tokens_field_name = max_tokens_field_name;
+
                 self.state.data.extra_request_fields = extra_request_fields;
                 self.state.advanced_request_parameters_expanded =
                     ProfileEditorState::has_advanced_request_parameters(&self.state.data);

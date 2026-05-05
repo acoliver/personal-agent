@@ -1,6 +1,6 @@
 //! Advanced request parameters rendering for `ProfileEditorView`.
 
-use super::{ActiveField, ProfileEditorData, ProfileEditorView};
+use super::{ActiveField, ProfileEditorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{div, prelude::*, px, MouseButton, ScrollWheelEvent};
 
@@ -70,7 +70,7 @@ impl ProfileEditorView {
                 Self::render_text_field(
                     "field-max-tokens-field-name",
                     &self.state.data.max_tokens_field_name,
-                    "default | max_tokens | max_completion_tokens | omit",
+                    "max_tokens",
                     field_active,
                 )
                 .on_mouse_down(
@@ -87,7 +87,7 @@ impl ProfileEditorView {
                     .text_size(px(Theme::font_size_small()))
                     .text_color(Theme::text_muted())
                     .child(
-                        "Use default for provider/model recommendations, max_tokens or max_completion_tokens to force a field, or omit to send no token limit.",
+                        "Leave blank to persist no field-name override. Set max_completion_tokens for APIs that require it.",
                     ),
             )
     }
@@ -221,8 +221,7 @@ impl ProfileEditorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {
-                            this.state.data.max_tokens_field_name =
-                                ProfileEditorData::DEFAULT_MAX_TOKENS_FIELD_NAME.to_string();
+                            this.state.data.max_tokens_field_name = "max_tokens".to_string();
                             this.state.data.extra_request_fields = "{}".to_string();
                             if this.advanced_request_parameters_active_field() {
                                 this.state.active_field = None;
