@@ -71,15 +71,7 @@ impl ConversationListView {
                     } else {
                         Theme::text_primary()
                     })
-                    .child(if query.is_empty() && !is_focused {
-                        SharedString::from("Search conversations...")
-                    } else if query.is_empty() {
-                        SharedString::from("|")
-                    } else if is_focused {
-                        SharedString::from(format!("{query}|"))
-                    } else {
-                        SharedString::from(query)
-                    })
+                    .child(Self::search_field_display_text(&query, is_focused))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
@@ -129,6 +121,18 @@ impl ConversationListView {
             || SharedString::from("CONVERSATIONS"),
             |results| SharedString::from(format!("{} results", results.len())),
         )
+    }
+
+    fn search_field_display_text(query: &str, is_focused: bool) -> SharedString {
+        if query.is_empty() && !is_focused {
+            SharedString::from("Search conversations...")
+        } else if query.is_empty() {
+            SharedString::from("|")
+        } else if is_focused {
+            SharedString::from(format!("{query}|"))
+        } else {
+            SharedString::from(query.to_string())
+        }
     }
 
     fn render_list(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {

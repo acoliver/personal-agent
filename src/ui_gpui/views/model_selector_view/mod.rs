@@ -131,6 +131,7 @@ pub(super) struct SearchableModelInfo {
 
 /// Model Selector view state
 /// @plan PLAN-20250130-GPUIREDUX.P07
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Default)]
 pub struct ModelSelectorState {
     // NOTE: unused for rendering — see cached_providers
@@ -141,6 +142,8 @@ pub struct ModelSelectorState {
     pub filter_reasoning: bool,
     pub filter_vision: bool,
     pub show_provider_dropdown: bool,
+    pub search_focused: bool,
+
     pub(super) searchable_models: Vec<SearchableModelInfo>,
     pub(super) cached_providers: Vec<String>,
     pub(super) cached_display_rows: Vec<DisplayRow>,

@@ -638,7 +638,6 @@ impl ChatView {
         let input_text = self.state.input_text.clone();
         let has_text = !input_text.trim().is_empty();
         let focus_handle = self.focus_handle.clone();
-        let cursor_pos = self.state.cursor_position.min(input_text.len());
 
         let wrapped_line_count = if input_text.is_empty() {
             1
@@ -664,13 +663,8 @@ impl ChatView {
         #[allow(clippy::cast_precision_loss)]
         let computed_height = (wrapped_line_count as f32).mul_add(line_height, 14.0);
         let input_box_height = computed_height.clamp(min_composer_height, max_composer_height);
-        let text_content = if input_text.is_empty() {
-            "Type a message...".to_string()
-        } else {
-            let before = &input_text[..cursor_pos];
-            let after = &input_text[cursor_pos..];
-            format!("{before}|{after}")
-        };
+        let focused = self.composer_has_focus(cx);
+        let text_content = self.composer_display_text(cx);
 
         div()
             .id("input-bar-container")
@@ -702,10 +696,13 @@ impl ChatView {
                 line_height,
                 &input_text,
                 text_content,
+                focused,
+                cx,
             ))
             .child(self.render_send_stop_button(is_streaming, has_text, cx))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_composer_field(
         focus_handle: gpui::FocusHandle,
         input_box_height: f32,
@@ -713,6 +710,8 @@ impl ChatView {
         line_height: f32,
         input_text: &str,
         text_content: String,
+        focused: bool,
+        cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         div()
             .id("input-field")
@@ -724,21 +723,29 @@ impl ChatView {
             .px(px(Theme::SPACING_SM))
             .py(px(7.0))
             .bg(Theme::bg_darkest())
+            .border_1()
+            .border_color(if focused {
+                Theme::accent()
+            } else {
+                Theme::border()
+            })
             .rounded(px(Theme::RADIUS_MD))
             .overflow_x_hidden()
             .overflow_y_scroll()
             .cursor_text()
-            .on_mouse_down(MouseButton::Left, {
-                move |_, window, cx| {
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
                     window.focus(&focus_handle, cx);
-                }
-            })
+                    this.focus_composer(cx);
+                }),
+            )
             .child(
                 div()
                     .w_full()
                     .text_size(px(Theme::font_size_mono()))
                     .line_height(px(line_height))
-                    .text_color(if input_text.is_empty() {
+                    .text_color(if input_text.is_empty() && !focused {
                         Theme::text_secondary()
                     } else {
                         Theme::text_primary()

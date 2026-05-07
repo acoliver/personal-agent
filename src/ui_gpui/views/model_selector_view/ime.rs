@@ -69,6 +69,7 @@ impl gpui::EntityInputHandler for ModelSelectorView {
             self.ime_marked_byte_count = 0;
         }
         if !text.is_empty() {
+            self.state.search_focused = true;
             self.state.search_query.push_str(text);
         }
         self.rebuild_and_reset_scroll(cx);
@@ -90,6 +91,7 @@ impl gpui::EntityInputHandler for ModelSelectorView {
             self.ime_marked_byte_count = 0;
         }
         if !new_text.is_empty() {
+            self.state.search_focused = true;
             self.state.search_query.push_str(new_text);
             self.ime_marked_byte_count = new_text.len();
         }

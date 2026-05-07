@@ -11,9 +11,14 @@
 //! @requirement REQ-GPUI-003
 
 mod command;
+mod focus;
+
 mod ime;
 mod render;
 mod render_bars;
+#[cfg(test)]
+mod render_bars_tests;
+
 mod render_bars_export;
 
 mod render_sidebar;
