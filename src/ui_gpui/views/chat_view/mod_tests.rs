@@ -701,6 +701,28 @@ async fn apply_store_snapshot_thinking_only_skips_maybe_scroll_when_autoscroll_d
 }
 
 #[gpui::test]
+async fn empty_composer_shows_cursor_only_when_focused(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            assert_eq!(view.composer_display_text_for_test(cx), "Type a message...");
+
+            view.focus_composer(cx);
+            assert_eq!(view.composer_display_text_for_test(cx), "|");
+
+            view.state.input_text = "hello".to_string();
+            view.state.cursor_position = 2;
+            assert_eq!(view.composer_display_text_for_test(cx), "he|llo");
+
+            view.blur_composer();
+            assert_eq!(view.composer_display_text_for_test(cx), "hello");
+        });
+    });
+}
+
+#[gpui::test]
 async fn send_message_and_start_streaming_reenables_autoscroll_and_starts_stream(
     cx: &mut TestAppContext,
 ) {

@@ -221,6 +221,8 @@ pub struct ChatState {
     pub thinking_content: Option<String>,
     pub input_text: String,
     pub cursor_position: usize,
+    pub composer_focused: bool,
+
     pub conversation_title: String,
     pub current_model: String,
     pub profiles: Vec<ProfileSummary>,
@@ -275,6 +277,8 @@ impl Default for ChatState {
             streaming: StreamingState::Idle,
             show_thinking: false,
             thinking_content: None,
+            composer_focused: false,
+
             input_text: String::new(),
             cursor_position: 0,
             conversation_title: "New Conversation".to_string(),

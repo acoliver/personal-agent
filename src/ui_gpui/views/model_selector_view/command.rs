@@ -48,6 +48,7 @@ impl ModelSelectorView {
 
     pub(super) fn toggle_provider_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.show_provider_dropdown = !self.state.show_provider_dropdown;
+        self.state.search_focused = false;
         cx.notify();
     }
 
@@ -84,6 +85,7 @@ impl ModelSelectorView {
             model_id,
         });
         self.state.show_provider_dropdown = false;
+        self.state.search_focused = false;
     }
 
     pub(super) fn handle_key_down(
@@ -95,6 +97,7 @@ impl ModelSelectorView {
         let modifiers = &event.keystroke.modifiers;
 
         if key == "escape" {
+            self.state.search_focused = false;
             if self.state.show_provider_dropdown {
                 self.state.show_provider_dropdown = false;
                 cx.notify();
@@ -112,6 +115,7 @@ impl ModelSelectorView {
         }
 
         if !modifiers.platform && !modifiers.control && key == "backspace" {
+            self.state.search_focused = true;
             self.state.search_query.pop();
             self.rebuild_and_reset_scroll(cx);
         }

@@ -65,10 +65,64 @@ impl ModelSelectorView {
             .child(div().w(px(70.0)))
     }
 
+    fn render_search_field(
+        search_query: String,
+        search_focused: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("search-field")
+            .flex_1()
+            .h(px(28.0))
+            .px(px(8.0))
+            .bg(Theme::bg_dark())
+            .border_1()
+            .border_color(if search_focused {
+                Theme::accent()
+            } else {
+                Theme::border()
+            })
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .cursor_text()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.state.search_focused = true;
+                    this.state.show_provider_dropdown = false;
+                    window.focus(&this.focus_handle, cx);
+                    cx.notify();
+                }),
+            )
+            .child(if search_query.is_empty() && !search_focused {
+                div()
+                    .text_size(px(Theme::font_size_mono()))
+                    .text_color(Theme::text_muted())
+                    .child("Search models...")
+            } else if search_query.is_empty() {
+                div()
+                    .text_size(px(Theme::font_size_mono()))
+                    .text_color(Theme::text_primary())
+                    .child("|")
+            } else if search_focused {
+                div()
+                    .text_size(px(Theme::font_size_mono()))
+                    .text_color(Theme::text_primary())
+                    .child(format!("{search_query}|"))
+            } else {
+                div()
+                    .text_size(px(Theme::font_size_mono()))
+                    .text_color(Theme::text_primary())
+                    .child(search_query)
+            })
+    }
+
     /// Render the filter bar with search and provider dropdown
     /// @plan PLAN-20250130-GPUIREDUX.P07
     fn render_filter_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let search_query = self.state.search_query.clone();
+        let search_focused = self.state.search_focused;
         let provider_display = self
             .state
             .selected_provider
@@ -85,32 +139,7 @@ impl ModelSelectorView {
             .flex()
             .items_center()
             .gap(px(8.0))
-            // Search field
-            .child(
-                div()
-                    .id("search-field")
-                    .flex_1()
-                    .h(px(28.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .cursor_text()
-                    .child(if search_query.is_empty() {
-                        div()
-                            .text_size(px(Theme::font_size_mono()))
-                            .text_color(Theme::text_muted())
-                            .child("Search models...")
-                    } else {
-                        div()
-                            .text_size(px(Theme::font_size_mono()))
-                            .text_color(Theme::text_primary())
-                            .child(search_query)
-                    }),
-            )
+            .child(Self::render_search_field(search_query, search_focused, cx))
             // Provider dropdown button
             .child(
                 div()
