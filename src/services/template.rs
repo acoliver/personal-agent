@@ -7,6 +7,8 @@
 //! - `{{session_date}}` - `conversation.created_at` formatted as %Y-%m-%d
 //! - `{{session_datetime}}` - `conversation.created_at` formatted as %Y-%m-%dT%H:%M:%SZ
 //! - `{{day_of_week}}` - `conversation.created_at` weekday name
+//! - `{{current_date}}` - Today's date (UTC) formatted as %Y-%m-%d
+//! - `{{current_datetime}}` - Current timestamp (UTC) formatted as %Y-%m-%dT%H:%M:%SZ
 //! - `{{profile_name}}` - `profile.name`
 //! - `{{model_id}}` - `profile.model_id`
 //! - `{{os}}` - `std::env::consts::OS`
@@ -56,20 +58,30 @@ impl<'a> TemplateContext<'a> {
 pub fn expand_system_prompt(template: &str, ctx: &TemplateContext<'_>) -> String {
     let mut result = template.to_string();
 
-    // session_date: %Y-%m-%d
+    // session_date: %Y-%m-%d (from conversation creation time)
     result = result.replace(
         "{{session_date}}",
         &ctx.created_at.format("%Y-%m-%d").to_string(),
     );
 
-    // session_datetime: %Y-%m-%dT%H:%M:%SZ
+    // session_datetime: %Y-%m-%dT%H:%M:%SZ (from conversation creation time)
     result = result.replace(
         "{{session_datetime}}",
         &ctx.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
     );
 
-    // day_of_week: full weekday name
+    // day_of_week: full weekday name (from conversation creation time)
     result = result.replace("{{day_of_week}}", &ctx.created_at.format("%A").to_string());
+
+    // current_date: today's date at expansion time
+    let now = Utc::now();
+    result = result.replace("{{current_date}}", &now.format("%Y-%m-%d").to_string());
+
+    // current_datetime: current timestamp at expansion time
+    result = result.replace(
+        "{{current_datetime}}",
+        &now.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    );
 
     // profile_name
     result = result.replace("{{profile_name}}", ctx.profile_name);
@@ -361,5 +373,43 @@ mod tests {
         assert!(expanded.contains("claude-sonnet-4-20250514")); // model_id
                                                                 // os value depends on platform
         assert!(expanded.contains(std::env::consts::OS));
+    }
+
+    #[test]
+    fn test_current_date_template_variable() {
+        let ctx = fixed_context();
+        let result = expand_system_prompt("Today is {{current_date}}.", &ctx);
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        assert_eq!(result, format!("Today is {today}."));
+    }
+
+    #[test]
+    fn test_current_datetime_template_variable() {
+        let ctx = fixed_context();
+        let result = expand_system_prompt("Now: {{current_datetime}}", &ctx);
+        // Verify it looks like a UTC timestamp (contains T and Z)
+        let expanded = result.strip_prefix("Now: ").unwrap();
+        assert!(expanded.contains('T'));
+        assert!(expanded.ends_with('Z'));
+    }
+
+    #[test]
+    fn test_current_date_differs_from_session_date() {
+        // Create a context with a date far in the past
+        let old_date = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let ctx = TemplateContext::new(old_date, "test", "test-model");
+        let result =
+            expand_system_prompt("Session: {{session_date}}, Today: {{current_date}}", &ctx);
+        assert!(result.contains("Session: 2020-01-01"));
+        assert_ne!(result, "Session: 2020-01-01, Today: 2020-01-01"); // today != 2020-01-01
+    }
+
+    #[test]
+    fn test_default_prompt_contains_current_date() {
+        use crate::models::profile::DEFAULT_SYSTEM_PROMPT;
+        assert!(DEFAULT_SYSTEM_PROMPT.contains("{{current_date}}"));
+        assert!(DEFAULT_SYSTEM_PROMPT.contains("{{current_datetime}}"));
     }
 }

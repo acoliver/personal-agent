@@ -189,7 +189,7 @@ impl LlmClient {
                         }
                     }
                     Role::Assistant => {
-                        req.add_user_prompt(format!("[Assistant]: {}", &m.content));
+                        req.add_user_prompt(format!("[Assistant]: {}", m.content));
                     }
                     Role::System => req.add_system_prompt(m.content.clone()),
                 }

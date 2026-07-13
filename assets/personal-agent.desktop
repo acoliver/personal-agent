@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Personal Agent
+Comment=Chat with AI models from your system tray
+Exec=personal-agent
+Icon=personal-agent
+Terminal=false
+Categories=Utility;Network;
+StartupNotify=false
+X-KDE-StartupNotify=false

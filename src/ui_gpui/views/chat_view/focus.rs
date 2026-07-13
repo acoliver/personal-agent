@@ -43,7 +43,7 @@ impl ChatView {
             && !self.state.profile_dropdown_open
     }
 
-    pub(super) fn focus_composer(&mut self, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn focus_composer(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.composer_focused = true;
         self.state.conversation_title_editing = false;
         self.state.conversation_dropdown_open = false;

@@ -79,6 +79,14 @@ impl MainPanel {
         }
     }
 
+    /// Save the current chat draft text so it survives popup close/reopen.
+    /// Called from `SystemTray::close_popup` before the window is destroyed.
+    pub fn save_chat_draft(&self, cx: &gpui::App) {
+        if let Some(ref chat_view) = self.chat_view {
+            chat_view.read(cx).save_current_draft();
+        }
+    }
+
     /// @plan PLAN-20260304-GPUIREMEDIATE.P06
     /// @requirement REQ-ARCH-002.5
     /// @requirement REQ-ARCH-006.3

@@ -180,10 +180,11 @@ impl ChatView {
                     // have no active conversation id (the event and the
                     // local composer state are independent concerns).
                     if let Some(conversation_id) = self.state.active_conversation_id {
-                        println!(">>> Escape pressed - stopping stream <<<");
                         self.emit(UserEvent::StopStreaming { conversation_id });
                     }
                     self.state.streaming = StreamingState::Idle;
+                    // Refocus so keyboard input works after stopping.
+                    self.focus_composer(cx);
                     cx.notify();
                 }
             }
@@ -736,6 +737,7 @@ impl ChatView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
+                    window.activate_window();
                     window.focus(&focus_handle, cx);
                     this.focus_composer(cx);
                 }),
@@ -785,13 +787,20 @@ impl ChatView {
                     .child("Stop")
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
+                        cx.listener(|this, _, window, cx| {
                             if let Some(conversation_id) = this.state.active_conversation_id {
                                 tracing::info!("Stop button clicked - emitting StopStreaming");
                                 this.emit(UserEvent::StopStreaming { conversation_id });
                             }
                             this.state.streaming = StreamingState::Idle;
                             this.maybe_scroll_chat_to_bottom(cx);
+                            // Refocus the composer so keyboard input works
+                            // immediately after stopping — without this,
+                            // GPUI leaves focus on the now-vanished Stop
+                            // button div, making all text inputs unresponsive
+                            // until the popup is toggled.
+                            this.focus_composer(cx);
+                            window.focus(&this.focus_handle, cx);
                             cx.notify();
                         }),
                     )

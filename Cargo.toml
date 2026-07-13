@@ -3,7 +3,7 @@ name = "personal_agent"
 version = "0.3.7"
 edition = "2021"
 license = "MIT"
-description = "Personal agent with macOS menu bar UI"
+description = "Personal agent with system tray UI (macOS menu bar / Linux KDE / Windows)"
 
 
 [[bin]]
@@ -110,8 +110,8 @@ cocoa = "0.26"
 objc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3", features = ["linux-native"] }
-ksni = { version = "0.3", features = ["blocking"] }
+keyring = { version = "3", features = ["sync-secret-service"] }
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 tray-icon = "0.21"
@@ -153,9 +153,23 @@ priority = "optional"
 depends = "$auto"
 assets = [
     ["target/release/personal_agent_gpui", "usr/bin/personal-agent", "755"],
+    ["assets/personal-agent.desktop", "usr/share/applications/personal-agent.desktop", "644"],
+    ["assets/icon-16.png", "usr/share/icons/hicolor/16x16/apps/personal-agent.png", "644"],
+    ["assets/icon-32.png", "usr/share/icons/hicolor/32x32/apps/personal-agent.png", "644"],
+    ["assets/icon-64.png", "usr/share/icons/hicolor/64x64/apps/personal-agent.png", "644"],
+    ["assets/AppIcon.iconset/icon_128x128.png", "usr/share/icons/hicolor/128x128/apps/personal-agent.png", "644"],
+    ["assets/AppIcon.iconset/icon_256x256.png", "usr/share/icons/hicolor/256x256/apps/personal-agent.png", "644"],
+    ["assets/AppIcon.iconset/icon_512x512.png", "usr/share/icons/hicolor/512x512/apps/personal-agent.png", "644"],
 ]
 
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/personal_agent_gpui", dest = "/usr/bin/personal-agent", mode = "755" },
+    { source = "assets/personal-agent.desktop", dest = "/usr/share/applications/personal-agent.desktop", mode = "644" },
+    { source = "assets/icon-16.png", dest = "/usr/share/icons/hicolor/16x16/apps/personal-agent.png", mode = "644" },
+    { source = "assets/icon-32.png", dest = "/usr/share/icons/hicolor/32x32/apps/personal-agent.png", mode = "644" },
+    { source = "assets/icon-64.png", dest = "/usr/share/icons/hicolor/64x64/apps/personal-agent.png", mode = "644" },
+    { source = "assets/AppIcon.iconset/icon_128x128.png", dest = "/usr/share/icons/hicolor/128x128/apps/personal-agent.png", mode = "644" },
+    { source = "assets/AppIcon.iconset/icon_256x256.png", dest = "/usr/share/icons/hicolor/256x256/apps/personal-agent.png", mode = "644" },
+    { source = "assets/AppIcon.iconset/icon_512x512.png", dest = "/usr/share/icons/hicolor/512x512/apps/personal-agent.png", mode = "644" },
 ]

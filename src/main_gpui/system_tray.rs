@@ -42,14 +42,57 @@ thread_local! {
 #[cfg(target_os = "linux")]
 use ksni::blocking::{Handle as KsniHandle, TrayMethods};
 #[cfg(target_os = "linux")]
-use ksni::{Category as KsniCategory, Status as KsniStatus, Tray as KsniTray};
+use ksni::menu::StandardItem;
+#[cfg(target_os = "linux")]
+use ksni::{
+    Category as KsniCategory, Icon as KsniIcon, MenuItem, Status as KsniStatus, Tray as KsniTray,
+};
+#[cfg(target_os = "linux")]
+use std::sync::LazyLock;
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+/// Decode the embedded menu-bar PNG into an ARGB32 `ksni::Icon` once at startup.
+///
+/// ksni's SNI protocol expects ARGB32 network-byte-order pixel data. The
+/// `image` crate gives us RGBA8, so we rotate each 4-byte chunk right by one
+/// (RGBA → ARGB). Using inline `icon_pixmap` instead of a freedesktop named
+/// icon guarantees the tray renders even when the system icon theme lacks a
+/// matching entry — which was the root cause of the "no icon shows" bug.
+#[cfg(target_os = "linux")]
+static TRAY_ICON: LazyLock<KsniIcon> = LazyLock::new(|| {
+    let png_data = include_bytes!("../../assets/MenuBarIcon.imageset/icon-32.png");
+    let img = match image::load_from_memory_with_format(png_data, image::ImageFormat::Png) {
+        Ok(img) => img,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to decode embedded tray icon PNG; using 1x1 placeholder");
+            return KsniIcon {
+                width: 1,
+                height: 1,
+                data: vec![0xFF, 0x00, 0x00, 0x00],
+            };
+        }
+    };
+    let (width, height) = (img.width() as i32, img.height() as i32);
+    let mut data = img.into_rgba8().into_vec();
+    // RGBA → ARGB: each pixel [R,G,B,A] → [A,R,G,B] via rotate_right(1).
+    for pixel in data.chunks_exact_mut(4) {
+        pixel.rotate_right(1);
+    }
+    tracing::info!(width, height, "Decoded embedded tray icon for ksni");
+    KsniIcon {
+        width,
+        height,
+        data,
+    }
+});
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy)]
 enum LinuxTrayEvent {
     Activate { x: i32, y: i32 },
+    OpenPopup,
+    Quit,
 }
 
 #[cfg(target_os = "linux")]
@@ -76,8 +119,45 @@ impl KsniTray for LinuxTray {
     }
 
     fn icon_name(&self) -> String {
-        // Standard icon fallback that usually resolves in Linux icon themes.
-        "applications-system".to_string()
+        // Secondary fallback: the personal-agent named icon is installed by the
+        // .deb into hicolor. If present, the host may prefer it (crisper SVG
+        // scaling). Inline icon_pixmap below is the guaranteed fallback.
+        "personal-agent".to_string()
+    }
+
+    fn icon_pixmap(&self) -> Vec<KsniIcon> {
+        // Inline ARGB32 pixel data — renders regardless of icon theme state.
+        vec![TRAY_ICON.clone()]
+    }
+
+    fn tool_tip(&self) -> ksni::ToolTip {
+        ksni::ToolTip {
+            title: "PersonalAgent".to_string(),
+            description: "Click to open chat".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn menu(&self) -> Vec<MenuItem<Self>> {
+        let tx_open = self.click_tx.clone();
+        let tx_quit = self.click_tx.clone();
+        vec![
+            MenuItem::Standard(StandardItem {
+                label: "Open".to_string(),
+                activate: Box::new(move |_this| {
+                    let _ = tx_open.send(LinuxTrayEvent::OpenPopup);
+                }),
+                ..Default::default()
+            }),
+            MenuItem::Separator,
+            MenuItem::Standard(StandardItem {
+                label: "Quit".to_string(),
+                activate: Box::new(move |_this| {
+                    let _ = tx_quit.send(LinuxTrayEvent::Quit);
+                }),
+                ..Default::default()
+            }),
+        ]
     }
 
     fn activate(&mut self, x: i32, y: i32) {
@@ -256,6 +336,39 @@ impl SystemTray {
 // Linux constructor + click listener
 // ============================================================================
 
+/// Detect the taskbar/panel height on Linux by querying `_NET_WORKAREA`
+/// from the X root window via `xprop` or `xlib`.
+///
+/// Returns the difference between the full screen height and the work area
+/// height. Falls back to 56px (a common KDE panel height + small gap) if
+/// detection fails.
+#[cfg(target_os = "linux")]
+fn linux_taskbar_height(screen_height: f32) -> f32 {
+    // Try _NET_WORKAREA via xprop (lightweight, no X11 crate dependency).
+    if let Ok(output) = std::process::Command::new("xprop")
+        .args(["-root", "_NET_WORKAREA"])
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            // Format: _NET_WORKAREA(CARDINAL) = 0, 0, 2560, 1362
+            if let Some(work_area_h) = text
+                .split('=')
+                .nth(1)
+                .and_then(|s| s.trim().trim_end_matches(',').split(',').nth(3))
+                .and_then(|s| s.trim().parse::<f32>().ok())
+            {
+                let taskbar = screen_height - work_area_h;
+                if taskbar > 0.0 && taskbar < 200.0 {
+                    return taskbar;
+                }
+            }
+        }
+    }
+    // Conservative fallback: 56px covers most KDE/default panels.
+    56.0
+}
+
 #[cfg(target_os = "linux")]
 impl SystemTray {
     pub fn new() -> anyhow::Result<Self> {
@@ -307,6 +420,21 @@ impl SystemTray {
                             tray.toggle_popup(cx);
                         });
                     }
+                    LinuxTrayEvent::OpenPopup => {
+                        info!("Linux tray menu: Open");
+                        let _ = cx.update_global::<Self, _>(|tray, cx| {
+                            if tray.popup_window.is_some() {
+                                tray.close_popup(cx);
+                            }
+                            tray.open_popup(cx);
+                        });
+                    }
+                    LinuxTrayEvent::Quit => {
+                        info!("Linux tray menu: Quit");
+                        let _ = cx.update(|cx| {
+                            cx.quit();
+                        });
+                    }
                 }
             }
 
@@ -355,22 +483,46 @@ impl SystemTray {
         let origin_x = f32::from(bounds.origin.x);
         let origin_y = f32::from(bounds.origin.y);
 
+        // Detect the actual taskbar/panel height by querying the X11 work area
+        // (_NET_WORKAREA). If unavailable, fall back to a conservative default.
+        // KDE panels are typically 48-72px; we use the gap between the full
+        // screen height and the work area height as the taskbar height.
+        // Add a safety margin because _NET_WORKAREA often underestimates the
+        // panel height (it may not include panel borders/shadows). On KDE
+        // Plasma 6, the work area can be ~16px shorter than the actual panel.
+        let taskbar_height = linux_taskbar_height(screen_height) + 16.0;
+        const POPUP_MARGIN: f32 = 8.0;
+
+        info!(
+            screen_width,
+            screen_height, taskbar_height, "Linux popup positioning parameters"
+        );
+
         if std::env::var("PA_TEST_POPUP_ONSCREEN").ok().as_deref() == Some("1") {
-            let x = (screen_width - menu_width - 24.0).max(0.0);
-            return (x, 36.0);
+            // Bottom-right, just above the taskbar.
+            let x = (screen_width - menu_width - POPUP_MARGIN).max(0.0);
+            let y = (screen_height - menu_height - taskbar_height).max(0.0);
+            return (x, y);
         }
 
         let click_position = self.last_click_position.lock().ok().and_then(|lock| *lock);
 
-        if let Some((click_x, click_y)) = click_position {
+        // Treat (0,0) as "no real coordinates" — SNI hosts often send zeros.
+        let has_real_coords = click_position
+            .map(|(x, y)| x > 1.0 || y > 1.0)
+            .unwrap_or(false);
+
+        if has_real_coords {
+            let (click_x, click_y) = click_position.unwrap();
             let relative_x = click_x - origin_x;
             let relative_y = click_y - origin_y;
 
+            // Tray is at the bottom of the screen: popup goes ABOVE the icon.
             let raw_x = relative_x - (menu_width / 2.0);
-            let raw_y = relative_y + 12.0;
+            let raw_y = relative_y - menu_height - POPUP_MARGIN;
 
             let max_x = (screen_width - menu_width).max(0.0);
-            let max_y = (screen_height - menu_height).max(0.0);
+            let max_y = (screen_height - menu_height - taskbar_height).max(0.0);
 
             let clamped_x = raw_x.clamp(0.0, max_x);
             let clamped_y = raw_y.clamp(0.0, max_y);
@@ -382,14 +534,17 @@ impl SystemTray {
                 raw_y,
                 clamped_x,
                 clamped_y,
-                "Computed Linux popup position from tray click"
+                "Computed Linux popup position from tray click (above icon)"
             );
 
             (clamped_x, clamped_y)
         } else {
-            info!("No Linux tray click position available; using fallback popup position");
-            let x = (screen_width - menu_width - 24.0).max(0.0);
-            (x, 36.0)
+            // No real click coordinates (SNI sent 0,0 or no click yet).
+            // Anchor to bottom-right, just above the taskbar.
+            info!("No real Linux tray click position; anchoring popup bottom-right above taskbar");
+            let x = (screen_width - menu_width - POPUP_MARGIN).max(0.0);
+            let y = (screen_height - menu_height - taskbar_height).max(0.0);
+            (x, y)
         }
     }
 }
@@ -742,6 +897,12 @@ impl SystemTray {
                     height: px(menu_height),
                 },
             })),
+            // On Linux, use PopUp kind so the X11 window gets override_redirect=true,
+            // bypassing KWin's window placement policy which would re-center the popup.
+            // On macOS/Windows, Normal kind works fine with the tray-icon-relative positioning.
+            #[cfg(target_os = "linux")]
+            kind: WindowKind::PopUp,
+            #[cfg(not(target_os = "linux"))]
             kind: WindowKind::Normal,
             focus: true,
             show: true,
@@ -870,8 +1031,11 @@ impl SystemTray {
 
     /// Close the popup/popout window and clear the global handle.
 
+    /// Fully destroy the popup window (used when switching modes or quitting).
     fn close_popup(&mut self, cx: &mut App) {
         if let Some(handle) = self.popup_window.take() {
+            // The on_window_should_close handler (registered in open_popup)
+            // saves the chat draft text before the window is removed.
             let _ = handle.update(cx, |_, window, _cx| {
                 window.remove_window();
             });

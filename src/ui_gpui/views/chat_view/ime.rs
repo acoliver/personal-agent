@@ -138,6 +138,13 @@ impl gpui::EntityInputHandler for ChatView {
         input.replace_range(start_utf8..end_utf8, text);
         self.state.cursor_position = start_utf8 + text.len();
         self.state.marked_range = None;
+
+        // Stash the draft immediately so it survives popup close/reopen
+        // even if the window is destroyed before the next store snapshot.
+        if let Some(conv_id) = self.conversation_id {
+            super::save_draft(conv_id, &self.state.input_text);
+        }
+
         cx.notify();
     }
 

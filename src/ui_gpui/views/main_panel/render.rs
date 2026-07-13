@@ -24,7 +24,6 @@ impl MainPanel {
         if !self.is_initialized() {
             self.init(cx);
             window.focus(&self.focus_handle, cx);
-            println!(">>> MainPanel first render - focused <<<");
         }
         if !self.runtime_started && self.is_initialized() {
             self.start_runtime(cx);
@@ -46,7 +45,6 @@ impl MainPanel {
             return;
         }
         if let Some(view_id) = crate::ui_gpui::navigation_channel().take_pending() {
-            println!(">>> MainPanel::render - Processing navigation to {view_id:?} <<<");
             tracing::info!("MainPanel: Processing navigation request to {:?}", view_id);
             if view_id == ViewId::ModelSelector {
                 if let Some(ref model_selector) = self.model_selector_view {
@@ -67,7 +65,7 @@ impl MainPanel {
 
     /// Focus the child view that matches the current navigation target.
     fn focus_current_view(
-        &self,
+        &mut self,
         current: ViewId,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
@@ -82,7 +80,18 @@ impl MainPanel {
             };
         }
         match current {
-            ViewId::Chat => focus_child!(self.chat_view),
+            ViewId::Chat => {
+                if let Some(ref chat_view) = self.chat_view {
+                    let focus = chat_view.read(cx).focus_handle(cx);
+                    window.focus(&focus, cx);
+                    // Also focus the composer so typing works immediately after
+                    // navigating back from Settings/other views.
+                    chat_view.update(cx, |view, cx| {
+                        view.focus_composer(cx);
+                    });
+                    return;
+                }
+            }
             ViewId::Settings => focus_child!(self.settings_view),
             ViewId::History => focus_child!(self.history_panel),
             ViewId::ProfileEditor => focus_child!(self.profile_editor_view),
@@ -242,7 +251,13 @@ impl gpui::Render for MainPanel {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_this, _, window, cx| {
-                    println!(">>> MainPanel clicked - requesting focus <<<");
+                    // On Linux/KDE the popup is an override_redirect window.
+                    // When the user clicks away and back, X11 doesn't send a
+                    // FocusIn event, so GPUI never restores keyboard dispatch.
+                    // Calling activate_window() forces XSetInputFocus so the
+                    // window regains keyboard input. Without this, text fields
+                    // are dead until the popup is toggled.
+                    window.activate_window();
                     window.focus(&focus_handle, cx);
                     cx.notify();
                 }),

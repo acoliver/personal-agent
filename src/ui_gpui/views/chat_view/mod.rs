@@ -38,6 +38,31 @@ use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::conversation_list::{ConversationListMode, ConversationListView};
+
+/// Stashes unsent input text per conversation so it survives popup
+/// close/reopen cycles. The popup is destroyed and recreated on each toggle,
+/// which would otherwise lose any text the user had typed.
+static DRAFT_TEXT: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<Uuid, String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Save the current draft text for a conversation so it can be restored later.
+pub(crate) fn save_draft(conversation_id: Uuid, text: &str) {
+    if let Ok(mut drafts) = DRAFT_TEXT.lock() {
+        if text.is_empty() {
+            drafts.remove(&conversation_id);
+        } else {
+            drafts.insert(conversation_id, text.to_string());
+        }
+    }
+}
+
+/// Take (and remove) any stashed draft text for a conversation.
+pub(crate) fn take_draft(conversation_id: Uuid) -> Option<String> {
+    DRAFT_TEXT
+        .lock()
+        .ok()
+        .and_then(|mut drafts| drafts.remove(&conversation_id))
+}
 use gpui::{
     point, prelude::*, px, Entity, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent,
 };
@@ -80,6 +105,15 @@ impl ChatView {
             conversation_list,
             #[cfg(test)]
             maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
+        }
+    }
+
+    /// Stash the current input text as a draft for the active conversation.
+    /// Called before the popup window is destroyed so the text survives
+    /// the close/reopen cycle.
+    pub fn save_current_draft(&self) {
+        if let Some(conv_id) = self.conversation_id {
+            save_draft(conv_id, &self.state.input_text);
         }
     }
 
@@ -286,6 +320,26 @@ impl ChatView {
         let previous_conversation_id = self.conversation_id;
         let previous_selection_generation = self.selection_generation;
         let previous_messages_empty = self.state.messages.is_empty();
+
+        // Save the current draft text when switching conversations so it
+        // survives popup close/reopen cycles.
+        if previous_conversation_id != selected_conversation_id {
+            if let Some(prev_id) = previous_conversation_id {
+                save_draft(prev_id, &self.state.input_text);
+            }
+            // Restore any stashed draft for the newly-selected conversation.
+            if let Some(new_id) = selected_conversation_id {
+                if let Some(draft) = take_draft(new_id) {
+                    self.state.input_text = draft;
+                    self.state.cursor_position = self.state.input_text.len();
+                }
+            }
+        } else if let Some(conv_id) = selected_conversation_id {
+            // Continuously update the stash for the current conversation so
+            // the latest draft is preserved even if the popup is closed
+            // without a prior snapshot (e.g. direct tray toggle).
+            save_draft(conv_id, &self.state.input_text);
+        }
 
         self.state.conversations = conversations;
         self.state.active_conversation_id = selected_conversation_id;
@@ -906,6 +960,10 @@ impl ChatView {
                 .map_or(0, |(i, _)| i);
             self.state.input_text.drain(prev..pos);
             self.state.cursor_position = prev;
+            // Update the draft stash on backspace too.
+            if let Some(conv_id) = self.conversation_id {
+                save_draft(conv_id, &self.state.input_text);
+            }
         }
         cx.notify();
     }

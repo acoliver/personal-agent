@@ -45,7 +45,17 @@ Download the latest Linux package from [GitHub Releases](https://github.com/acol
 - `.rpm` for Fedora/RHEL
 - `.zip` for a portable archive
 
-The Linux tray uses the StatusNotifierItem protocol. KDE Plasma supports it out of the box. GNOME users may need an AppIndicator/SNI extension.
+The `.deb` and `.rpm` packages install the binary, a `.desktop` file, and hicolor icons at standard freedesktop paths (`/usr/share/icons/hicolor/*/apps/personal-agent.png`).
+
+The Linux tray uses the StatusNotifierItem (SNI) protocol via the `ksni` crate. KDE Plasma supports it out of the box — the tray icon appears in the bottom-right system tray area, and clicking it opens the chat popup just above the taskbar. GNOME users may need an AppIndicator/SNI extension.
+
+To verify the tray is working on KDE:
+
+```bash
+scripts/verify_linux_tray.sh
+```
+
+This script checks SNI registration via D-Bus, triggers the popup, and verifies window positioning.
 
 ## First run
 

@@ -149,6 +149,7 @@ impl McpAddView {
                         cx.listener(|this, _, window, cx| {
                             this.state.active_field = Some(ActiveField::ManualEntry);
                             this.state.show_registry_dropdown = false;
+                            window.activate_window();
                             window.focus(&this.focus_handle, cx);
                             cx.notify();
                         }),
@@ -158,12 +159,20 @@ impl McpAddView {
                             .text_color(Theme::text_muted())
                             .w_full()
                             .overflow_hidden()
-                            .child("npx @scope/package or docker image or URL")
+                            .child(if active {
+                                "|"
+                            } else {
+                                "npx @scope/package or docker image or URL"
+                            })
                     } else {
                         div()
                             .text_color(Theme::text_primary())
                             .w_full()
-                            .child(self.state.manual_entry.clone())
+                            .child(if active {
+                                format!("{}|", self.state.manual_entry)
+                            } else {
+                                self.state.manual_entry.clone()
+                            })
                     }),
             )
     }
@@ -221,6 +230,7 @@ impl McpAddView {
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
                             this.toggle_registry_dropdown(cx);
+                            window.activate_window();
                             window.focus(&this.focus_handle, cx);
                         }),
                     )
@@ -273,6 +283,7 @@ impl McpAddView {
                             MouseButton::Left,
                             cx.listener(move |this, _, window, cx| {
                                 this.select_registry(registry.clone());
+                                window.activate_window();
                                 window.focus(&this.focus_handle, cx);
                                 cx.notify();
                             }),
@@ -315,6 +326,7 @@ impl McpAddView {
                         cx.listener(|this, _, window, cx| {
                             this.state.active_field = Some(ActiveField::SearchQuery);
                             this.state.show_registry_dropdown = false;
+                            window.activate_window();
                             window.focus(&this.focus_handle, cx);
                             cx.notify();
                         }),
@@ -324,12 +336,16 @@ impl McpAddView {
                             .text_color(Theme::text_muted())
                             .w_full()
                             .overflow_hidden()
-                            .child("Search MCP servers...")
+                            .child(if active { "|" } else { "Search MCP servers..." })
                     } else {
                         div()
                             .text_color(Theme::text_primary())
                             .w_full()
-                            .child(self.state.search_query.clone())
+                            .child(if active {
+                                format!("{}|", self.state.search_query)
+                            } else {
+                                self.state.search_query.clone()
+                            })
                     }),
             )
     }
@@ -428,7 +444,7 @@ impl McpAddView {
 
     /// Render the results list
     /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_results(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_results(&self, cx: &mut gpui::Context<Self>, max_h: f32) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -438,7 +454,7 @@ impl McpAddView {
                 div()
                     .id("results-list")
                     .w_full()
-                    .h(px(260.0))
+                    .max_h(px(max_h))
                     .bg(Theme::bg_dark())
                     .border_1()
                     .border_color(Theme::border())
@@ -514,13 +530,26 @@ impl McpAddView {
 
     /// Render the content area
     /// @plan PLAN-20250130-GPUIREDUX.P09
-    fn render_content(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_content(
+        &self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        // Calculate available height for the results list so it scrolls
+        // internally instead of overflowing the popup window. On macOS the
+        // menu bar is at the top so downward growth is fine, but on Linux/KDE
+        // the taskbar is at the bottom and overflow gets clipped.
+        let window_h = f32::from(window.bounds().size.height);
+        let results_top_offset: f32 = 342.0;
+        let bottom_padding: f32 = 12.0;
+        let results_max_h = (window_h - results_top_offset - bottom_padding).max(80.0);
+
         div()
             .id("mcp-add-content")
             .flex_1()
             .w_full()
+            .min_h(px(0.0))
             .bg(Theme::bg_base())
-            .overflow_y_scroll()
             .p(px(12.0))
             .flex()
             .flex_col()
@@ -529,7 +558,7 @@ impl McpAddView {
             .child(Self::render_divider())
             .child(self.render_registry_dropdown(cx))
             .child(self.render_search_field(cx))
-            .child(self.render_results(cx))
+            .child(self.render_results(cx, results_max_h))
     }
 }
 
@@ -543,7 +572,7 @@ impl gpui::Render for McpAddView {
     #[allow(clippy::too_many_lines)]
     fn render(
         &mut self,
-        _window: &mut gpui::Window,
+        window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let root = div()
@@ -584,7 +613,7 @@ impl gpui::Render for McpAddView {
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Content
-            .child(self.render_content(cx));
+            .child(self.render_content(window, cx));
 
         if self.state.show_registry_dropdown {
             root.child(

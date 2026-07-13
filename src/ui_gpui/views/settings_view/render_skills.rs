@@ -409,7 +409,13 @@ impl SettingsView {
     fn render_skill_url_input(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
         let is_active = self.state.active_field == Some(super::ActiveField::InstallSkillUrlInput);
         let display_text = if self.state.install_skill_url_input.is_empty() {
-            "Paste a SKILL.md URL here\u{2026}".to_string()
+            if is_active {
+                "|".to_string()
+            } else {
+                "Paste a SKILL.md URL here\u{2026}".to_string()
+            }
+        } else if is_active {
+            format!("{}|", self.state.install_skill_url_input)
         } else {
             self.state.install_skill_url_input.clone()
         };
@@ -422,8 +428,9 @@ impl SettingsView {
         div()
             .id("skill-url-input")
             .w_full()
-            .h(px(28.0))
+            .min_h(px(36.0))
             .px(px(8.0))
+            .py(px(6.0))
             .bg(Theme::bg_darker())
             .border_1()
             .border_color(if is_active {
@@ -442,6 +449,7 @@ impl SettingsView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
+                    window.activate_window();
                     window.focus(&this.focus_handle, cx);
                     this.set_active_field(Some(super::ActiveField::InstallSkillUrlInput));
                     cx.notify();
