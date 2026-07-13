@@ -25,7 +25,6 @@ for tool in xdotool xclip import compare python3; do
 done
 [[ "$(uname -s)" == "Linux" ]] || { echo "This runner is Linux-only" >&2; exit 2; }
 [[ -n "${DISPLAY:-}" ]] || { echo "DISPLAY is not set" >&2; exit 2; }
-[[ -x "$BIN" ]] || { echo "Build the app first: cargo build --bin personal_agent_gpui" >&2; exit 2; }
 
 mkdir -p "$ARTIFACTS" "$DATA_HOME/PersonalAgent" "$CONFIG_HOME/PersonalAgent/profiles"
 rm -f "$ARTIFACTS/before-selection.png" "$ARTIFACTS/selected.png" \

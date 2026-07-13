@@ -37,13 +37,16 @@ def clipboard() -> str:
 
 
 def set_clipboard(text: str) -> None:
-    subprocess.run(
-        ["xclip", "-selection", "clipboard", "-i"],
-        input=text,
-        text=True,
-        check=True,
-        timeout=0.25,
-    )
+    try:
+        subprocess.run(
+            ["xclip", "-selection", "clipboard", "-i"],
+            input=text,
+            text=True,
+            check=True,
+            timeout=1.0,
+        )
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def geometry(window_id: str) -> dict[str, int]:

@@ -81,7 +81,12 @@ impl ChatView {
             return;
         }
 
-        if let Some(id) = self.current_or_active_conversation_id() {
+        let Some(id) = self.current_or_active_conversation_id() else {
+            self.cancel_rename_conversation(cx);
+            return;
+        };
+
+        {
             let title = self.state.conversation_title_input.trim().to_string();
             if title.is_empty() {
                 self.state.conversation_title_editing = false;

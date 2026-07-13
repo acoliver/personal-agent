@@ -724,6 +724,23 @@ async fn empty_composer_shows_cursor_only_when_focused(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+async fn rename_submission_without_conversation_cancels_editing(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+
+    view.update(cx, |view, cx| {
+        view.state.conversation_title_editing = true;
+        view.state.conversation_title_input = "orphan title".to_string();
+        view.state.rename_replace_on_next_char = true;
+
+        view.submit_rename_conversation(cx);
+
+        assert!(!view.state.conversation_title_editing);
+        assert!(view.state.conversation_title_input.is_empty());
+        assert!(!view.state.rename_replace_on_next_char);
+    });
+}
+
+#[gpui::test]
 async fn send_message_and_start_streaming_reenables_autoscroll_and_starts_stream(
     cx: &mut TestAppContext,
 ) {

@@ -30,7 +30,7 @@ echo ""
 echo "=== Stopping any previous instances ==="
 systemctl --user stop "${UNIT}.service" 2>/dev/null || true
 # Don't pkill ourselves — match the binary path exactly, excluding this script
-{ pgrep -f "target/debug/personal_agent_gpui$\|target/release/personal_agent_gpui$\|/usr/bin/personal-agent$" 2>/dev/null || true; } | while read pid; do
+{ pgrep -f "target/debug/personal_agent_gpui$\|target/release/personal_agent_gpui$\|/usr/bin/personal-agent$" 2>/dev/null || true; } | while read -r pid; do
   kill "$pid" 2>/dev/null || true
 done
 sleep 1
