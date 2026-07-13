@@ -1,7 +1,21 @@
 use super::*;
 
+fn copy_modifiers() -> Modifiers {
+    if cfg!(target_os = "macos") {
+        Modifiers {
+            platform: true,
+            ..Modifiers::default()
+        }
+    } else {
+        Modifiers {
+            control: true,
+            ..Modifiers::default()
+        }
+    }
+}
+
 #[gpui::test]
-async fn linux_control_c_copies_active_message_selection(cx: &mut TestAppContext) {
+async fn platform_copy_shortcut_copies_active_message_selection(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();
 
@@ -18,16 +32,7 @@ async fn linux_control_c_copies_active_message_selection(cx: &mut TestAppContext
                 dragging: false,
             });
 
-            view.handle_key_down(
-                &modified_chat_key_event(
-                    "c",
-                    Modifiers {
-                        control: true,
-                        ..Modifiers::default()
-                    },
-                ),
-                cx,
-            );
+            view.handle_key_down(&modified_chat_key_event("c", copy_modifiers()), cx);
 
             assert_eq!(
                 cx.read_from_clipboard().and_then(|item| item.text()),
@@ -56,16 +61,7 @@ async fn stale_message_selection_is_cleared_instead_of_copied(cx: &mut TestAppCo
             });
             cx.write_to_clipboard(gpui::ClipboardItem::new_string("sentinel".to_string()));
 
-            view.handle_key_down(
-                &modified_chat_key_event(
-                    "c",
-                    Modifiers {
-                        control: true,
-                        ..Modifiers::default()
-                    },
-                ),
-                cx,
-            );
+            view.handle_key_down(&modified_chat_key_event("c", copy_modifiers()), cx);
 
             assert!(view.active_message_selection.is_none());
             assert_eq!(
