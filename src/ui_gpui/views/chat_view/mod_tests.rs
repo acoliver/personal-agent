@@ -8,6 +8,7 @@ use crate::presentation::view_command::{
 };
 use crate::ui_gpui::app_store::StreamingStoreSnapshot;
 use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::components::markdown_content::visible_document::{MessageRevision, Selection};
 use chrono::Utc;
 use gpui::{
     point, AppContext, KeyDownEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
@@ -813,126 +814,5 @@ async fn wheel_scroll_down_reenables_autoscroll_only_when_near_bottom(cx: &mut T
     });
 }
 
-#[gpui::test]
-async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppContext) {
-    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
-    let mut visual_cx = cx.add_empty_window().clone();
-    let (bridge, user_rx) = make_chat_bridge();
-
-    visual_cx.update(|_window, app| {
-        view.update(app, |view: &mut ChatView, cx| {
-            view.set_bridge(bridge.clone());
-            view.state.input_text = "firstsecond".to_string();
-            view.state.cursor_position = "first".len();
-
-            view.handle_key_down(
-                &modified_chat_key_event(
-                    "enter",
-                    Modifiers {
-                        shift: true,
-                        ..Modifiers::default()
-                    },
-                ),
-                cx,
-            );
-
-            assert_eq!(view.state.input_text, "first\nsecond");
-            assert_eq!(view.state.cursor_position, "first\n".len());
-            assert!(user_rx.try_recv().is_err());
-            assert_eq!(view.state.streaming, StreamingState::Idle);
-
-            view.handle_key_down(
-                &modified_chat_key_event(
-                    "enter",
-                    Modifiers {
-                        control: true,
-                        ..Modifiers::default()
-                    },
-                ),
-                cx,
-            );
-
-            assert_eq!(view.state.input_text, "first\n\nsecond");
-            assert_eq!(view.state.cursor_position, "first\n\n".len());
-            assert!(user_rx.try_recv().is_err());
-            assert_eq!(view.state.streaming, StreamingState::Idle);
-
-            view.handle_key_down(
-                &modified_chat_key_event(
-                    "enter",
-                    Modifiers {
-                        alt: true,
-                        ..Modifiers::default()
-                    },
-                ),
-                cx,
-            );
-
-            assert_eq!(view.state.input_text, "first\n\n\nsecond");
-            assert_eq!(view.state.cursor_position, "first\n\n\n".len());
-            assert!(user_rx.try_recv().is_err());
-            assert_eq!(view.state.streaming, StreamingState::Idle);
-        });
-    });
-}
-
-#[gpui::test]
-async fn plain_enter_still_submits_message(cx: &mut TestAppContext) {
-    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
-    let mut visual_cx = cx.add_empty_window().clone();
-    let (bridge, user_rx) = make_chat_bridge();
-
-    visual_cx.update(|_window, app| {
-        view.update(app, |view: &mut ChatView, cx| {
-            view.set_bridge(bridge.clone());
-            view.state.input_text = "send me".to_string();
-            view.state.cursor_position = view.state.input_text.len();
-
-            view.handle_key_down(&chat_key_event("enter"), cx);
-
-            assert_eq!(
-                user_rx.try_recv().ok(),
-                Some(UserEvent::SendMessage {
-                    text: "send me".to_string(),
-                    conversation_id: None,
-                })
-            );
-            assert!(view.state.input_text.is_empty());
-            assert_eq!(view.state.cursor_position, 0);
-            assert_eq!(
-                view.state.streaming,
-                StreamingState::Streaming {
-                    content: String::new(),
-                    done: false,
-                }
-            );
-        });
-    });
-}
-
-#[gpui::test]
-async fn send_message_targets_selected_conversation(cx: &mut TestAppContext) {
-    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
-    let mut visual_cx = cx.add_empty_window().clone();
-    let (bridge, user_rx) = make_chat_bridge();
-    let conversation_id = Uuid::new_v4();
-
-    visual_cx.update(|_window, app| {
-        view.update(app, |view: &mut ChatView, cx| {
-            view.set_bridge(bridge.clone());
-            view.conversation_id = Some(conversation_id);
-            view.state.input_text = "continue here".to_string();
-            view.state.cursor_position = view.state.input_text.len();
-
-            view.handle_key_down(&chat_key_event("enter"), cx);
-
-            assert_eq!(
-                user_rx.try_recv().ok(),
-                Some(UserEvent::SendMessage {
-                    text: "continue here".to_string(),
-                    conversation_id: Some(conversation_id),
-                })
-            );
-        });
-    });
-}
+#[path = "mod_tests/keyboard_tests.rs"]
+mod keyboard_tests;

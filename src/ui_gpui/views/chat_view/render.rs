@@ -6,11 +6,10 @@
 //!
 //! @plan PLAN-20260325-ISSUE11B.P02
 
-use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
+use super::state::{ApprovalBubbleState, StreamingState};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
-use crate::ui_gpui::components::markdown_content::{blocks_to_elements_with_color, MarkdownBlock};
 use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
@@ -22,7 +21,7 @@ use std::sync::Arc;
 
 /// Strip emojis from a string, replacing them with empty string.
 /// This only affects display, not the underlying database storage.
-fn strip_emojis(text: &str) -> String {
+pub(super) fn strip_emojis(text: &str) -> String {
     text.chars().filter(|c| !is_emoji(*c)).collect()
 }
 
@@ -58,34 +57,6 @@ const fn is_emoji(c: char) -> bool {
     )
 }
 
-/// Check if markdown blocks contain any links.
-///
-/// @plan:PLAN-20260402-ISSUE153.P02
-/// @requirement:REQ-MSG-LINK-002
-fn has_any_links(blocks: &[MarkdownBlock]) -> bool {
-    blocks.iter().any(|block| match block {
-        MarkdownBlock::Paragraph { links, .. } | MarkdownBlock::Heading { links, .. } => {
-            !links.is_empty()
-        }
-        MarkdownBlock::BlockQuote { blocks } => has_any_links(blocks),
-        MarkdownBlock::List { items, .. } => {
-            items.iter().any(|item_blocks| has_any_links(item_blocks))
-        }
-        MarkdownBlock::Table { header, rows, .. } => {
-            let header_has_links = header.iter().any(|cell| {
-                !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
-            });
-            let body_has_links = rows.iter().any(|row| {
-                row.iter().any(|cell| {
-                    !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
-                })
-            });
-            header_has_links || body_has_links
-        }
-        _ => false,
-    })
-}
-
 impl ChatView {
     /// Dispatch a `KeyDownEvent` from the root render node.
     ///
@@ -99,8 +70,7 @@ impl ChatView {
         let key = &event.keystroke.key;
         let modifiers = &event.keystroke.modifiers;
 
-        if modifiers.platform {
-            self.handle_platform_key(key, cx);
+        if self.handle_global_key(key, *modifiers, cx) {
             return;
         }
 
@@ -192,6 +162,50 @@ impl ChatView {
         }
     }
 
+    fn handle_global_key(
+        &mut self,
+        key: &str,
+        modifiers: gpui::Modifiers,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let standard_edit_shortcut = modifiers.platform
+            || (!cfg!(target_os = "macos")
+                && modifiers.control
+                && matches!(key, "a" | "c" | "v" | "x"));
+        if standard_edit_shortcut {
+            self.handle_platform_key(key, cx);
+            return true;
+        }
+        if key == "escape" && self.message_context_menu.is_some() {
+            self.message_context_menu = None;
+            cx.notify();
+            return true;
+        }
+        false
+    }
+
+    fn handle_copy_shortcut(&mut self, cx: &mut gpui::Context<Self>) {
+        let had_message_selection = self.active_message_selection.is_some();
+        let message_text = self.fresh_active_message_selected_text();
+        if had_message_selection && message_text.is_none() {
+            self.active_message_selection = None;
+            self.message_context_menu = None;
+            cx.notify();
+        }
+        let text = if let Some(selected_text) = message_text {
+            selected_text
+        } else if self.sidebar_search_focused(cx) {
+            self.state.sidebar_search_query.clone()
+        } else if self.state.conversation_title_editing {
+            self.state.conversation_title_input.clone()
+        } else {
+            self.state.input_text.clone()
+        };
+        if !text.is_empty() {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        }
+    }
+
     /// Handle Cmd+key shortcuts.
     fn handle_platform_key(&mut self, key: &str, cx: &mut gpui::Context<Self>) {
         match key {
@@ -209,6 +223,8 @@ impl ChatView {
                 println!(">>> Cmd+N pressed - new conversation <<<");
                 self.emit(UserEvent::NewConversation);
                 self.state.messages.clear();
+                self.active_message_selection = None;
+                self.message_context_menu = None;
                 self.state.input_text.clear();
                 self.state.cursor_position = 0;
                 self.state.streaming = StreamingState::Idle;
@@ -245,18 +261,7 @@ impl ChatView {
                     self.handle_select_all(cx);
                 }
             }
-            "c" => {
-                let text = if self.sidebar_search_focused(cx) {
-                    self.state.sidebar_search_query.clone()
-                } else if self.state.conversation_title_editing {
-                    self.state.conversation_title_input.clone()
-                } else {
-                    self.state.input_text.clone()
-                };
-                if !text.is_empty() {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                }
-            }
+            "c" => self.handle_copy_shortcut(cx),
             "x" => {
                 if self.sidebar_search_focused(cx) {
                     let text = self.state.sidebar_search_query.clone();
@@ -297,6 +302,12 @@ impl ChatView {
         let streaming = self.state.streaming.clone();
         let show_thinking = self.state.show_thinking;
         let filter_emoji = self.state.filter_emoji;
+        let view_entity = cx.entity();
+        let active_selection = self.active_message_selection.clone();
+        let conversation_identity = self
+            .state
+            .active_conversation_id
+            .map_or_else(|| "new".to_string(), |id| id.to_string());
         div()
             .id("chat-area")
             .flex_1()
@@ -344,7 +355,15 @@ impl ChatView {
                         .w_full()
                         .flex()
                         .justify_start()
-                        .child(Self::render_message(&msg, show_thinking, filter_emoji))
+                        .child(Self::render_message(
+                            &msg,
+                            i,
+                            &conversation_identity,
+                            show_thinking,
+                            filter_emoji,
+                            active_selection.as_ref(),
+                            view_entity.clone(),
+                        ))
                 }))
             })
             // Approval bubbles (inline in message stream) - queue: only first pending
@@ -407,97 +426,6 @@ impl ChatView {
             }
         }
         div().id("streaming-msg").child(bubble)
-    }
-
-    /// Render a single message
-    /// @plan PLAN-20250130-GPUIREDUX.P03
-    /// @plan PLAN-20260407-ISSUE172.P03 (markdown caching)
-    pub(super) fn render_message(
-        msg: &ChatMessage,
-        show_thinking: bool,
-        filter_emoji: bool,
-    ) -> impl IntoElement {
-        match msg.role {
-            MessageRole::User => Self::render_user_message(msg),
-            MessageRole::Assistant => {
-                Self::render_assistant_message(msg, show_thinking, filter_emoji)
-            }
-        }
-    }
-
-    /// Render user message - right aligned, green bubble
-    /// @plan:PLAN-20260402-ISSUE153.P02
-    /// @plan:PLAN-20260407-ISSUE172.P04 (markdown caching)
-    /// @requirement:REQ-MSG-LINK-001
-    pub(super) fn render_user_message(msg: &ChatMessage) -> gpui::AnyElement {
-        // Use cached markdown blocks for finalized messages
-        let blocks = msg.get_or_parse_markdown();
-        // Use user_bubble_text() for proper contrast on green background
-        let text_color = Theme::user_bubble_text();
-        let rendered = blocks_to_elements_with_color(&blocks, text_color);
-        let has_links = has_any_links(&blocks);
-
-        let raw_content = Arc::clone(&msg.content);
-        let mut bubble = div()
-            .max_w(px(300.0))
-            .px(px(10.0))
-            .py(px(10.0))
-            .rounded(px(12.0))
-            .text_size(px(Theme::font_size_mono()))
-            .children(rendered);
-
-        // Only enable click-to-copy when no links are present
-        if !has_links {
-            bubble = bubble
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string((*raw_content).clone()));
-                });
-        }
-
-        div()
-            .w_full()
-            .flex()
-            .justify_end()
-            .child(Theme::user_bubble(bubble))
-            .into_any_element()
-    }
-
-    /// Render assistant message - left aligned, dark bubble with model label
-    /// @plan:PLAN-20260402-MARKDOWN.P11
-    /// @plan:PLAN-20260407-ISSUE172.P05 (markdown caching)
-    /// @plan:PLAN-20260407-ISSUE172.P10 (Arc<String> + cached blocks)
-    /// @requirement:REQ-MD-INTEGRATE-010
-    pub(super) fn render_assistant_message(
-        msg: &ChatMessage,
-        show_thinking: bool,
-        filter_emoji: bool,
-    ) -> gpui::AnyElement {
-        let bubble = if filter_emoji {
-            // When filtering emojis, we need a new string - no cache can be used
-            AssistantBubble::new(strip_emojis(&msg.content))
-        } else {
-            // Pass Arc clone directly - no heap allocation
-            // Also pass cached markdown blocks for finalized messages
-            AssistantBubble::new(Arc::clone(&msg.content))
-                .with_cached_blocks(msg.get_or_parse_markdown())
-        };
-
-        let mut bubble = bubble;
-
-        if let Some(ref model_label) = msg.model_label {
-            bubble = bubble.model_id(model_label.clone());
-        } else {
-            bubble = bubble.model_id("Assistant");
-        }
-
-        if show_thinking {
-            if let Some(ref thinking) = msg.thinking {
-                bubble = bubble.thinking((**thinking).clone()).show_thinking(true);
-            }
-        }
-
-        bubble.into_any_element()
     }
 
     /// Render a single inline approval bubble with action button callbacks.
@@ -867,8 +795,8 @@ impl ChatView {
             .child(self.render_chat_area(cx))
             // Input bar (50px)
             .child(self.render_input_bar(cx))
-        // Note: Dropdown overlays are now rendered at root level in render()
-        // to avoid being clipped by the flex container
+        // Note: Dropdown overlays are rendered at root level in render()
+        // to avoid being clipped by the flex container.
     }
 }
 
@@ -948,6 +876,9 @@ impl gpui::Render for ChatView {
             )
             .when(self.state.profile_dropdown_open, |d| {
                 d.child(self.render_profile_dropdown(window, cx))
+            })
+            .when(self.message_context_menu.is_some(), |d| {
+                d.child(self.render_message_context_menu(window, cx))
             })
     }
 }

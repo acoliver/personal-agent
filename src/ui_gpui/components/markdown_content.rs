@@ -17,7 +17,7 @@
 /// @plan:PLAN-20260402-MARKDOWN.P03
 use std::ops::Range;
 
-use gpui::{div, prelude::*, px};
+use gpui::px;
 
 /// A single inline text span with style flags.
 ///
@@ -319,37 +319,7 @@ pub(crate) fn blocks_to_elements_with_color(
     blocks: &[MarkdownBlock],
     text_color: gpui::Hsla,
 ) -> Vec<gpui::AnyElement> {
-    blocks
-        .iter()
-        .map(|block| match block {
-            MarkdownBlock::Paragraph { spans, links } => {
-                render_paragraph_with_color(spans, links, text_color)
-            }
-            MarkdownBlock::Heading {
-                level,
-                spans,
-                links,
-            } => render_heading_with_color(*level, spans, links, text_color),
-            MarkdownBlock::CodeBlock { language, code } => {
-                render_code_block(language.as_ref(), code)
-            }
-            MarkdownBlock::BlockQuote { blocks } => {
-                render_blockquote_with_color(blocks, text_color)
-            }
-            MarkdownBlock::List {
-                ordered,
-                start,
-                items,
-            } => render_list_with_color(*ordered, *start, items, text_color),
-            MarkdownBlock::Table {
-                alignments,
-                header,
-                rows,
-            } => render_table_with_color(alignments, header, rows, text_color),
-            MarkdownBlock::ThematicBreak => render_thematic_break(),
-            MarkdownBlock::ImageFallback { alt } => render_image_fallback(alt),
-        })
-        .collect()
+    rich_builder::build_rich_children(blocks, text_color)
 }
 
 /// Public API: Render markdown content to GPUI elements.
@@ -387,7 +357,7 @@ pub(crate) fn is_safe_url(raw: &str) -> bool {
 
 /// @plan:PLAN-20260402-MARKDOWN.P06
 /// @requirement:REQ-MD-RENDER-023
-fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::TextRun {
+pub(crate) fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::TextRun {
     use gpui::{font, FontStyle, FontWeight, StrikethroughStyle, TextRun, UnderlineStyle};
 
     // For links, use accent color. For non-links, use the provided text_color
@@ -429,278 +399,14 @@ fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::Te
     run
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-002
-fn spans_to_styled_text(
-    spans: &[MarkdownInline],
-    links: &[(Range<usize>, String)],
-    text_color: gpui::Hsla,
-) -> gpui::AnyElement {
-    use gpui::StyledText;
-
-    let mut text = String::new();
-    let mut runs = Vec::with_capacity(spans.len());
-    for span in spans {
-        text.push_str(&span.text);
-        runs.push(inline_to_text_run(span, text_color));
-    }
-
-    let styled = StyledText::new(text).with_runs(runs);
-    if links.is_empty() {
-        return div()
-            .w_full()
-            .min_w(px(0.0))
-            .child(styled)
-            .into_any_element();
-    }
-
-    let ranges: Vec<Range<usize>> = links.iter().map(|(range, _)| range.clone()).collect();
-    let links_owned: Vec<String> = links.iter().map(|(_, url)| url.clone()).collect();
-
-    div()
-        .w_full()
-        .min_w(px(0.0))
-        .child(
-            gpui::InteractiveText::new("markdown-links", styled).on_click(
-                ranges,
-                move |clicked_ix, _window, cx| {
-                    if let Some(url) = links_owned.get(clicked_ix) {
-                        if is_safe_url(url) {
-                            cx.open_url(url);
-                        }
-                    }
-                },
-            ),
-        )
-        .into_any_element()
-}
-
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_paragraph_with_color(
-    spans: &[MarkdownInline],
-    links: &[(Range<usize>, String)],
-    text_color: gpui::Hsla,
-) -> gpui::AnyElement {
-    div()
-        .text_size(px(crate::ui_gpui::theme::Theme::font_size_body()))
-        .child(spans_to_styled_text(spans, links, text_color))
-        .into_any_element()
-}
-
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_heading_with_color(
-    level: u8,
-    spans: &[MarkdownInline],
-    links: &[(Range<usize>, String)],
-    text_color: gpui::Hsla,
-) -> gpui::AnyElement {
-    let size = match level {
-        1 => crate::ui_gpui::theme::Theme::font_size_h1(),
-        2 => crate::ui_gpui::theme::Theme::font_size_h2(),
-        3 => crate::ui_gpui::theme::Theme::font_size_h3(),
-        4 => crate::ui_gpui::theme::Theme::font_size_body(),
-        5 => crate::ui_gpui::theme::Theme::font_size_mono(),
-        _ => crate::ui_gpui::theme::Theme::font_size_ui(),
-    };
-
-    div()
-        .w_full()
-        .min_w(px(0.0))
-        .text_size(px(size))
-        .font_weight(gpui::FontWeight::BOLD)
-        .child(spans_to_styled_text(spans, links, text_color))
-        .into_any_element()
-}
-
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-005
-fn render_code_block(language: Option<&String>, code: &str) -> gpui::AnyElement {
-    let mut block = div()
-        .flex()
-        .flex_col()
-        .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-        .w_full()
-        .px(px(crate::ui_gpui::theme::Theme::SPACING_SM))
-        .py(px(crate::ui_gpui::theme::Theme::SPACING_SM))
-        .rounded(px(crate::ui_gpui::theme::Theme::RADIUS_MD))
-        .bg(crate::ui_gpui::theme::Theme::bg_dark())
-        .text_color(crate::ui_gpui::theme::Theme::text_primary())
-        .font_family(crate::ui_gpui::theme::Theme::mono_font_family_name())
-        .font_features(crate::ui_gpui::theme::Theme::mono_font_features())
-        .text_size(px(crate::ui_gpui::theme::Theme::font_size_mono()));
-
-    if let Some(lang) = language {
-        block = block.child(
-            div()
-                .text_size(px(crate::ui_gpui::theme::Theme::font_size_ui()))
-                .text_color(crate::ui_gpui::theme::Theme::text_muted())
-                .child(lang.clone()),
-        );
-    }
-
-    block.child(code.to_string()).into_any_element()
-}
-
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_blockquote_with_color(
-    children: &[MarkdownBlock],
-    text_color: gpui::Hsla,
-) -> gpui::AnyElement {
-    div()
-        .w_full()
-        .border_l_2()
-        .border_color(crate::ui_gpui::theme::Theme::accent())
-        .pl(px(crate::ui_gpui::theme::Theme::SPACING_SM))
-        .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-        .bg(crate::ui_gpui::theme::Theme::bg_base())
-        .children(blocks_to_elements_with_color(children, text_color))
-        .into_any_element()
-}
-
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_list_with_color(
-    ordered: bool,
-    start: u64,
-    items: &[Vec<MarkdownBlock>],
-    text_color: gpui::Hsla,
-) -> gpui::AnyElement {
-    let mut list = div()
-        .flex()
-        .flex_col()
-        .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-        .w_full();
-
-    for (idx, item_blocks) in items.iter().enumerate() {
-        let prefix = if ordered {
-            format!("{}. ", start.saturating_add(idx as u64))
-        } else {
-            "• ".to_string()
-        };
-        list = list.child(
-            div()
-                .flex()
-                .w_full()
-                .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                .child(
-                    div()
-                        .text_color(crate::ui_gpui::theme::Theme::text_muted())
-                        .child(prefix),
-                )
-                .child(
-                    div()
-                        .min_w(px(0.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                        .children(blocks_to_elements_with_color(item_blocks, text_color)),
-                ),
-        );
-    }
-
-    list.into_any_element()
-}
-
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_table_with_color(
-    alignments: &[Alignment],
-    header: &[TableCell],
-    rows: &[Vec<TableCell>],
-    text_color: gpui::Hsla,
-) -> gpui::AnyElement {
-    let col_count = header
-        .len()
-        .max(rows.first().map_or(0, Vec::len))
-        .max(alignments.len());
-    let grid_cols = u16::try_from(col_count.max(1)).unwrap_or(u16::MAX);
-
-    let align_content = |alignment: &Alignment, content: gpui::AnyElement| match alignment {
-        Alignment::Center => div()
-            .w_full()
-            .min_w(px(0.0))
-            .flex()
-            .justify_center()
-            .child(content),
-        Alignment::Right => div()
-            .w_full()
-            .min_w(px(0.0))
-            .flex()
-            .justify_end()
-            .child(content),
-        Alignment::Left | Alignment::None => div()
-            .w_full()
-            .min_w(px(0.0))
-            .flex()
-            .justify_start()
-            .child(content),
-    };
-
-    let mut table_grid = div().grid().grid_cols(grid_cols).w_full();
-
-    for (col_idx, cell) in header.iter().enumerate() {
-        let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
-        let content = spans_to_styled_text(&cell.spans, &cell.links, text_color);
-
-        table_grid = table_grid.child(
-            div()
-                .w_full()
-                .min_w(px(120.0))
-                .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                .bg(crate::ui_gpui::theme::Theme::bg_dark())
-                .border_1()
-                .border_color(crate::ui_gpui::theme::Theme::border())
-                .child(align_content(alignment, content)),
-        );
-    }
-
-    for (row_idx, row) in rows.iter().enumerate() {
-        for (col_idx, cell) in row.iter().enumerate() {
-            let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
-            let content = spans_to_styled_text(&cell.spans, &cell.links, text_color);
-
-            table_grid = table_grid.child(
-                div()
-                    .w_full()
-                    .min_w(px(120.0))
-                    .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                    .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                    .bg(if row_idx % 2 == 0 {
-                        crate::ui_gpui::theme::Theme::bg_base()
-                    } else {
-                        crate::ui_gpui::theme::Theme::bg_dark()
-                    })
-                    .border_1()
-                    .border_color(crate::ui_gpui::theme::Theme::border())
-                    .child(align_content(alignment, content)),
-            );
-        }
-    }
-
-    div().w_full().child(table_grid).into_any_element()
-}
-
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-010
-fn render_thematic_break() -> gpui::AnyElement {
-    div()
-        .h(px(1.0))
-        .w_full()
-        .bg(crate::ui_gpui::theme::Theme::border())
-        .into_any_element()
-}
-
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-011
-fn render_image_fallback(alt: &str) -> gpui::AnyElement {
-    div()
-        .text_color(crate::ui_gpui::theme::Theme::text_muted())
-        .text_size(px(crate::ui_gpui::theme::Theme::font_size_mono()))
-        .child(format!("[image: {alt}]"))
-        .into_any_element()
-}
-
 mod autolink;
+mod leaf_meta;
 mod markdown_parser;
+mod rich_builder;
+#[cfg(test)]
+mod selectable_leaf;
+pub mod selectable_markdown;
+pub mod visible_document;
 
 pub(crate) use autolink::apply_autolinks;
 pub use markdown_parser::parse_markdown_blocks;

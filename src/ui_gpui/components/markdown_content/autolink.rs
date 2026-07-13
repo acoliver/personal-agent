@@ -230,7 +230,7 @@ fn split_span_at_urls(
         new_spans.push(url_span);
 
         // Record the link range in the new combined text
-        let link_start = byte_offset + last_end;
+        let link_start = byte_offset + local_range.start;
         let link_end = link_start + url_text.len();
         new_links.push((link_start..link_end, url.clone()));
 

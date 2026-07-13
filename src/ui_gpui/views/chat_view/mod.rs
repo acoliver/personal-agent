@@ -11,9 +11,11 @@
 //! @requirement REQ-GPUI-003
 
 mod command;
+mod conversation_actions;
 mod focus;
 
 mod ime;
+mod message_selection;
 mod render;
 mod render_bars;
 #[cfg(test)]
@@ -64,12 +66,27 @@ pub(crate) fn take_draft(conversation_id: Uuid) -> Option<String> {
         .and_then(|mut drafts| drafts.remove(&conversation_id))
 }
 use gpui::{
-    point, prelude::*, px, Entity, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+    point, prelude::*, px, Entity, FocusHandle, Pixels, Point, ScrollDelta, ScrollHandle,
+    ScrollWheelEvent,
 };
 #[cfg(test)]
 use std::cell::Cell;
 use std::sync::Arc;
 use uuid::Uuid;
+
+#[derive(Clone)]
+pub(super) struct ActiveMessageSelection {
+    pub message_index: usize,
+    pub revision: crate::ui_gpui::components::markdown_content::visible_document::MessageRevision,
+    pub selection: crate::ui_gpui::components::markdown_content::visible_document::Selection,
+    pub dragging: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct MessageContextMenu {
+    pub position: Point<Pixels>,
+    pub selected_text: String,
+}
 
 /// Chat view component with event handling
 ///
@@ -80,6 +97,8 @@ pub struct ChatView {
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
+    pub(super) active_message_selection: Option<ActiveMessageSelection>,
+    pub(super) message_context_menu: Option<MessageContextMenu>,
     pub(super) chat_scroll_handle: ScrollHandle,
     /// Embedded shared conversation list rendered inside the popout sidebar
     /// (Inline mode). The same component type is used for the popin History
@@ -101,6 +120,8 @@ impl ChatView {
             bridge: None,
             conversation_id: None,
             selection_generation: 0,
+            active_message_selection: None,
+            message_context_menu: None,
             chat_scroll_handle: ScrollHandle::new(),
             conversation_list,
             #[cfg(test)]
@@ -297,6 +318,28 @@ impl ChatView {
         });
     }
 
+    fn update_conversation_draft(
+        &mut self,
+        previous_conversation_id: Option<Uuid>,
+        selected_conversation_id: Option<Uuid>,
+    ) {
+        if previous_conversation_id != selected_conversation_id {
+            self.active_message_selection = None;
+            self.message_context_menu = None;
+            if let Some(previous_id) = previous_conversation_id {
+                save_draft(previous_id, &self.state.input_text);
+            }
+            if let Some(selected_id) = selected_conversation_id {
+                if let Some(draft) = take_draft(selected_id) {
+                    self.state.input_text = draft;
+                    self.state.cursor_position = self.state.input_text.len();
+                }
+            }
+        } else if let Some(conversation_id) = selected_conversation_id {
+            save_draft(conversation_id, &self.state.input_text);
+        }
+    }
+
     /// @plan PLAN-20260304-GPUIREMEDIATE.P04
     /// @requirement REQ-ARCH-001.1
     /// @requirement REQ-ARCH-004.1
@@ -321,25 +364,7 @@ impl ChatView {
         let previous_selection_generation = self.selection_generation;
         let previous_messages_empty = self.state.messages.is_empty();
 
-        // Save the current draft text when switching conversations so it
-        // survives popup close/reopen cycles.
-        if previous_conversation_id != selected_conversation_id {
-            if let Some(prev_id) = previous_conversation_id {
-                save_draft(prev_id, &self.state.input_text);
-            }
-            // Restore any stashed draft for the newly-selected conversation.
-            if let Some(new_id) = selected_conversation_id {
-                if let Some(draft) = take_draft(new_id) {
-                    self.state.input_text = draft;
-                    self.state.cursor_position = self.state.input_text.len();
-                }
-            }
-        } else if let Some(conv_id) = selected_conversation_id {
-            // Continuously update the stash for the current conversation so
-            // the latest draft is preserved even if the popup is closed
-            // without a prior snapshot (e.g. direct tray toggle).
-            save_draft(conv_id, &self.state.input_text);
-        }
+        self.update_conversation_draft(previous_conversation_id, selected_conversation_id);
 
         self.state.conversations = conversations;
         self.state.active_conversation_id = selected_conversation_id;
@@ -501,6 +526,8 @@ impl ChatView {
     /// Set the current conversation ID
     /// @plan PLAN-20250130-GPUIREDUX.P04
     pub fn set_conversation_id(&mut self, id: Uuid) {
+        self.active_message_selection = None;
+        self.message_context_menu = None;
         self.conversation_id = Some(id);
         self.selection_generation = 0;
         self.state.active_conversation_id = Some(id);
@@ -557,150 +584,13 @@ impl ChatView {
         self.state.conversation_dropdown_open = false;
         self.state.conversation_title_editing = false;
         if switching_conversation {
+            self.active_message_selection = None;
+            self.message_context_menu = None;
             self.state.chat_autoscroll_enabled = true;
             self.chat_scroll_handle.scroll_to_bottom();
         }
         selection_intent_channel().request_select(conversation_id);
         cx.notify();
-    }
-
-    pub fn toggle_conversation_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
-        self.state.conversation_dropdown_open = !self.state.conversation_dropdown_open;
-        if self.state.conversation_dropdown_open {
-            self.state.profile_dropdown_open = false;
-            self.state.conversation_title_editing = false;
-            self.state.sync_conversation_dropdown_index();
-        }
-        tracing::info!(
-            open = self.state.conversation_dropdown_open,
-            count = self.state.conversations.len(),
-            selected_index = self.state.conversation_dropdown_index,
-            "ChatView: toggled conversation dropdown"
-        );
-        cx.notify();
-    }
-
-    #[must_use]
-    pub const fn conversation_dropdown_open(&self) -> bool {
-        self.state.conversation_dropdown_open
-    }
-
-    pub fn move_conversation_dropdown_selection(
-        &mut self,
-        delta: isize,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if !self.state.conversation_dropdown_open || self.state.conversations.is_empty() {
-            return;
-        }
-
-        let len = self.state.conversations.len().cast_signed();
-        let current = self.state.conversation_dropdown_index.cast_signed();
-        let next = (current + delta).clamp(0, len - 1).cast_unsigned();
-        if next != self.state.conversation_dropdown_index {
-            self.state.conversation_dropdown_index = next;
-            cx.notify();
-        }
-    }
-
-    pub fn confirm_conversation_dropdown_selection(&mut self, cx: &mut gpui::Context<Self>) {
-        if !self.state.conversation_dropdown_open {
-            return;
-        }
-        self.select_conversation_at_index(self.state.conversation_dropdown_index, cx);
-    }
-
-    pub fn select_conversation_by_id(
-        &mut self,
-        conversation_id: Uuid,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if let Some(index) = self
-            .state
-            .conversations
-            .iter()
-            .position(|conversation| conversation.id == conversation_id)
-        {
-            self.select_conversation_at_index(index, cx);
-        }
-    }
-
-    pub fn start_rename_conversation(&mut self, cx: &mut gpui::Context<Self>) {
-        if let Some(id) = self.current_or_active_conversation_id() {
-            self.state.conversation_dropdown_open = false;
-            self.state.conversation_title_editing = true;
-            self.state.conversation_title_input = self.state.conversation_title.clone();
-            self.state.rename_replace_on_next_char = true;
-            self.state.active_conversation_id = Some(id);
-            self.conversation_id = Some(id);
-            // Rename mode is local UI state; persistence happens on ConfirmRenameConversation.
-            // Emitting StartRenameConversation here causes presenter-driven re-activation cycles.
-            cx.notify();
-        }
-    }
-
-    pub fn submit_rename_conversation(&mut self, cx: &mut gpui::Context<Self>) {
-        if !self.state.conversation_title_editing {
-            return;
-        }
-
-        if let Some(id) = self.current_or_active_conversation_id() {
-            let title = self.state.conversation_title_input.trim().to_string();
-            if title.is_empty() {
-                self.state.conversation_title_editing = false;
-                self.state.conversation_title_input.clear();
-                self.state.rename_replace_on_next_char = false;
-                self.state.sync_conversation_title_from_active();
-                cx.notify();
-                return;
-            }
-
-            self.state.conversation_title.clone_from(&title);
-            if let Some(conversation) = self
-                .state
-                .conversations
-                .iter_mut()
-                .find(|conversation| conversation.id == id)
-            {
-                conversation.title.clone_from(&title);
-            }
-
-            self.state.conversation_title_editing = false;
-            self.state.conversation_title_input.clear();
-            self.state.rename_replace_on_next_char = false;
-            self.emit(UserEvent::ConfirmRenameConversation { id, title });
-            cx.notify();
-        }
-    }
-
-    pub fn cancel_rename_conversation(&mut self, cx: &mut gpui::Context<Self>) {
-        if !self.state.conversation_title_editing {
-            return;
-        }
-        self.state.conversation_title_editing = false;
-        self.state.conversation_title_input.clear();
-        self.state.rename_replace_on_next_char = false;
-        self.state.sync_conversation_title_from_active();
-        self.emit(UserEvent::CancelRenameConversation);
-        cx.notify();
-    }
-
-    pub fn handle_rename_backspace(&mut self, cx: &mut gpui::Context<Self>) {
-        if !self.state.conversation_title_editing {
-            return;
-        }
-        if self.state.rename_replace_on_next_char {
-            self.state.conversation_title_input.clear();
-            self.state.rename_replace_on_next_char = false;
-        } else {
-            self.state.conversation_title_input.pop();
-        }
-        cx.notify();
-    }
-
-    #[must_use]
-    pub const fn conversation_title_editing(&self) -> bool {
-        self.state.conversation_title_editing
     }
 
     pub(super) fn select_profile_at_index(&mut self, index: usize, cx: &mut gpui::Context<Self>) {
