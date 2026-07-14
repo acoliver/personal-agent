@@ -333,7 +333,6 @@ impl ChatView {
         if previous_conversation_id != selected_conversation_id {
             self.active_message_selection = None;
             self.message_context_menu = None;
-            self.composer_selection = composer_selection::ComposerSelection::default();
             if let Some(previous_id) = previous_conversation_id {
                 save_draft(previous_id, &self.state.input_text);
             }
@@ -343,6 +342,8 @@ impl ChatView {
                     self.state.cursor_position = self.state.input_text.len();
                 }
             }
+            self.composer_selection =
+                composer_selection::ComposerSelection::caret(self.state.cursor_position);
         } else if let Some(conversation_id) = selected_conversation_id {
             save_draft(conversation_id, &self.state.input_text);
         }
@@ -842,12 +843,15 @@ impl ChatView {
     /// Move cursor to start of line
     pub fn move_cursor_home(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.cursor_position = 0;
+        self.composer_selection = composer_selection::ComposerSelection::caret(0);
         cx.notify();
     }
 
     /// Move cursor to end of line
     pub fn move_cursor_end(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.cursor_position = self.state.input_text.len();
+        self.composer_selection =
+            composer_selection::ComposerSelection::caret(self.state.cursor_position);
         cx.notify();
     }
 
@@ -882,6 +886,7 @@ impl ChatView {
                 .map_or(0, |(i, _)| i);
             self.state.input_text.drain(prev..pos);
             self.state.cursor_position = prev;
+            self.composer_selection = composer_selection::ComposerSelection::caret(prev);
             // Update the draft stash on backspace too.
             if let Some(conv_id) = self.conversation_id {
                 save_draft(conv_id, &self.state.input_text);

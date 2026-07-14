@@ -85,8 +85,8 @@ impl Element for ComposerField {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child = StyledText::new(self.config.text.clone());
-        self.layout = child.layout().clone();
         let layout_id = Element::request_layout(&mut child, None, None, window, cx).0;
+        self.layout = child.layout().clone();
         (layout_id, LayoutState { child })
     }
 
@@ -141,7 +141,9 @@ impl ComposerField {
         if self.config.selection.is_collapsed() {
             return;
         }
-        let range = self.config.selection.start()..self.config.selection.end();
+        let text = self.layout.text();
+        let selection = self.config.selection.clamped(&text);
+        let range = selection.start()..selection.end();
         for bounds in selection_bounds(&self.layout, range, self.config.line_height) {
             window.paint_quad(fill(bounds, Theme::selection_bg()));
         }
@@ -151,7 +153,8 @@ impl ComposerField {
         if !self.config.show_caret || !self.config.selection.is_collapsed() {
             return;
         }
-        let offset = self.config.selection.head.min(self.config.text.len());
+        let text = self.layout.text();
+        let offset = clamp_to_char_boundary(&text, self.config.selection.head);
         let origin = self
             .layout
             .position_for_index(offset)
@@ -170,7 +173,7 @@ impl ComposerField {
         let Some(handler) = self.on_selection_change.clone() else {
             return;
         };
-        let text = self.config.text.to_string();
+        let text = self.config.text.clone();
         let layout = self.layout.clone();
         let down_handler = Arc::clone(&handler);
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
@@ -180,11 +183,11 @@ impl ComposerField {
             {
                 return;
             }
-            let offset = hit_test(&layout, event.position, &text);
+            let offset = hit_test(&layout, event.position, text.as_ref());
             down_handler(ComposerSelection::caret(offset), window, cx);
         });
 
-        let text = self.config.text.to_string();
+        let text = self.config.text.clone();
         let layout = self.layout.clone();
         let anchor = self.config.selection.anchor;
         let move_handler = Arc::clone(&handler);
@@ -196,11 +199,11 @@ impl ComposerField {
                 event.position.x.max(bounds.left()).min(bounds.right()),
                 event.position.y.max(bounds.top()).min(bounds.bottom()),
             );
-            let offset = hit_test(&layout, point, &text);
+            let offset = hit_test(&layout, point, text.as_ref());
             move_handler(ComposerSelection::new(anchor, offset), window, cx);
         });
 
-        let text = self.config.text.to_string();
+        let text = self.config.text.clone();
         let layout = self.layout.clone();
         window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
@@ -210,7 +213,7 @@ impl ComposerField {
                 event.position.x.max(bounds.left()).min(bounds.right()),
                 event.position.y.max(bounds.top()).min(bounds.bottom()),
             );
-            let offset = hit_test(&layout, point, &text);
+            let offset = hit_test(&layout, point, text.as_ref());
             handler(ComposerSelection::new(anchor, offset), window, cx);
         });
     }

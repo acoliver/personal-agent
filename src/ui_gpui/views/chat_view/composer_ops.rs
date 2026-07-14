@@ -44,9 +44,8 @@ impl ChatView {
             return String::new();
         }
         let text = &self.state.input_text;
-        let start = sel.start().min(text.len());
-        let end = sel.end().min(text.len());
-        text[start..end].to_string()
+        let sel = sel.clamped(text);
+        text[sel.start()..sel.end()].to_string()
     }
 
     /// Select all text in the composer.
@@ -118,7 +117,7 @@ impl ChatView {
             self.delete_composer_selection(cx);
             return;
         }
-        let position = self.state.cursor_position.min(self.state.input_text.len());
+        let position = clamp_to_char_boundary(&self.state.input_text, self.state.cursor_position);
         if position >= self.state.input_text.len() {
             return;
         }

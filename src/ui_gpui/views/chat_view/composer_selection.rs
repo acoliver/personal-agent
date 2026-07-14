@@ -119,6 +119,7 @@ pub const fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
 /// caret position (at the deletion point).
 #[must_use]
 pub fn delete_range(text: &str, sel: ComposerSelection) -> (String, usize) {
+    let sel = sel.clamped(text);
     if sel.is_collapsed() {
         return (text.to_string(), sel.head);
     }
@@ -134,6 +135,7 @@ pub fn delete_range(text: &str, sel: ComposerSelection) -> (String, usize) {
 /// the caret position (just after the replacement).
 #[must_use]
 pub fn replace_range(text: &str, sel: ComposerSelection, replacement: &str) -> (String, usize) {
+    let sel = sel.clamped(text);
     let start = sel.start();
     let end = sel.end();
     let mut result = String::with_capacity(text.len() - (end - start) + replacement.len());
@@ -249,5 +251,18 @@ mod tests {
         let (result, caret) = delete_range(text, sel);
         assert_eq!(result, "ab");
         assert_eq!(caret, 1);
+    }
+
+    #[test]
+    fn stale_mid_character_ranges_are_clamped_before_slicing() {
+        let text = "aéb";
+
+        let (deleted, caret) = delete_range(text, ComposerSelection::new(2, 100));
+        assert_eq!(deleted, "a");
+        assert_eq!(caret, 1);
+
+        let (replaced, caret) = replace_range(text, ComposerSelection::new(2, 100), "z");
+        assert_eq!(replaced, "az");
+        assert_eq!(caret, 2);
     }
 }

@@ -7,18 +7,10 @@ impl ChatView {
     }
 
     pub(super) fn composer_display_text(&self, cx: &gpui::App) -> String {
-        Self::format_composer_display_text(
-            &self.state.input_text,
-            self.state.cursor_position,
-            self.composer_has_focus(cx),
-        )
+        Self::format_composer_display_text(&self.state.input_text, self.composer_has_focus(cx))
     }
 
-    fn format_composer_display_text(
-        input_text: &str,
-        _cursor_position: usize,
-        composer_focused: bool,
-    ) -> String {
+    fn format_composer_display_text(input_text: &str, composer_focused: bool) -> String {
         if input_text.is_empty() && !composer_focused {
             "Type a message...".to_string()
         } else {

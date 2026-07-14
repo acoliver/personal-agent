@@ -239,6 +239,7 @@ def main() -> int:
     replacement = "ISSUE151_REPLACED café"
     set_clipboard(replacement)
     xdo("key", "ctrl+v")
+    time.sleep(0.08)
     xdo("key", "ctrl+a")
     composer_replaced = copy_selection(window_id)
     if composer_replaced != replacement:
