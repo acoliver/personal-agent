@@ -99,6 +99,42 @@ async fn empty_selection_from_another_message_clears_active_selection(cx: &mut T
 }
 
 #[gpui::test]
+async fn composer_selection_supports_copy_cut_delete_and_replacement(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+
+    view.update(cx, |view, cx| {
+        view.state.input_text = "hello world".to_string();
+        view.state.cursor_position = 5;
+        view.set_composer_selection_from_pointer(
+            super::super::composer_selection::ComposerSelection::new(0, 5),
+            cx,
+        );
+        assert_eq!(view.composer_selected_text(), "hello");
+        assert!(view.copy_composer_selection(cx));
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("hello".to_string())
+        );
+
+        assert!(view.cut_composer_selection(cx));
+        assert_eq!(view.state.input_text, " world");
+        assert_eq!(view.state.cursor_position, 0);
+
+        view.state.input_text = "a😀b".to_string();
+        view.state.cursor_position = 1;
+        view.composer_selection = super::super::composer_selection::ComposerSelection::caret(1);
+        view.handle_delete(cx);
+        assert_eq!(view.state.input_text, "ab");
+
+        view.state.input_text = "hello world".to_string();
+        view.composer_selection = super::super::composer_selection::ComposerSelection::new(6, 11);
+        view.replace_composer_selection("GPUI", cx);
+        assert_eq!(view.state.input_text, "hello GPUI");
+        assert_eq!(view.state.cursor_position, "hello GPUI".len());
+    });
+}
+
+#[gpui::test]
 async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();

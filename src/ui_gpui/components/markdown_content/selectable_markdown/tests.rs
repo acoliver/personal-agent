@@ -15,7 +15,8 @@
 #![allow(clippy::future_not_send)]
 
 use gpui::{
-    div, px, IntoElement, Modifiers, MouseButton, Point, Render, TestAppContext, VisualTestContext,
+    div, px, IntoElement, Modifiers, MouseButton, ParentElement, Point, Render, Styled,
+    TestAppContext, VisualTestContext,
 };
 
 use super::{SelectableMarkdown, SelectableMarkdownEvent};
@@ -75,6 +76,19 @@ impl Render for MarkdownView {
     }
 }
 
+struct WrappedMarkdownView {
+    element: SelectableMarkdown,
+}
+
+impl Render for WrappedMarkdownView {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        div().w(px(180.0)).child(self.element.clone())
+    }
+}
 /// Build a `SelectableMarkdown` from raw markdown, place it in a window, and
 /// return the element + the visual test context for interaction.
 fn build<'a>(
@@ -463,6 +477,37 @@ async fn multi_leaf_mixed_formatting(cx: &mut TestAppContext) {
     assert!(!sel.is_empty());
 }
 
+/// Full selection over wrapped text must start every continuation rectangle at
+/// the same layout left edge. This guards GPUI's ambiguous soft-wrap boundary
+/// index from dropping the first glyph on each continuation line.
+#[gpui::test]
+async fn wrapped_selection_rectangles_share_left_edge(cx: &mut TestAppContext) {
+    let md = "Done! Git clone successfully grabbed the skills-hub repository. Next, I will read the docx-manipulation skill file located here: /tmp/skills-hub/docx-manipulation/SKILL.md.";
+    let revision = MessageRevision::new("wrapped", md, 0, false);
+    let element = SelectableMarkdown::from_markdown(md, revision)
+        .id("wrapped-selection-geometry")
+        .with_selection(Some(Selection::new(0, md.len())));
+    let shared = element.clone();
+    let (_view, vtc) = cx.add_window_view(|_window, _cx| WrappedMarkdownView {
+        element: element.clone(),
+    });
+    vtc.run_until_parked();
+
+    let rectangles = super::selection_bounds_for_test(&shared);
+    assert!(
+        rectangles.len() > 1,
+        "fixture must wrap onto multiple lines"
+    );
+    let leaf_left = shared.state.leaves.borrow()[0].layout.bounds().left();
+    for rectangle in rectangles {
+        assert!(
+            (rectangle.left() - leaf_left).abs() <= px(1.0),
+            "wrapped rectangle started at {:?}, expected {:?}",
+            rectangle.left(),
+            leaf_left
+        );
+    }
+}
 // ---------------------------------------------------------------------------
 // simulation helpers
 // ---------------------------------------------------------------------------

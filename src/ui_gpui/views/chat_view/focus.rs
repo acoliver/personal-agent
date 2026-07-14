@@ -16,20 +16,11 @@ impl ChatView {
 
     fn format_composer_display_text(
         input_text: &str,
-        cursor_position: usize,
+        _cursor_position: usize,
         composer_focused: bool,
     ) -> String {
-        if input_text.is_empty() {
-            if composer_focused {
-                "|".to_string()
-            } else {
-                "Type a message...".to_string()
-            }
-        } else if composer_focused {
-            let cursor_pos = cursor_position.min(input_text.len());
-            let before = &input_text[..cursor_pos];
-            let after = &input_text[cursor_pos..];
-            format!("{before}|{after}")
+        if input_text.is_empty() && !composer_focused {
+            "Type a message...".to_string()
         } else {
             input_text.to_string()
         }

@@ -6,6 +6,7 @@
 //!
 //! @plan PLAN-20260325-ISSUE11B.P02
 
+use super::composer_field::{ComposerField, ComposerFieldConfig};
 use super::state::{ApprovalBubbleState, StreamingState};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
@@ -139,6 +140,7 @@ impl ChatView {
             "pageup" => self.scroll_chat_page_up(cx),
             "pagedown" => self.scroll_chat_page_down(cx),
             "backspace" => self.handle_backspace(cx),
+            "delete" => self.handle_delete(cx),
             "enter" => self.handle_composer_enter(*modifiers, cx),
             "escape" => {
                 if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
@@ -198,6 +200,9 @@ impl ChatView {
             self.state.sidebar_search_query.clone()
         } else if self.state.conversation_title_editing {
             self.state.conversation_title_input.clone()
+        } else if self.composer_has_selection(cx) {
+            // Prefer the composer's selected range.
+            self.composer_selected_text()
         } else {
             self.state.input_text.clone()
         };
@@ -268,6 +273,9 @@ impl ChatView {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                     self.state.sidebar_search_query.clear();
                     self.state.sidebar_search_results = None;
+                } else if self.composer_has_selection(cx) {
+                    // Cut the selected range in the composer.
+                    self.cut_composer_selection(cx);
                 } else {
                     self.handle_select_all(cx);
                     let text = if self.state.conversation_title_editing {
@@ -284,6 +292,8 @@ impl ChatView {
                     {
                         self.state.input_text.clear();
                         self.state.cursor_position = 0;
+                        self.composer_selection =
+                            super::composer_selection::ComposerSelection::default();
                         self.state.marked_range = None;
                     }
                 }
@@ -618,7 +628,7 @@ impl ChatView {
                     }
                 }),
             )
-            .child(Self::render_composer_field(
+            .child(self.render_composer_field(
                 focus_handle,
                 input_box_height,
                 max_composer_height,
@@ -633,6 +643,7 @@ impl ChatView {
 
     #[allow(clippy::too_many_arguments)]
     fn render_composer_field(
+        &self,
         focus_handle: gpui::FocusHandle,
         input_box_height: f32,
         max_composer_height: f32,
@@ -642,6 +653,7 @@ impl ChatView {
         focused: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        let entity = cx.entity();
         div()
             .id("input-field")
             .debug_selector(|| "chat-input-field".to_string())
@@ -681,7 +693,30 @@ impl ChatView {
                         Theme::text_primary()
                     })
                     .whitespace_normal()
-                    .child(text_content),
+                    .child(
+                        ComposerField::new(ComposerFieldConfig {
+                            text: text_content.into(),
+                            selection: if self.composer_selection.is_collapsed()
+                                && self.composer_selection.head != self.state.cursor_position
+                            {
+                                super::composer_selection::ComposerSelection::caret(
+                                    self.state.cursor_position,
+                                )
+                            } else {
+                                self.composer_selection
+                            },
+                            line_height: px(line_height),
+                            show_caret: focused,
+                        })
+                        .interactive(!input_text.is_empty() || focused)
+                        .on_selection_change(
+                            move |selection, _window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.set_composer_selection_from_pointer(selection, cx);
+                                });
+                            },
+                        ),
+                    ),
             )
     }
 

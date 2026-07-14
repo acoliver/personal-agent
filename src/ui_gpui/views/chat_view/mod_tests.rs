@@ -711,11 +711,11 @@ async fn empty_composer_shows_cursor_only_when_focused(cx: &mut TestAppContext) 
             assert_eq!(view.composer_display_text_for_test(cx), "Type a message...");
 
             view.focus_composer(cx);
-            assert_eq!(view.composer_display_text_for_test(cx), "|");
+            assert_eq!(view.composer_display_text_for_test(cx), "");
 
             view.state.input_text = "hello".to_string();
             view.state.cursor_position = 2;
-            assert_eq!(view.composer_display_text_for_test(cx), "he|llo");
+            assert_eq!(view.composer_display_text_for_test(cx), "hello");
 
             view.blur_composer();
             assert_eq!(view.composer_display_text_for_test(cx), "hello");
@@ -723,6 +723,37 @@ async fn empty_composer_shows_cursor_only_when_focused(cx: &mut TestAppContext) 
     });
 }
 
+#[gpui::test]
+async fn composer_mouse_drag_selects_visible_text(cx: &mut TestAppContext) {
+    let (view, visual_cx) =
+        cx.add_window_view(|_window, cx| ChatView::new(ChatState::default(), cx));
+    visual_cx.simulate_resize(gpui::size(px(780.0), px(600.0)));
+    view.update(visual_cx, |view, cx| {
+        view.state.input_text = "select this composer text".to_string();
+        view.state.cursor_position = view.state.input_text.len();
+        view.composer_selection =
+            super::composer_selection::ComposerSelection::caret(view.state.cursor_position);
+        view.focus_composer(cx);
+        cx.notify();
+    });
+    visual_cx.run_until_parked();
+
+    let bounds = visual_cx
+        .debug_bounds("chat-input-field")
+        .expect("composer bounds");
+    let start = gpui::Point::new(bounds.left() + px(12.0), bounds.top() + px(14.0));
+    let end = gpui::Point::new(bounds.left() + px(120.0), bounds.top() + px(14.0));
+    visual_cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::default());
+    visual_cx.simulate_mouse_move(end, gpui::MouseButton::Left, Modifiers::default());
+    visual_cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::default());
+    visual_cx.run_until_parked();
+
+    view.read_with(visual_cx, |view, _| {
+        assert!(view.composer_selection.is_non_empty());
+        assert!(!view.composer_selected_text().is_empty());
+        assert_ne!(view.composer_selected_text(), view.state.input_text);
+    });
+}
 #[gpui::test]
 async fn rename_submission_without_conversation_cancels_editing(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));

@@ -55,6 +55,15 @@ impl gpui::EntityInputHandler for ChatView {
         cx: &mut gpui::Context<Self>,
     ) -> Option<UTF16Selection> {
         let text = self.active_input_text(cx).to_string();
+        if !self.sidebar_search_focused(cx) && !self.state.conversation_title_editing {
+            let selection = self.composer_selection.clamped(&text);
+            let start = utf8_offset_to_utf16(&text, selection.start());
+            let end = utf8_offset_to_utf16(&text, selection.end());
+            return Some(UTF16Selection {
+                range: start..end,
+                reversed: selection.is_reversed(),
+            });
+        }
         let cursor_utf8 = self.active_cursor_position(cx).min(text.len());
         let cursor_utf16 = utf8_offset_to_utf16(&text, cursor_utf8);
         Some(UTF16Selection {
@@ -131,12 +140,14 @@ impl gpui::EntityInputHandler for ChatView {
                 utf16_offset_to_utf8(input, r.end),
             )
         } else {
-            let pos = self.state.cursor_position.min(input.len());
-            (pos, pos)
+            let selection = self.composer_selection.clamped(input);
+            (selection.start(), selection.end())
         };
 
         input.replace_range(start_utf8..end_utf8, text);
         self.state.cursor_position = start_utf8 + text.len();
+        self.composer_selection =
+            super::composer_selection::ComposerSelection::caret(self.state.cursor_position);
         self.state.marked_range = None;
 
         // Stash the draft immediately so it survives popup close/reopen
@@ -219,12 +230,14 @@ impl gpui::EntityInputHandler for ChatView {
                 utf16_offset_to_utf8(input, mr.end),
             )
         } else {
-            let pos = self.state.cursor_position.min(input.len());
-            (pos, pos)
+            let selection = self.composer_selection.clamped(input);
+            (selection.start(), selection.end())
         };
 
         input.replace_range(start_utf8..end_utf8, new_text);
         self.state.cursor_position = start_utf8 + new_text.len();
+        self.composer_selection =
+            super::composer_selection::ComposerSelection::caret(self.state.cursor_position);
 
         // Compute marked range in UTF-16 over the newly inserted text
         let mark_start_utf16 = utf8_offset_to_utf16(input, start_utf8);

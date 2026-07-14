@@ -374,13 +374,13 @@ async fn input_editing_and_ime_composition_follow_real_cursor_and_dropdown_rules
             );
 
             view.replace_text_in_range(None, "!", window, cx);
-            assert_eq!(view.state.input_text, "hi theré!");
+            assert_eq!(view.state.input_text, "!");
             assert_eq!(view.state.cursor_position, view.state.input_text.len());
 
             view.replace_and_mark_text_in_range(None, "🙂", Some(1..1), window, cx);
             assert!(view.marked_text_range(window, cx).is_some());
-            assert_eq!(view.state.input_text, "hi theré!🙂");
-            let utf16_len = "hi theré!🙂".encode_utf16().count();
+            assert_eq!(view.state.input_text, "!🙂");
+            let utf16_len = "!🙂".encode_utf16().count();
             assert_eq!(
                 view.selected_text_range(false, window, cx)
                     .expect("selection")
@@ -389,7 +389,7 @@ async fn input_editing_and_ime_composition_follow_real_cursor_and_dropdown_rules
             );
 
             view.replace_text_in_range(None, " done", window, cx);
-            assert_eq!(view.state.input_text, "hi theré! done");
+            assert_eq!(view.state.input_text, "! done");
             assert_eq!(view.marked_text_range(window, cx), None);
 
             view.toggle_conversation_dropdown(cx);

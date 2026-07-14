@@ -11,6 +11,9 @@
 //! @requirement REQ-GPUI-003
 
 mod command;
+mod composer_field;
+mod composer_ops;
+mod composer_selection;
 mod conversation_actions;
 mod focus;
 
@@ -99,6 +102,9 @@ pub struct ChatView {
     pub(super) selection_generation: u64,
     pub(super) active_message_selection: Option<ActiveMessageSelection>,
     pub(super) message_context_menu: Option<MessageContextMenu>,
+    /// Transient composer text selection (anchor/head byte offsets).
+    /// This is separate from message transcript selection.
+    pub(super) composer_selection: composer_selection::ComposerSelection,
     pub(super) chat_scroll_handle: ScrollHandle,
     /// Embedded shared conversation list rendered inside the popout sidebar
     /// (Inline mode). The same component type is used for the popin History
@@ -122,6 +128,7 @@ impl ChatView {
             selection_generation: 0,
             active_message_selection: None,
             message_context_menu: None,
+            composer_selection: composer_selection::ComposerSelection::default(),
             chat_scroll_handle: ScrollHandle::new(),
             conversation_list,
             #[cfg(test)]
@@ -326,6 +333,7 @@ impl ChatView {
         if previous_conversation_id != selected_conversation_id {
             self.active_message_selection = None;
             self.message_context_menu = None;
+            self.composer_selection = composer_selection::ComposerSelection::default();
             if let Some(previous_id) = previous_conversation_id {
                 save_draft(previous_id, &self.state.input_text);
             }
@@ -735,32 +743,48 @@ impl ChatView {
         if self.state.conversation_dropdown_open || self.state.profile_dropdown_open {
             return;
         }
-        let pos = self.state.cursor_position.min(self.state.input_text.len());
-        self.state.input_text.insert_str(pos, text);
-        self.state.cursor_position = pos + text.len();
-        cx.notify();
+        // If there is an active selection, replace it; otherwise insert at cursor.
+        if self.composer_selection.is_non_empty() {
+            self.replace_composer_selection(text, cx);
+        } else {
+            let pos = self.state.cursor_position.min(self.state.input_text.len());
+            self.state.input_text.insert_str(pos, text);
+            let new_pos = pos + text.len();
+            self.state.cursor_position = new_pos;
+            self.composer_selection = composer_selection::ComposerSelection::caret(new_pos);
+            if let Some(conv_id) = self.conversation_id {
+                save_draft(conv_id, &self.state.input_text);
+            }
+            cx.notify();
+        }
     }
 
     /// Handle select-all (Cmd+A)
-    pub const fn handle_select_all(&mut self, _cx: &mut gpui::Context<Self>) {
-        // No visual selection yet, but move cursor to end
-        self.state.cursor_position = self.state.input_text.len();
+    pub fn handle_select_all(&mut self, cx: &mut gpui::Context<Self>) {
+        self.select_all_composer(cx);
     }
 
-    /// Move cursor left
+    /// Move cursor left (collapses selection if active).
     pub fn move_cursor_left(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.collapse_selection_left(cx) {
+            return;
+        }
         if self.state.cursor_position > 0 {
             let prev = self.state.input_text[..self.state.cursor_position]
                 .char_indices()
                 .next_back()
                 .map_or(0, |(i, _)| i);
             self.state.cursor_position = prev;
+            self.composer_selection = composer_selection::ComposerSelection::caret(prev);
             cx.notify();
         }
     }
 
-    /// Move cursor right
+    /// Move cursor right (collapses selection if active).
     pub fn move_cursor_right(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.collapse_selection_right(cx) {
+            return;
+        }
         if self.state.cursor_position < self.state.input_text.len() {
             let next = self.state.input_text[self.state.cursor_position..]
                 .char_indices()
@@ -769,6 +793,7 @@ impl ChatView {
                     self.state.cursor_position + i
                 });
             self.state.cursor_position = next;
+            self.composer_selection = composer_selection::ComposerSelection::caret(next);
             cx.notify();
         }
     }
@@ -840,6 +865,13 @@ impl ChatView {
         if self.state.profile_dropdown_open {
             return;
         }
+
+        // If there is an active selection, delete the selected range.
+        if self.composer_selection.is_non_empty() {
+            self.delete_composer_selection(cx);
+            return;
+        }
+
         if self.state.cursor_position > 0 && !self.state.input_text.is_empty() {
             let pos = self.state.cursor_position.min(self.state.input_text.len());
             // Find the previous char boundary so we delete a whole character,
@@ -898,6 +930,7 @@ impl ChatView {
         });
         self.state.input_text.clear();
         self.state.cursor_position = 0;
+        self.composer_selection = composer_selection::ComposerSelection::default();
         self.state.chat_autoscroll_enabled = true;
         self.state.conversation_dropdown_open = false;
         self.state.profile_dropdown_open = false;

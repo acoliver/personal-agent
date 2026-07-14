@@ -48,7 +48,7 @@ use super::visible_document::{
 };
 use super::MarkdownBlock;
 
-const DRAG_THRESHOLD: f32 = 4.0;
+const DRAG_THRESHOLD: f32 = 1.0;
 
 /// Interaction emitted by a selectable message body.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,9 +76,9 @@ struct PointerGesture {
     dragged: bool,
 }
 
-/// Selection color: translucent accent.
+/// Selection color supplied by the active application theme.
 fn selection_color() -> Hsla {
-    crate::ui_gpui::theme::Theme::accent().alpha(0.25)
+    crate::ui_gpui::theme::Theme::selection_bg()
 }
 
 /// State held outside the per-frame lifecycle so it persists across frames.
@@ -676,29 +676,60 @@ fn selection_bounds_for_leaf(leaf: &LeafMeta, range: Range<usize>) -> Vec<Bounds
         let Some(end_pos) = layout.position_for_index(end) else {
             continue;
         };
-        let right = if (end_pos.y - start_pos.y).abs() < line_height * 0.5 {
-            end_pos.x
+        let wrapped = (end_pos.y - start_pos.y).abs() >= line_height * 0.5;
+        let (origin, right) = if wrapped {
+            // GPUI maps an index exactly at a soft-wrap boundary to the end of
+            // the preceding visual line. For the first glyph on the next line,
+            // use the next-line end position and the layout's left edge.
+            (Point::new(layout_bounds.left(), end_pos.y), end_pos.x)
         } else {
-            layout_bounds.right()
+            (start_pos, end_pos.x)
         };
-        if right <= start_pos.x {
+        if right <= origin.x {
             continue;
         }
         if let Some(previous) = result.last_mut() {
-            let same_line = (previous.origin.y - start_pos.y).abs() < line_height * 0.5;
-
-            let adjacent = start_pos.x <= previous.right() + px(1.0);
+            let same_line = (previous.origin.y - origin.y).abs() < line_height * 0.5;
+            let adjacent = origin.x <= previous.right() + px(1.0);
             if same_line && adjacent {
                 previous.size.width = right - previous.left();
                 continue;
             }
         }
         result.push(Bounds::from_corners(
-            start_pos,
-            Point::new(right, start_pos.y + line_height),
+            origin,
+            Point::new(right, origin.y + line_height),
         ));
     }
+
     result
+}
+
+#[cfg(test)]
+fn selection_bounds_for_test(element: &SelectableMarkdown) -> Vec<Bounds<Pixels>> {
+    let Some(selection) = element.selection() else {
+        return Vec::new();
+    };
+    let range = selection.ordered_range();
+    element
+        .state
+        .leaves
+        .borrow()
+        .iter()
+        .flat_map(|leaf| {
+            let start = range.start.max(leaf.doc_range.start);
+            let end = range.end.min(leaf.doc_range.end);
+            (start < end)
+                .then(|| {
+                    selection_bounds_for_leaf(
+                        leaf,
+                        start - leaf.doc_range.start..end - leaf.doc_range.start,
+                    )
+                })
+                .into_iter()
+                .flatten()
+        })
+        .collect()
 }
 
 fn link_at_offset(state: &SharedState, offset: usize) -> Option<String> {
@@ -729,6 +760,9 @@ fn set_selection(
     window: &mut Window,
     cx: &mut App,
 ) {
+    if dragging && *state.selection.borrow() == selection {
+        return;
+    }
     state.selection.borrow_mut().clone_from(&selection);
     let selected_text = selection
         .as_ref()
