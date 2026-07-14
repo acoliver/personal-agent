@@ -84,23 +84,25 @@ def drag(
 ) -> float | None:
     move_local(start_x, y)
     xdo("mousedown", "1")
-    time.sleep(0.03)
-    moved_at = time.monotonic()
-    for step in range(1, 7):
-        x = start_x + (end_x - start_x) * step // 6
-        move_local(x, y)
-        time.sleep(0.005)
     latency: float | None = None
-    if held_path is not None and baseline_path is not None:
-        deadline = moved_at + 12.0
-        while time.monotonic() < deadline:
-            screenshot(WINDOW_ID, held_path)
-            if image_changed_pixels(baseline_path, held_path) > 0:
-                latency = time.monotonic() - moved_at
-                break
-            time.sleep(0.02)
-    xdo("mouseup", "1")
-    time.sleep(0.03)
+    try:
+        time.sleep(0.03)
+        moved_at = time.monotonic()
+        for step in range(1, 7):
+            x = start_x + (end_x - start_x) * step // 6
+            move_local(x, y)
+            time.sleep(0.005)
+        if held_path is not None and baseline_path is not None:
+            deadline = moved_at + 12.0
+            while time.monotonic() < deadline:
+                screenshot(WINDOW_ID, held_path)
+                if image_changed_pixels(baseline_path, held_path) > 0:
+                    latency = time.monotonic() - moved_at
+                    break
+                time.sleep(0.02)
+    finally:
+        xdo("mouseup", "1")
+        time.sleep(0.03)
     return latency
 
 
