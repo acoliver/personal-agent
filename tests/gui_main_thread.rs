@@ -4,12 +4,12 @@
 //! macOS main thread — runs the test bodies directly. In CI the binary exits 0.
 #![allow(clippy::too_many_lines)]
 
-#[cfg(ci)]
+#[cfg(any(ci, not(target_os = "macos")))]
 fn main() {
-    println!("gui_main_thread: skipped in CI (no window server)");
+    println!("gui_main_thread: skipped outside interactive macOS");
 }
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn main() {
     let mut passed = 0u32;
     let mut failed = 0u32;
@@ -75,7 +75,7 @@ fn main() {
     }
 }
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn run_test(name: &str, passed: &mut u32, failed: &mut u32, f: fn()) {
     print!("test {name} ... ");
     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_ok() {
@@ -89,7 +89,7 @@ fn run_test(name: &str, passed: &mut u32, failed: &mut u32, f: fn()) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn make_bridge() -> std::sync::Arc<personal_agent::ui_gpui::bridge::GpuiBridge> {
     let (user_tx, _) = flume::unbounded();
     let (_, view_rx) = flume::unbounded();
@@ -100,7 +100,7 @@ fn make_bridge() -> std::sync::Arc<personal_agent::ui_gpui::bridge::GpuiBridge> 
 
 // ── PopupWindow tests ────────────────────────────────────────────
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_popup_creation() {
     use personal_agent::ui_gpui::popup_window::PopupWindow;
     let mut popup = PopupWindow::new(make_bridge()).expect("PopupWindow::new");
@@ -111,7 +111,7 @@ fn test_popup_creation() {
     assert!(!popup.is_visible(), "hide makes invisible");
 }
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_popup_esc_resign() {
     use personal_agent::ui_gpui::popup_window::PopupWindow;
     let mut popup = PopupWindow::new(make_bridge()).expect("PopupWindow::new");
@@ -123,7 +123,7 @@ fn test_popup_esc_resign() {
     assert!(!popup.is_visible(), "resign hides");
 }
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_popup_bridge_shared() {
     use personal_agent::ui_gpui::popup_window::PopupWindow;
     use std::sync::Arc;
@@ -134,14 +134,14 @@ fn test_popup_bridge_shared() {
 
 // ── TrayBridge tests ─────────────────────────────────────────────
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_tray_creation() {
     use personal_agent::ui_gpui::tray_bridge::TrayBridge;
     let tray = TrayBridge::new(make_bridge()).expect("TrayBridge::new");
     assert!(!tray.is_popup_visible());
 }
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_tray_toggle() {
     use personal_agent::ui_gpui::tray_bridge::TrayBridge;
     let tray = TrayBridge::new(make_bridge()).expect("TrayBridge::new");
@@ -152,7 +152,7 @@ fn test_tray_toggle() {
     assert!(!tray.is_popup_visible());
 }
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_tray_click_outside() {
     use personal_agent::ui_gpui::tray_bridge::TrayBridge;
     let tray = TrayBridge::new(make_bridge()).expect("TrayBridge::new");
@@ -162,7 +162,7 @@ fn test_tray_click_outside() {
     assert!(!tray.is_popup_visible());
 }
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_tray_set_popup() {
     use personal_agent::ui_gpui::popup_window::PopupWindow;
     use personal_agent::ui_gpui::tray_bridge::TrayBridge;
@@ -176,7 +176,7 @@ fn test_tray_set_popup() {
 
 // ── GpuiApp tests ────────────────────────────────────────────────
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_app_init() {
     use personal_agent::events::EventBus;
     use personal_agent::ui_gpui::app::GpuiApp;
@@ -188,7 +188,7 @@ fn test_app_init() {
         .expect("start_event_forwarding");
 }
 
-#[cfg(not(ci))]
+#[cfg(all(not(ci), target_os = "macos"))]
 fn test_app_toggle_shutdown() {
     use personal_agent::events::EventBus;
     use personal_agent::ui_gpui::app::GpuiApp;

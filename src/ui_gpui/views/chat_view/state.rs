@@ -10,7 +10,9 @@ use crate::presentation::view_command::{
     ConversationSearchResult, ConversationSummary, ProfileSummary, ToolApprovalContext,
     ToolCategory,
 };
-use crate::ui_gpui::components::markdown_content::{parse_markdown_blocks, MarkdownBlock};
+use crate::ui_gpui::components::markdown_content::{
+    parse_markdown_blocks, visible_document::VisibleDocument, MarkdownBlock,
+};
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -38,6 +40,8 @@ pub struct ChatMessage {
     /// Streaming messages should NOT cache since content changes.
     /// Uses `OnceCell` for lazy initialization with interior mutability.
     markdown_cache: OnceCell<Arc<Vec<MarkdownBlock>>>,
+    /// Cached selection metadata derived from the same parsed Markdown IR.
+    visible_document_cache: OnceCell<Arc<VisibleDocument>>,
 }
 
 impl PartialEq for ChatMessage {
@@ -47,8 +51,7 @@ impl PartialEq for ChatMessage {
             && self.thinking == other.thinking
             && self.model_label == other.model_label
             && self.timestamp == other.timestamp
-        // Intentionally exclude markdown_cache from equality check
-        // since it's derived from content
+        // Intentionally exclude derived Markdown/selection caches from equality.
     }
 }
 
@@ -70,6 +73,7 @@ impl ChatMessage {
             model_label: None,
             timestamp: None,
             markdown_cache: OnceCell::new(),
+            visible_document_cache: OnceCell::new(),
         }
     }
 
@@ -81,6 +85,7 @@ impl ChatMessage {
             model_label: Some(model_label.into()),
             timestamp: None,
             markdown_cache: OnceCell::new(),
+            visible_document_cache: OnceCell::new(),
         }
     }
 
@@ -107,6 +112,17 @@ impl ChatMessage {
     pub fn get_or_parse_markdown(&self) -> Arc<Vec<MarkdownBlock>> {
         self.markdown_cache
             .get_or_init(|| Arc::new(parse_markdown_blocks(&self.content)))
+            .clone()
+    }
+
+    /// Get or build the visible document used by message selection.
+    #[must_use]
+    pub fn get_or_build_visible_document(&self) -> Arc<VisibleDocument> {
+        self.visible_document_cache
+            .get_or_init(|| {
+                let blocks = self.get_or_parse_markdown();
+                Arc::new(VisibleDocument::from_blocks(&blocks))
+            })
             .clone()
     }
 
@@ -323,6 +339,7 @@ impl ChatState {
         // clones produced during render share the cached Arc.
         for msg in &messages {
             let _ = msg.get_or_parse_markdown();
+            let _ = msg.get_or_build_visible_document();
         }
         self.messages = messages;
         self
@@ -346,6 +363,7 @@ impl ChatState {
         // This ensures that clones produced during render share the cached Arc.
         // @plan PLAN-20260407-ISSUE172.P06
         let _ = message.get_or_parse_markdown();
+        let _ = message.get_or_build_visible_document();
         self.messages.push(message);
     }
 

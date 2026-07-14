@@ -4,7 +4,8 @@
 //! @requirement REQ-GPUI-003
 
 use crate::ui_gpui::components::markdown_content::{
-    blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
+    blocks_to_elements, parse_markdown_blocks, selectable_markdown::SelectableMarkdown,
+    MarkdownBlock,
 };
 use gpui::{div, prelude::*, px, IntoElement, MouseButton};
 use std::sync::Arc;
@@ -60,6 +61,7 @@ pub struct AssistantBubble {
     thinking: Option<String>,
     show_thinking: bool,
     is_streaming: bool,
+    selectable_content: Option<SelectableMarkdown>,
 }
 
 impl AssistantBubble {
@@ -77,6 +79,7 @@ impl AssistantBubble {
             thinking: None,
             show_thinking: false,
             is_streaming: false,
+            selectable_content: None,
         }
     }
 
@@ -113,6 +116,13 @@ impl AssistantBubble {
     #[must_use]
     pub fn with_cached_blocks(mut self, blocks: Arc<Vec<MarkdownBlock>>) -> Self {
         self.cached_blocks = Some(blocks);
+        self
+    }
+
+    /// Render finalized content through the per-message selectable rich tree.
+    #[must_use]
+    pub fn selectable_content(mut self, content: SelectableMarkdown) -> Self {
+        self.selectable_content = Some(content);
         self
     }
 
@@ -190,45 +200,47 @@ impl IntoElement for AssistantBubble {
             }
         }
 
-        let content_text = rendered_content_text(&self.content, self.is_streaming);
-
-        // @plan:PLAN-20260402-MARKDOWN.P11
-        // @plan:PLAN-20260407-ISSUE172.P10 (cached blocks)
-        // @requirement:REQ-MD-INTEGRATE-002
-        let blocks: Vec<MarkdownBlock> = if self.is_streaming {
-            // Streaming: parse fresh since content changes
-            parse_markdown_blocks(&content_text)
-        } else if let Some(cached) = &self.cached_blocks {
-            // Finalized with cache: use cached blocks
-            // Dereference Arc<Vec<_>> to &Vec<_>, then clone the Vec
-            cached.as_ref().clone()
+        let main_content = if let Some(selectable) = self.selectable_content {
+            Theme::assistant_bubble(
+                div()
+                    .w_full()
+                    .px(px(Theme::SPACING_MD))
+                    .py(px(Theme::SPACING_SM))
+                    .rounded(px(Theme::RADIUS_LG))
+                    .cursor_text()
+                    .child(selectable),
+            )
         } else {
-            // No cache available: parse fresh
-            parse_markdown_blocks(&content_text)
+            let content_text = rendered_content_text(&self.content, self.is_streaming);
+            let blocks: Vec<MarkdownBlock> = if self.is_streaming {
+                parse_markdown_blocks(&content_text)
+            } else if let Some(cached) = &self.cached_blocks {
+                cached.as_ref().clone()
+            } else {
+                parse_markdown_blocks(&content_text)
+            };
+            let rendered = blocks_to_elements(&blocks);
+            let mut content = Theme::assistant_bubble(
+                div()
+                    .w_full()
+                    .px(px(Theme::SPACING_MD))
+                    .py(px(Theme::SPACING_SM))
+                    .rounded(px(Theme::RADIUS_LG))
+                    .children(rendered),
+            );
+            if should_enable_bubble_copy(&blocks, self.is_streaming) {
+                let raw_markdown = Arc::clone(&self.content);
+                content =
+                    content
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                (*raw_markdown).clone(),
+                            ));
+                        });
+            }
+            content
         };
-        let rendered = blocks_to_elements(&blocks);
-
-        let mut main_content = Theme::assistant_bubble(
-            div()
-                .w_full()
-                .px(px(Theme::SPACING_MD))
-                .py(px(Theme::SPACING_SM))
-                .rounded(px(Theme::RADIUS_LG))
-                .children(rendered),
-        );
-
-        if should_enable_bubble_copy(&blocks, self.is_streaming) {
-            // Clone the Arc, not the String - defer allocation to click time
-            let raw_markdown = Arc::clone(&self.content);
-            main_content =
-                main_content
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                            (*raw_markdown).clone(),
-                        ));
-                    });
-        }
 
         bubble = bubble.child(main_content);
 

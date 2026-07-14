@@ -58,6 +58,17 @@ fn chat_message_caches_parsed_markdown_blocks() {
 }
 
 #[test]
+fn chat_message_caches_visible_selection_document() {
+    let msg = ChatMessage::assistant("# Heading\n\n**selected** text", "gpt-4");
+
+    let document1 = msg.get_or_build_visible_document();
+    let document2 = msg.get_or_build_visible_document();
+
+    assert_eq!(document1.text(), "Heading\nselected text");
+    assert!(Arc::ptr_eq(&document1, &document2));
+}
+
+#[test]
 fn streaming_message_reparse_is_different() {
     // Streaming messages should NOT cache - content changes on each chunk
     // The content difference should be reflected in the parsed blocks

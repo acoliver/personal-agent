@@ -8,6 +8,7 @@ use crate::presentation::view_command::{
 };
 use crate::ui_gpui::app_store::StreamingStoreSnapshot;
 use crate::ui_gpui::bridge::GpuiBridge;
+use crate::ui_gpui::components::markdown_content::visible_document::{MessageRevision, Selection};
 use chrono::Utc;
 use gpui::{
     point, AppContext, KeyDownEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
@@ -710,15 +711,63 @@ async fn empty_composer_shows_cursor_only_when_focused(cx: &mut TestAppContext) 
             assert_eq!(view.composer_display_text_for_test(cx), "Type a message...");
 
             view.focus_composer(cx);
-            assert_eq!(view.composer_display_text_for_test(cx), "|");
+            assert_eq!(view.composer_display_text_for_test(cx), "");
 
             view.state.input_text = "hello".to_string();
             view.state.cursor_position = 2;
-            assert_eq!(view.composer_display_text_for_test(cx), "he|llo");
+            assert_eq!(view.composer_display_text_for_test(cx), "hello");
 
             view.blur_composer();
             assert_eq!(view.composer_display_text_for_test(cx), "hello");
         });
+    });
+}
+
+#[gpui::test]
+async fn composer_mouse_drag_selects_visible_text(cx: &mut TestAppContext) {
+    let (view, visual_cx) =
+        cx.add_window_view(|_window, cx| ChatView::new(ChatState::default(), cx));
+    visual_cx.simulate_resize(gpui::size(px(780.0), px(600.0)));
+    view.update(visual_cx, |view, cx| {
+        view.state.input_text = "select this composer text".to_string();
+        view.state.cursor_position = view.state.input_text.len();
+        view.composer_selection =
+            super::composer_selection::ComposerSelection::caret(view.state.cursor_position);
+        view.focus_composer(cx);
+        cx.notify();
+    });
+    visual_cx.run_until_parked();
+
+    let bounds = visual_cx
+        .debug_bounds("chat-input-field")
+        .expect("composer bounds");
+    let start = gpui::Point::new(bounds.left() + px(12.0), bounds.top() + px(14.0));
+    let end = gpui::Point::new(bounds.left() + px(120.0), bounds.top() + px(14.0));
+    visual_cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::default());
+    visual_cx.simulate_mouse_move(end, gpui::MouseButton::Left, Modifiers::default());
+    visual_cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::default());
+    visual_cx.run_until_parked();
+
+    view.read_with(visual_cx, |view, _| {
+        assert!(view.composer_selection.is_non_empty());
+        assert!(!view.composer_selected_text().is_empty());
+        assert_ne!(view.composer_selected_text(), view.state.input_text);
+    });
+}
+#[gpui::test]
+async fn rename_submission_without_conversation_cancels_editing(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+
+    view.update(cx, |view, cx| {
+        view.state.conversation_title_editing = true;
+        view.state.conversation_title_input = "orphan title".to_string();
+        view.state.rename_replace_on_next_char = true;
+
+        view.submit_rename_conversation(cx);
+
+        assert!(!view.state.conversation_title_editing);
+        assert!(view.state.conversation_title_input.is_empty());
+        assert!(!view.state.rename_replace_on_next_char);
     });
 }
 
@@ -813,126 +862,5 @@ async fn wheel_scroll_down_reenables_autoscroll_only_when_near_bottom(cx: &mut T
     });
 }
 
-#[gpui::test]
-async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppContext) {
-    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
-    let mut visual_cx = cx.add_empty_window().clone();
-    let (bridge, user_rx) = make_chat_bridge();
-
-    visual_cx.update(|_window, app| {
-        view.update(app, |view: &mut ChatView, cx| {
-            view.set_bridge(bridge.clone());
-            view.state.input_text = "firstsecond".to_string();
-            view.state.cursor_position = "first".len();
-
-            view.handle_key_down(
-                &modified_chat_key_event(
-                    "enter",
-                    Modifiers {
-                        shift: true,
-                        ..Modifiers::default()
-                    },
-                ),
-                cx,
-            );
-
-            assert_eq!(view.state.input_text, "first\nsecond");
-            assert_eq!(view.state.cursor_position, "first\n".len());
-            assert!(user_rx.try_recv().is_err());
-            assert_eq!(view.state.streaming, StreamingState::Idle);
-
-            view.handle_key_down(
-                &modified_chat_key_event(
-                    "enter",
-                    Modifiers {
-                        control: true,
-                        ..Modifiers::default()
-                    },
-                ),
-                cx,
-            );
-
-            assert_eq!(view.state.input_text, "first\n\nsecond");
-            assert_eq!(view.state.cursor_position, "first\n\n".len());
-            assert!(user_rx.try_recv().is_err());
-            assert_eq!(view.state.streaming, StreamingState::Idle);
-
-            view.handle_key_down(
-                &modified_chat_key_event(
-                    "enter",
-                    Modifiers {
-                        alt: true,
-                        ..Modifiers::default()
-                    },
-                ),
-                cx,
-            );
-
-            assert_eq!(view.state.input_text, "first\n\n\nsecond");
-            assert_eq!(view.state.cursor_position, "first\n\n\n".len());
-            assert!(user_rx.try_recv().is_err());
-            assert_eq!(view.state.streaming, StreamingState::Idle);
-        });
-    });
-}
-
-#[gpui::test]
-async fn plain_enter_still_submits_message(cx: &mut TestAppContext) {
-    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
-    let mut visual_cx = cx.add_empty_window().clone();
-    let (bridge, user_rx) = make_chat_bridge();
-
-    visual_cx.update(|_window, app| {
-        view.update(app, |view: &mut ChatView, cx| {
-            view.set_bridge(bridge.clone());
-            view.state.input_text = "send me".to_string();
-            view.state.cursor_position = view.state.input_text.len();
-
-            view.handle_key_down(&chat_key_event("enter"), cx);
-
-            assert_eq!(
-                user_rx.try_recv().ok(),
-                Some(UserEvent::SendMessage {
-                    text: "send me".to_string(),
-                    conversation_id: None,
-                })
-            );
-            assert!(view.state.input_text.is_empty());
-            assert_eq!(view.state.cursor_position, 0);
-            assert_eq!(
-                view.state.streaming,
-                StreamingState::Streaming {
-                    content: String::new(),
-                    done: false,
-                }
-            );
-        });
-    });
-}
-
-#[gpui::test]
-async fn send_message_targets_selected_conversation(cx: &mut TestAppContext) {
-    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
-    let mut visual_cx = cx.add_empty_window().clone();
-    let (bridge, user_rx) = make_chat_bridge();
-    let conversation_id = Uuid::new_v4();
-
-    visual_cx.update(|_window, app| {
-        view.update(app, |view: &mut ChatView, cx| {
-            view.set_bridge(bridge.clone());
-            view.conversation_id = Some(conversation_id);
-            view.state.input_text = "continue here".to_string();
-            view.state.cursor_position = view.state.input_text.len();
-
-            view.handle_key_down(&chat_key_event("enter"), cx);
-
-            assert_eq!(
-                user_rx.try_recv().ok(),
-                Some(UserEvent::SendMessage {
-                    text: "continue here".to_string(),
-                    conversation_id: Some(conversation_id),
-                })
-            );
-        });
-    });
-}
+#[path = "mod_tests/keyboard_tests.rs"]
+mod keyboard_tests;
