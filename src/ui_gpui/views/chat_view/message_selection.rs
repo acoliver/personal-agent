@@ -8,6 +8,7 @@ use crate::ui_gpui::components::markdown_content::{
 use crate::ui_gpui::components::AssistantBubble;
 use crate::ui_gpui::theme::Theme;
 use gpui::{div, prelude::*, px, MouseButton};
+use std::sync::Arc;
 
 impl ChatView {
     fn current_conversation_identity(&self) -> String {
@@ -35,12 +36,11 @@ impl ChatView {
         if active.revision != revision {
             return None;
         }
-        let blocks = if self.state.filter_emoji {
-            parse_markdown_blocks(&display_content)
+        let document = if self.state.filter_emoji {
+            VisibleDocument::from_blocks(&parse_markdown_blocks(&display_content))
         } else {
-            message.get_or_parse_markdown().as_ref().clone()
+            (*message.get_or_build_visible_document()).clone()
         };
-        let document = VisibleDocument::from_blocks(&blocks);
         let selected_text = document.selected_text(&active.selection);
         (!selected_text.is_empty()).then_some(selected_text)
     }
@@ -96,10 +96,15 @@ impl ChatView {
         } else {
             (*msg.content).clone()
         };
-        let blocks = if filter_emoji {
-            parse_markdown_blocks(&display_content)
+        let (blocks, document) = if filter_emoji {
+            let blocks = Arc::new(parse_markdown_blocks(&display_content));
+            let document = Arc::new(VisibleDocument::from_blocks(&blocks));
+            (blocks, document)
         } else {
-            msg.get_or_parse_markdown().as_ref().clone()
+            (
+                msg.get_or_parse_markdown(),
+                msg.get_or_build_visible_document(),
+            )
         };
         let identity = format!("{conversation_identity}:{message_index}:{:?}", msg.role);
         let revision = MessageRevision::new(&identity, &display_content, 0, filter_emoji);
@@ -111,9 +116,9 @@ impl ChatView {
             "selectable-message:{identity}:{}",
             callback_revision.hash()
         ));
-        let selectable = SelectableMarkdown::from_blocks(
-            &display_content,
+        let selectable = SelectableMarkdown::from_cached_blocks(
             blocks,
+            document,
             revision,
             match msg.role {
                 MessageRole::User => Theme::user_bubble_text(),

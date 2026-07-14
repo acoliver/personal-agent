@@ -308,7 +308,7 @@ impl ChatView {
     /// Render the chat area with messages
     /// @plan PLAN-20250130-GPUIREDUX.P03
     pub(super) fn render_chat_area(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let messages = self.state.messages.clone();
+        let messages = &self.state.messages;
         let streaming = self.state.streaming.clone();
         let show_thinking = self.state.show_thinking;
         let filter_emoji = self.state.filter_emoji;
@@ -358,7 +358,7 @@ impl ChatView {
             )
             // Messages
             .when(!messages.is_empty(), |d| {
-                d.children(messages.into_iter().enumerate().map(|(i, msg)| {
+                d.children(messages.iter().enumerate().map(|(i, msg)| {
                     let id = SharedString::from(format!("msg-{i}"));
                     div()
                         .id(id)
@@ -366,7 +366,7 @@ impl ChatView {
                         .flex()
                         .justify_start()
                         .child(Self::render_message(
-                            &msg,
+                            msg,
                             i,
                             &conversation_identity,
                             show_thinking,

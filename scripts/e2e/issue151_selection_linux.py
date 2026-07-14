@@ -10,6 +10,7 @@ import sys
 import time
 
 MARKER = "ISSUE151_ALPHA"
+WINDOW_ID = ""
 WINDOW_X = 0
 WINDOW_Y = 0
 
@@ -67,7 +68,7 @@ def move_local(x: int, y: int) -> None:
     xdo("mousemove", str(WINDOW_X + x), str(WINDOW_Y + y))
 
 
-def drag(start_x: int, end_x: int, y: int) -> None:
+def drag(start_x: int, end_x: int, y: int, held_path: pathlib.Path | None = None) -> None:
     move_local(start_x, y)
     xdo("mousedown", "1")
     time.sleep(0.03)
@@ -75,6 +76,9 @@ def drag(start_x: int, end_x: int, y: int) -> None:
         x = start_x + (end_x - start_x) * step // 6
         move_local(x, y)
         time.sleep(0.005)
+    if held_path is not None:
+        time.sleep(0.03)
+        screenshot(WINDOW_ID, held_path)
     xdo("mouseup", "1")
     time.sleep(0.03)
 
@@ -91,13 +95,15 @@ def main() -> int:
         print("usage: issue151_selection_linux.py WINDOW_ID ARTIFACT_DIR LOG", file=sys.stderr)
         return 2
 
-    global WINDOW_X, WINDOW_Y
+    global WINDOW_ID, WINDOW_X, WINDOW_Y
     window_id, artifact_dir_text, log_path_text = sys.argv[1:]
+    WINDOW_ID = window_id
     artifact_dir = pathlib.Path(artifact_dir_text)
     log_path = pathlib.Path(log_path_text)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     before_path = artifact_dir / "before-selection.png"
     selected_path = artifact_dir / "selected.png"
+    held_selection_path = artifact_dir / "selection-while-mouse-held.png"
     menu_path = artifact_dir / "context-menu.png"
     composer_forward_path = artifact_dir / "composer-forward-selection.png"
     composer_reverse_path = artifact_dir / "composer-reverse-selection.png"
@@ -144,7 +150,22 @@ def main() -> int:
         return 1
 
     start_x, end_x, y, copied = found
+    # Repeat the successful gesture and capture before mouse-up. This proves
+    # that selection feedback is live rather than appearing only on release.
+    move_local(12, height - 80)
+    xdo("click", "1")
+    time.sleep(0.03)
+    drag(start_x, end_x, y, held_selection_path)
     screenshot(window_id, selected_path)
+
+    held_metric = run(
+        "compare", "-metric", "AE", str(before_path), str(held_selection_path), "null:",
+        check=False,
+    ).stderr.strip()
+    held_changed_pixels = int(float((held_metric or "0").split()[0]))
+    if held_changed_pixels <= 0:
+        print("FAIL: no selection pixels changed while mouse was held", file=sys.stderr)
+        return 1
 
     # A changed image is machine-verifiable evidence that selection produced a
     # visible highlight, not merely a hidden range and successful clipboard.
@@ -261,6 +282,7 @@ def main() -> int:
                 f"composer_reverse_drag={composer_reverse!r}",
                 f"composer_after_cut={composer_after_cut!r}",
                 f"composer_replaced={composer_replaced!r}",
+                f"selection_while_held_changed_pixels={held_changed_pixels}",
                 f"selection_changed_pixels={changed_pixels}",
                 f"menu_changed_pixels={menu_changed_pixels}",
             ]

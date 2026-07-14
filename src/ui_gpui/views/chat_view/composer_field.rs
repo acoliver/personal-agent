@@ -84,7 +84,17 @@ impl Element for ComposerField {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        let selection = self.config.selection.clamped(&self.config.text);
         let mut child = StyledText::new(self.config.text.clone());
+        if !selection.is_collapsed() {
+            child = child.with_highlights([(
+                selection.start()..selection.end(),
+                gpui::HighlightStyle {
+                    color: Some(Theme::selection_fg()),
+                    ..Default::default()
+                },
+            )]);
+        }
         let layout_id = Element::request_layout(&mut child, None, None, window, cx).0;
         self.layout = child.layout().clone();
         (layout_id, LayoutState { child })

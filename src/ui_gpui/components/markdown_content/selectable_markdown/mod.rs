@@ -34,6 +34,7 @@ mod tests;
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{
     fill, px, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId, Hsla,
@@ -81,11 +82,15 @@ fn selection_color() -> Hsla {
     crate::ui_gpui::theme::Theme::selection_bg()
 }
 
+fn selection_text_color() -> Hsla {
+    crate::ui_gpui::theme::Theme::selection_fg()
+}
+
 /// State held outside the per-frame lifecycle so it persists across frames.
 #[derive(Clone)]
 struct SharedState {
     /// The visible document (text + links + blocks) built from the same IR.
-    doc: Rc<RefCell<VisibleDocument>>,
+    doc: Arc<VisibleDocument>,
     /// Registry of leaf layouts, populated each frame.
     registry: LeafRegistry,
     /// Current selection for this message, if any.
@@ -95,7 +100,7 @@ struct SharedState {
     /// The latest reported "current" revision (to detect staleness).
     current_revision: Rc<RefCell<MessageRevision>>,
     /// Parsed blocks cached by the owning message.
-    blocks: Rc<Vec<MarkdownBlock>>,
+    blocks: Arc<Vec<MarkdownBlock>>,
     /// Bubble-specific base text color.
     text_color: Hsla,
     /// Cached leaves from the most recent layout (for painting quads).
@@ -152,7 +157,7 @@ impl SelectableMarkdown {
         )
     }
 
-    /// Build from already-parsed blocks so production chat rendering shares its cache.
+    /// Build from already-parsed blocks.
     #[must_use]
     pub fn from_blocks(
         _markdown: &str,
@@ -160,15 +165,26 @@ impl SelectableMarkdown {
         revision: MessageRevision,
         text_color: Hsla,
     ) -> Self {
-        let doc = VisibleDocument::from_blocks(&blocks);
+        let document = Arc::new(VisibleDocument::from_blocks(&blocks));
+        Self::from_cached_blocks(Arc::new(blocks), document, revision, text_color)
+    }
+
+    /// Build from cached parsed blocks and selection metadata.
+    #[must_use]
+    pub fn from_cached_blocks(
+        blocks: Arc<Vec<MarkdownBlock>>,
+        document: Arc<VisibleDocument>,
+        revision: MessageRevision,
+        text_color: Hsla,
+    ) -> Self {
         Self {
             state: SharedState {
-                doc: Rc::new(RefCell::new(doc)),
+                doc: document,
                 registry: LeafRegistry::default(),
                 selection: Rc::new(RefCell::new(None)),
                 revision: Rc::new(RefCell::new(revision.clone())),
                 current_revision: Rc::new(RefCell::new(revision)),
-                blocks: Rc::new(blocks),
+                blocks,
                 text_color,
                 leaves: Rc::new(RefCell::new(Vec::new())),
                 gesture: Rc::new(RefCell::new(None)),
@@ -232,14 +248,14 @@ impl SelectableMarkdown {
     #[must_use]
     pub fn selected_text(&self) -> String {
         self.selection().map_or_else(String::new, |selection| {
-            self.state.doc.borrow().selected_text(&selection)
+            self.state.doc.selected_text(&selection)
         })
     }
 
     /// Return the visible-document text.
     #[must_use]
     pub fn document_text(&self) -> String {
-        self.state.doc.borrow().text().to_string()
+        self.state.doc.text().to_string()
     }
 
     /// Return the number of selectable leaves from the most recent layout.
@@ -301,7 +317,7 @@ impl SelectableMarkdown {
             Some(s) if !s.is_empty() => s,
             _ => return,
         };
-        let doc = self.state.doc.borrow();
+        let doc = &self.state.doc;
         let clamped = sel.clamped(doc.text());
         let range = clamped.ordered_range();
 
@@ -359,11 +375,14 @@ impl Element for SelectableMarkdown {
         // Clear registry and build the rich child. The child's leaves will
         // register their layouts during the child's request_layout traversal.
         self.state.registry.clear();
-        let document = self.state.doc.borrow();
+        let document = &self.state.doc;
+        let selection = self.selection().filter(|selection| !selection.is_empty());
         let child = build_selectable_rich_tree(
             &self.state.blocks,
-            &document,
+            document,
             self.state.text_color,
+            selection.as_ref(),
+            selection_text_color(),
             &self.state.registry,
         );
 
@@ -413,6 +432,7 @@ impl Element for SelectableMarkdown {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.paint_selection(window, cx);
         Element::paint(
             &mut request_layout.child,
             None,
@@ -425,11 +445,10 @@ impl Element for SelectableMarkdown {
         );
 
         let gesture = persistent_gesture(global_id, &self.state, window);
-        self.paint_selection(window, cx);
 
         let mut state = self.state.clone();
         state.gesture = gesture;
-        let doc_text = self.state.doc.borrow().text().to_string();
+        let doc_text = self.state.doc.text().to_string();
         register_mouse_listeners(state, bounds, doc_text, window);
     }
 }
@@ -483,7 +502,7 @@ fn register_secondary_click(state: SharedState, bounds: Bounds<Pixels>, window: 
         let Some(selection) = selection.filter(|selection| selection.contains(offset)) else {
             return;
         };
-        let selected_text = state.doc.borrow().selected_text(&selection);
+        let selected_text = state.doc.selected_text(&selection);
         emit_event(
             &state,
             SelectableMarkdownEvent::ContextMenu {
@@ -523,7 +542,6 @@ fn register_primary_down(
 fn select_semantic_block(state: &SharedState, offset: usize, window: &mut Window, cx: &mut App) {
     let selection = state
         .doc
-        .borrow()
         .semantic_blocks()
         .iter()
         .find(|block| block.range.contains(&offset) || block.range.end == offset)
@@ -735,7 +753,6 @@ fn selection_bounds_for_test(element: &SelectableMarkdown) -> Vec<Bounds<Pixels>
 fn link_at_offset(state: &SharedState, offset: usize) -> Option<String> {
     state
         .doc
-        .borrow()
         .links()
         .iter()
         .find(|link| link.range.contains(&offset))
@@ -766,7 +783,7 @@ fn set_selection(
     state.selection.borrow_mut().clone_from(&selection);
     let selected_text = selection
         .as_ref()
-        .map(|selection| state.doc.borrow().selected_text(selection))
+        .map(|selection| state.doc.selected_text(selection))
         .unwrap_or_default();
     emit_event(
         state,
