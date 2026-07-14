@@ -308,6 +308,9 @@ async fn drag_continues_across_owner_rerender(cx: &mut TestAppContext) {
         Modifiers::default(),
     );
     vtc.run_until_parked();
+    vtc.executor()
+        .advance_clock(std::time::Duration::from_millis(16));
+    vtc.run_until_parked();
     view.read_with(vtc, |view, _| {
         assert!(view.dragging, "owner must preserve an in-progress drag");
         assert!(view.selection.as_ref().is_some_and(|sel| !sel.is_empty()));

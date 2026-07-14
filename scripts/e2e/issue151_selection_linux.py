@@ -68,19 +68,40 @@ def move_local(x: int, y: int) -> None:
     xdo("mousemove", str(WINDOW_X + x), str(WINDOW_Y + y))
 
 
-def drag(start_x: int, end_x: int, y: int, held_path: pathlib.Path | None = None) -> None:
+def image_changed_pixels(before: pathlib.Path, after: pathlib.Path) -> int:
+    metric = run(
+        "compare", "-metric", "AE", str(before), str(after), "null:", check=False
+    ).stderr.strip()
+    return int(float((metric or "0").split()[0]))
+
+
+def drag(
+    start_x: int,
+    end_x: int,
+    y: int,
+    held_path: pathlib.Path | None = None,
+    baseline_path: pathlib.Path | None = None,
+) -> float | None:
     move_local(start_x, y)
     xdo("mousedown", "1")
     time.sleep(0.03)
+    moved_at = time.monotonic()
     for step in range(1, 7):
         x = start_x + (end_x - start_x) * step // 6
         move_local(x, y)
         time.sleep(0.005)
-    if held_path is not None:
-        time.sleep(0.03)
-        screenshot(WINDOW_ID, held_path)
+    latency: float | None = None
+    if held_path is not None and baseline_path is not None:
+        deadline = moved_at + 12.0
+        while time.monotonic() < deadline:
+            screenshot(WINDOW_ID, held_path)
+            if image_changed_pixels(baseline_path, held_path) > 0:
+                latency = time.monotonic() - moved_at
+                break
+            time.sleep(0.02)
     xdo("mouseup", "1")
     time.sleep(0.03)
+    return latency
 
 
 def copy_selection(window_id: str) -> str:
@@ -155,16 +176,24 @@ def main() -> int:
     move_local(12, height - 80)
     xdo("click", "1")
     time.sleep(0.03)
-    drag(start_x, end_x, y, held_selection_path)
+    held_selection_latency = drag(
+        start_x,
+        end_x,
+        y,
+        held_selection_path,
+        before_path,
+    )
     screenshot(window_id, selected_path)
 
-    held_metric = run(
-        "compare", "-metric", "AE", str(before_path), str(held_selection_path), "null:",
-        check=False,
-    ).stderr.strip()
-    held_changed_pixels = int(float((held_metric or "0").split()[0]))
-    if held_changed_pixels <= 0:
-        print("FAIL: no selection pixels changed while mouse was held", file=sys.stderr)
+    held_changed_pixels = image_changed_pixels(before_path, held_selection_path)
+    if held_changed_pixels <= 0 or held_selection_latency is None:
+        print("FAIL: no selection pixels changed within 12s while mouse was held", file=sys.stderr)
+        return 1
+    if held_selection_latency > 0.75:
+        print(
+            f"FAIL: held selection took {held_selection_latency:.3f}s to paint",
+            file=sys.stderr,
+        )
         return 1
 
     # A changed image is machine-verifiable evidence that selection produced a
@@ -283,6 +312,7 @@ def main() -> int:
                 f"composer_after_cut={composer_after_cut!r}",
                 f"composer_replaced={composer_replaced!r}",
                 f"selection_while_held_changed_pixels={held_changed_pixels}",
+                f"held_selection_latency_ms={held_selection_latency * 1000:.1f}",
                 f"selection_changed_pixels={changed_pixels}",
                 f"menu_changed_pixels={menu_changed_pixels}",
             ]

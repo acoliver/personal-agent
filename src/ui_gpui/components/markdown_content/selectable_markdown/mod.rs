@@ -35,6 +35,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     fill, px, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId, Hsla,
@@ -50,6 +51,7 @@ use super::visible_document::{
 use super::MarkdownBlock;
 
 const DRAG_THRESHOLD: f32 = 1.0;
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 /// Interaction emitted by a selectable message body.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +111,15 @@ struct SharedState {
     gesture: Rc<RefCell<Option<PointerGesture>>>,
     /// Optional owner callback used by the chat view.
     on_event: Option<EventHandler>,
+    /// Coalesces rapid pointer moves into a single owner update per frame.
+    pending_drag_event: Rc<RefCell<Option<PendingDragEvent>>>,
+    drag_event_scheduled: Rc<RefCell<bool>>,
+}
+
+#[derive(Clone)]
+struct PendingDragEvent {
+    selection: Selection,
+    selected_text: String,
 }
 
 /// A custom GPUI element that renders a real rich Markdown child and supports
@@ -189,6 +200,8 @@ impl SelectableMarkdown {
                 leaves: Rc::new(RefCell::new(Vec::new())),
                 gesture: Rc::new(RefCell::new(None)),
                 on_event: None,
+                pending_drag_event: Rc::new(RefCell::new(None)),
+                drag_event_scheduled: Rc::new(RefCell::new(false)),
             },
             element_id: None,
         }
@@ -785,15 +798,57 @@ fn set_selection(
         .as_ref()
         .map(|selection| state.doc.selected_text(selection))
         .unwrap_or_default();
-    emit_event(
-        state,
-        SelectableMarkdownEvent::SelectionChanged {
-            selection,
-            selected_text,
-            dragging,
-        },
-        window,
-        cx,
-    );
+
+    if dragging {
+        if let Some(selection) = selection {
+            *state.pending_drag_event.borrow_mut() = Some(PendingDragEvent {
+                selection,
+                selected_text,
+            });
+            schedule_drag_event(state, window, cx);
+        }
+    } else {
+        state.pending_drag_event.borrow_mut().take();
+        *state.drag_event_scheduled.borrow_mut() = false;
+        emit_event(
+            state,
+            SelectableMarkdownEvent::SelectionChanged {
+                selection,
+                selected_text,
+                dragging: false,
+            },
+            window,
+            cx,
+        );
+    }
     window.refresh();
+}
+
+fn schedule_drag_event(state: &SharedState, window: &mut Window, cx: &mut App) {
+    if std::mem::replace(&mut *state.drag_event_scheduled.borrow_mut(), true) {
+        return;
+    }
+    let state = state.clone();
+    window
+        .spawn(cx, async move |cx| {
+            cx.background_executor().timer(FRAME_INTERVAL).await;
+            cx.update(|window, cx| {
+                *state.drag_event_scheduled.borrow_mut() = false;
+                let Some(pending) = state.pending_drag_event.borrow_mut().take() else {
+                    return;
+                };
+                emit_event(
+                    &state,
+                    SelectableMarkdownEvent::SelectionChanged {
+                        selection: Some(pending.selection),
+                        selected_text: pending.selected_text,
+                        dragging: true,
+                    },
+                    window,
+                    cx,
+                );
+            })
+            .ok();
+        })
+        .detach();
 }
