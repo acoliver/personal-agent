@@ -25,6 +25,7 @@ pub mod skills_impl;
 
 pub mod conversation;
 pub mod conversation_sqlite;
+pub mod conversation_title;
 pub mod login_item;
 pub mod mcp;
 pub mod mcp_impl;
@@ -84,6 +85,9 @@ pub use app_settings::AppSettingsService;
 pub use backup::BackupService;
 pub use chat::ChatService;
 pub use conversation::ConversationService;
+pub use conversation_title::{
+    ConversationTitleGenerator, DisabledConversationTitleGenerator, LlmConversationTitleGenerator,
+};
 pub use mcp::McpService;
 pub use mcp_registry::McpRegistryService;
 pub use models_registry::ModelsRegistryService;

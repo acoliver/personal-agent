@@ -13,6 +13,7 @@ mod chat_test_support;
 mod compression_persistence;
 mod concurrent_streams;
 mod three_stream_concurrency;
+mod title_generation;
 
 use chat_test_support::*;
 

@@ -124,6 +124,9 @@ keyring = "3"
 tempfile = "3"
 rstest = "0.18"
 wiremock = "0.6"
+# `test-util` enables paused-clock tests (`#[tokio::test(start_paused = true)]`) so
+# timeout behaviour can be verified without real waiting.
+tokio = { version = "1.0", features = ["full", "test-util"] }
 
 [[test]]
 name = "gui_main_thread"
