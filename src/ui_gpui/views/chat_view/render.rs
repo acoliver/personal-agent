@@ -702,7 +702,7 @@ impl ChatView {
                 cx.listener(move |this, _, window, cx| {
                     window.activate_window();
                     window.focus(&focus_handle, cx);
-                    this.focus_composer(cx);
+                    this.focus_composer_dismissing_overlays(cx);
                 }),
             )
             .child(
