@@ -20,6 +20,9 @@ mod render_bars;
 #[cfg(test)]
 mod render_bars_tests;
 
+#[cfg(test)]
+mod snapshot_tests;
+
 mod render_bars_export;
 
 mod render_sidebar;
