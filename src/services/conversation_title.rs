@@ -17,19 +17,16 @@ use crate::services::{ServiceError, ServiceResult};
 /// Maximum length of a generated title, in characters.
 ///
 /// Conversation rows are narrow, so anything longer is dead weight.
-pub const MAX_TITLE_CHARS: usize = 60;
+pub(crate) const MAX_TITLE_CHARS: usize = 60;
 
 /// Maximum number of characters of the first prompt sent to the model.
 ///
 /// A title only needs the opening of the prompt; sending a multi-megabyte paste again
 /// would make auto-naming more expensive than the conversation itself.
-pub const MAX_PROMPT_CHARS: usize = 2000;
+pub(crate) const MAX_PROMPT_CHARS: usize = 2000;
 
 /// Placeholder titles assigned by the app rather than chosen by the user.
 const PLACEHOLDER_TITLES: [&str; 3] = ["new conversation", "untitled conversation", "untitled"];
-
-/// Width of the timestamp title produced by `Conversation::new` (`%Y%m%d%H%M%S%3f`).
-const TIMESTAMP_TITLE_LEN: usize = 17;
 
 /// Characters stripped from both ends of a candidate title.
 ///
@@ -104,7 +101,7 @@ impl ConversationTitleGenerator for LlmConversationTitleGenerator {
 /// Used by `ChatServiceImpl::new_for_tests` so that test harnesses exercising the chat
 /// stream do not also fire a live title request at a provider. Tests that cover
 /// auto-naming inject their own generator instead.
-pub struct DisabledConversationTitleGenerator;
+pub(crate) struct DisabledConversationTitleGenerator;
 
 #[async_trait]
 impl ConversationTitleGenerator for DisabledConversationTitleGenerator {
@@ -124,7 +121,7 @@ impl ConversationTitleGenerator for DisabledConversationTitleGenerator {
 /// Only placeholders are eligible for auto-naming; a title the user (or a previous
 /// generation) chose is never overwritten.
 #[must_use]
-pub fn is_placeholder_title(title: Option<&str>) -> bool {
+pub(crate) fn is_placeholder_title(title: Option<&str>) -> bool {
     let Some(title) = title else {
         return true;
     };
@@ -134,23 +131,14 @@ pub fn is_placeholder_title(title: Option<&str>) -> bool {
         return true;
     }
 
-    if PLACEHOLDER_TITLES.contains(&trimmed.to_lowercase().as_str()) {
-        return true;
-    }
-
-    is_default_timestamp_title(trimmed)
-}
-
-/// The `Conversation::new` fallback title is a bare `%Y%m%d%H%M%S%3f` stamp.
-fn is_default_timestamp_title(title: &str) -> bool {
-    title.len() == TIMESTAMP_TITLE_LEN && title.bytes().all(|byte| byte.is_ascii_digit())
+    PLACEHOLDER_TITLES.contains(&trimmed.to_lowercase().as_str())
 }
 
 /// Build the messages sent to the model to obtain a title.
 ///
 /// The first prompt is truncated so the extra request stays cheap.
 #[must_use]
-pub fn build_title_request_messages(first_prompt: &str) -> Vec<LlmMessage> {
+pub(crate) fn build_title_request_messages(first_prompt: &str) -> Vec<LlmMessage> {
     let excerpt = truncate_chars(first_prompt.trim(), MAX_PROMPT_CHARS);
 
     vec![
@@ -169,10 +157,15 @@ pub fn build_title_request_messages(first_prompt: &str) -> Vec<LlmMessage> {
 /// Turn a raw model response into a title safe to display, or `None` if unusable.
 ///
 /// Models wrap titles in quotes, prefix them with `Title:`, format them as markdown
-/// headings, precede them with a sentence of preamble, or leak `<think>` blocks. All of
-/// that is stripped here rather than shown to the user.
+/// headings, add a trailing full stop, or leak `<think>` blocks. All of that is stripped
+/// here rather than shown to the user.
+///
+/// Only the first non-empty line is used: leading blank lines and any trailing chatter
+/// are discarded. A model that writes a sentence of preamble *before* the title would
+/// have that sentence taken as the title, which is why the request instructs it to reply
+/// with the title alone.
 #[must_use]
-pub fn sanitize_generated_title(raw: &str) -> Option<String> {
+pub(crate) fn sanitize_generated_title(raw: &str) -> Option<String> {
     let body = strip_thinking_blocks(raw);
     let candidate = body.lines().map(str::trim).find(|line| !line.is_empty())?;
 
@@ -304,19 +297,12 @@ mod tests {
     }
 
     #[test]
-    fn default_timestamp_title_is_a_placeholder() {
-        let generated = chrono::Utc::now().format("%Y%m%d%H%M%S%3f").to_string();
-        assert_eq!(generated.len(), TIMESTAMP_TITLE_LEN);
-        assert!(is_placeholder_title(Some(&generated)));
-    }
-
-    #[test]
     fn user_chosen_titles_are_not_placeholders() {
         assert!(!is_placeholder_title(Some("Rust build failures")));
         assert!(!is_placeholder_title(Some("New Conversation about GPUI")));
         assert!(!is_placeholder_title(Some("2026")));
-        // Same length as the timestamp default, but not all digits.
-        assert!(!is_placeholder_title(Some("2026080520084312a")));
+        // A user is entitled to title a conversation with an order or tracking number.
+        assert!(!is_placeholder_title(Some("20260805200843123")));
     }
 
     #[test]
@@ -407,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn preamble_lines_are_discarded_in_favour_of_the_first_content_line() {
+    fn leading_blank_lines_and_trailing_chatter_are_discarded() {
         assert_eq!(
             sanitize_generated_title("\n\n   \nDebugging GPUI focus loss\n\nLet me know!"),
             Some("Debugging GPUI focus loss".to_string())

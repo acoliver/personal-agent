@@ -85,9 +85,7 @@ pub use app_settings::AppSettingsService;
 pub use backup::BackupService;
 pub use chat::ChatService;
 pub use conversation::ConversationService;
-pub use conversation_title::{
-    ConversationTitleGenerator, DisabledConversationTitleGenerator, LlmConversationTitleGenerator,
-};
+pub use conversation_title::{ConversationTitleGenerator, LlmConversationTitleGenerator};
 pub use mcp::McpService;
 pub use mcp_registry::McpRegistryService;
 pub use models_registry::ModelsRegistryService;

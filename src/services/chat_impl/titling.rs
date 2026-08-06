@@ -6,15 +6,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::events::types::ConversationEvent;
-use crate::events::{emit, AppEvent};
 use crate::models::{Conversation, MessageRole, ModelProfile};
+use crate::presentation::view_command::ViewCommand;
 use crate::services::conversation_title::{
     is_placeholder_title, sanitize_generated_title, ConversationTitleGenerator,
 };
-use crate::services::ConversationService;
+use crate::services::{ConversationService, ServiceError};
 
 /// Upper bound on how long the title request may take.
 ///
@@ -30,13 +30,16 @@ pub(super) struct TitleGenerationRequest {
 }
 
 impl TitleGenerationRequest {
-    /// Build a request when `conversation` is an untitled conversation whose only user
-    /// message is the prompt that was just sent.
+    /// Build a request when `conversation` still carries a placeholder title.
     ///
-    /// Returns `None` for conversations that already have a real title or that already
-    /// contain earlier user turns, so a conversation is auto-named at most once and a
-    /// user-chosen title is never replaced.
-    pub(super) fn for_first_prompt(
+    /// Returns `None` once the conversation has a real title, so a title the user chose
+    /// — or an earlier generated one — is not replaced. A conversation whose first
+    /// attempt failed (offline, bad key, unusable answer) is still a placeholder, so the
+    /// next send tries again rather than leaving it named "New Conversation" forever.
+    ///
+    /// The prompt is always the conversation's first user message, so a retry names the
+    /// conversation after what it is actually about rather than after a follow-up.
+    pub(super) fn for_untitled_conversation(
         conversation: &Conversation,
         profile: &ModelProfile,
     ) -> Option<Self> {
@@ -44,15 +47,12 @@ impl TitleGenerationRequest {
             return None;
         }
 
-        let mut user_messages = conversation
+        let first_prompt = conversation
             .messages
             .iter()
-            .filter(|message| message.role == MessageRole::User);
-
-        let first_prompt = user_messages.next()?.content.clone();
-        if user_messages.next().is_some() {
-            return None;
-        }
+            .find(|message| message.role == MessageRole::User)?
+            .content
+            .clone();
         if first_prompt.trim().is_empty() {
             return None;
         }
@@ -64,48 +64,29 @@ impl TitleGenerationRequest {
     }
 }
 
-/// Generate a title for `conversation_id` and persist it.
+/// Generate a title for `conversation_id`, persist it, and tell the UI.
 ///
-/// Every failure mode — generation error, timeout, storage error — leaves the existing
-/// placeholder title untouched and is logged rather than surfaced.
+/// Every failure mode — generation error, timeout, unusable answer, storage error —
+/// leaves the existing placeholder title untouched and is logged rather than surfaced.
 pub(super) async fn generate_and_apply_title(
     generator: Arc<dyn ConversationTitleGenerator>,
     conversation_service: Arc<dyn ConversationService>,
+    view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     conversation_id: Uuid,
     request: TitleGenerationRequest,
+    cancel: CancellationToken,
 ) {
-    let proposal = generator.propose_title(&request.profile, &request.first_prompt);
-
-    let proposal = match tokio::time::timeout(TITLE_GENERATION_TIMEOUT, proposal).await {
-        Ok(Ok(proposal)) => proposal,
-        Ok(Err(error)) => {
-            tracing::info!(
-                conversation_id = %conversation_id,
-                error = %error,
-                "Conversation title generation failed; keeping placeholder title"
-            );
-            return;
-        }
-        Err(_) => {
-            tracing::info!(
-                conversation_id = %conversation_id,
-                timeout_secs = TITLE_GENERATION_TIMEOUT.as_secs(),
-                "Conversation title generation timed out; keeping placeholder title"
-            );
-            return;
-        }
-    };
-
-    let Some(title) = sanitize_generated_title(&proposal) else {
-        tracing::info!(
-            conversation_id = %conversation_id,
-            "Model returned no usable conversation title; keeping placeholder title"
-        );
+    let Some(title) = propose_title(&generator, conversation_id, &request, &cancel).await else {
         return;
     };
 
-    // The user can rename the conversation while the request is in flight. Re-read the
-    // stored title so an auto-generated name never overwrites a deliberate one.
+    // The user can rename the conversation during the seconds the request is in flight.
+    // Re-read the stored title so a deliberate rename made in that window wins. This is
+    // a read-then-write, not a compare-and-swap: `ConversationService::rename` is an
+    // unconditional update, so a rename landing between this read and the write below
+    // would still be overwritten. Closing that remaining sub-millisecond gap would mean
+    // a conditional-rename operation across the service trait and every implementation,
+    // which is not worth it for a title the user can simply set again.
     match conversation_service.load(conversation_id).await {
         Ok(conversation) if !is_placeholder_title(conversation.title.as_deref()) => {
             tracing::debug!(
@@ -115,6 +96,13 @@ pub(super) async fn generate_and_apply_title(
             return;
         }
         Ok(_) => {}
+        Err(ServiceError::NotFound(_)) => {
+            tracing::debug!(
+                conversation_id = %conversation_id,
+                "Conversation was deleted while generating its title"
+            );
+            return;
+        }
         Err(error) => {
             tracing::warn!(
                 conversation_id = %conversation_id,
@@ -137,8 +125,68 @@ pub(super) async fn generate_and_apply_title(
         return;
     }
 
-    let _ = emit(AppEvent::Conversation(ConversationEvent::TitleUpdated {
-        id: conversation_id,
-        title,
-    }));
+    // Delivered on the view channel rather than the global event bus: the bus is a
+    // 16-slot broadcast that also carries one message per streamed token, and both
+    // presenters treat lag as normal and drop what they missed. A one-shot title update
+    // cannot survive that, so it goes down the same reliable queue the service already
+    // uses for its other UI updates.
+    let _ = view_tx
+        .send(ViewCommand::ConversationTitleUpdated {
+            id: conversation_id,
+            title,
+        })
+        .await;
+}
+
+/// Ask the model for a title, bounded by the timeout and by `cancel`.
+///
+/// Returns the sanitized title, or `None` when there is nothing usable to apply.
+async fn propose_title(
+    generator: &Arc<dyn ConversationTitleGenerator>,
+    conversation_id: Uuid,
+    request: &TitleGenerationRequest,
+    cancel: &CancellationToken,
+) -> Option<String> {
+    let proposal = generator.propose_title(&request.profile, &request.first_prompt);
+
+    let proposal = tokio::select! {
+        biased;
+        () = cancel.cancelled() => {
+            tracing::debug!(
+                conversation_id = %conversation_id,
+                "Chat turn cancelled; abandoning conversation title generation"
+            );
+            return None;
+        }
+        result = tokio::time::timeout(TITLE_GENERATION_TIMEOUT, proposal) => result,
+    };
+
+    let proposal = match proposal {
+        Ok(Ok(proposal)) => proposal,
+        Ok(Err(error)) => {
+            tracing::info!(
+                conversation_id = %conversation_id,
+                error = %error,
+                "Conversation title generation failed; keeping placeholder title"
+            );
+            return None;
+        }
+        Err(_) => {
+            tracing::info!(
+                conversation_id = %conversation_id,
+                timeout_secs = TITLE_GENERATION_TIMEOUT.as_secs(),
+                "Conversation title generation timed out; keeping placeholder title"
+            );
+            return None;
+        }
+    };
+
+    let title = sanitize_generated_title(&proposal);
+    if title.is_none() {
+        tracing::info!(
+            conversation_id = %conversation_id,
+            "Model returned no usable conversation title; keeping placeholder title"
+        );
+    }
+    title
 }

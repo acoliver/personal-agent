@@ -14,7 +14,7 @@ use crate::presentation::view_command::ViewCommand;
 use crate::services::conversation_title::{
     ConversationTitleGenerator, DisabledConversationTitleGenerator, LlmConversationTitleGenerator,
 };
-use crate::services::template::{build_skills_prompt_block, expand_system_prompt, TemplateContext};
+use crate::services::template::{expand_system_prompt, TemplateContext};
 use crate::services::{ConversationService, SkillsService};
 use crate::ui_gpui::error_log::ErrorLogStreamLifecycle;
 use futures::{stream, Stream};
@@ -26,9 +26,11 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+mod prompt;
 mod streaming;
 mod titling;
 
+use prompt::{build_system_prompt, filter_emoji_setting};
 use streaming::{
     build_stream_error_diagnostics, clear_streaming_state, emit_stream_error, run_stream_task,
     StreamDiagnosticContext, StreamTranscript, STREAM_ERROR_MESSAGE,
@@ -340,7 +342,7 @@ impl ChatServiceImpl {
         &self,
         conversation_id: Uuid,
         content: String,
-    ) -> ServiceResult<PreparedMessageContext> {
+    ) -> ServiceResult<(PreparedMessageContext, Option<TitleGenerationRequest>)> {
         let _conversation =
             if let Ok(conversation) = self.conversation_service.load(conversation_id).await {
                 conversation
@@ -375,7 +377,8 @@ impl ChatServiceImpl {
             self.default_profile("No active profile").await?
         };
 
-        let title_request = TitleGenerationRequest::for_first_prompt(&conversation, &profile);
+        let title_request =
+            TitleGenerationRequest::for_untitled_conversation(&conversation, &profile);
 
         let client = LlmClient::from_profile(&profile)
             .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
@@ -389,87 +392,49 @@ impl ChatServiceImpl {
         );
         // The emoji filter drives both the system prompt and tool-output filtering, so
         // it is read once here rather than separately by each consumer.
-        let filter_emoji = self.filter_emoji_setting().await;
-        let system_prompt = self
-            .build_system_prompt(&conversation, &profile, filter_emoji)
-            .await;
+        let filter_emoji = filter_emoji_setting(&self.app_settings_service).await;
+        let system_prompt =
+            build_system_prompt(&self.skills_service, &conversation, &profile, filter_emoji).await;
 
-        Ok(PreparedMessageContext {
-            profile,
-            client,
-            messages: compression_result.messages.clone(),
-            system_prompt,
-            skills_service: self.skills_service.clone(),
-            compression_result,
-            filter_emoji,
+        Ok((
+            PreparedMessageContext {
+                profile,
+                client,
+                messages: compression_result.messages.clone(),
+                system_prompt,
+                skills_service: self.skills_service.clone(),
+                compression_result,
+                filter_emoji,
+            },
             title_request,
-        })
-    }
-
-    /// Assemble the system prompt for a send: conversation/profile prompt with template
-    /// variables expanded, plus the enabled-skills block and the emoji instruction.
-    async fn build_system_prompt(
-        &self,
-        conversation: &crate::models::Conversation,
-        profile: &crate::models::ModelProfile,
-        filter_emoji: bool,
-    ) -> String {
-        let raw_system_prompt =
-            Self::system_prompt_for_conversation(conversation, profile).to_string();
-        let template_ctx =
-            TemplateContext::new(conversation.created_at, &profile.name, &profile.model_id);
-        let mut system_prompt = expand_system_prompt(&raw_system_prompt, &template_ctx);
-
-        let enabled_skills = match self.skills_service.get_enabled_skills().await {
-            Ok(skills) => skills,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "Failed to fetch enabled skills; continuing without skills prompt block"
-                );
-                Vec::new()
-            }
-        };
-        append_prompt_section(
-            &mut system_prompt,
-            &build_skills_prompt_block(&enabled_skills),
-        );
-
-        if filter_emoji {
-            append_prompt_section(
-                &mut system_prompt,
-                "Please avoid using emojis in your responses.",
-            );
-        }
-
-        system_prompt
-    }
-
-    /// Whether emoji filtering is enabled, defaulting to disabled when unreadable.
-    async fn filter_emoji_setting(&self) -> bool {
-        match self.app_settings_service.get_filter_emoji().await {
-            Ok(Some(enabled)) => enabled,
-            Ok(None) => false,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "Failed to read emoji filter setting; defaulting to disabled"
-                );
-                false
-            }
-        }
+        ))
     }
 
     /// Name an untitled conversation from the prompt that was just sent.
     ///
     /// Runs in its own task so the chat stream is never delayed by the extra request.
-    fn spawn_title_generation(&self, conversation_id: Uuid, request: TitleGenerationRequest) {
+    /// It shares the turn's cancellation token, so stopping the turn also abandons the
+    /// title request instead of letting it rename the conversation minutes later.
+    fn spawn_title_generation(
+        &self,
+        conversation_id: Uuid,
+        request: TitleGenerationRequest,
+        cancel: CancellationToken,
+    ) {
         let generator = self.title_generator.clone();
         let conversation_service = self.conversation_service.clone();
+        let view_tx = self.view_tx.clone();
 
         tokio::spawn(async move {
-            generate_and_apply_title(generator, conversation_service, conversation_id, request)
-                .await;
+            generate_and_apply_title(
+                generator,
+                conversation_service,
+                view_tx,
+                conversation_id,
+                request,
+                cancel,
+            )
+            .await;
         });
     }
 
@@ -566,21 +531,6 @@ impl ChatServiceImpl {
         }
 
         messages
-    }
-
-    fn system_prompt_for_conversation<'a>(
-        conversation: &'a crate::models::Conversation,
-        profile: &'a crate::models::ModelProfile,
-    ) -> &'a str {
-        conversation
-            .messages
-            .iter()
-            .find(|message| {
-                message.role == MessageRole::System && !message.content.trim().is_empty()
-            })
-            .map(|message| message.content.as_str())
-            .filter(|prompt| !prompt.trim().is_empty())
-            .unwrap_or(profile.system_prompt.as_str())
     }
 
     async fn load_mcp_tools(&self) -> Vec<crate::llm::tools::Tool> {
@@ -728,21 +678,6 @@ impl ChatServiceImpl {
     }
 }
 
-/// Append `section` to `system_prompt`, separated by a blank line when both are present.
-fn append_prompt_section(system_prompt: &mut String, section: &str) {
-    if section.is_empty() {
-        return;
-    }
-    if !system_prompt.trim().is_empty() {
-        system_prompt.push_str(
-            "
-
-",
-        );
-    }
-    system_prompt.push_str(section);
-}
-
 struct PreparedMessageContext {
     profile: crate::models::ModelProfile,
     client: LlmClient,
@@ -751,8 +686,6 @@ struct PreparedMessageContext {
     skills_service: Arc<dyn SkillsService>,
     compression_result: CompressionResult,
     filter_emoji: bool,
-    /// Present only when this send is the first prompt of an untitled conversation.
-    title_request: Option<TitleGenerationRequest>,
 }
 
 #[allow(clippy::missing_const_for_fn)]
@@ -835,24 +768,31 @@ impl ChatService for ChatServiceImpl {
 
         self.refresh_tool_approval_policy_from_settings().await;
 
-        let mut prepared = match self.prepare_message_context(conversation_id, content).await {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.clear_reservation(conversation_id, stream_id);
-                return Err(error);
-            }
-        };
-        let title_request = prepared.title_request.take();
+        let (prepared, title_request) =
+            match self.prepare_message_context(conversation_id, content).await {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    self.clear_reservation(conversation_id, stream_id);
+                    return Err(error);
+                }
+            };
         Self::emit_stream_started(conversation_id, prepared.profile.model_id.clone());
 
         let mcp_tools = self.load_mcp_tools().await;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ChatStreamEvent>();
-        self.spawn_stream_task(conversation_id, stream_id, cancel, prepared, mcp_tools, tx)
-            .await;
+        self.spawn_stream_task(
+            conversation_id,
+            stream_id,
+            cancel.clone(),
+            prepared,
+            mcp_tools,
+            tx,
+        )
+        .await;
 
         if let Some(request) = title_request {
-            self.spawn_title_generation(conversation_id, request);
+            self.spawn_title_generation(conversation_id, request, cancel);
         }
 
         let message_stream: Pin<Box<dyn Stream<Item = ChatStreamEvent> + Send>> =

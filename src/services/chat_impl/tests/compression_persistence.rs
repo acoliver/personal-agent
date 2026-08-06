@@ -121,7 +121,7 @@ async fn prepare_message_context_uses_persisted_compression_config() {
         .await
         .push(assistant);
 
-    let prepared = service
+    let (prepared, _title_request) = service
         .prepare_message_context(Uuid::new_v4(), "hello".to_string())
         .await
         .expect("prepare_message_context should succeed");

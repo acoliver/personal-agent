@@ -16,6 +16,8 @@ pub(super) struct MockConversationService {
     pub(super) title: Arc<RwLock<Option<String>>>,
     /// Every title passed to `rename`, in order.
     pub(super) rename_calls: Arc<RwLock<Vec<String>>>,
+    /// When set, `load` reports the conversation as deleted.
+    pub(super) load_missing: Arc<RwLock<bool>>,
 }
 
 pub(super) struct InMemoryAppSettingsService {
@@ -205,7 +207,8 @@ pub(super) fn make_approval_test_chat_service(
         view_tx,
         approval_gate.clone(),
         policy,
-    );
+    )
+    .with_title_generator(Arc::new(DisabledConversationTitleGenerator));
 
     (service, view_rx, approval_gate)
 }
@@ -218,7 +221,12 @@ impl MockConversationService {
             context_state: Arc::new(RwLock::new(None)),
             title: Arc::new(RwLock::new(Some("New Conversation".to_string()))),
             rename_calls: Arc::new(RwLock::new(Vec::new())),
+            load_missing: Arc::new(RwLock::new(false)),
         }
+    }
+
+    pub(super) async fn set_load_missing(&self, missing: bool) {
+        *self.load_missing.write().await = missing;
     }
 
     pub(super) async fn set_title(&self, title: Option<&str>) {
@@ -248,6 +256,11 @@ impl super::super::ConversationService for MockConversationService {
         &self,
         _id: Uuid,
     ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        if *self.load_missing.read().await {
+            return Err(crate::services::ServiceError::NotFound(
+                "conversation not found".to_string(),
+            ));
+        }
         let mut conversation = crate::models::Conversation::new(self.profile_id);
         conversation.messages = self.messages.read().await.clone();
         conversation.title = self.title.read().await.clone();

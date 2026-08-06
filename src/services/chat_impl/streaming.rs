@@ -182,7 +182,6 @@ pub(super) async fn run_stream_task(
         skills_service,
         compression_result,
         filter_emoji,
-        title_request: _,
     } = prepared;
 
     let diagnostics_context = StreamDiagnosticContext::from_profile(&profile);

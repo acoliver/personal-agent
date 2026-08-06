@@ -52,6 +52,9 @@ impl ChatServiceImpl {
             approval_gate,
             Arc::new(AsyncMutex::new(crate::agent::ToolApprovalPolicy::default())),
         )
+        .with_title_generator(Arc::new(
+            crate::services::conversation_title::DisabledConversationTitleGenerator,
+        ))
     }
 }
 
