@@ -237,10 +237,14 @@ impl SystemTray {
 
                             (clamped_x, clamped_y)
                         } else {
+                            // Without a screen there is no frame to convert against, and
+                            // the raw AppKit values are bottom-left and global. Returning
+                            // them as GPUI top-left display-relative coordinates would put
+                            // the popup mid-display, or off it entirely on a secondary
+                            // monitor, so use the same safe constant as the sibling
+                            // fallbacks.
                             info!("No screen on status item window; using fallback popup position");
-                            let x = icon_center_x as f32 - (menu_width / 2.0);
-                            let y = icon_bottom_y as f32 - menu_height - 6.0;
-                            (x, y)
+                            (100.0, 30.0)
                         }
                     } else {
                         info!("No window on status item button; using fallback popup position");

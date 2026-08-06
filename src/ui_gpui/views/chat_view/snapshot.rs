@@ -195,8 +195,9 @@ impl ChatView {
 
     /// Keep composer drafts attached to their conversation across a selection change.
     ///
-    /// The outgoing conversation's text is stashed and the incoming one's is restored, so
-    /// a draft survives popup close/reopen cycles. When the selection has not changed the
+    /// The outgoing conversation's text is stashed and the incoming one's is restored (or
+    /// the composer cleared when it has none), so a draft survives popup close/reopen
+    /// cycles without leaking into another conversation. When the selection has not changed the
     /// stash is refreshed anyway, because the popup can be closed by a direct tray toggle
     /// without a further snapshot.
     fn carry_draft_across_selection(
@@ -215,10 +216,11 @@ impl ChatView {
             save_draft(prev_id, &self.state.input_text);
         }
         if let Some(new_id) = selected_conversation_id {
-            if let Some(draft) = take_draft(new_id) {
-                self.state.input_text = draft;
-                self.state.cursor_position = self.state.input_text.len();
-            }
+            // Unconditional: a conversation with no stashed draft must show an empty
+            // composer, otherwise the outgoing conversation's text stays visible and the
+            // user can send it into the wrong conversation.
+            self.state.input_text = take_draft(new_id).unwrap_or_default();
+            self.state.cursor_position = self.state.input_text.len();
         }
     }
 
