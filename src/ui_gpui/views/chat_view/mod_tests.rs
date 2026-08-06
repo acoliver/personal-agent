@@ -6,7 +6,7 @@ use crate::events::types::UserEvent;
 use crate::presentation::view_command::{
     ConversationMessagePayload, ConversationSummary, MessageRole, ViewCommand,
 };
-use crate::ui_gpui::app_store::StreamingStoreSnapshot;
+use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, StreamingStoreSnapshot};
 use crate::ui_gpui::bridge::GpuiBridge;
 use chrono::Utc;
 use gpui::{
