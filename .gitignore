@@ -4,7 +4,9 @@ research/
 # Rust
 target/
 xtask/target/
-Cargo.lock
+# Cargo.lock is committed: this crate ships a binary, so builds must be
+# reproducible. Leaving it out let CI resolve dependencies fresh on every run,
+# which broke the build the moment zune-core 0.5.2 was published.
 
 # macOS
 .DS_Store

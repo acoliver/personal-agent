@@ -43,15 +43,29 @@ impl ChatView {
             && !self.state.profile_dropdown_open
     }
 
+    /// Give the composer keyboard focus.
+    ///
+    /// This deliberately leaves the dropdowns and the inline rename alone.
+    /// `MainPanel::focus_current_view` calls this on every frame to keep focus on the
+    /// composer, so anything torn down here would be torn down continuously — which is
+    /// what previously made the conversation and profile dropdowns impossible to open.
+    /// Callers that represent a deliberate "user moved to the composer" gesture should
+    /// use [`focus_composer_dismissing_overlays`](Self::focus_composer_dismissing_overlays).
     pub(crate) fn focus_composer(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.composer_focused = true;
-        self.state.conversation_title_editing = false;
-        self.state.conversation_dropdown_open = false;
-        self.state.profile_dropdown_open = false;
         if self.sidebar_search_focused(cx) {
             self.set_sidebar_search_focused(false, cx);
         }
         cx.notify();
+    }
+
+    /// Focus the composer and dismiss the transient chrome that a click into the
+    /// composer should close: the two dropdowns and the inline title rename.
+    pub(crate) fn focus_composer_dismissing_overlays(&mut self, cx: &mut gpui::Context<Self>) {
+        self.state.conversation_title_editing = false;
+        self.state.conversation_dropdown_open = false;
+        self.state.profile_dropdown_open = false;
+        self.focus_composer(cx);
     }
 
     pub(super) const fn blur_composer(&mut self) {

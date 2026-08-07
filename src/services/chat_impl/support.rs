@@ -11,6 +11,13 @@ pub(super) struct MockConversationService {
     pub(super) profile_id: Uuid,
     pub(super) messages: Arc<RwLock<Vec<Message>>>,
     pub(super) context_state: Arc<RwLock<Option<crate::models::ContextState>>>,
+    /// Current stored title. `rename` writes here and `load` reads it back, so title
+    /// changes are observable the same way they are against real storage.
+    pub(super) title: Arc<RwLock<Option<String>>>,
+    /// Every title passed to `rename`, in order.
+    pub(super) rename_calls: Arc<RwLock<Vec<String>>>,
+    /// When set, `load` reports the conversation as deleted.
+    pub(super) load_missing: Arc<RwLock<bool>>,
 }
 
 pub(super) struct InMemoryAppSettingsService {
@@ -200,7 +207,8 @@ pub(super) fn make_approval_test_chat_service(
         view_tx,
         approval_gate.clone(),
         policy,
-    );
+    )
+    .with_title_generator(Arc::new(DisabledConversationTitleGenerator));
 
     (service, view_rx, approval_gate)
 }
@@ -211,7 +219,26 @@ impl MockConversationService {
             profile_id,
             messages: Arc::new(RwLock::new(Vec::new())),
             context_state: Arc::new(RwLock::new(None)),
+            title: Arc::new(RwLock::new(Some("New Conversation".to_string()))),
+            rename_calls: Arc::new(RwLock::new(Vec::new())),
+            load_missing: Arc::new(RwLock::new(false)),
         }
+    }
+
+    pub(super) async fn set_load_missing(&self, missing: bool) {
+        *self.load_missing.write().await = missing;
+    }
+
+    pub(super) async fn set_title(&self, title: Option<&str>) {
+        *self.title.write().await = title.map(ToString::to_string);
+    }
+
+    pub(super) async fn current_title(&self) -> Option<String> {
+        self.title.read().await.clone()
+    }
+
+    pub(super) async fn rename_calls(&self) -> Vec<String> {
+        self.rename_calls.read().await.clone()
     }
 }
 
@@ -229,8 +256,14 @@ impl super::super::ConversationService for MockConversationService {
         &self,
         _id: Uuid,
     ) -> Result<crate::models::Conversation, crate::services::ServiceError> {
+        if *self.load_missing.read().await {
+            return Err(crate::services::ServiceError::NotFound(
+                "conversation not found".to_string(),
+            ));
+        }
         let mut conversation = crate::models::Conversation::new(self.profile_id);
         conversation.messages = self.messages.read().await.clone();
+        conversation.title = self.title.read().await.clone();
         Ok(conversation)
     }
 
@@ -286,8 +319,10 @@ impl super::super::ConversationService for MockConversationService {
     async fn rename(
         &self,
         _id: Uuid,
-        _new_title: String,
+        new_title: String,
     ) -> Result<(), crate::services::ServiceError> {
+        self.rename_calls.write().await.push(new_title.clone());
+        *self.title.write().await = Some(new_title);
         Ok(())
     }
 

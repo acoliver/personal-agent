@@ -13,6 +13,7 @@ mod chat_test_support;
 mod compression_persistence;
 mod concurrent_streams;
 mod three_stream_concurrency;
+mod title_generation;
 
 use chat_test_support::*;
 
@@ -397,7 +398,8 @@ async fn send_message_clears_session_allowlist_when_yolo_turns_off_in_settings()
         view_tx,
         approval_gate,
         Arc::new(AsyncMutex::new(in_memory_policy)),
-    );
+    )
+    .with_title_generator(Arc::new(DisabledConversationTitleGenerator));
 
     let conversation_id = Uuid::new_v4();
     let stream = chat_service
@@ -806,7 +808,7 @@ async fn prepare_message_context_uses_conversation_profile_id() {
 
     let chat_service = ChatServiceImpl::new_for_tests(conversation_service, profile_service);
 
-    let prepared = chat_service
+    let (prepared, _title_request) = chat_service
         .prepare_message_context(Uuid::new_v4(), "hello".to_string())
         .await
         .expect("prepare_message_context should succeed");
@@ -861,7 +863,7 @@ async fn prepare_message_context_ignores_skill_lookup_failures() {
         Arc::new(tokio::sync::Mutex::new(ToolApprovalPolicy::default())),
     );
 
-    let prepared = chat_service
+    let (prepared, _title_request) = chat_service
         .prepare_message_context(Uuid::new_v4(), "hello".to_string())
         .await
         .expect("prepare_message_context should succeed even when skills lookup fails");
