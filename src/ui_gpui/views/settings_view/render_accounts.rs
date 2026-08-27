@@ -200,8 +200,26 @@ impl SettingsView {
         }
         match account.expires_in_secs {
             Some(secs) if secs <= 0 => "Renewing".to_string(),
-            Some(secs) => format!("Signed in, {} minutes left", secs / 60),
+            Some(secs) => Self::signed_in_for(secs),
             None => "Signed in".to_string(),
+        }
+    }
+
+    /// Describe how long a grant has left, in a unit a person reads.
+    ///
+    /// Access tokens usually last about an hour, so minutes is the useful
+    /// unit. A longer-lived grant is not worth counting down, and rendering it
+    /// in minutes produces numbers in the tens of millions.
+    fn signed_in_for(secs: i64) -> String {
+        const MINUTE: i64 = 60;
+        const HOUR: i64 = 60 * MINUTE;
+        const DAY: i64 = 24 * HOUR;
+
+        match secs {
+            s if s < MINUTE => "Signed in, expires shortly".to_string(),
+            s if s < 2 * HOUR => format!("Signed in, {} minutes left", s / MINUTE),
+            s if s < DAY => format!("Signed in, {} hours left", s / HOUR),
+            _ => "Signed in".to_string(),
         }
     }
 

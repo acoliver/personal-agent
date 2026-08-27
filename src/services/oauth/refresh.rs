@@ -138,13 +138,16 @@ fn config_for_issuer(_issuer: &str) -> OAuthConfig {
 ///
 /// Returns [`OAuthError::Storage`] when the record cannot be written back.
 pub async fn report_reauth_required_async(account: &str) -> Result<(), OAuthError> {
+    // Announced before the record is touched. Persisting the flag is a
+    // durability nicety; telling the user their session died is the point, and
+    // a keychain that will not answer must not swallow the prompt.
+    announce_reauth(account);
+
     let slug = account.to_string();
     store::off_runtime_public("flag a sign-in as expired", move || {
         store::mark_needs_reauth(&slug)
     })
-    .await?;
-    announce_reauth(account);
-    Ok(())
+    .await
 }
 
 /// The synchronous form, for callers that are not on the runtime.
@@ -153,9 +156,8 @@ pub async fn report_reauth_required_async(account: &str) -> Result<(), OAuthErro
 ///
 /// Returns [`OAuthError::Storage`] when the record cannot be written back.
 pub fn report_reauth_required(account: &str) -> Result<(), OAuthError> {
-    store::mark_needs_reauth(account)?;
     announce_reauth(account);
-    Ok(())
+    store::mark_needs_reauth(account)
 }
 
 /// Tell any view showing this account that it needs a fresh sign-in.
@@ -267,6 +269,33 @@ mod tests {
         assert_eq!(
             classify_refresh_error("error sending request for url"),
             OAuthError::Network("error sending request for url".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dead_session_is_announced_even_if_the_flag_cannot_be_written() {
+        // The announcement is what puts the "Sign in again" banner in front of
+        // the user. Gating it on a keychain write meant a keychain that would
+        // not answer swallowed the prompt and the turn failed with a generic
+        // stream error instead.
+        secure_store::use_mock_backend();
+        let mut events = crate::events::subscribe();
+
+        // No stored record, so the write path finds nothing to flag.
+        let _ = report_reauth_required_async("chatgpt-never-stored-announce").await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .expect("an event should arrive")
+            .expect("bus should deliver");
+        assert!(
+            matches!(
+                event,
+                crate::events::AppEvent::System(
+                    crate::events::SystemEvent::OAuthReauthRequired { ref account }
+                ) if account == "chatgpt-never-stored-announce"
+            ),
+            "expected a reauth announcement, got {event:?}"
         );
     }
 

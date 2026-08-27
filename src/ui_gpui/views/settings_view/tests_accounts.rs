@@ -116,6 +116,39 @@ fn an_account_without_an_expiry_just_reports_signed_in() {
 }
 
 #[test]
+fn a_long_lived_grant_is_not_counted_down_in_minutes() {
+    // Rendering a grant that lasts years in minutes produced
+    // "Signed in, 38576215 minutes left" in the running app.
+    let mut info = account("chatgpt-a", false, vec![]);
+    info.expires_in_secs = Some(60 * 60 * 24 * 365 * 75);
+
+    assert_eq!(SettingsView::account_status_line(&info), "Signed in");
+}
+
+#[test]
+fn remaining_time_reads_in_a_sensible_unit() {
+    let mut info = account("chatgpt-a", false, vec![]);
+
+    info.expires_in_secs = Some(45 * 60);
+    assert_eq!(
+        SettingsView::account_status_line(&info),
+        "Signed in, 45 minutes left"
+    );
+
+    info.expires_in_secs = Some(5 * 60 * 60);
+    assert_eq!(
+        SettingsView::account_status_line(&info),
+        "Signed in, 5 hours left"
+    );
+
+    info.expires_in_secs = Some(30);
+    assert_eq!(
+        SettingsView::account_status_line(&info),
+        "Signed in, expires shortly"
+    );
+}
+
+#[test]
 fn an_account_at_zero_reports_renewing_rather_than_expired() {
     let mut info = account("chatgpt-a", false, vec![]);
     info.expires_in_secs = Some(0);
