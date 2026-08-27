@@ -123,6 +123,9 @@ impl StoredOAuthToken {
 /// Returns [`OAuthError::Storage`] when the keychain cannot be read or the
 /// stored blob is not a valid record.
 pub fn load(account: &str) -> Result<Option<StoredOAuthToken>, OAuthError> {
+    if let Some(record) = e2e_grant_override()? {
+        return Ok(Some(record));
+    }
     let blob =
         secure_store::oauth_tokens::get(account).map_err(|e| OAuthError::Storage(e.to_string()))?;
     let Some(blob) = blob else {
@@ -131,6 +134,34 @@ pub fn load(account: &str) -> Result<Option<StoredOAuthToken>, OAuthError> {
     serde_json::from_str(&blob)
         .map(Some)
         .map_err(|e| OAuthError::Storage(format!("stored token for {account} is unreadable: {e}")))
+}
+
+/// Environment variable holding a grant for non-interactive runs.
+pub const E2E_GRANT_ENV: &str = "PA_E2E_CODEX_TOKEN_JSON";
+
+/// A grant supplied by the environment instead of the keychain.
+///
+/// The keychain is per-binary on macOS: an item written by a test binary is not
+/// readable by the app it launches, and the read blocks on a system prompt
+/// nobody answers. End-to-end runs therefore pass the grant directly, the same
+/// way `PA_E2E_API_KEY` supplies an API key.
+///
+/// Like that variable, this overrides whichever account was asked for.
+fn e2e_grant_override() -> Result<Option<StoredOAuthToken>, OAuthError> {
+    parse_grant_override(std::env::var(E2E_GRANT_ENV).ok().as_deref())
+}
+
+/// Parse the grant an end-to-end run supplied, if any.
+///
+/// Separate from reading the variable so it can be tested without mutating
+/// process state, which parallel tests share.
+fn parse_grant_override(raw: Option<&str>) -> Result<Option<StoredOAuthToken>, OAuthError> {
+    let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return Ok(None);
+    };
+    serde_json::from_str(raw).map(Some).map_err(|e| {
+        OAuthError::Storage(format!("{E2E_GRANT_ENV} is not a valid stored grant: {e}"))
+    })
 }
 
 /// Write the grant for an account.
@@ -423,6 +454,36 @@ mod tests {
 
         delete(account).expect("delete");
         assert_eq!(load(account).expect("load after delete"), None);
+    }
+
+    #[test]
+    fn a_grant_supplied_by_the_environment_is_used_as_it_stands() {
+        // The keychain is per-binary on macOS, so an end-to-end run cannot
+        // hand a grant to the app it launches through the keychain. This is
+        // the same escape hatch PA_E2E_API_KEY provides for API keys.
+        let record = StoredOAuthToken::from_token_set(token_set(), CHATGPT_ISSUER);
+        let serialized = serde_json::to_string(&record).expect("serialize");
+
+        let parsed = parse_grant_override(Some(&serialized)).expect("parse");
+
+        assert_eq!(parsed.expect("a grant should be returned"), record);
+    }
+
+    #[test]
+    fn no_environment_grant_falls_through_to_the_keychain() {
+        assert_eq!(parse_grant_override(None).expect("parse"), None);
+        assert_eq!(parse_grant_override(Some("   ")).expect("parse"), None);
+    }
+
+    #[test]
+    fn a_malformed_environment_grant_is_reported_rather_than_ignored() {
+        let error = parse_grant_override(Some("{not json"))
+            .expect_err("a bad grant should not be silently skipped");
+
+        assert!(
+            error.to_string().contains(E2E_GRANT_ENV),
+            "the message should name the variable, got {error}"
+        );
     }
 
     #[test]

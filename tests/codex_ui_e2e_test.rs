@@ -12,7 +12,17 @@
 //!
 //! ## Prerequisites
 //! - macOS with Accessibility permissions for the test runner.
-//! - `PA_E2E_CODEX_ACCOUNT`, and `PA_E2E_CODEX_TOKEN_JSON` for scenarios 1 and 3.
+//! - `PA_E2E_CODEX_ACCOUNT` and `PA_E2E_CODEX_TOKEN_JSON` for scenarios 1 and 3.
+//!
+//! The grant reaches the app through `PA_E2E_CODEX_TOKEN_JSON` rather than the
+//! keychain. A keychain item written by this test binary is not readable by the
+//! app binary it launches: macOS scopes access per binary, and the app's read
+//! blocks on a system prompt nobody answers. This mirrors how `PA_E2E_API_KEY`
+//! supplies an API key for the same reason.
+//!
+//! These scenarios wait for the MCP runtime before typing. A machine with
+//! unreachable MCP servers spends a minute timing them out, and a turn sent
+//! before that never runs.
 //!
 //! ## Run
 //! ```text
@@ -29,13 +39,23 @@ use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use personal_agent::services::oauth::{now_secs, store};
+use personal_agent::services::oauth::{now_secs, store, StoredOAuthToken};
 use personal_agent::services::secure_store;
 use ui_tests::applescript_helpers::run_applescript_lines;
 use uuid::Uuid;
 
 const APP_PROCESS: &str = "personal_agent_gpui";
-const LOG_PATH: &str = "/tmp/personal_agent_gpui_codex_e2e.log";
+/// Where the launched app writes its log.
+///
+/// Unique per process: sibling checkouts of this repo run their suites at the
+/// same time and share /tmp, and two runs opening one path with truncation
+/// interleave into a log neither can assert on.
+fn log_path() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "personal_agent_gpui_codex_e2e_{}.log",
+        std::process::id()
+    ))
+}
 const ACCOUNT_ENV: &str = "PA_E2E_CODEX_ACCOUNT";
 const TOKEN_ENV: &str = "PA_E2E_CODEX_TOKEN_JSON";
 const MODEL_ENV: &str = "PA_E2E_CODEX_MODEL";
@@ -57,7 +77,7 @@ fn profiles_dir() -> PathBuf {
 }
 
 fn read_log() -> String {
-    fs::read_to_string(LOG_PATH).unwrap_or_default()
+    fs::read_to_string(log_path()).unwrap_or_default()
 }
 
 fn wait_for_log(needle: &str, timeout: Duration) -> bool {
@@ -69,6 +89,25 @@ fn wait_for_log(needle: &str, timeout: Duration) -> bool {
         thread::sleep(Duration::from_millis(200));
     }
     false
+}
+
+/// Wait until the app can actually run a turn.
+///
+/// `MainPanel::init` only means the window exists. Chat turns queue behind the
+/// MCP runtime, and a machine with unreachable MCP servers spends a minute
+/// timing them out. Typing before that burns the whole assertion budget on
+/// startup and the turn never runs.
+fn wait_until_ready_to_send() {
+    assert!(
+        wait_for_log("MainPanel::init", Duration::from_secs(30)),
+        "app did not start: {}",
+        last_n_lines(&read_log(), 40)
+    );
+    assert!(
+        wait_for_log("Global MCP runtime initialized", Duration::from_secs(180)),
+        "app never became ready to send: {}",
+        last_n_lines(&read_log(), 40)
+    );
 }
 
 fn last_n_lines(text: &str, n: usize) -> String {
@@ -92,19 +131,27 @@ fn required_account() -> String {
 }
 
 /// Put the seeded grant in the keychain, or replace it with a dead one.
-fn seed_grant(account: &str, expired: bool) {
+/// Build the grant the app will be handed, and register the account so the
+/// accounts list can enumerate it.
+///
+/// The value itself travels by environment rather than the keychain: on macOS a
+/// keychain item written by this test binary is not readable by the app binary
+/// it launches, and the attempt blocks on a system prompt nobody answers.
+fn seed_grant(account: &str, expired: bool) -> String {
     let blob = std::env::var(TOKEN_ENV).unwrap_or_default();
     assert!(!blob.trim().is_empty(), "set {TOKEN_ENV} to run this test");
-    secure_store::oauth_tokens::store(account, blob.trim()).expect("seed grant");
 
+    let mut record: StoredOAuthToken =
+        serde_json::from_str(blob.trim()).expect("{TOKEN_ENV} should hold a stored grant");
     if expired {
-        let mut record = store::load(account)
-            .expect("load seeded grant")
-            .expect("grant present");
         record.expires_at = Some(now_secs() - 60);
         record.refresh_token = Some("this-refresh-token-is-not-valid".to_string());
-        store::save(account, &record).expect("store expired grant");
     }
+
+    // Records the account in the index, which is a plain file the app can read.
+    let serialized = serde_json::to_string(&record).expect("serialize grant");
+    let _ = secure_store::oauth_tokens::store(account, &serialized);
+    serialized
 }
 
 struct ProfileGuard {
@@ -176,6 +223,11 @@ fn install_codex_profile(account: &str) -> ProfileGuard {
 }
 
 fn launch_app() -> Child {
+    launch_app_with_grant(None)
+}
+
+/// Launch the app, optionally handing it a grant through the environment.
+fn launch_app_with_grant(grant: Option<&str>) -> Child {
     let _ = Command::new("pkill").arg("-f").arg(APP_PROCESS).status();
     thread::sleep(Duration::from_millis(500));
 
@@ -183,14 +235,19 @@ fn launch_app() -> Child {
         .create(true)
         .write(true)
         .truncate(true)
-        .open(LOG_PATH)
+        .open(log_path())
         .expect("open log file");
     let log_err = log_file.try_clone().expect("clone log handle");
 
-    Command::new(gpui_bin_path())
+    let mut command = Command::new(gpui_bin_path());
+    command
         .env("PA_AUTO_OPEN_POPUP", "1")
         .env("PA_TEST_POPUP_ONSCREEN", "1")
-        .env("RUST_LOG", "info")
+        .env("RUST_LOG", "info");
+    if let Some(grant) = grant {
+        command.env(store::E2E_GRANT_ENV, grant);
+    }
+    command
         .stdout(log_file)
         .stderr(log_err)
         .spawn()
@@ -247,15 +304,11 @@ fn open_settings() {
 #[ignore = "Requires macOS Accessibility permissions and PA_E2E_CODEX_* configuration"]
 fn a_seeded_account_streams_a_real_turn_through_the_ui() {
     let account = required_account();
-    seed_grant(&account, false);
+    let grant = seed_grant(&account, false);
     let _guard = install_codex_profile(&account);
 
-    let mut app = launch_app();
-    assert!(
-        wait_for_log("MainPanel::init", Duration::from_secs(20)),
-        "app did not start: {}",
-        last_n_lines(&read_log(), 40)
-    );
+    let mut app = launch_app_with_grant(Some(&grant));
+    wait_until_ready_to_send();
 
     open_settings();
     assert!(
@@ -292,11 +345,7 @@ fn the_auth_presenter_starts_when_no_grant_is_stored() {
     let _guard = install_codex_profile("");
 
     let mut app = launch_app();
-    assert!(
-        wait_for_log("MainPanel::init", Duration::from_secs(20)),
-        "app did not start: {}",
-        last_n_lines(&read_log(), 40)
-    );
+    wait_until_ready_to_send();
 
     open_settings();
 
@@ -326,15 +375,11 @@ fn the_auth_presenter_starts_when_no_grant_is_stored() {
 #[ignore = "Requires macOS Accessibility permissions and PA_E2E_CODEX_* configuration"]
 fn an_expired_grant_raises_the_reauth_banner() {
     let account = required_account();
-    seed_grant(&account, true);
+    let grant = seed_grant(&account, true);
     let _guard = install_codex_profile(&account);
 
-    let mut app = launch_app();
-    assert!(
-        wait_for_log("MainPanel::init", Duration::from_secs(20)),
-        "app did not start: {}",
-        last_n_lines(&read_log(), 40)
-    );
+    let mut app = launch_app_with_grant(Some(&grant));
+    wait_until_ready_to_send();
 
     type_and_send("This turn cannot run.");
 
@@ -344,7 +389,7 @@ fn an_expired_grant_raises_the_reauth_banner() {
     stop_app(&mut app);
 
     // Put the good grant back so a later run is not left broken.
-    seed_grant(&account, false);
+    let _restored = seed_grant(&account, false);
 
     assert!(
         asked,
