@@ -234,45 +234,10 @@ impl MainPanel {
                 self.navigation.navigate(ViewId::ProfileEditor);
                 cx.notify();
             }
-            ViewCommand::ProfileEditorLoad {
-                id,
-                name,
-                provider_id,
-                model_id,
-                base_url,
-                api_key_label,
-                temperature,
-                max_tokens,
-                max_tokens_field_name,
-                extra_request_fields,
-                context_limit,
-                show_thinking,
-                enable_thinking,
-                thinking_budget,
-                system_prompt,
-            } => {
+            load @ ViewCommand::ProfileEditorLoad { .. } => {
                 if let Some(ref profile_editor) = self.profile_editor_view {
                     profile_editor.update(cx, |view, cx| {
-                        view.handle_command(
-                            ViewCommand::ProfileEditorLoad {
-                                id,
-                                name,
-                                provider_id,
-                                model_id,
-                                base_url,
-                                api_key_label,
-                                temperature,
-                                max_tokens,
-                                max_tokens_field_name,
-                                extra_request_fields,
-                                context_limit,
-                                show_thinking,
-                                enable_thinking,
-                                thinking_budget,
-                                system_prompt,
-                            },
-                            cx,
-                        );
+                        view.handle_command(load, cx);
                     });
                 }
                 self.navigation.navigate(ViewId::ProfileEditor);

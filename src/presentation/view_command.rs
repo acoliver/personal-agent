@@ -317,6 +317,8 @@ pub enum ViewCommand {
         base_url: String,
         /// Keychain label for the API key (empty string = none set).
         api_key_label: String,
+        /// OAuth account slug (empty string = not an OAuth profile).
+        oauth_account: String,
         temperature: f64,
         max_tokens: Option<u32>,
         max_tokens_field_name: String,

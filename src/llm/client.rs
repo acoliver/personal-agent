@@ -64,6 +64,16 @@ pub enum StreamEvent {
     Error(String),
 }
 
+/// Token usage accumulated from a provider's terminal stream event.
+///
+/// Providers that confirm completion on the wire report usage there; the rest
+/// leave both fields `None`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StreamUsage {
+    pub(crate) input_tokens: Option<u32>,
+    pub(crate) output_tokens: Option<u32>,
+}
+
 /// LLM client that uses `SerdesAI`
 #[derive(Clone)]
 pub struct LlmClient {
@@ -137,6 +147,10 @@ impl LlmClient {
                 }
                 Ok(key.trim().to_string())
             }
+            // OAuth profiles carry a bearer token, not an API key. The token
+            // is resolved per request in the open-responses transport, which
+            // is the only transport that accepts an OAuth profile.
+            AuthConfig::OAuth { .. } => Ok(String::new()),
         }
     }
 
@@ -253,6 +267,7 @@ impl LlmClient {
     fn handle_stream_event<F>(
         event: ModelResponseStreamEvent,
         pending_tool_calls: &mut HashMap<usize, (String, String, String)>,
+        usage: &mut StreamUsage,
         on_event: &mut F,
     ) where
         F: FnMut(StreamEvent) + Send,
@@ -296,6 +311,15 @@ impl LlmClient {
             }
             ModelResponseStreamEvent::PartEnd(end) => {
                 Self::emit_tool_use(pending_tool_calls, end.index, on_event);
+            }
+            ModelResponseStreamEvent::StreamComplete(complete) => {
+                // Providers that confirm completion on the wire (Anthropic
+                // `message_stop`, the Responses `response.completed` frame)
+                // report usage here. Record it; the single terminal
+                // `Complete` is still emitted once the stream is drained, so
+                // providers that never send this event behave as before.
+                usage.input_tokens = complete.input_tokens.and_then(|v| u32::try_from(v).ok());
+                usage.output_tokens = complete.output_tokens.and_then(|v| u32::try_from(v).ok());
             }
         }
     }
@@ -499,11 +523,17 @@ impl LlmClient {
         };
 
         let mut pending_tool_calls: HashMap<usize, (String, String, String)> = HashMap::new();
+        let mut usage = StreamUsage::default();
 
         while let Some(event_result) = stream.next().await {
             match event_result {
                 Ok(event) => {
-                    Self::handle_stream_event(event, &mut pending_tool_calls, &mut on_event);
+                    Self::handle_stream_event(
+                        event,
+                        &mut pending_tool_calls,
+                        &mut usage,
+                        &mut on_event,
+                    );
                 }
                 Err(e) => {
                     let err_msg = debug_error_message(&e);
@@ -514,8 +544,8 @@ impl LlmClient {
         }
 
         on_event(StreamEvent::Complete {
-            input_tokens: None,
-            output_tokens: None,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
         });
         Ok(())
     }

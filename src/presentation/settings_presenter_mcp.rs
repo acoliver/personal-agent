@@ -254,8 +254,11 @@ impl SettingsPresenter {
             Ok(profile) => {
                 let api_key_label = match &profile.auth {
                     crate::models::AuthConfig::Keychain { label } => label.clone(),
-                    crate::models::AuthConfig::None => String::new(),
+                    crate::models::AuthConfig::None | crate::models::AuthConfig::OAuth { .. } => {
+                        String::new()
+                    }
                 };
+                let oauth_account = profile.auth.oauth_account().unwrap_or_default().to_string();
 
                 let _ = view_tx.send(ViewCommand::ProfileEditorLoad {
                     id: profile.id,
@@ -264,6 +267,7 @@ impl SettingsPresenter {
                     model_id: profile.model_id,
                     base_url: profile.base_url,
                     api_key_label,
+                    oauth_account,
                     temperature: profile.parameters.temperature,
                     max_tokens: profile.parameters.max_tokens,
                     max_tokens_field_name: profile

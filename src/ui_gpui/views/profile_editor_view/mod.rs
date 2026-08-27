@@ -117,6 +117,12 @@ pub struct ProfileEditorData {
     pub key_label: String,
     /// Available keychain labels populated by `ApiKeysListed`.
     pub available_keys: Vec<String>,
+    /// OAuth account slug for OAuth profiles (empty = not signed in).
+    pub oauth_account: String,
+    /// Human-readable label for the signed-in account, when known.
+    pub oauth_account_label: String,
+    /// Plan name reported by the identity provider, when known.
+    pub oauth_account_plan: String,
     pub temperature: f32,
     pub max_tokens: String,
     pub max_tokens_field_name: String,
@@ -554,6 +560,7 @@ impl ProfileEditorView {
                 model_id,
                 base_url,
                 api_key_label,
+                oauth_account,
                 temperature,
                 max_tokens,
                 max_tokens_field_name,
@@ -571,6 +578,7 @@ impl ProfileEditorView {
                 self.state.data.base_url = base_url;
                 self.state.data.api_type = ApiType::from_provider_id(&provider_id);
                 self.state.data.key_label = api_key_label;
+                self.state.data.oauth_account = oauth_account;
                 #[allow(clippy::cast_possible_truncation)]
                 {
                     self.state.data.temperature = temperature as f32;

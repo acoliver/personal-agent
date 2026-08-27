@@ -1161,6 +1161,7 @@ mod settings_presenter_tests {
                 model_id: profile.model_id.clone(),
                 base_url: profile.base_url.clone(),
                 api_key_label: "editor-key".to_string(),
+                oauth_account: String::new(),
                 temperature: profile.parameters.temperature,
                 max_tokens: profile.parameters.max_tokens,
                 max_tokens_field_name: profile
@@ -1222,6 +1223,7 @@ mod settings_presenter_tests {
                 model_id: legacy_profile.model_id.clone(),
                 base_url: legacy_profile.base_url.clone(),
                 api_key_label: "legacy-editor-key".to_string(),
+                oauth_account: String::new(),
                 temperature: legacy_profile.parameters.temperature,
                 max_tokens: legacy_profile.parameters.max_tokens,
                 max_tokens_field_name: "max_tokens".to_string(),
