@@ -8,6 +8,7 @@ mod backup_actions;
 mod command;
 mod input_handler;
 mod render;
+mod render_accounts;
 mod render_appearance;
 mod render_backup_panel;
 mod render_skills;
@@ -41,6 +42,8 @@ pub(super) enum ActiveField {
 #[allow(clippy::struct_excessive_bools)]
 pub struct SettingsState {
     pub profiles: Vec<ProfileItem>,
+    /// Signed-in `ChatGPT` accounts, shown under Models.
+    pub accounts: Vec<crate::presentation::view_command::CodexAccountInfo>,
     pub mcps: Vec<McpItem>,
     pub skills: Vec<SkillItem>,
     pub selected_profile_id: Option<Uuid>,
@@ -110,6 +113,7 @@ impl Default for SettingsState {
     fn default() -> Self {
         Self {
             profiles: Vec::new(),
+            accounts: Vec::new(),
             mcps: Vec::new(),
             skills: Vec::new(),
             selected_profile_id: None,

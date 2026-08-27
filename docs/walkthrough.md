@@ -87,6 +87,32 @@ Personal Agent stores secret values in your OS credential store:
 
 Profile files reference the key label; they should not contain the API key itself.
 
+## 5b. Or sign in with ChatGPT instead of using a key
+
+If you have a ChatGPT subscription, you can use it directly and skip the API
+key entirely.
+
+In the profile editor, set **API TYPE** to `ChatGPT (Codex)`. The API-key row is
+replaced by an **ACCOUNT** row, and the endpoint fills itself in. Press
+**Sign in with ChatGPT**.
+
+Your browser opens on OpenAI's sign-in page. Finish signing in there and the
+app picks up the result on its own; the sheet shows the link and a countdown
+while it waits.
+
+If your browser is on another machine, or something else is already using port
+1455 (the Codex CLI, for example), the app switches to a device code by itself.
+It shows a short code, puts it on your clipboard, and gives you a page to open
+on any device. Paste the code there and approve.
+
+Once you are signed in, the account row names the account and **Save** becomes
+available. Set a model, such as `gpt-5.6-luna`, and save.
+
+Signing in stores the grant in your OS keychain and renews it in the
+background. It is separate from any Codex CLI sign-in; the two do not share
+credentials. You can see and remove signed-in accounts under
+**Settings → Models → CHATGPT ACCOUNTS**.
+
 ## 6. Select the profile
 
 Return to the chat panel and select `Z.ai GLM-5.1 General` from the profile dropdown. If it does not appear, reopen settings and verify that the profile was saved.
@@ -127,6 +153,18 @@ Only enable skills or MCP servers you understand and trust. Tool approval settin
 ### The profile dropdown is empty
 
 Open settings, go to **Models**, and create a profile. Save it, then return to chat. If needed, restart the app.
+
+### Chat says my ChatGPT session expired
+
+The stored sign-in could no longer be renewed, usually because the grant was
+revoked or the account password changed. Press **Sign in again** on the banner
+and complete the sign-in; the conversation carries on afterwards.
+
+### Sign-in says port 1455 is in use
+
+Nothing to do. OpenAI registers that exact port for this sign-in, so it cannot
+be changed, and the app falls through to a device code with the code already on
+your clipboard.
 
 ### The model call fails with an authentication error
 

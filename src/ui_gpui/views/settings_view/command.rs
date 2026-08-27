@@ -31,6 +31,10 @@ impl SettingsView {
 
     fn apply_profile_command(&mut self, command: &ViewCommand) -> bool {
         match command {
+            ViewCommand::CodexAccountsListed { accounts } => {
+                self.state.accounts.clone_from(accounts);
+                true
+            }
             ViewCommand::ShowSettings {
                 profiles,
                 selected_profile_id,

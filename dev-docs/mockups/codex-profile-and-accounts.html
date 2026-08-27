@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - Codex Profile and Accounts Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .annotation {
+    font-size: 11px;
+    color: #6a9955;
+    font-style: italic;
+    margin-top: 8px;
+    max-width: 620px;
+    line-height: 1.6;
+  }
+  .mockup-wrapper { display: flex; flex-direction: column; align-items: center; }
+
+  .panel {
+    width: 620px;
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .top-bar {
+    height: 44px;
+    background: #171717;
+    border-bottom: 1px solid #3a3a3a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+  }
+  .title { font-size: 15px; font-weight: 600; }
+  .body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .field-label {
+    font-size: 11px;
+    color: #888;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  .input, .dropdown {
+    width: 360px;
+    height: 24px;
+    padding: 0 8px;
+    background: #171717;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: #e5e5e5;
+  }
+  .readonly { color: #888; }
+  .muted { font-size: 12px; color: #888; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .btn-primary { background: #6a9955; color: #101010; font-weight: 600; }
+  .btn-secondary { background: #262626; color: #e5e5e5; border-color: #3a3a3a; }
+  .btn-disabled { background: #262626; color: #555; border-color: #333; cursor: not-allowed; }
+  .ok { color: #6a9955; }
+  .err { color: #d16969; }
+  .account-row {
+    padding: 8px;
+    background: #171717;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .small { font-size: 11px; color: #888; }
+  .banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: #171717;
+    border-bottom: 1px solid #3a3a3a;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<h1>PersonalAgent &mdash; Codex profile, accounts, and re-auth</h1>
+<h2>Issue #214</h2>
+
+<div class="mockup-wrapper">
+  <div class="panel">
+    <div class="top-bar">
+      <div class="muted" style="cursor:pointer">Cancel</div>
+      <div class="title">Edit Model Profile</div>
+      <div class="btn btn-primary">Save</div>
+    </div>
+    <div class="body">
+      <div>
+        <div class="field-label">NAME</div>
+        <div class="input">Codex GPT-5.6</div>
+      </div>
+      <div>
+        <div class="field-label">API TYPE</div>
+        <div class="dropdown"><span>ChatGPT (Codex)</span><span class="muted">v</span></div>
+      </div>
+      <div>
+        <div class="field-label">ACCOUNT</div>
+        <div class="row"><span class="ok">*</span> <span>andrew@example.com</span> <span class="muted">ChatGPT Pro</span></div>
+        <div class="small">Signed in. The session renews itself.</div>
+        <div class="row" style="margin-top:6px">
+          <div class="btn btn-primary">Switch</div>
+          <div class="btn btn-secondary">Sign out</div>
+        </div>
+      </div>
+      <div>
+        <div class="field-label">MODEL</div>
+        <div class="input">gpt-5.6-luna</div>
+      </div>
+      <div>
+        <div class="field-label">ENDPOINT</div>
+        <div class="input readonly">wss://chatgpt.com/backend-api/codex/responses</div>
+        <div class="small">Managed by the ChatGPT provider.</div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">
+    Selecting ChatGPT (Codex) replaces the API-key dropdown with the account
+    row and fills in the endpoint. The user never types or pastes a credential.
+  </div>
+</div>
+
+<div class="mockup-wrapper">
+  <div class="panel">
+    <div class="top-bar">
+      <div class="muted" style="cursor:pointer">Cancel</div>
+      <div class="title">New Model Profile</div>
+      <div class="btn btn-disabled">Save</div>
+    </div>
+    <div class="body">
+      <div>
+        <div class="field-label">API TYPE</div>
+        <div class="dropdown"><span>ChatGPT (Codex)</span><span class="muted">v</span></div>
+      </div>
+      <div>
+        <div class="field-label">ACCOUNT</div>
+        <div class="small">Sign in with your ChatGPT subscription.</div>
+        <div class="row" style="margin-top:6px">
+          <div class="btn btn-primary">Sign in with ChatGPT</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">Signed out. Save stays disabled until an account is signed in, the same gate the key label already applies.</div>
+</div>
+
+<div class="mockup-wrapper">
+  <div class="panel">
+    <div class="body">
+      <div class="field-label">CHATGPT ACCOUNTS</div>
+      <div class="account-row">
+        <div class="row"><span class="ok">*</span> <span>andrew@example.com</span> <span class="muted">ChatGPT Pro</span></div>
+        <div class="small">Signed in, 40 minutes left</div>
+        <div class="small">Used by 2 profiles</div>
+        <div class="row" style="margin-top:6px"><div class="btn btn-secondary">Sign out</div></div>
+      </div>
+      <div class="account-row">
+        <div class="row"><span class="err">!</span> <span>work@example.com</span> <span class="muted">ChatGPT Team</span></div>
+        <div class="small">Session expired</div>
+        <div class="small">Used by 1 profile</div>
+        <div class="row" style="margin-top:6px">
+          <div class="btn btn-primary">Sign in again</div>
+          <div class="btn btn-secondary">Remove</div>
+        </div>
+      </div>
+      <div class="row"><div class="btn btn-secondary">+ Add ChatGPT account</div></div>
+    </div>
+  </div>
+  <div class="annotation">
+    Settings &rarr; Models, below the profile list. Accounts exist to serve
+    profiles, so they live next to them rather than in a category of their own.
+  </div>
+</div>
+
+<div class="mockup-wrapper">
+  <div class="panel">
+    <div class="banner">
+      <span class="err">Your ChatGPT session expired.</span>
+      <div class="btn btn-primary">Sign in again</div>
+    </div>
+    <div class="body">
+      <div class="muted">&hellip;conversation&hellip;</div>
+    </div>
+  </div>
+  <div class="annotation">
+    Shown when a refresh fails permanently. A dead grant is not a provider
+    error the user can act on, so the chat says what happened and offers the
+    one thing that fixes it.
+  </div>
+</div>
+
+</body>
+</html>

@@ -5,6 +5,7 @@
 
 mod ime;
 mod render;
+mod render_account;
 mod render_advanced;
 
 use gpui::FocusHandle;
@@ -13,7 +14,7 @@ use uuid::Uuid;
 
 use crate::config::default_api_base_url_for_provider;
 use crate::events::types::{ModelProfileAuth, ModelProfileParameters, UserEvent};
-use crate::presentation::view_command::ViewCommand;
+use crate::presentation::view_command::{ViewCommand, ViewId};
 use crate::ui_gpui::bridge::GpuiBridge;
 
 /// Auth method enum for display
@@ -40,25 +41,47 @@ pub enum ApiType {
     #[default]
     Anthropic,
     OpenAI,
+    /// `ChatGPT` subscription over the Responses websocket.
+    ChatGptCodex,
+    /// Any Open Responses-compatible endpoint, URL supplied by the user.
+    OpenResponses,
     Local,
     Custom(String),
 }
 
 impl ApiType {
+    /// Every type offered in the picker, in the order it is offered.
+    ///
+    /// `Custom` is absent: it exists to carry a provider id loaded from disk,
+    /// not as something a user picks.
+    pub const CHOICES: [Self; 5] = [
+        Self::Anthropic,
+        Self::OpenAI,
+        Self::ChatGptCodex,
+        Self::OpenResponses,
+        Self::Local,
+    ];
+
     #[must_use]
     pub fn display(&self) -> String {
         match self {
             Self::Anthropic => "Anthropic".to_string(),
             Self::OpenAI => "OpenAI".to_string(),
+            Self::ChatGptCodex => "ChatGPT (Codex)".to_string(),
+            Self::OpenResponses => "Open Responses".to_string(),
             Self::Local => "Local Model".to_string(),
             Self::Custom(provider) => provider.clone(),
         }
     }
 
-    fn provider_id(&self) -> String {
+    /// The provider id this type persists as.
+    #[must_use]
+    pub fn provider_id(&self) -> String {
         match self {
             Self::Anthropic => "anthropic".to_string(),
             Self::OpenAI => "openai".to_string(),
+            Self::ChatGptCodex => "openai-codex".to_string(),
+            Self::OpenResponses => "open-responses".to_string(),
             Self::Local => "local".to_string(),
             Self::Custom(provider) => provider.clone(),
         }
@@ -68,8 +91,24 @@ impl ApiType {
     #[must_use]
     pub const fn requires_api_key(&self) -> bool {
         match self {
-            Self::Anthropic | Self::OpenAI | Self::Custom(_) => true,
-            Self::Local => false,
+            Self::Anthropic | Self::OpenAI | Self::OpenResponses | Self::Custom(_) => true,
+            Self::ChatGptCodex | Self::Local => false,
+        }
+    }
+
+    /// Returns `true` if this API type authenticates with a signed-in account.
+    #[must_use]
+    pub const fn requires_oauth_account(&self) -> bool {
+        matches!(self, Self::ChatGptCodex)
+    }
+
+    /// The endpoint this type manages on the user's behalf, when it manages
+    /// one. A managed endpoint is shown read-only until the user unlocks it.
+    #[must_use]
+    pub const fn managed_endpoint(&self) -> Option<&'static str> {
+        match self {
+            Self::ChatGptCodex => Some("wss://chatgpt.com/backend-api/codex/responses"),
+            _ => None,
         }
     }
 
@@ -85,9 +124,26 @@ impl ApiType {
         match provider_id {
             "anthropic" => Self::Anthropic,
             "openai" => Self::OpenAI,
+            "openai-codex" => Self::ChatGptCodex,
+            "open-responses" => Self::OpenResponses,
             "local" => Self::Local,
             other => Self::Custom(other.to_string()),
         }
+    }
+
+    /// The next type in the picker, wrapping at the end.
+    ///
+    /// `Custom` is not in the list, so a profile loaded with an unrecognised
+    /// provider id leaves via the first choice.
+    #[must_use]
+    pub fn next(&self) -> Self {
+        Self::CHOICES
+            .iter()
+            .position(|choice| choice == self)
+            .map_or_else(
+                || Self::CHOICES[0].clone(),
+                |index| Self::CHOICES[(index + 1) % Self::CHOICES.len()].clone(),
+            )
     }
 }
 
@@ -154,6 +210,28 @@ impl ProfileEditorData {
         }
     }
 
+    /// Reconcile the rest of the form after the API type changes.
+    ///
+    /// Credentials do not carry across types: a key label means nothing to an
+    /// account-authenticated provider and vice versa, and leaving the old one
+    /// in place would let Save light up on a credential that cannot be used.
+    pub fn apply_api_type_change(&mut self) {
+        if !self.api_type.requires_api_key() {
+            self.key_label.clear();
+        }
+        if !self.api_type.requires_oauth_account() {
+            self.oauth_account.clear();
+            self.oauth_account_label.clear();
+            self.oauth_account_plan.clear();
+        }
+
+        if let Some(managed) = self.api_type.managed_endpoint() {
+            self.base_url = managed.to_string();
+        } else if self.base_url.trim().is_empty() {
+            self.base_url = default_api_base_url_for_provider(&self.api_type.provider_id());
+        }
+    }
+
     /// Check if save should be enabled
     #[must_use]
     pub fn can_save(&self) -> bool {
@@ -168,6 +246,10 @@ impl ProfileEditorData {
         }
         // Only require key_label for API types that need authentication
         if self.api_type.requires_api_key() && self.key_label.trim().is_empty() {
+            return false;
+        }
+        // Account-authenticated types need a signed-in account instead.
+        if self.api_type.requires_oauth_account() && self.oauth_account.trim().is_empty() {
             return false;
         }
         true
@@ -473,6 +555,25 @@ impl ProfileEditorView {
         }
     }
 
+    /// Ask for a sign-in and open the sheet.
+    ///
+    /// The browser is the method requested; the flow falls through to a device
+    /// code on its own when the fixed callback port is unavailable.
+    pub fn start_codex_sign_in(&self) {
+        self.emit(&UserEvent::StartCodexSignIn {
+            method: crate::events::types::CodexSignInMethod::Browser,
+        });
+        crate::ui_gpui::navigation_channel().request_navigate(ViewId::CodexSignIn);
+    }
+
+    /// Forget the signed-in account this profile uses.
+    pub fn sign_out_codex_account(&mut self, account: String) {
+        self.state.data.oauth_account.clear();
+        self.state.data.oauth_account_label.clear();
+        self.state.data.oauth_account_plan.clear();
+        self.emit(&UserEvent::SignOutCodexAccount { account });
+    }
+
     fn emit_save_profile(&self) {
         let id = self
             .state
@@ -484,7 +585,11 @@ impl ProfileEditorView {
 
         let provider_id = Some(self.state.data.api_type.provider_id());
 
-        let auth = if self.state.data.api_type.requires_api_key() {
+        let auth = if self.state.data.api_type.requires_oauth_account() {
+            Some(ModelProfileAuth::OAuth {
+                account: self.state.data.oauth_account.clone(),
+            })
+        } else if self.state.data.api_type.requires_api_key() {
             Some(ModelProfileAuth::Keychain {
                 label: self.state.data.key_label.clone(),
             })
@@ -602,6 +707,18 @@ impl ProfileEditorView {
 
             ViewCommand::ApiKeysListed { keys } => {
                 self.state.data.available_keys = keys.iter().map(|k| k.label.clone()).collect();
+            }
+
+            ViewCommand::CodexSignInCompleted {
+                account,
+                label,
+                plan,
+            } => {
+                // The editor is what asked for the sign-in, so it adopts the
+                // account without the user selecting anything.
+                self.state.data.oauth_account = account;
+                self.state.data.oauth_account_label = label;
+                self.state.data.oauth_account_plan = plan.unwrap_or_default();
             }
 
             ViewCommand::ProfileEditorReset => {

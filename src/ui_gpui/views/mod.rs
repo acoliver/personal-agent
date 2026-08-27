@@ -5,6 +5,7 @@
 
 pub mod api_key_manager_view;
 pub mod chat_view;
+pub mod codex_signin_view;
 pub mod conversation_list;
 pub mod error_log_view;
 pub mod main_panel;

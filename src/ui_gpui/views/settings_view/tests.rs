@@ -1,5 +1,8 @@
 #![allow(clippy::future_not_send)]
 
+#[path = "tests_accounts.rs"]
+mod tests_accounts;
+
 #[path = "tests_category.rs"]
 mod tests_category;
 

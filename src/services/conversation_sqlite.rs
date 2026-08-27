@@ -725,6 +725,10 @@ impl ConversationService for SqliteConversationService {
         }
         drop(active);
 
+        // A session-stateful transport holds an open socket for the
+        // conversation; nothing should outlive the conversation itself.
+        crate::llm::open_responses::invalidate_conversation(id);
+
         Ok(())
     }
 

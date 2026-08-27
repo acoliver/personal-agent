@@ -83,22 +83,10 @@ fn apply_api_keys_listed(state: &mut ProfileEditorState, keys: Vec<ApiKeyInfo>) 
     state.data.available_keys = keys.into_iter().map(|key| key.label).collect();
 }
 
+/// Advance the picker exactly the way the editor's dropdown does.
 fn cycle_api_type(data: &mut ProfileEditorData) {
-    data.api_type = match data.api_type.clone() {
-        ApiType::Anthropic => ApiType::OpenAI,
-        ApiType::OpenAI => ApiType::Local,
-        ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
-    };
-
-    if data.base_url.trim().is_empty() {
-        data.base_url =
-            personal_agent::config::default_api_base_url_for_provider(&match &data.api_type {
-                ApiType::Anthropic => "anthropic".to_string(),
-                ApiType::OpenAI => "openai".to_string(),
-                ApiType::Local => "local".to_string(),
-                ApiType::Custom(provider) => provider.clone(),
-            });
-    }
+    data.api_type = data.api_type.next();
+    data.apply_api_type_change();
 }
 
 fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types::ModelProfile {
@@ -108,7 +96,11 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
         .and_then(|raw| Uuid::parse_str(raw).ok())
         .unwrap_or_else(Uuid::new_v4);
 
-    let auth = if data.api_type.requires_api_key() {
+    let auth = if data.api_type.requires_oauth_account() {
+        Some(personal_agent::events::types::ModelProfileAuth::OAuth {
+            account: data.oauth_account.clone(),
+        })
+    } else if data.api_type.requires_api_key() {
         Some(personal_agent::events::types::ModelProfileAuth::Keychain {
             label: data.key_label.clone(),
         })
@@ -130,12 +122,7 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
     personal_agent::events::types::ModelProfile {
         id,
         name: data.name.clone(),
-        provider_id: Some(match &data.api_type {
-            ApiType::Anthropic => "anthropic".to_string(),
-            ApiType::OpenAI => "openai".to_string(),
-            ApiType::Local => "local".to_string(),
-            ApiType::Custom(provider) => provider.clone(),
-        }),
+        provider_id: Some(data.api_type.provider_id()),
         model_id: Some(data.model_id.clone()),
         base_url: Some(data.base_url.clone()),
         auth,
@@ -403,7 +390,7 @@ fn api_keys_listed_replaces_available_keys_in_order() {
 }
 
 #[test]
-fn api_type_cycling_updates_empty_base_url_only() {
+fn api_type_cycling_fills_an_empty_base_url_and_keeps_a_set_one() {
     let mut data = ProfileEditorData::new();
     cycle_api_type(&mut data);
     assert_eq!(data.api_type, ApiType::OpenAI);
@@ -412,19 +399,51 @@ fn api_type_cycling_updates_empty_base_url_only() {
         personal_agent::config::default_api_base_url_for_provider("openai")
     );
 
+    // Skip past the managed-endpoint types to one that respects a custom URL.
+    data.api_type = ApiType::Local;
     let preserved_url = "https://custom.host/v1".to_string();
     data.base_url = preserved_url.clone();
     cycle_api_type(&mut data);
-    assert_eq!(data.api_type, ApiType::Local);
-    assert_eq!(data.base_url, preserved_url);
+    assert_eq!(data.api_type, ApiType::Anthropic);
+    assert_eq!(
+        data.base_url, preserved_url,
+        "a URL the user set is not overwritten"
+    );
 
     data.base_url.clear();
     cycle_api_type(&mut data);
-    assert_eq!(data.api_type, ApiType::Anthropic);
+    assert_eq!(data.api_type, ApiType::OpenAI);
     assert_eq!(
         data.base_url,
-        personal_agent::config::default_api_base_url_for_provider("anthropic")
+        personal_agent::config::default_api_base_url_for_provider("openai")
     );
+}
+
+#[test]
+fn a_managed_endpoint_replaces_whatever_the_user_typed() {
+    let mut data = ProfileEditorData::new();
+    data.base_url = "https://custom.host/v1".to_string();
+
+    data.api_type = ApiType::ChatGptCodex;
+    data.apply_api_type_change();
+
+    assert_eq!(
+        data.base_url, "wss://chatgpt.com/backend-api/codex/responses",
+        "the ChatGPT provider owns its endpoint; a stale URL would break it"
+    );
+}
+
+#[test]
+fn open_responses_leaves_the_endpoint_to_the_user() {
+    let mut data = ProfileEditorData::new();
+    data.base_url = "wss://my-own-server.test/v1/responses".to_string();
+
+    data.api_type = ApiType::OpenResponses;
+    data.apply_api_type_change();
+
+    assert_eq!(data.base_url, "wss://my-own-server.test/v1/responses");
+    assert!(data.api_type.requires_api_key());
+    assert!(!data.api_type.requires_oauth_account());
 }
 
 #[test]

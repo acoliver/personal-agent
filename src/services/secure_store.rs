@@ -33,25 +33,55 @@ fn oauth_account_index_path() -> Option<PathBuf> {
 // stays in the keychain.
 
 mod name_index {
-    use super::{fs, PathBuf, SecureStoreError};
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    use super::{fs, is_mock, PathBuf, SecureStoreError};
+
+    /// Index contents while the mock backend is active.
+    ///
+    /// Without this the index would still be written to the user's real
+    /// application-support directory during tests, which both pollutes their
+    /// data and makes parallel tests race on one file.
+    static MOCK_INDEX: OnceLock<Mutex<HashMap<PathBuf, Vec<String>>>> = OnceLock::new();
+
+    fn mock_index() -> &'static Mutex<HashMap<PathBuf, Vec<String>>> {
+        MOCK_INDEX.get_or_init(|| Mutex::new(HashMap::new()))
+    }
 
     pub(super) fn load(path: Option<PathBuf>) -> Vec<String> {
-        path.map_or_else(Vec::new, |path| {
-            fs::read_to_string(path).map_or_else(
-                |_| Vec::new(),
-                |json| serde_json::from_str(&json).unwrap_or_default(),
-            )
-        })
+        let Some(path) = path else {
+            return Vec::new();
+        };
+        if is_mock() {
+            return mock_index()
+                .lock()
+                .expect("mock index poisoned")
+                .get(&path)
+                .cloned()
+                .unwrap_or_default();
+        }
+        fs::read_to_string(path).map_or_else(
+            |_| Vec::new(),
+            |json| serde_json::from_str(&json).unwrap_or_default(),
+        )
     }
 
     pub(super) fn save(path: Option<PathBuf>, names: &[String]) -> Result<(), SecureStoreError> {
-        let json =
-            serde_json::to_string(names).map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
         let Some(path) = path else {
             return Err(SecureStoreError::Keychain(
                 "Unable to resolve runtime path for the name index".to_string(),
             ));
         };
+        if is_mock() {
+            mock_index()
+                .lock()
+                .expect("mock index poisoned")
+                .insert(path, names.to_vec());
+            return Ok(());
+        }
+        let json =
+            serde_json::to_string(names).map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
                 SecureStoreError::Keychain(format!("Failed to create name index dir: {e}"))
@@ -61,23 +91,34 @@ mod name_index {
             .map_err(|e| SecureStoreError::Keychain(format!("Failed to write name index: {e}")))
     }
 
+    /// Serializes the read-modify-write cycle so two concurrent updates cannot
+    /// clobber each other's entry.
+    static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
     pub(super) fn add(path: fn() -> Option<PathBuf>, name: &str) -> Result<(), SecureStoreError> {
+        let guard = WRITE_LOCK.lock().expect("name index lock poisoned");
         let mut names = load(path());
-        if !names.iter().any(|n| n == name) {
+        let result = if names.iter().any(|n| n == name) {
+            Ok(())
+        } else {
             names.push(name.to_string());
             names.sort();
-            save(path(), &names)?;
-        }
-        Ok(())
+            save(path(), &names)
+        };
+        drop(guard);
+        result
     }
 
     pub(super) fn remove(
         path: fn() -> Option<PathBuf>,
         name: &str,
     ) -> Result<(), SecureStoreError> {
+        let guard = WRITE_LOCK.lock().expect("name index lock poisoned");
         let mut names = load(path());
         names.retain(|n| n != name);
-        save(path(), &names)
+        let result = save(path(), &names);
+        drop(guard);
+        result
     }
 }
 

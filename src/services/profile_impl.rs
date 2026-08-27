@@ -540,6 +540,10 @@ impl ProfileService for ProfileServiceImpl {
         drop(profiles); // Release lock before I/O
         self.save_profile_to_disk(&updated_profile)?;
 
+        // Session-stateful transports bake the endpoint, model, and bearer in
+        // at construction, so an edited profile has to start a new session.
+        crate::llm::open_responses::invalidate_profile(id);
+
         Ok(updated_profile)
     }
 
@@ -560,6 +564,8 @@ impl ProfileService for ProfileServiceImpl {
 
         // Remove from in-memory cache
         self.profiles.write().await.retain(|p| p.id != id);
+
+        crate::llm::open_responses::invalidate_profile(id);
 
         Ok(())
     }

@@ -381,7 +381,8 @@ impl ChatServiceImpl {
             TitleGenerationRequest::for_untitled_conversation(&conversation, &profile);
 
         let client = LlmClient::from_profile(&profile)
-            .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
+            .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?
+            .for_conversation(conversation.id);
         let mut messages = Self::build_llm_messages(&conversation, &profile);
         strip_thinking_from_previous_turns(&mut messages);
         let compression_config = self.load_compression_config().await;

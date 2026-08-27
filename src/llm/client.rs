@@ -82,6 +82,12 @@ pub struct LlmClient {
     /// Base URL from models.dev registry (if available)
     pub(crate) registry_base_url: Option<String>,
     pub(crate) quirks: ProviderQuirks,
+    /// Conversation this client is serving, when it is serving one.
+    ///
+    /// Session-stateful transports keep the wire conversation alive between
+    /// turns and key it on this. Absent means "build a throwaway model",
+    /// which is what connection tests and one-shot calls want.
+    pub(crate) conversation_id: Option<uuid::Uuid>,
 }
 
 impl LlmClient {
@@ -104,7 +110,19 @@ impl LlmClient {
             api_key,
             registry_base_url,
             quirks: resolve_provider_quirks(profile),
+            conversation_id: None,
         })
+    }
+
+    /// Bind this client to a conversation.
+    ///
+    /// Session-stateful transports keep one wire conversation per chat, so
+    /// callers that have a conversation should say so; otherwise every turn
+    /// opens a fresh session and replays the whole history.
+    #[must_use]
+    pub const fn for_conversation(mut self, conversation_id: uuid::Uuid) -> Self {
+        self.conversation_id = Some(conversation_id);
+        self
     }
 
     /// Get the base URL from models.dev registry for a provider
@@ -203,13 +221,40 @@ impl LlmClient {
                         }
                     }
                     Role::Assistant => {
-                        req.add_user_prompt(format!("[Assistant]: {}", m.content));
+                        // The assistant's own turn has to go back as an
+                        // assistant turn. Flattening it into a user prompt
+                        // breaks role alternation, and on session-stateful
+                        // transports it makes the client resend a reply the
+                        // server already holds.
+                        use serdes_ai::core::messages::request::ModelRequestPart;
+                        req.parts.push(ModelRequestPart::ModelResponse(Box::new(
+                            Self::assistant_response(m),
+                        )));
                     }
                     Role::System => req.add_system_prompt(m.content.clone()),
                 }
                 req
             })
             .collect()
+    }
+
+    /// Rebuild a stored assistant turn as a model response, including any tool
+    /// calls it made, so the provider sees the turn it actually produced.
+    fn assistant_response(message: &Message) -> ModelResponse {
+        use serdes_ai::core::messages::{ModelResponsePart, TextPart, ToolCallPart};
+
+        let mut response = ModelResponse::new();
+        if !message.content.is_empty() {
+            response
+                .parts
+                .push(ModelResponsePart::Text(TextPart::new(&message.content)));
+        }
+        for tool_use in &message.tool_uses {
+            let mut call = ToolCallPart::new(&tool_use.name, tool_use.input.to_string());
+            call.tool_call_id = Some(tool_use.id.clone());
+            response.parts.push(ModelResponsePart::ToolCall(call));
+        }
+        response
     }
 
     pub(crate) fn base_url_override(&self) -> Option<&str> {
@@ -233,13 +278,13 @@ impl LlmClient {
             .collect()
     }
 
-    fn build_model_and_params(
+    async fn build_model_and_params(
         &self,
         tools: &[crate::llm::tools::Tool],
     ) -> StdResult<(std::sync::Arc<dyn serdes_ai::Model>, ModelRequestParameters), LlmError> {
         let base_url = self.base_url_override();
         let provider = self.get_serdes_provider();
-        let model = self.build_model(provider, base_url)?;
+        let model = self.build_model(provider, base_url).await?;
         let tool_defs = Self::build_tool_definitions(tools);
         let params = ModelRequestParameters::new().with_tools(tool_defs);
         Ok((model, params))
@@ -325,11 +370,22 @@ impl LlmClient {
     }
 
     /// Build a model with extended configuration (thinking support, etc.)
-    pub(crate) fn build_model(
+    pub(crate) async fn build_model(
         &self,
         provider: &str,
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        if provider == super::open_responses::TRANSPORT {
+            return self.build_open_responses_model(base_url).await;
+        }
+
+        if self.profile.auth.requires_oauth_account() {
+            return Err(LlmError::Auth(format!(
+                "OAuth profiles need the Responses transport; provider '{}' speaks API keys",
+                self.profile.provider_id
+            )));
+        }
+
         if provider == "openai" {
             return self.build_openai_model_with_quirks(base_url);
         }
@@ -373,6 +429,26 @@ impl LlmClient {
         );
 
         Ok(std::sync::Arc::new(wrapper))
+    }
+
+    /// Build (or reuse) an `OpenAI` Responses model.
+    ///
+    /// Deliberately not wrapped in `NormalizingSseModel`: that wrapper repairs
+    /// Chat Completions SSE, and this client already emits well-formed stream
+    /// events.
+    async fn build_open_responses_model(
+        &self,
+        base_url: Option<&str>,
+    ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        let endpoint = base_url.unwrap_or(self.profile.base_url.as_str());
+        super::open_responses::model_for(super::open_responses::SessionRequest {
+            profile: &self.profile,
+            quirks: &self.quirks,
+            endpoint,
+            conversation_id: self.conversation_id,
+            api_key: &self.api_key,
+        })
+        .await
     }
 
     fn build_openai_model_with_quirks(
@@ -461,7 +537,7 @@ impl LlmClient {
         self.set_api_key_env();
 
         let model_requests = Self::build_model_requests(messages);
-        let (model, params) = self.build_model_and_params(tools)?;
+        let (model, params) = self.build_model_and_params(tools).await?;
 
         // Make the request using the model directly
         let response = model
@@ -507,7 +583,7 @@ impl LlmClient {
         self.set_api_key_env();
 
         let model_requests = Self::build_model_requests(messages);
-        let (model, params) = self.build_model_and_params(tools)?;
+        let (model, params) = self.build_model_and_params(tools).await?;
 
         // Use the model directly for streaming
         let mut stream = match model
@@ -810,8 +886,8 @@ mod tests {
         )));
     }
 
-    #[test]
-    fn build_model_wraps_non_openai_with_normalizer() {
+    #[tokio::test]
+    async fn build_model_wraps_non_openai_with_normalizer() {
         crate::services::secure_store::use_mock_backend();
         crate::services::secure_store::api_keys::store("_test_build_model", "test-key")
             .expect("store test key");
@@ -831,14 +907,14 @@ mod tests {
 
         let client = LlmClient::from_profile(&profile).unwrap();
         // Verify that build_model succeeds for non-OpenAI providers
-        let result = client.build_model("anthropic", None);
+        let result = client.build_model("anthropic", None).await;
         assert!(result.is_ok(), "build_model should succeed for anthropic");
 
         let _ = crate::services::secure_store::api_keys::delete("_test_build_model");
     }
 
-    #[test]
-    fn build_model_openai_uses_quirks_path() {
+    #[tokio::test]
+    async fn build_model_openai_uses_quirks_path() {
         crate::services::secure_store::use_mock_backend();
         crate::services::secure_store::api_keys::store("_test_build_openai", "test-key")
             .expect("store test key");
@@ -859,7 +935,7 @@ mod tests {
 
         let client = LlmClient::from_profile(&profile).unwrap();
         // Verify that build_model succeeds for OpenAI providers (uses quirks path)
-        let result = client.build_model("openai", None);
+        let result = client.build_model("openai", None).await;
         assert!(result.is_ok(), "build_model should succeed for openai");
 
         let _ = crate::services::secure_store::api_keys::delete("_test_build_openai");

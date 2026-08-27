@@ -403,7 +403,7 @@ impl AgentClientExt for crate::llm::LlmClient {
         );
         self.set_api_key_env();
 
-        let model = self.build_agent_model()?;
+        let model = self.build_agent_model().await?;
         let builder = self.build_agent_builder(model, system_prompt);
         // Register native tools first (they appear first in tool list)
         let builder = register_native_tools(builder);
@@ -606,10 +606,10 @@ impl crate::llm::LlmClient {
         Ok(())
     }
 
-    fn build_agent_model(&self) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+    async fn build_agent_model(&self) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
         let base_url = self.base_url_override();
         let provider = self.get_serdes_provider();
-        self.build_model(provider, base_url)
+        self.build_model(provider, base_url).await
     }
 
     fn build_agent_builder(

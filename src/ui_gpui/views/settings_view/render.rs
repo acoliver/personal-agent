@@ -884,6 +884,7 @@ impl SettingsView {
                     ),
             )
             .child(self.render_profiles_section(cx))
+            .child(self.render_accounts_section(cx))
     }
 
     /// Security panel: renders tool approval controls, including skills auto-approve.

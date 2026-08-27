@@ -43,11 +43,7 @@ impl MainPanel {
         use ViewCommand::*;
         match cmd {
             // ── navigation ──────────────────────────────────────────────
-            NavigateTo { view } => {
-                tracing::info!("MainPanel: NavigateTo {:?}", view);
-                self.navigation.navigate(view);
-                cx.notify();
-            }
+            NavigateTo { view } => self.handle_navigate_to(view, cx),
             NavigateBack => {
                 tracing::info!("MainPanel: NavigateBack");
                 self.navigation.navigate_back();
@@ -62,7 +58,8 @@ impl MainPanel {
             | ShowConversationExportFormat { .. }
             | ExportCompleted { .. }
             | ToolApprovalRequest { .. }
-            | ToolApprovalResolved { .. } => self.forward_to_chat(cmd, cx),
+            | ToolApprovalResolved { .. }
+            | CodexReauthRequired { .. } => self.forward_to_chat(cmd, cx),
 
             ConversationSearchResults { results } => {
                 self.forward_conversation_search_results(results, cx);
@@ -72,6 +69,7 @@ impl MainPanel {
             // ── settings-only forwarding ─────────────────────────────
             ExportDirectoryLoaded { .. }
             | SkillsLoaded { .. }
+            | CodexAccountsListed { .. }
             | ToolApprovalPolicyUpdated { .. } => self.forward_to_settings(cmd, cx),
 
             // ── model selector + profile editor ─────────────────────────
@@ -81,6 +79,12 @@ impl MainPanel {
             | ProfileEditorReset => {
                 self.handle_model_profile_command(cmd, cx);
             }
+
+            // ── `ChatGPT` sign-in ───────────────────────────────────────
+            CodexSignInStarted { .. }
+            | CodexSignInProgress { .. }
+            | CodexSignInFailed { .. }
+            | CodexSignInCompleted { .. } => self.handle_codex_command(cmd, cx),
 
             YoloModeChanged { .. } => {
                 self.forward_yolo_to_settings_and_chat(&cmd, cx);
@@ -112,30 +116,43 @@ impl MainPanel {
             BackupSettingsLoaded { .. }
             | BackupCompleted { .. }
             | BackupListRefreshed { .. }
-            | RestoreCompleted { .. } => {
-                tracing::info!(
-                    "MainPanel: forwarding backup command {:?}",
-                    std::mem::discriminant(&cmd)
-                );
-                self.forward_to_settings(cmd, cx);
-            }
+            | RestoreCompleted { .. } => self.handle_backup_command(cmd, cx),
 
-            // ── database restored - emit refresh event ───────────────────
-            DatabaseRestored => {
-                tracing::info!("MainPanel: database restored, clearing and refreshing");
-                // First clear the active conversation (it may not exist after restore)
-                self.forward_to_chat(ViewCommand::ClearActiveConversation, cx);
-                // Then get the bridge to emit refresh event
-                if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
-                    let _ = app_state
-                        .gpui_bridge
-                        .emit(crate::events::types::UserEvent::RefreshConversations);
-                }
-            }
+            DatabaseRestored => self.handle_database_restored(cx),
 
             other => {
                 tracing::debug!("MainPanel: command {:?} not forwarded to child view", other);
             }
+        }
+    }
+
+    fn handle_backup_command(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        tracing::info!(
+            "MainPanel: forwarding backup command {:?}",
+            std::mem::discriminant(&cmd)
+        );
+        self.forward_to_settings(cmd, cx);
+    }
+
+    fn handle_navigate_to(
+        &mut self,
+        view: crate::presentation::view_command::ViewId,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        tracing::info!("MainPanel: NavigateTo {:?}", view);
+        self.navigation.navigate(view);
+        cx.notify();
+    }
+
+    /// A restored database invalidates the open conversation, so clear it and
+    /// ask for a fresh list.
+    fn handle_database_restored(&self, cx: &mut gpui::Context<Self>) {
+        tracing::info!("MainPanel: database restored, clearing and refreshing");
+        self.forward_to_chat(ViewCommand::ClearActiveConversation, cx);
+        if let Some(app_state) = cx.try_global::<super::startup::MainPanelAppState>() {
+            let _ = app_state
+                .gpui_bridge
+                .emit(crate::events::types::UserEvent::RefreshConversations);
         }
     }
 
@@ -176,6 +193,44 @@ impl MainPanel {
             settings.update(cx, |view, cx| {
                 view.handle_command(cmd, cx);
             });
+        }
+    }
+
+    /// Route a sign-in command.
+    ///
+    /// A completed sign-in reaches three places: the editor adopts the account
+    /// it asked for, the sheet shows the confirmation, and the chat drops any
+    /// expiry banner naming that account.
+    fn handle_codex_command(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        let completed = matches!(cmd, ViewCommand::CodexSignInCompleted { .. });
+        if !completed {
+            self.forward_to_codex_signin(cmd, cx);
+            return;
+        }
+        self.forward_to_codex_signin(cmd.clone(), cx);
+        if let Some(ref editor) = self.profile_editor_view {
+            editor.update(cx, |view, cx| view.handle_command(cmd.clone(), cx));
+        }
+        self.forward_to_chat(cmd, cx);
+    }
+
+    /// Forward a sign-in command to the sheet, and put anything it hands back
+    /// on the clipboard.
+    ///
+    /// The sheet cannot reach the clipboard itself, so a device code arrives
+    /// here as a return value and is written without the user pressing
+    /// anything.
+    fn forward_to_codex_signin(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        let Some(ref sheet) = self.codex_signin_view else {
+            return;
+        };
+        let to_copy = sheet.update(cx, |view, cx| {
+            let copied = view.apply(cmd);
+            cx.notify();
+            copied
+        });
+        if let Some(text) = to_copy {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
         }
     }
 
