@@ -426,7 +426,7 @@ fn parse_named_color(name: &str) -> Option<(f32, f32, f32)> {
 fn rgb_to_hsla(r: f32, g: f32, b: f32, a: f32) -> Hsla {
     let max = r.max(g.max(b));
     let min = r.min(g.min(b));
-    let lightness = (max + min) * 0.5;
+    let lightness = f32::midpoint(max, min);
     let delta = max - min;
 
     if delta <= f32::EPSILON {

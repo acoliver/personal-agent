@@ -67,7 +67,7 @@ fn scaled_fraction_count(total: usize, fraction: f64) -> usize {
     total.saturating_mul(scaled) / FRACTION_SCALE
 }
 
-fn tool_exchange_prefix_len(messages: &[LlmMessage]) -> usize {
+const fn tool_exchange_prefix_len(messages: &[LlmMessage]) -> usize {
     match messages {
         [first, second, ..]
             if matches!(first.role, Role::Assistant)
