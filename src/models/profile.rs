@@ -106,7 +106,7 @@ impl AuthConfig {
 
     /// The OAuth account slug, when this profile authenticates with OAuth.
     #[must_use]
-    pub fn oauth_account(&self) -> Option<&str> {
+    pub const fn oauth_account(&self) -> Option<&str> {
         match self {
             Self::OAuth { account } => Some(account.as_str()),
             Self::Keychain { .. } | Self::None => None,

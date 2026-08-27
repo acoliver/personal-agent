@@ -635,6 +635,10 @@ pub enum SystemEvent {
 
     /// Models registry refresh failed
     ModelsRegistryRefreshFailed { error: String },
+
+    /// A stored OAuth grant can no longer be renewed; the user has to sign in
+    /// again before any profile using this account can run a turn.
+    OAuthReauthRequired { account: String },
 }
 
 // Placeholder types for event variants

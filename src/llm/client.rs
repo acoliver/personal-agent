@@ -69,9 +69,9 @@ pub enum StreamEvent {
 /// Providers that confirm completion on the wire report usage there; the rest
 /// leave both fields `None`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StreamUsage {
-    pub(crate) input_tokens: Option<u32>,
-    pub(crate) output_tokens: Option<u32>,
+pub struct StreamUsage {
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
 }
 
 /// LLM client that uses `SerdesAI`

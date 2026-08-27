@@ -22,6 +22,65 @@ fn api_key_index_path() -> Option<PathBuf> {
     dirs::data_local_dir().map(|dir| dir.join("PersonalAgent").join("api_key_index.json"))
 }
 
+fn oauth_account_index_path() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|dir| dir.join("PersonalAgent").join("oauth_account_index.json"))
+}
+
+// ── Name index ──────────────────────────────────────────────────────────
+//
+// The keyring API cannot enumerate entries, so each namespace keeps a sorted
+// JSON list of its names on disk. The list holds names only; every secret
+// stays in the keychain.
+
+mod name_index {
+    use super::{fs, PathBuf, SecureStoreError};
+
+    pub(super) fn load(path: Option<PathBuf>) -> Vec<String> {
+        path.map_or_else(Vec::new, |path| {
+            fs::read_to_string(path).map_or_else(
+                |_| Vec::new(),
+                |json| serde_json::from_str(&json).unwrap_or_default(),
+            )
+        })
+    }
+
+    pub(super) fn save(path: Option<PathBuf>, names: &[String]) -> Result<(), SecureStoreError> {
+        let json =
+            serde_json::to_string(names).map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
+        let Some(path) = path else {
+            return Err(SecureStoreError::Keychain(
+                "Unable to resolve runtime path for the name index".to_string(),
+            ));
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                SecureStoreError::Keychain(format!("Failed to create name index dir: {e}"))
+            })?;
+        }
+        fs::write(path, json)
+            .map_err(|e| SecureStoreError::Keychain(format!("Failed to write name index: {e}")))
+    }
+
+    pub(super) fn add(path: fn() -> Option<PathBuf>, name: &str) -> Result<(), SecureStoreError> {
+        let mut names = load(path());
+        if !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
+            names.sort();
+            save(path(), &names)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn remove(
+        path: fn() -> Option<PathBuf>,
+        name: &str,
+    ) -> Result<(), SecureStoreError> {
+        let mut names = load(path());
+        names.retain(|n| n != name);
+        save(path(), &names)
+    }
+}
+
 // ── In-memory test backend ──────────────────────────────────────────────
 
 static MOCK_ACTIVE: OnceLock<bool> = OnceLock::new();
@@ -320,53 +379,22 @@ pub fn has_secret(key: &str) -> Result<bool, SecureStoreError> {
 /// stored under the special keychain key `apikey:__index__`.
 pub mod api_keys {
     use super::{
-        api_key_index_path, delete_secret, fs, get_secret, has_secret, set_secret, SecureStoreError,
+        api_key_index_path, delete_secret, get_secret, has_secret, name_index, set_secret,
+        SecureStoreError,
     };
 
     const PREFIX: &str = "apikey:";
 
-    // ── label index helpers ──────────────────────────────────────────
-
     fn load_index() -> Vec<String> {
-        api_key_index_path().map_or_else(Vec::new, |path| {
-            fs::read_to_string(path).map_or_else(
-                |_| Vec::new(),
-                |json| serde_json::from_str(&json).unwrap_or_default(),
-            )
-        })
-    }
-
-    fn save_index(labels: &[String]) -> Result<(), SecureStoreError> {
-        let json =
-            serde_json::to_string(labels).map_err(|e| SecureStoreError::Keychain(e.to_string()))?;
-        let Some(path) = api_key_index_path() else {
-            return Err(SecureStoreError::Keychain(
-                "Unable to resolve runtime path for api_key_index.json".to_string(),
-            ));
-        };
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                SecureStoreError::Keychain(format!("Failed to create api key index dir: {e}"))
-            })?;
-        }
-        fs::write(path, json)
-            .map_err(|e| SecureStoreError::Keychain(format!("Failed to write api key index: {e}")))
+        name_index::load(api_key_index_path())
     }
 
     fn add_to_index(label: &str) -> Result<(), SecureStoreError> {
-        let mut idx = load_index();
-        if !idx.iter().any(|l| l == label) {
-            idx.push(label.to_string());
-            idx.sort();
-            save_index(&idx)?;
-        }
-        Ok(())
+        name_index::add(api_key_index_path, label)
     }
 
     fn remove_from_index(label: &str) -> Result<(), SecureStoreError> {
-        let mut idx = load_index();
-        idx.retain(|l| l != label);
-        save_index(&idx)
+        name_index::remove(api_key_index_path, label)
     }
 
     // ── public API ───────────────────────────────────────────────────
@@ -507,5 +535,65 @@ pub mod mcp_keys {
             format!("mcp:{mcp_id}:{var_name}")
         };
         delete_secret(&key)
+    }
+}
+
+/// OAuth token blobs, keyed by account slug.
+///
+/// The value is the JSON form of `services::oauth::StoredOAuthToken`. This
+/// module deliberately deals in opaque strings so the keychain layer stays
+/// unaware of the token schema.
+pub mod oauth_tokens {
+    use super::{
+        delete_secret, get_secret, has_secret, name_index, oauth_account_index_path, set_secret,
+        SecureStoreError,
+    };
+
+    const PREFIX: &str = "oauth:";
+
+    /// Store a token blob for an account and record the account in the index.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SecureStoreError` if the blob cannot be stored or the account
+    /// index cannot be updated.
+    pub fn store(account: &str, blob: &str) -> Result<(), SecureStoreError> {
+        set_secret(&format!("{PREFIX}{account}"), blob)?;
+        name_index::add(oauth_account_index_path, account)
+    }
+
+    /// Retrieve the token blob for an account.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SecureStoreError` if the underlying keychain lookup fails.
+    pub fn get(account: &str) -> Result<Option<String>, SecureStoreError> {
+        get_secret(&format!("{PREFIX}{account}"))
+    }
+
+    /// Delete an account's token blob and drop it from the index.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SecureStoreError` if the blob cannot be deleted or the account
+    /// index cannot be updated.
+    pub fn delete(account: &str) -> Result<(), SecureStoreError> {
+        delete_secret(&format!("{PREFIX}{account}"))?;
+        name_index::remove(oauth_account_index_path, account)
+    }
+
+    /// Check whether a token blob exists for an account.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SecureStoreError` if the underlying keychain lookup fails.
+    pub fn exists(account: &str) -> Result<bool, SecureStoreError> {
+        has_secret(&format!("{PREFIX}{account}"))
+    }
+
+    /// Return every known account slug (sorted alphabetically).
+    #[must_use]
+    pub fn list() -> Vec<String> {
+        name_index::load(oauth_account_index_path())
     }
 }
