@@ -26,7 +26,15 @@ use support::stub_profile_service::StubProfileService;
 
 /// One scripted `begin` outcome: either it refuses to start, or it starts and
 /// later resolves the way the test says.
-type ScriptedBegin = Result<(SignInStart, Result<TokenSet, OAuthError>), OAuthError>;
+type ScriptedBegin = Result<(SignInStart, ScriptedOutcome), OAuthError>;
+
+/// How a started sign-in finishes.
+enum ScriptedOutcome {
+    /// Resolves straight away with this result.
+    Ready(Result<TokenSet, OAuthError>),
+    /// Never resolves, so only a cancel can end the sign-in.
+    Pending,
+}
 
 /// A sign-in whose outcome the test decides.
 struct FakeSignIn {
@@ -60,10 +68,11 @@ impl CodexSignIn for FakeSignIn {
             .pop()
             .expect("script exhausted");
         let (start, outcome) = next?;
-        Ok(StartedSignIn {
-            start,
-            complete: async move { outcome }.boxed(),
-        })
+        let complete = match outcome {
+            ScriptedOutcome::Ready(result) => async move { result }.boxed(),
+            ScriptedOutcome::Pending => std::future::pending().boxed(),
+        };
+        Ok(StartedSignIn { start, complete })
     }
 }
 
@@ -175,7 +184,10 @@ fn codex_profile(name: &str, account: &str) -> ModelProfile {
 
 #[tokio::test]
 async fn a_browser_sign_in_reports_a_url_then_stores_the_grant() {
-    let (sign_in, asked) = FakeSignIn::new(vec![Ok((browser_start(), Ok(tokens("acct-1"))))]);
+    let (sign_in, asked) = FakeSignIn::new(vec![Ok((
+        browser_start(),
+        ScriptedOutcome::Ready(Ok(tokens("acct-1"))),
+    ))]);
     let mut h = harness(sign_in, Vec::new()).await;
 
     h.bus
@@ -235,7 +247,10 @@ async fn a_browser_sign_in_reports_a_url_then_stores_the_grant() {
 
 #[tokio::test]
 async fn a_device_code_sign_in_carries_the_code_to_the_clipboard() {
-    let (sign_in, _asked) = FakeSignIn::new(vec![Ok((device_start(false), Ok(tokens("acct-2"))))]);
+    let (sign_in, _asked) = FakeSignIn::new(vec![Ok((
+        device_start(false),
+        ScriptedOutcome::Ready(Ok(tokens("acct-2"))),
+    ))]);
     let mut h = harness(sign_in, Vec::new()).await;
 
     h.bus
@@ -271,7 +286,10 @@ async fn a_device_code_sign_in_carries_the_code_to_the_clipboard() {
 async fn a_browser_flow_that_falls_through_reports_a_device_code_not_a_failure() {
     // The flow itself resolves the busy port; the presenter sees only the
     // device-code start it produced, flagged as a fall-through.
-    let (sign_in, _asked) = FakeSignIn::new(vec![Ok((device_start(true), Ok(tokens("acct-3"))))]);
+    let (sign_in, _asked) = FakeSignIn::new(vec![Ok((
+        device_start(true),
+        ScriptedOutcome::Ready(Ok(tokens("acct-3"))),
+    ))]);
     let mut h = harness(sign_in, Vec::new()).await;
 
     h.bus
@@ -309,7 +327,10 @@ async fn a_browser_flow_that_falls_through_reports_a_device_code_not_a_failure()
 
 #[tokio::test]
 async fn a_timeout_is_reported_as_a_timeout() {
-    let (sign_in, _asked) = FakeSignIn::new(vec![Ok((browser_start(), Err(OAuthError::TimedOut)))]);
+    let (sign_in, _asked) = FakeSignIn::new(vec![Ok((
+        browser_start(),
+        ScriptedOutcome::Ready(Err(OAuthError::TimedOut)),
+    ))]);
     let mut h = harness(sign_in, Vec::new()).await;
 
     h.bus
@@ -357,7 +378,7 @@ async fn an_issuer_without_device_login_says_so() {
 async fn an_expired_device_code_says_so() {
     let (sign_in, _asked) = FakeSignIn::new(vec![Ok((
         device_start(false),
-        Err(OAuthError::DeviceCodeExpired),
+        ScriptedOutcome::Ready(Err(OAuthError::DeviceCodeExpired)),
     ))]);
     let mut h = harness(sign_in, Vec::new()).await;
 
@@ -381,8 +402,9 @@ async fn an_expired_device_code_says_so() {
 
 #[tokio::test]
 async fn cancelling_reports_a_cancellation() {
-    // The completion never resolves, so only a cancel can end this.
-    let (sign_in, _asked) = FakeSignIn::new(vec![Ok((browser_start(), Err(OAuthError::TimedOut)))]);
+    // The completion never resolves, so a Cancelled command can only come
+    // from the cancel itself rather than from the sign-in finishing on its own.
+    let (sign_in, _asked) = FakeSignIn::new(vec![Ok((browser_start(), ScriptedOutcome::Pending))]);
     let mut h = harness(sign_in, Vec::new()).await;
 
     h.bus

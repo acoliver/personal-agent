@@ -4,8 +4,10 @@
 //! `chat_profile_switch_ui_e2e_test` does. Three scenarios:
 //!
 //! 1. A seeded grant streams a real turn over the Responses websocket.
-//! 2. With no grant, the sign-in sheet opens and a real device code renders.
-//!    This exercises the live flow start without needing anyone to approve.
+//! 2. With no grant, the app starts the sign-in presenter and the editor
+//!    offers a sign-in. Rendering of a live device code is not asserted here:
+//!    it needs a real request to auth.openai.com and a rendered surface to
+//!    read back, which `e2e_codex_signin_device_code` covers.
 //! 3. An expired grant that cannot be renewed raises the re-auth banner.
 //!
 //! ## Prerequisites
@@ -116,8 +118,16 @@ impl Drop for ProfileGuard {
         for path in &self.created {
             let _ = fs::remove_file(path);
         }
-        if let Some(ref original) = self.original_default {
-            let _ = fs::write(&self.default_path, original);
+        match self.original_default {
+            // Put back what was there.
+            Some(ref original) => {
+                let _ = fs::write(&self.default_path, original);
+            }
+            // There was no default before this test wrote one; leaving it
+            // would point the app at a profile that no longer exists.
+            None => {
+                let _ = fs::remove_file(&self.default_path);
+            }
         }
     }
 }
@@ -277,7 +287,7 @@ fn a_seeded_account_streams_a_real_turn_through_the_ui() {
 
 #[test]
 #[ignore = "Requires macOS Accessibility permissions and network access"]
-fn the_sign_in_sheet_renders_a_real_device_code() {
+fn the_auth_presenter_starts_when_no_grant_is_stored() {
     // No account on the profile, so the editor offers a sign-in.
     let _guard = install_codex_profile("");
 
@@ -290,8 +300,8 @@ fn the_sign_in_sheet_renders_a_real_device_code() {
 
     open_settings();
 
-    // Ask for a device code directly: the browser flow would open a browser
-    // and wait on a human, which this scenario deliberately avoids.
+    // Bring the app forward and let it settle. Driving the sign-in itself
+    // would open a browser and wait on a human, which this scenario avoids.
     let result = run_applescript_lines(&[
         "tell application \"System Events\"",
         &format!("tell process \"{APP_PROCESS}\""),

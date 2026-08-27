@@ -51,11 +51,11 @@ impl AccountIdentity {
             return email.to_string();
         }
         if let Some(id) = self.account_id.as_deref().filter(|s| !s.is_empty()) {
-            let tail = if id.len() > 4 {
-                &id[id.len() - 4..]
-            } else {
-                id
-            };
+            // The claim comes off the network and may hold any UTF-8. Slicing
+            // by byte offset would panic inside a multi-byte character, and
+            // this runs while building the account list.
+            let chars: Vec<char> = id.chars().collect();
+            let tail: String = chars[chars.len().saturating_sub(4)..].iter().collect();
             return format!("account ending {tail}");
         }
         "ChatGPT account".to_string()
@@ -197,6 +197,30 @@ mod tests {
         };
 
         assert_eq!(identity.display_label(), "account ending 4f21");
+    }
+
+    #[test]
+    fn display_label_does_not_panic_on_a_multi_byte_account_id() {
+        // The claim comes off the network, so it can hold anything. Slicing
+        // the last four bytes would land mid-character and panic.
+        let identity = AccountIdentity {
+            account_id: Some("acct-日本語テスト".into()),
+            email: None,
+            plan: None,
+        };
+
+        assert_eq!(identity.display_label(), "account ending 語テスト");
+    }
+
+    #[test]
+    fn display_label_handles_an_account_id_shorter_than_the_tail() {
+        let identity = AccountIdentity {
+            account_id: Some("ab".into()),
+            email: None,
+            plan: None,
+        };
+
+        assert_eq!(identity.display_label(), "account ending ab");
     }
 
     #[test]

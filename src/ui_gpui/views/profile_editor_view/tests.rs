@@ -4,6 +4,9 @@
 
 #![allow(clippy::future_not_send)]
 
+#[path = "tests_account.rs"]
+mod tests_account;
+
 use super::*;
 use flume;
 use gpui::{AppContext, TestAppContext};
@@ -891,6 +894,8 @@ async fn a_completed_sign_in_populates_the_account_row(cx: &mut TestAppContext) 
 
     view.update(cx, |view: &mut ProfileEditorView, cx| {
         view.state.data.api_type = ApiType::ChatGptCodex;
+        // Selecting the type is what fills in its managed endpoint.
+        view.state.data.apply_api_type_change();
         view.handle_command(
             ViewCommand::CodexSignInCompleted {
                 account: "chatgpt-acct-1".to_string(),
@@ -903,7 +908,11 @@ async fn a_completed_sign_in_populates_the_account_row(cx: &mut TestAppContext) 
         assert_eq!(view.state.data.oauth_account, "chatgpt-acct-1");
         assert_eq!(view.state.data.oauth_account_label, "andrew@example.com");
         assert_eq!(view.state.data.oauth_account_plan, "ChatGPT Pro");
-        assert!(view.state.data.can_save() || view.state.data.name.is_empty());
+        // A signed-in account is the credential this API type needs, so with
+        // the other required fields present Save becomes available.
+        view.state.data.name = "Codex".to_string();
+        view.state.data.model_id = "gpt-5.6-luna".to_string();
+        assert!(view.state.data.can_save());
     });
 }
 

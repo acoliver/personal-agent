@@ -220,12 +220,15 @@ async fn resolve_bearer(profile: &ModelProfile, api_key: &str) -> Result<String,
             "This profile has no signed-in account. Sign in with ChatGPT to use it.".to_string(),
         ));
     }
-    refresh::access_token_for(account).await.map_err(|error| {
-        if matches!(error, OAuthError::GrantRevoked) {
-            let _ = refresh::report_reauth_required(account);
+    match refresh::access_token_for(account).await {
+        Ok(token) => Ok(token),
+        Err(error) => {
+            if matches!(error, OAuthError::GrantRevoked) {
+                let _ = refresh::report_reauth_required_async(account).await;
+            }
+            Err(LlmError::Auth(error.to_string()))
         }
-        LlmError::Auth(error.to_string())
-    })
+    }
 }
 
 /// The `chatgpt-account-id` header value, when the stored grant knows it.
@@ -253,6 +256,12 @@ fn build(
             "Responses profiles need an endpoint URL".to_string(),
         ));
     }
+    if request.profile.auth.requires_oauth_account() {
+        // A ChatGPT grant is scoped to ChatGPT. Sending it to whatever host a
+        // profile happens to name would hand the bearer token, and the account
+        // id, to that host.
+        ensure_oauth_endpoint_is_trusted(request.endpoint)?;
+    }
 
     let mut model = OpenResponsesModel::new(&request.profile.model_id, request.endpoint);
 
@@ -272,6 +281,45 @@ fn build(
     }
 
     Ok(model)
+}
+
+/// Hosts an OAuth grant may be presented to.
+///
+/// The grant is issued by `OpenAI` for the `ChatGPT` backend. Anything else is a
+/// third party as far as that token is concerned.
+const OAUTH_ALLOWED_HOSTS: &[&str] = &["chatgpt.com", "api.openai.com", "auth.openai.com"];
+
+/// Reject an endpoint that an OAuth grant must not be sent to.
+///
+/// Requires TLS and a host in [`OAUTH_ALLOWED_HOSTS`], matching either the host
+/// itself or a subdomain of it.
+fn ensure_oauth_endpoint_is_trusted(endpoint: &str) -> Result<(), LlmError> {
+    let url = url::Url::parse(endpoint)
+        .map_err(|e| LlmError::InvalidConfig(format!("endpoint is not a valid URL: {e}")))?;
+
+    if !matches!(url.scheme(), "https" | "wss") {
+        return Err(LlmError::InvalidConfig(format!(
+            "a ChatGPT account can only be used over an encrypted connection, not {}",
+            url.scheme()
+        )));
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| LlmError::InvalidConfig("endpoint has no host".to_string()))?
+        .to_ascii_lowercase();
+
+    let trusted = OAUTH_ALLOWED_HOSTS
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")));
+    if !trusted {
+        return Err(LlmError::InvalidConfig(format!(
+            "a ChatGPT account cannot be used with {host}; sign-in is only valid for OpenAI's own \
+             endpoints. Use an API key for this provider."
+        )));
+    }
+
+    Ok(())
 }
 
 /// Identify this client the way the codex backend expects.
@@ -304,6 +352,63 @@ const fn effort_for_budget(budget: Option<u32>) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::ensure_oauth_endpoint_is_trusted;
+
+    #[test]
+    fn an_oauth_grant_may_reach_the_chatgpt_backend() {
+        for endpoint in [
+            "wss://chatgpt.com/backend-api/codex/responses",
+            "https://api.openai.com/v1/responses",
+            "wss://eu.chatgpt.com/backend-api/codex/responses",
+        ] {
+            assert!(
+                ensure_oauth_endpoint_is_trusted(endpoint).is_ok(),
+                "{endpoint} should be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn an_oauth_grant_is_not_sent_to_a_third_party() {
+        // Otherwise a profile naming any host would be handed the bearer
+        // token and the account id.
+        let error = ensure_oauth_endpoint_is_trusted("wss://evil.example/responses")
+            .expect_err("a foreign host must be refused");
+
+        assert!(
+            error.to_string().contains("evil.example"),
+            "the message should name the host, got {error}"
+        );
+    }
+
+    #[test]
+    fn a_lookalike_host_is_not_mistaken_for_the_real_one() {
+        for endpoint in [
+            "wss://chatgpt.com.evil.example/responses",
+            "wss://notchatgpt.com/responses",
+            "https://api.openai.com.evil.example/v1/responses",
+        ] {
+            assert!(
+                ensure_oauth_endpoint_is_trusted(endpoint).is_err(),
+                "{endpoint} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn an_oauth_grant_requires_an_encrypted_connection() {
+        for endpoint in ["ws://chatgpt.com/responses", "http://api.openai.com/v1"] {
+            let error =
+                ensure_oauth_endpoint_is_trusted(endpoint).expect_err("plaintext must be refused");
+            assert!(error.to_string().contains("encrypted"), "got {error}");
+        }
+    }
+
+    #[test]
+    fn a_malformed_endpoint_is_refused_rather_than_panicking() {
+        assert!(ensure_oauth_endpoint_is_trusted("not a url").is_err());
+    }
+
     use super::*;
     use crate::models::{AuthConfig, ModelParameters};
 

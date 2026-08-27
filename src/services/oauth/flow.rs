@@ -218,6 +218,13 @@ async fn poll_until_approved(
 ) -> Result<TokenSet, OAuthError> {
     let interval = Duration::from_secs(code.interval_secs);
     loop {
+        // Checked before the request, not after: the interval can be up to
+        // thirty seconds, so a sleep can cross the deadline and the next poll
+        // would report a network error or a late approval instead of expiry.
+        if now_secs() >= expires_at {
+            return Err(OAuthError::DeviceCodeExpired);
+        }
+
         match device_code::poll_once(http, issuer, client_id, code).await? {
             (PollOutcome::Approved, Some(tokens)) => return Ok(tokens),
             (PollOutcome::Approved, None) => {
@@ -228,9 +235,6 @@ async fn poll_until_approved(
             (PollOutcome::Pending, _) => {}
         }
 
-        if now_secs() >= expires_at {
-            return Err(OAuthError::DeviceCodeExpired);
-        }
         tokio::time::sleep(interval).await;
     }
 }

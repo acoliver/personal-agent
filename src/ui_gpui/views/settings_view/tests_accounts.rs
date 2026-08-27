@@ -181,3 +181,38 @@ async fn other_panels_do_not_touch_the_keychain(cx: &mut TestAppContext) {
         "only the Models panel shows accounts, got {emitted:?}"
     );
 }
+
+#[gpui::test]
+async fn signing_in_from_settings_opens_the_sheet(cx: &mut TestAppContext) {
+    // The presenter only publishes sign-in state; nothing in that path changes
+    // the current view. Without an explicit navigation the user stays on
+    // Settings while a browser opens with no explanation.
+    while crate::ui_gpui::navigation_channel()
+        .take_pending()
+        .is_some()
+    {}
+    let (bridge, events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = SettingsView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view, _cx| view.start_codex_sign_in());
+
+    let emitted: Vec<UserEvent> = events.try_iter().collect();
+    assert!(
+        emitted.iter().any(|event| matches!(
+            event,
+            UserEvent::StartCodexSignIn {
+                method: crate::events::types::CodexSignInMethod::Browser
+            }
+        )),
+        "should ask for a browser sign-in, got {emitted:?}"
+    );
+    assert_eq!(
+        crate::ui_gpui::navigation_channel().take_pending(),
+        Some(crate::presentation::view_command::ViewId::CodexSignIn),
+        "should show the sheet that reports progress"
+    );
+}

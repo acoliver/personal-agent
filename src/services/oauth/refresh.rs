@@ -137,8 +137,29 @@ fn config_for_issuer(_issuer: &str) -> OAuthConfig {
 /// # Errors
 ///
 /// Returns [`OAuthError::Storage`] when the record cannot be written back.
+pub async fn report_reauth_required_async(account: &str) -> Result<(), OAuthError> {
+    let slug = account.to_string();
+    store::off_runtime_public("flag a sign-in as expired", move || {
+        store::mark_needs_reauth(&slug)
+    })
+    .await?;
+    announce_reauth(account);
+    Ok(())
+}
+
+/// The synchronous form, for callers that are not on the runtime.
+///
+/// # Errors
+///
+/// Returns [`OAuthError::Storage`] when the record cannot be written back.
 pub fn report_reauth_required(account: &str) -> Result<(), OAuthError> {
     store::mark_needs_reauth(account)?;
+    announce_reauth(account);
+    Ok(())
+}
+
+/// Tell any view showing this account that it needs a fresh sign-in.
+fn announce_reauth(account: &str) {
     // A bus with no subscribers is normal at startup and during tests; the
     // record on disk is what makes the state durable.
     let _ = crate::events::emit(crate::events::AppEvent::System(
@@ -146,7 +167,6 @@ pub fn report_reauth_required(account: &str) -> Result<(), OAuthError> {
             account: account.to_string(),
         },
     ));
-    Ok(())
 }
 
 #[cfg(test)]

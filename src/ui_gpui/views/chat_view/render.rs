@@ -870,8 +870,9 @@ impl ChatView {
                     .child("Sign in again")
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, _window, _cx| {
+                        cx.listener(|this, _, _window, cx| {
                             this.start_codex_reauth();
+                            cx.notify();
                         }),
                     ),
             )

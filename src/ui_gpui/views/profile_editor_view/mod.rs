@@ -227,9 +227,23 @@ impl ProfileEditorData {
 
         if let Some(managed) = self.api_type.managed_endpoint() {
             self.base_url = managed.to_string();
-        } else if self.base_url.trim().is_empty() {
+        } else if self.base_url.trim().is_empty() || self.base_url_is_managed_elsewhere() {
+            // A managed endpoint belongs to the type that manages it. Carrying
+            // ChatGPT's websocket URL onto a plain HTTP provider would save an
+            // endpoint that provider cannot serve, and Save would allow it
+            // because the field is not empty.
             self.base_url = default_api_base_url_for_provider(&self.api_type.provider_id());
         }
+    }
+
+    /// Whether `base_url` is the managed endpoint of some other API type, and
+    /// so was inherited rather than chosen.
+    fn base_url_is_managed_elsewhere(&self) -> bool {
+        let current = self.base_url.trim();
+        ApiType::CHOICES
+            .iter()
+            .filter_map(ApiType::managed_endpoint)
+            .any(|managed| managed == current)
     }
 
     /// Check if save should be enabled
@@ -684,6 +698,11 @@ impl ProfileEditorView {
                 self.state.data.api_type = ApiType::from_provider_id(&provider_id);
                 self.state.data.key_label = api_key_label;
                 self.state.data.oauth_account = oauth_account;
+                // The load payload carries the slug only. Keeping the previous
+                // profile's label and plan would caption this account with
+                // someone else's name.
+                self.state.data.oauth_account_label.clear();
+                self.state.data.oauth_account_plan.clear();
                 #[allow(clippy::cast_possible_truncation)]
                 {
                     self.state.data.temperature = temperature as f32;

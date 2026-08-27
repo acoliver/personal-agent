@@ -7,7 +7,7 @@ use gpui::{div, prelude::*, px, MouseButton};
 
 use super::SettingsView;
 use crate::events::types::{CodexSignInMethod, UserEvent};
-use crate::presentation::view_command::CodexAccountInfo;
+use crate::presentation::view_command::{CodexAccountInfo, ViewId};
 use crate::ui_gpui::theme::Theme;
 
 impl SettingsView {
@@ -129,9 +129,7 @@ impl SettingsView {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, _, _window, _cx| {
-                                this.emit(&UserEvent::StartCodexSignIn {
-                                    method: CodexSignInMethod::Browser,
-                                });
+                                this.start_codex_sign_in();
                             }),
                         ),
                 )
@@ -177,11 +175,21 @@ impl SettingsView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _window, _cx| {
-                    this.emit(&UserEvent::StartCodexSignIn {
-                        method: CodexSignInMethod::Browser,
-                    });
+                    this.start_codex_sign_in();
                 }),
             )
+    }
+
+    /// Ask for a sign-in and show the sheet that reports its progress.
+    ///
+    /// The presenter only publishes sign-in state; nothing in that path
+    /// changes the current view. Without this the user stays on Settings while
+    /// a sign-in runs unseen, and a browser opens with no explanation.
+    pub fn start_codex_sign_in(&self) {
+        self.emit(&UserEvent::StartCodexSignIn {
+            method: CodexSignInMethod::Browser,
+        });
+        crate::ui_gpui::navigation_channel().request_navigate(ViewId::CodexSignIn);
     }
 
     /// The second line of an account row.

@@ -181,6 +181,23 @@ where
     off_runtime_within(STORE_TIMEOUT, what, call).await
 }
 
+/// Run any blocking store call off the runtime with the standard deadline.
+///
+/// For sibling modules that need the same protection around a store operation
+/// this module does not wrap directly.
+///
+/// # Errors
+///
+/// Returns whatever `call` returns, or [`OAuthError::Storage`] if it does not
+/// answer within the deadline.
+pub async fn off_runtime_public<T, F>(what: &'static str, call: F) -> Result<T, OAuthError>
+where
+    F: FnOnce() -> Result<T, OAuthError> + Send + 'static,
+    T: Send + 'static,
+{
+    off_runtime(what, call).await
+}
+
 /// [`off_runtime`] with an explicit deadline, so tests need not wait one out.
 async fn off_runtime_within<T, F>(
     deadline: std::time::Duration,
