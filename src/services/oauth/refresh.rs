@@ -37,7 +37,9 @@ fn lock_for(account: &str) -> Arc<AsyncMutex<()>> {
 /// sign-in, [`OAuthError::Storage`] when the record cannot be read or written,
 /// and the underlying transport error when the refresh call itself fails.
 pub async fn access_token_for(account: &str) -> Result<String, OAuthError> {
-    let record = store::load(account)?.ok_or(OAuthError::GrantRevoked)?;
+    let record = store::load_async(account)
+        .await?
+        .ok_or(OAuthError::GrantRevoked)?;
 
     if record.needs_reauth {
         return Err(OAuthError::GrantRevoked);
@@ -70,7 +72,9 @@ pub async fn refresh_account(account: &str) -> Result<StoredOAuthToken, OAuthErr
     let lock = lock_for(account);
     let _guard = lock.lock().await;
 
-    let mut record = store::load(account)?.ok_or(OAuthError::GrantRevoked)?;
+    let mut record = store::load_async(account)
+        .await?
+        .ok_or(OAuthError::GrantRevoked)?;
 
     // Someone else may have refreshed while we waited on the lock.
     if !record.needs_refresh() && !record.access_token.is_empty() {
@@ -88,7 +92,7 @@ pub async fn refresh_account(account: &str) -> Result<StoredOAuthToken, OAuthErr
     })?;
 
     record.apply_refresh(tokens);
-    store::save(account, &record)?;
+    store::save_async(account, record.clone()).await?;
     Ok(record)
 }
 

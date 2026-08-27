@@ -161,6 +161,88 @@ pub fn list_accounts() -> Vec<String> {
     secure_store::oauth_tokens::list()
 }
 
+// ── Async wrappers ──────────────────────────────────────────────────────
+//
+// Keychain access is a blocking syscall owned by the OS, and it does not
+// always return. On macOS an item whose access control does not name this
+// binary puts up a system prompt, and if nobody answers that prompt the read
+// never completes. Async callers therefore go through these, which move the
+// call off the runtime and give it a deadline.
+
+/// Longest a keychain call may take before we treat it as unavailable.
+const STORE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run a blocking store call off the runtime, with a deadline.
+async fn off_runtime<T, F>(what: &'static str, call: F) -> Result<T, OAuthError>
+where
+    F: FnOnce() -> Result<T, OAuthError> + Send + 'static,
+    T: Send + 'static,
+{
+    off_runtime_within(STORE_TIMEOUT, what, call).await
+}
+
+/// [`off_runtime`] with an explicit deadline, so tests need not wait one out.
+async fn off_runtime_within<T, F>(
+    deadline: std::time::Duration,
+    what: &'static str,
+    call: F,
+) -> Result<T, OAuthError>
+where
+    F: FnOnce() -> Result<T, OAuthError> + Send + 'static,
+    T: Send + 'static,
+{
+    let task = tokio::task::spawn_blocking(call);
+    match tokio::time::timeout(deadline, task).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => Err(OAuthError::Storage(error.to_string())),
+        Err(_elapsed) => Err(OAuthError::Storage(format!(
+            "the keychain did not answer within {}s while trying to {what}; \
+             it may be waiting on a system prompt",
+            deadline.as_secs().max(1)
+        ))),
+    }
+}
+
+/// [`load`], off the runtime.
+///
+/// # Errors
+///
+/// As [`load`], plus [`OAuthError::Storage`] if the blocking thread is lost.
+pub async fn load_async(account: &str) -> Result<Option<StoredOAuthToken>, OAuthError> {
+    let account = account.to_string();
+    off_runtime("read a saved sign-in", move || load(&account)).await
+}
+
+/// [`save`], off the runtime.
+///
+/// # Errors
+///
+/// As [`save`], plus [`OAuthError::Storage`] if the blocking thread is lost.
+pub async fn save_async(account: &str, token: StoredOAuthToken) -> Result<(), OAuthError> {
+    let account = account.to_string();
+    off_runtime("save a sign-in", move || save(&account, &token)).await
+}
+
+/// [`delete`], off the runtime.
+///
+/// # Errors
+///
+/// As [`delete`], plus [`OAuthError::Storage`] if the blocking thread is lost.
+pub async fn delete_async(account: &str) -> Result<(), OAuthError> {
+    let account = account.to_string();
+    off_runtime("forget a sign-in", move || delete(&account)).await
+}
+
+/// [`load_all`], off the runtime.
+pub async fn load_all_async() -> Vec<(String, StoredOAuthToken)> {
+    off_runtime("list saved sign-ins", || Ok(load_all()))
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "Reading stored OAuth accounts failed");
+            Vec::new()
+        })
+}
+
 /// Load every stored grant, skipping records that cannot be read.
 ///
 /// A corrupt entry should not hide the accounts that are fine, so this reports
@@ -360,6 +442,56 @@ mod tests {
         assert!(loaded.needs_reauth);
         assert!(loaded.access_token.is_empty());
         assert_eq!(loaded.refresh_token.as_deref(), Some("refresh-1"));
+    }
+
+    #[tokio::test]
+    async fn the_async_wrappers_round_trip_a_record() {
+        secure_store::use_mock_backend();
+        let account = "chatgpt-async-round-trip";
+        let record = StoredOAuthToken::from_token_set(token_set(), CHATGPT_ISSUER);
+
+        save_async(account, record.clone()).await.expect("save");
+        let loaded = load_async(account)
+            .await
+            .expect("load")
+            .expect("record present");
+        assert_eq!(loaded, record);
+
+        delete_async(account).await.expect("delete");
+        assert_eq!(load_async(account).await.expect("load"), None);
+    }
+
+    #[tokio::test]
+    async fn a_keychain_that_never_answers_gives_up_instead_of_hanging() {
+        // The OS owns this call and does not always return: on macOS an item
+        // whose access control does not name this binary raises a system
+        // prompt, and an unanswered prompt never completes. Blocking forever
+        // would take the panel, and the presenter behind it, with it.
+        let outcome: Result<(), OAuthError> =
+            off_runtime_within(std::time::Duration::from_millis(20), "stall", || {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                Ok(())
+            })
+            .await;
+
+        let error = outcome.expect_err("a stalled keychain call must not hang");
+        assert!(
+            matches!(error, OAuthError::Storage(_)),
+            "expected a storage error, got {error:?}"
+        );
+        assert!(
+            error.to_string().contains("did not answer"),
+            "the message should say what happened, got {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_call_that_answers_in_time_passes_its_result_through() {
+        let value: u8 = off_runtime_within(std::time::Duration::from_secs(5), "read", || Ok(7))
+            .await
+            .expect("a prompt call should succeed");
+
+        assert_eq!(value, 7);
     }
 
     #[test]

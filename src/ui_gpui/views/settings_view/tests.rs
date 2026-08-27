@@ -6,6 +6,9 @@ mod tests_accounts;
 #[path = "tests_category.rs"]
 mod tests_category;
 
+#[path = "tests_keys.rs"]
+mod tests_keys;
+
 #[path = "tests_scrollable.rs"]
 mod tests_scrollable;
 
@@ -16,14 +19,14 @@ use super::*;
 use crate::presentation::view_command::{ViewCommand, ViewId};
 use gpui::{AppContext, Bounds, EntityInputHandler, Pixels, TestAppContext};
 
-fn clear_navigation_requests() {
+pub(super) fn clear_navigation_requests() {
     while crate::ui_gpui::navigation_channel()
         .take_pending()
         .is_some()
     {}
 }
 
-fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
+pub(super) fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
     let (user_tx, user_rx) = flume::bounded(16);
     let (_view_tx, view_rx) = flume::bounded(16);
     (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
@@ -286,7 +289,7 @@ async fn profile_and_mcp_setters_enforce_selection_fallbacks_without_bridge(
     });
 }
 
-fn settings_key_event(key: &str) -> gpui::KeyDownEvent {
+pub(super) fn settings_key_event(key: &str) -> gpui::KeyDownEvent {
     gpui::KeyDownEvent {
         keystroke: gpui::Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),
         is_held: false,
@@ -353,100 +356,6 @@ async fn helper_actions_emit_expected_bridge_events(cx: &mut TestAppContext) {
     assert_eq!(
         user_rx.recv().unwrap(),
         UserEvent::ConfigureMcp { id: mcp_a }
-    );
-    assert!(
-        user_rx.try_recv().is_err(),
-        "unexpected additional settings events"
-    );
-}
-
-#[gpui::test]
-async fn key_handling_navigates_and_emits_profile_events(cx: &mut TestAppContext) {
-    clear_navigation_requests();
-    let profile_a = Uuid::new_v4();
-    let profile_b = Uuid::new_v4();
-    let mcp_a = Uuid::new_v4();
-    let (bridge, user_rx) = make_bridge();
-    let view = cx.new(SettingsView::new);
-
-    view.update(cx, |view: &mut SettingsView, cx| {
-        view.set_bridge(Arc::clone(&bridge));
-        view.set_profiles(vec![
-            ProfileItem::new(profile_a, "Alpha").with_model("openai", "gpt-4o"),
-            ProfileItem::new(profile_b, "Beta").with_model("anthropic", "claude"),
-        ]);
-        view.set_mcps(vec![McpItem::new(mcp_a, "Fetcher").with_enabled(true)]);
-        view.state.selected_profile_id = Some(profile_b);
-
-        // Arrow keys on Models category scroll profiles
-        view.select_category(SettingsCategory::Models);
-        view.handle_key_down(&settings_key_event("up"), cx);
-        assert_eq!(view.state.selected_profile_id, Some(profile_a));
-
-        view.handle_key_down(&settings_key_event("down"), cx);
-        assert_eq!(view.state.selected_profile_id, Some(profile_b));
-
-        view.handle_key_down(&settings_key_event("e"), cx);
-
-        view.handle_key_down(&settings_key_event("shift-="), cx);
-        assert_eq!(
-            crate::ui_gpui::navigation_channel().take_pending(),
-            Some(ViewId::ProfileEditor)
-        );
-
-        view.handle_key_down(&settings_key_event("m"), cx);
-        assert_eq!(
-            crate::ui_gpui::navigation_channel().take_pending(),
-            Some(ViewId::McpAdd)
-        );
-
-        // Theme scrolling requires Appearance category with dropdown open
-        view.select_category(SettingsCategory::Appearance);
-        view.state.theme_dropdown_open = true;
-        view.state.available_themes = vec![
-            ThemeOption {
-                name: "Green Screen".to_string(),
-                slug: "green-screen".to_string(),
-            },
-            ThemeOption {
-                name: "Midnight Nebula".to_string(),
-                slug: "default".to_string(),
-            },
-        ];
-        view.state.selected_theme_slug = "green-screen".to_string();
-        view.handle_key_down(&settings_key_event("down"), cx);
-        assert_eq!(view.state.selected_theme_slug, "default");
-        view.handle_key_down(&settings_key_event("enter"), cx);
-        assert!(!view.state.theme_dropdown_open, "enter closes dropdown");
-
-        view.handle_key_down(&settings_key_event("cmd-w"), cx);
-        assert_eq!(
-            crate::ui_gpui::navigation_channel().take_pending(),
-            Some(ViewId::Chat)
-        );
-    });
-
-    assert_eq!(
-        user_rx.recv().unwrap(),
-        UserEvent::SelectProfile { id: profile_a }
-    );
-    assert_eq!(
-        user_rx.recv().unwrap(),
-        UserEvent::SelectProfile { id: profile_b }
-    );
-    assert_eq!(
-        user_rx.recv().unwrap(),
-        UserEvent::EditProfile { id: profile_b }
-    );
-    // `shift-=` now emits `OpenNewProfile` so the presenter can reset the
-    // editor view before the `+`/`Shift+=` flow navigates into it. See
-    // issue #182.
-    assert_eq!(user_rx.recv().unwrap(), UserEvent::OpenNewProfile);
-    assert_eq!(
-        user_rx.recv().unwrap(),
-        UserEvent::SelectTheme {
-            slug: "default".to_string()
-        }
     );
     assert!(
         user_rx.try_recv().is_err(),

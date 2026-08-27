@@ -19,23 +19,16 @@ impl CodexSignInView {
             .px(px(12.0))
             .flex()
             .items_center()
-            .justify_between()
             .text_color(Theme::text_primary())
-            .child(
-                div()
-                    .text_size(px(Theme::font_size_h3()))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(Theme::text_primary())
-                    .child("Sign in with ChatGPT"),
-            )
+            // Left: cancel
             .child(
                 div()
                     .id("btn-codex-close")
-                    .px(px(10.0))
+                    .w(px(70.0))
                     .py(px(6.0))
                     .rounded(px(4.0))
                     .cursor_pointer()
-                    .text_size(px(Theme::font_size_ui()))
+                    .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_secondary())
                     .hover(|s| s.bg(Theme::bg_dark()))
                     .on_mouse_down(
@@ -49,6 +42,19 @@ impl CodexSignInView {
                     )
                     .child("Cancel"),
             )
+            // Centre: title. The flex_1 is what makes the bar span the panel
+            // and keeps the title centred between the two edges.
+            .child(
+                div().flex_1().flex().justify_center().child(
+                    div()
+                        .text_size(px(Theme::font_size_body()))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(Theme::text_primary())
+                        .child("Sign in with ChatGPT"),
+                ),
+            )
+            // Right: balances the cancel button so the title sits centred.
+            .child(div().w(px(70.0)))
     }
 
     /// A line of body copy.
@@ -59,18 +65,44 @@ impl CodexSignInView {
             .child(text.into())
     }
 
+    /// Shorten a URL for display.
+    ///
+    /// An authorize URL carries a PKCE challenge and state and runs to several
+    /// hundred characters. Wrapping that across the panel buries everything
+    /// under it, and none of it is worth reading: the link is clickable and
+    /// there is a copy button beside it.
+    fn display_url(url: &str) -> String {
+        const LIMIT: usize = 64;
+        let trimmed = url.split('?').next().unwrap_or(url);
+        if url.len() <= LIMIT {
+            return url.to_string();
+        }
+        if trimmed.len() < url.len() {
+            format!("{trimmed}?…")
+        } else {
+            let mut cut = LIMIT;
+            while cut > 0 && !url.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            format!("{}…", &url[..cut])
+        }
+    }
+
     /// A clickable link that also offers a copy button.
-    fn render_link(url: String, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let to_open = url.clone();
-        let to_copy = url.clone();
+    fn render_link(url: &str, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let to_open = url.to_string();
+        let to_copy = url.to_string();
+        let shown = Self::display_url(url);
 
         div()
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(px(6.0))
             .child(
                 div()
                     .id("codex-signin-url")
+                    .w_full()
+                    .overflow_hidden()
                     .cursor_pointer()
                     .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::accent())
@@ -80,16 +112,16 @@ impl CodexSignInView {
                             cx.open_url(&to_open);
                         }),
                     )
-                    .child(url),
+                    .child(shown),
             )
-            .child(Self::render_secondary_button(
+            .child(div().flex().child(Self::render_secondary_button(
                 "btn-codex-copy-link",
                 "Copy link",
                 move |_, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone()));
                 },
                 cx,
-            ))
+            )))
     }
 
     /// A low-emphasis button.
@@ -163,7 +195,7 @@ impl CodexSignInView {
                 "Your browser is opening. If it did not, click here:",
                 Theme::text_primary(),
             ))
-            .child(Self::render_link(pending.url.clone(), cx))
+            .child(Self::render_link(&pending.url, cx))
             .child(Self::render_waiting_line(
                 "Waiting for you to finish signing in…",
                 pending,
@@ -172,12 +204,12 @@ impl CodexSignInView {
                 "Listening on localhost:1455.",
                 Theme::text_muted(),
             ))
-            .child(Self::render_secondary_button(
+            .child(div().flex().child(Self::render_secondary_button(
                 "btn-codex-use-device-code",
                 "Use a device code",
                 |this, _| this.use_device_code(),
                 cx,
-            ))
+            )))
             .into_any_element()
     }
 
@@ -204,7 +236,7 @@ impl CodexSignInView {
                 "1.  Open this page on any device",
                 Theme::text_primary(),
             ))
-            .child(Self::render_link(pending.url.clone(), cx))
+            .child(Self::render_link(&pending.url, cx))
             .child(Self::line(
                 if copied {
                     "2.  Paste the code. It is already on your clipboard."
@@ -214,27 +246,29 @@ impl CodexSignInView {
                 Theme::text_primary(),
             ))
             .child(
-                div()
-                    .id("codex-user-code")
-                    .px(px(12.0))
-                    .py(px(6.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .text_size(px(Theme::font_size_h2()))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(Theme::text_primary())
-                    .child(code),
+                div().flex().child(
+                    div()
+                        .id("codex-user-code")
+                        .px(px(16.0))
+                        .py(px(8.0))
+                        .bg(Theme::bg_dark())
+                        .border_1()
+                        .border_color(Theme::border())
+                        .rounded(px(4.0))
+                        .text_size(px(Theme::font_size_h2()))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(Theme::text_primary())
+                        .child(code),
+                ),
             )
-            .child(Self::render_secondary_button(
+            .child(div().flex().child(Self::render_secondary_button(
                 "btn-codex-copy-code",
                 "Copy code",
                 move |_, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone()));
                 },
                 cx,
-            ))
+            )))
             .child(Self::render_waiting_line("Waiting for approval…", pending))
             .child(Self::line(
                 "Only continue if you started this sign-in.",
@@ -283,14 +317,14 @@ impl CodexSignInView {
             .when_some(plan.map(str::to_owned), |body, plan| {
                 body.child(Self::line(plan, Theme::text_muted()))
             })
-            .child(Self::render_primary_button(
+            .child(div().flex().child(Self::render_primary_button(
                 "btn-codex-done",
                 "Done",
                 |_, _| {
                     crate::ui_gpui::navigation_channel().request_navigate(ViewId::ProfileEditor);
                 },
                 cx,
-            ))
+            )))
             .into_any_element()
     }
 

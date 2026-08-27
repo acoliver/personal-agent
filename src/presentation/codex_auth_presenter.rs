@@ -71,6 +71,7 @@ impl CodexAuthPresenter {
     /// # Errors
     ///
     /// Returns `PresenterError` if presenter startup becomes fallible.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn start(&mut self) -> Result<(), PresenterError> {
         if self.running.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -78,7 +79,10 @@ impl CodexAuthPresenter {
         self.running
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        Self::emit_accounts(&self.profile_service, &self.view_tx).await;
+        // No account read here. Startup runs presenters in sequence, and a
+        // keychain read can take tens of seconds on macOS, which would stall
+        // every presenter behind this one and the window with them. Views ask
+        // for the list with `ListCodexAccounts` once they can receive it.
 
         let mut rx = self.rx.resubscribe();
         let running = self.running.clone();
@@ -230,7 +234,7 @@ impl CodexAuthPresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
         account: &str,
     ) {
-        if let Err(error) = store::delete(account) {
+        if let Err(error) = store::delete_async(account).await {
             Self::fail(view_tx, CodexSignInFailure::Storage, &error);
             return;
         }
@@ -245,7 +249,8 @@ impl CodexAuthPresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
     ) {
         let profiles = profile_service.list().await.unwrap_or_default();
-        let accounts = store::load_all()
+        let accounts = store::load_all_async()
+            .await
             .into_iter()
             .map(|(account, record)| {
                 let used_by = profiles

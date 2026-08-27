@@ -18,6 +18,9 @@ pub(super) fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
     (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
 }
 
+/// Take exclusive use of the global navigation channel for this test.
+///
+/// Drop any navigation request a test left in the global channel.
 pub(super) fn clear_navigation_requests() {
     while crate::ui_gpui::navigation_channel()
         .take_pending()
@@ -850,6 +853,7 @@ async fn leaving_a_key_provider_drops_the_key_label(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn signing_in_asks_for_a_browser_flow(cx: &mut TestAppContext) {
+    clear_navigation_requests();
     let (bridge, events) = make_bridge();
     let view = cx.new(|cx| {
         let mut view = ProfileEditorView::new(cx);
@@ -869,6 +873,11 @@ async fn signing_in_asks_for_a_browser_flow(cx: &mut TestAppContext) {
             method: crate::events::types::CodexSignInMethod::Browser
         }
     );
+
+    // Starting a sign-in also navigates to the sheet. The navigation channel
+    // is a single global slot shared by every test in this binary, so a
+    // request left behind here surfaces as a stray navigation in another test.
+    clear_navigation_requests();
 }
 
 #[gpui::test]

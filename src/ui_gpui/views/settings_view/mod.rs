@@ -770,11 +770,17 @@ impl SettingsView {
         .detach();
     }
 
-    pub(super) const fn select_category(&mut self, category: SettingsCategory) {
+    pub(super) fn select_category(&mut self, category: SettingsCategory) {
         self.state.selected_category = category;
         self.state.theme_dropdown_open = false;
         self.state.active_field = None;
         self.ime_marked_byte_count = 0;
+        // Reading stored accounts touches the keychain, so it happens when the
+        // panel that shows them is opened rather than at startup. Asking on
+        // each visit also keeps the list current after a sign-in elsewhere.
+        if category == SettingsCategory::Models {
+            self.emit(&UserEvent::ListCodexAccounts);
+        }
     }
 
     pub(super) const fn toggle_theme_dropdown(&mut self) {

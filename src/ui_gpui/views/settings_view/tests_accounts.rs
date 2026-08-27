@@ -138,3 +138,46 @@ fn usage_counts_read_naturally() {
         "Used by 2 profiles"
     );
 }
+
+#[gpui::test]
+async fn opening_the_models_panel_asks_for_the_account_list(cx: &mut TestAppContext) {
+    // Presenters start before any view exists, so an account list published at
+    // startup reaches nobody, and reading the keychain at startup stalls the
+    // launch. The panel that shows accounts asks for them when it opens.
+    let (bridge, events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = SettingsView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view, _cx| {
+        view.select_category(super::SettingsCategory::Models);
+    });
+
+    let emitted: Vec<UserEvent> = events.try_iter().collect();
+    assert!(
+        emitted.contains(&UserEvent::ListCodexAccounts),
+        "opening Models should request the account list, got {emitted:?}"
+    );
+}
+
+#[gpui::test]
+async fn other_panels_do_not_touch_the_keychain(cx: &mut TestAppContext) {
+    let (bridge, events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = SettingsView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view, _cx| {
+        view.select_category(super::SettingsCategory::Appearance);
+    });
+
+    let emitted: Vec<UserEvent> = events.try_iter().collect();
+    assert!(
+        !emitted.contains(&UserEvent::ListCodexAccounts),
+        "only the Models panel shows accounts, got {emitted:?}"
+    );
+}

@@ -91,11 +91,11 @@ impl ProfileEditorView {
                     .text_color(Theme::text_muted())
                     .child("Sign in with your ChatGPT subscription."),
             )
-            .child(Self::render_account_button(
+            .child(div().flex().child(Self::render_account_button(
                 "btn-codex-signin",
                 "Sign in with ChatGPT",
                 cx,
-            ))
+            )))
             .into_any_element()
     }
 

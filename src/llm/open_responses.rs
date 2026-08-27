@@ -91,7 +91,7 @@ pub struct SessionRequest<'a> {
 /// unusable.
 pub async fn model_for(request: SessionRequest<'_>) -> Result<Arc<dyn serdes_ai::Model>, LlmError> {
     let bearer = resolve_bearer(request.profile, request.api_key).await?;
-    let account_id = account_header(request.profile);
+    let account_id = account_header(request.profile).await;
 
     let Some(conversation_id) = request.conversation_id else {
         let model = build(&request, &bearer, account_id.as_deref())?;
@@ -229,9 +229,13 @@ async fn resolve_bearer(profile: &ModelProfile, api_key: &str) -> Result<String,
 }
 
 /// The `chatgpt-account-id` header value, when the stored grant knows it.
-fn account_header(profile: &ModelProfile) -> Option<String> {
+///
+/// Reading the keychain blocks, so it goes to a blocking thread rather than
+/// stalling the runtime for the length of a turn setup.
+async fn account_header(profile: &ModelProfile) -> Option<String> {
     let account = profile.auth.oauth_account()?;
-    store::load(account)
+    store::load_async(account)
+        .await
         .ok()
         .flatten()
         .and_then(|record| record.identity.account_id)
