@@ -75,6 +75,8 @@ impl SettingsPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P03
     /// @requirement REQ-025.4
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub(super) async fn handle_mcp_event(
         view_tx: &broadcast::Sender<ViewCommand>,
         event: McpEvent,
@@ -150,6 +152,8 @@ impl SettingsPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P03
     /// @requirement REQ-025.4
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub(super) async fn handle_system_event(
         view_tx: &broadcast::Sender<ViewCommand>,
         event: SystemEvent,

@@ -154,8 +154,8 @@ unsafe_code = "warn"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
-pedantic = "warn"
-nursery = "warn"
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
 cognitive_complexity = "warn"
 
 # Disable incremental compilation for local dev/test to avoid large incremental artifact growth (Issue #23).

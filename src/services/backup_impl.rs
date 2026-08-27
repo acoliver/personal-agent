@@ -384,6 +384,8 @@ impl BackupServiceImpl {
     }
 
     /// Internal method to list backups in a directory
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     async fn list_backups_internal(&self, dir: &Path) -> ServiceResult<Vec<BackupInfo>> {
         if !dir.exists() {
             return Ok(Vec::new());

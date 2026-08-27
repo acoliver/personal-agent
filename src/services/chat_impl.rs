@@ -563,6 +563,8 @@ impl ChatServiceImpl {
     /// @plan PLAN-20260416-ISSUE173.P14-CR4
     /// @requirement REQ-173-001.1
     #[allow(clippy::too_many_arguments)]
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     async fn spawn_stream_task(
         &self,
         conversation_id: Uuid,
