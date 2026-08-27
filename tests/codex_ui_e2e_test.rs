@@ -36,6 +36,7 @@ mod ui_tests;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command};
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -45,6 +46,22 @@ use ui_tests::applescript_helpers::run_applescript_lines;
 use uuid::Uuid;
 
 const APP_PROCESS: &str = "personal_agent_gpui";
+/// Serializes the whole live-app lifecycle.
+///
+/// These scenarios each launch the app, `pkill` it by name, share one profile
+/// directory and one default profile, and log to a path keyed by this
+/// binary's PID, which they all share. Run in parallel they would truncate
+/// each other's logs, kill each other's app, and restore each other's default
+/// profile. Held from profile setup until the app is stopped.
+static SCENARIO: Mutex<()> = Mutex::new(());
+
+/// Take exclusive use of the app, the profile directory, and the log.
+fn scenario_lock() -> MutexGuard<'static, ()> {
+    SCENARIO
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Where the launched app writes its log.
 ///
 /// Unique per process: sibling checkouts of this repo run their suites at the
@@ -303,6 +320,7 @@ fn open_settings() {
 #[test]
 #[ignore = "Requires macOS Accessibility permissions and PA_E2E_CODEX_* configuration"]
 fn a_seeded_account_streams_a_real_turn_through_the_ui() {
+    let _scenario = scenario_lock();
     let account = required_account();
     let grant = seed_grant(&account, false);
     let _guard = install_codex_profile(&account);
@@ -341,6 +359,7 @@ fn a_seeded_account_streams_a_real_turn_through_the_ui() {
 #[test]
 #[ignore = "Requires macOS Accessibility permissions and network access"]
 fn the_auth_presenter_starts_when_no_grant_is_stored() {
+    let _scenario = scenario_lock();
     // No account on the profile, so the editor offers a sign-in.
     let _guard = install_codex_profile("");
 
@@ -374,6 +393,7 @@ fn the_auth_presenter_starts_when_no_grant_is_stored() {
 #[test]
 #[ignore = "Requires macOS Accessibility permissions and PA_E2E_CODEX_* configuration"]
 fn an_expired_grant_raises_the_reauth_banner() {
+    let _scenario = scenario_lock();
     let account = required_account();
     let grant = seed_grant(&account, true);
     let _guard = install_codex_profile(&account);
