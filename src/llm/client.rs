@@ -183,12 +183,26 @@ impl LlmClient {
 
     /// Build model settings from profile parameters
     fn model_settings(&self) -> ModelSettings {
+        // The codex backend rejects the sampling and length knobs outright,
+        // answering `Unsupported parameter: temperature` and then the same for
+        // `max_output_tokens`, so the turn never starts. Reasoning models take
+        // a reasoning effort instead, which the transport sets from the
+        // profile's thinking settings.
+        if self.uses_open_responses() {
+            return ModelSettings::default();
+        }
+
         ModelSettings {
             temperature: Some(self.profile.parameters.temperature),
             top_p: Some(self.profile.parameters.top_p),
             max_tokens: self.profile.parameters.max_tokens.map(u64::from),
             ..ModelSettings::default()
         }
+    }
+
+    /// Whether this profile talks the Responses protocol.
+    pub(crate) fn uses_open_responses(&self) -> bool {
+        self.quirks.serdes_provider.as_deref() == Some(crate::llm::open_responses::TRANSPORT)
     }
 
     fn build_model_requests(messages: &[Message]) -> Vec<ModelRequest> {
@@ -816,128 +830,5 @@ impl Message {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serdes_ai::core::messages::parts::ToolCallArgs;
-    use serdes_ai::core::{ModelResponse, ModelResponsePart};
-
-    #[test]
-    fn parse_response_includes_tool_uses_and_thinking() {
-        crate::services::secure_store::use_mock_backend();
-        crate::services::secure_store::api_keys::store("_test_parse_resp", "fake-key-for-test")
-            .expect("store test key");
-
-        let profile = ModelProfile {
-            provider_id: "anthropic".to_string(),
-            model_id: "claude-3-opus".to_string(),
-            auth: AuthConfig::Keychain {
-                label: "_test_parse_resp".to_string(),
-            },
-            ..Default::default()
-        };
-
-        let _client = LlmClient::from_profile(&profile).unwrap();
-
-        // Clean up test key
-        let _ = crate::services::secure_store::api_keys::delete("_test_parse_resp");
-        let response = ModelResponse {
-            parts: vec![
-                ModelResponsePart::Thinking(serdes_ai::core::messages::parts::ThinkingPart::new(
-                    "Let me think",
-                )),
-                ModelResponsePart::Text(serdes_ai::core::messages::parts::TextPart::new(
-                    "Final answer",
-                )),
-                ModelResponsePart::ToolCall(
-                    serdes_ai::core::messages::parts::ToolCallPart::new(
-                        "get_weather",
-                        ToolCallArgs::json(serde_json::json!({"city": "NYC"})),
-                    )
-                    .with_tool_call_id("toolu_123"),
-                ),
-            ],
-            ..ModelResponse::new()
-        };
-
-        let message = LlmClient::parse_response(response, &[]);
-
-        assert_eq!(message.role, Role::Assistant);
-        assert_eq!(message.content, "Final answer");
-        assert_eq!(message.thinking_content, Some("Let me think".to_string()));
-        assert_eq!(message.tool_uses.len(), 1);
-        assert_eq!(message.tool_uses[0].name, "get_weather");
-        assert_eq!(message.tool_uses[0].id, "toolu_123");
-    }
-
-    #[test]
-    fn message_builder_tracks_tool_results() {
-        let message =
-            Message::user("input").with_tool_results(vec![crate::llm::tools::ToolResult::success(
-                "toolu_1", "ok",
-            )]);
-
-        let requests = LlmClient::build_model_requests(&[message]);
-        let prompt = requests[0].user_prompts().next().unwrap();
-        assert_eq!(prompt.as_text(), Some("input"));
-
-        assert!(requests[0].parts.iter().any(|part| matches!(
-            part,
-            serdes_ai::core::messages::ModelRequestPart::ToolReturn(_)
-        )));
-    }
-
-    #[tokio::test]
-    async fn build_model_wraps_non_openai_with_normalizer() {
-        crate::services::secure_store::use_mock_backend();
-        crate::services::secure_store::api_keys::store("_test_build_model", "test-key")
-            .expect("store test key");
-
-        let profile = ModelProfile {
-            provider_id: "anthropic".to_string(),
-            model_id: "claude-3-opus".to_string(),
-            auth: AuthConfig::Keychain {
-                label: "_test_build_model".to_string(),
-            },
-            parameters: crate::models::profile::ModelParameters {
-                max_tokens_field_name: Some("max_completion_tokens".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let client = LlmClient::from_profile(&profile).unwrap();
-        // Verify that build_model succeeds for non-OpenAI providers
-        let result = client.build_model("anthropic", None).await;
-        assert!(result.is_ok(), "build_model should succeed for anthropic");
-
-        let _ = crate::services::secure_store::api_keys::delete("_test_build_model");
-    }
-
-    #[tokio::test]
-    async fn build_model_openai_uses_quirks_path() {
-        crate::services::secure_store::use_mock_backend();
-        crate::services::secure_store::api_keys::store("_test_build_openai", "test-key")
-            .expect("store test key");
-
-        let profile = ModelProfile {
-            provider_id: "openai".to_string(),
-            model_id: "gpt-4.1".to_string(),
-            auth: AuthConfig::Keychain {
-                label: "_test_build_openai".to_string(),
-            },
-            parameters: crate::models::profile::ModelParameters {
-                max_tokens_field_name: Some("max_completion_tokens".to_string()),
-                extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let client = LlmClient::from_profile(&profile).unwrap();
-        // Verify that build_model succeeds for OpenAI providers (uses quirks path)
-        let result = client.build_model("openai", None).await;
-        assert!(result.is_ok(), "build_model should succeed for openai");
-
-        let _ = crate::services::secure_store::api_keys::delete("_test_build_openai");
-    }
-}
+#[path = "client_tests.rs"]
+mod tests;
