@@ -7,6 +7,7 @@
 //!
 //! Non-streaming `request()` is delegated to the inner model unchanged.
 
+use super::error::LlmError;
 use super::sse_normalize::NormalizeSseStream;
 use async_trait::async_trait;
 use reqwest::Client;
@@ -28,11 +29,23 @@ use serdes_ai_models::ToolChoice;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Default idle-read window for streaming requests: a stream fails only when no
+/// bytes arrive for this long, no matter how long the total generation takes.
+///
+/// reqwest's client-level `read_timeout` covers the connect + response-header
+/// phase and then resets after every successful body read, which is exactly the
+/// idle semantics an SSE stream needs. There must be no total deadline: thinking
+/// models legitimately stream for many minutes (issue #213).
+pub const DEFAULT_STREAM_IDLE_READ_TIMEOUT: Duration = Duration::from_mins(5);
+
 /// Configuration for constructing a [`NormalizingSseModel`].
 pub struct NormalizingSseModelConfig {
     pub inner: Arc<dyn Model>,
-    /// HTTP client (carries custom headers like User-Agent via `default_headers`).
-    pub client: Client,
+    /// Default headers (e.g. provider-quirk `User-Agent`) applied to every
+    /// streaming request. The wrapper builds its own client from these.
+    pub default_headers: reqwest::header::HeaderMap,
+    /// Idle-read window for the streaming client.
+    pub idle_read_timeout: Duration,
     pub api_key: String,
     pub base_url: String,
     pub model_name: String,
@@ -54,7 +67,6 @@ pub struct NormalizingSseModel {
     api_key: String,
     base_url: String,
     model_name: String,
-    default_timeout: Duration,
     enable_thinking: bool,
     thinking_budget: Option<u64>,
     max_tokens_field_name: Option<String>,
@@ -62,19 +74,25 @@ pub struct NormalizingSseModel {
 }
 
 impl NormalizingSseModel {
-    pub fn new(config: NormalizingSseModelConfig) -> Self {
-        Self {
+    pub fn new(config: NormalizingSseModelConfig) -> Result<Self, LlmError> {
+        let client = Client::builder()
+            .default_headers(config.default_headers)
+            .read_timeout(config.idle_read_timeout)
+            .build()
+            .map_err(|e| {
+                LlmError::InvalidConfig(format!("failed to build streaming HTTP client: {e}"))
+            })?;
+        Ok(Self {
             inner: config.inner,
-            client: config.client,
+            client,
             api_key: config.api_key,
             base_url: config.base_url,
             model_name: config.model_name,
-            default_timeout: Duration::from_mins(2),
             enable_thinking: config.enable_thinking,
             thinking_budget: config.thinking_budget,
             max_tokens_field_name: config.max_tokens_field_name,
             extra_request_fields: config.extra_request_fields,
-        }
+        })
     }
 }
 
@@ -117,14 +135,15 @@ impl Model for NormalizingSseModel {
             self.max_tokens_field_name.as_deref(),
             self.extra_request_fields.as_ref(),
         )?;
-        let timeout = settings.timeout.unwrap_or(self.default_timeout);
 
+        // No per-request total timeout: reqwest's per-request `.timeout()` is a
+        // whole-body deadline that kills long SSE streams mid-generation. Idle
+        // enforcement comes from the client-level `read_timeout` set in `new`.
         let response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .timeout(timeout)
             .json(&body)
             .send()
             .await
@@ -150,7 +169,6 @@ impl std::fmt::Debug for NormalizingSseModel {
             .field("name", &self.inner.name())
             .field("base_url", &self.base_url)
             .field("model_name", &self.model_name)
-            .field("default_timeout", &self.default_timeout)
             .field("enable_thinking", &self.enable_thinking)
             .field("thinking_budget", &self.thinking_budget)
             .finish_non_exhaustive()
@@ -471,297 +489,4 @@ fn convert_tool_choice(choice: &ToolChoice) -> serdes_ai_models::openai::types::
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serdes_ai::core::messages::parts::{ThinkingPart, ToolCallArgs, ToolCallPart};
-    use serdes_ai::core::messages::{ModelRequestPart, ModelResponse, ModelResponsePart};
-
-    #[test]
-    fn convert_request_includes_reasoning_content_for_assistant_history() {
-        let mut response = ModelResponse::new();
-        response.add_part(ModelResponsePart::Thinking(ThinkingPart::new("step one")));
-        response.add_part(ModelResponsePart::Text(
-            serdes_ai::core::messages::parts::TextPart::new("final"),
-        ));
-        response.add_part(ModelResponsePart::ToolCall(
-            ToolCallPart::new(
-                "read_file",
-                ToolCallArgs::json(serde_json::json!({ "path": "a" })),
-            )
-            .with_tool_call_id("call_1"),
-        ));
-
-        let mut request = ModelRequest::new();
-        request.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
-
-        let converted = convert_request(&request);
-        assert_eq!(converted.len(), 1);
-
-        let assistant = &converted[0];
-        assert_eq!(assistant.role, "assistant");
-        assert_eq!(assistant.reasoning_content.as_deref(), Some("step one"));
-        assert!(assistant
-            .tool_calls
-            .as_ref()
-            .is_some_and(|calls| calls.len() == 1));
-    }
-
-    #[test]
-    fn build_chat_request_payload_serializes_reasoning_content_field() {
-        let mut response = ModelResponse::new();
-        response.add_part(ModelResponsePart::Thinking(ThinkingPart::new("chain")));
-        response.add_part(ModelResponsePart::Text(
-            serdes_ai::core::messages::parts::TextPart::new("answer"),
-        ));
-
-        let mut history_turn = ModelRequest::new();
-        history_turn.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
-
-        let payload = build_chat_request_payload(
-            "kimi-k2-0711-preview",
-            &[history_turn],
-            &ModelSettings::default(),
-            &ModelRequestParameters::default(),
-            true,
-            Some(512),
-            None,
-            None,
-        )
-        .expect("payload should serialize");
-
-        let messages = payload
-            .get("messages")
-            .and_then(serde_json::Value::as_array)
-            .expect("messages array should be present");
-        assert_eq!(messages.len(), 1);
-        assert_eq!(
-            messages[0]
-                .get("reasoning_content")
-                .and_then(serde_json::Value::as_str),
-            Some("chain")
-        );
-    }
-
-    #[test]
-    fn build_chat_request_payload_uses_configured_max_tokens_field_name() {
-        let settings = ModelSettings {
-            max_tokens: Some(2048),
-            ..ModelSettings::default()
-        };
-
-        let payload = build_chat_request_payload(
-            "gpt-4.1",
-            &[],
-            &settings,
-            &ModelRequestParameters::default(),
-            false,
-            None,
-            Some("max_completion_tokens"),
-            None,
-        )
-        .expect("payload should serialize");
-
-        assert_eq!(
-            payload
-                .get("max_completion_tokens")
-                .and_then(serde_json::Value::as_u64),
-            Some(2048)
-        );
-        assert!(payload.get("max_tokens").is_none());
-    }
-
-    #[test]
-    fn build_chat_request_payload_omits_token_limit_when_max_tokens_is_absent() {
-        let payload = build_chat_request_payload(
-            "gpt-4.1",
-            &[],
-            &ModelSettings::default(),
-            &ModelRequestParameters::default(),
-            false,
-            None,
-            Some("max_completion_tokens"),
-            None,
-        )
-        .expect("payload should serialize");
-
-        assert!(payload.get("max_tokens").is_none());
-        assert!(payload.get("max_completion_tokens").is_none());
-    }
-
-    #[test]
-    fn resolve_token_field_uses_max_tokens_for_empty_string() {
-        assert_eq!(resolve_token_field(Some("")), "max_tokens".to_string());
-    }
-
-    #[test]
-    fn resolve_token_field_uses_max_tokens_for_whitespace() {
-        assert_eq!(resolve_token_field(Some("   ")), "max_tokens".to_string());
-        assert_eq!(resolve_token_field(Some("	")), "max_tokens".to_string());
-    }
-
-    #[test]
-    fn resolve_token_field_keeps_explicit_standard_names() {
-        assert_eq!(
-            resolve_token_field(Some("max_tokens")),
-            "max_tokens".to_string()
-        );
-        assert_eq!(
-            resolve_token_field(Some("max_completion_tokens")),
-            "max_completion_tokens".to_string()
-        );
-    }
-
-    #[test]
-    fn resolve_token_field_uses_max_tokens_for_reserved_keys() {
-        assert_eq!(resolve_token_field(Some("model")), "max_tokens".to_string());
-        assert_eq!(
-            resolve_token_field(Some("messages")),
-            "max_tokens".to_string()
-        );
-        assert_eq!(
-            resolve_token_field(Some("stream")),
-            "max_tokens".to_string()
-        );
-        assert_eq!(resolve_token_field(Some("tools")), "max_tokens".to_string());
-        assert_eq!(
-            resolve_token_field(Some("temperature")),
-            "max_tokens".to_string()
-        );
-    }
-
-    #[test]
-    fn resolve_token_field_returns_custom_valid_override() {
-        assert_eq!(
-            resolve_token_field(Some("custom_tokens")),
-            "custom_tokens".to_string()
-        );
-    }
-
-    #[test]
-    fn resolve_token_field_trims_whitespace() {
-        assert_eq!(
-            resolve_token_field(Some("  custom_field  ")),
-            "custom_field".to_string()
-        );
-    }
-
-    #[test]
-    fn build_chat_request_payload_merges_extra_request_fields() {
-        let extra_fields = serde_json::json!({
-            "reasoning": {"effort": "medium"},
-            "custom_param": "value"
-        });
-
-        let payload = build_chat_request_payload(
-            "gpt-4.1",
-            &[],
-            &ModelSettings::default(),
-            &ModelRequestParameters::default(),
-            false,
-            None,
-            None,
-            Some(&extra_fields),
-        )
-        .expect("payload should serialize");
-
-        assert_eq!(
-            payload
-                .get("reasoning")
-                .and_then(serde_json::Value::as_object)
-                .and_then(|obj| obj.get("effort"))
-                .and_then(serde_json::Value::as_str),
-            Some("medium")
-        );
-        assert_eq!(
-            payload
-                .get("custom_param")
-                .and_then(serde_json::Value::as_str),
-            Some("value")
-        );
-    }
-
-    #[test]
-    fn build_chat_request_payload_skips_reserved_keys_in_extra_fields() {
-        let extra_fields = serde_json::json!({
-            "model": "should-be-ignored",
-            "messages": "should-be-ignored",
-            "stream": false,
-            "valid_key": "kept"
-        });
-
-        let payload = build_chat_request_payload(
-            "gpt-4.1",
-            &[],
-            &ModelSettings::default(),
-            &ModelRequestParameters::default(),
-            false,
-            None,
-            None,
-            Some(&extra_fields),
-        )
-        .expect("payload should serialize");
-
-        // model and messages should not be overwritten by extra_fields
-        assert_eq!(
-            payload.get("model").and_then(serde_json::Value::as_str),
-            Some("gpt-4.1")
-        );
-        assert!(payload.get("messages").is_some()); // original messages array
-        assert_eq!(
-            payload.get("stream").and_then(serde_json::Value::as_bool),
-            Some(true)
-        ); // default streaming
-        assert_eq!(
-            payload.get("valid_key").and_then(serde_json::Value::as_str),
-            Some("kept")
-        );
-    }
-
-    #[test]
-    fn build_chat_request_payload_uses_default_token_field_when_no_override() {
-        let settings = ModelSettings {
-            max_tokens: Some(1024),
-            ..ModelSettings::default()
-        };
-
-        let payload = build_chat_request_payload(
-            "gpt-4.1",
-            &[],
-            &settings,
-            &ModelRequestParameters::default(),
-            false,
-            None,
-            None,
-            None,
-        )
-        .expect("payload should serialize");
-
-        assert_eq!(
-            payload
-                .get("max_tokens")
-                .and_then(serde_json::Value::as_u64),
-            Some(1024)
-        );
-        assert!(payload.get("max_completion_tokens").is_none());
-
-        let payload_thinking = build_chat_request_payload(
-            "gpt-4.1",
-            &[],
-            &settings,
-            &ModelRequestParameters::default(),
-            true,
-            None,
-            None,
-            None,
-        )
-        .expect("payload should serialize");
-
-        assert_eq!(
-            payload_thinking
-                .get("max_tokens")
-                .and_then(serde_json::Value::as_u64),
-            Some(1024)
-        );
-        assert!(payload_thinking.get("max_completion_tokens").is_none());
-    }
-}
+mod tests;
