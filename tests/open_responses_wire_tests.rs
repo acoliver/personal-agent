@@ -527,3 +527,35 @@ async fn the_agent_path_also_asks_for_reasoning() {
         "frame was {frame}"
     );
 }
+
+#[tokio::test]
+async fn a_chained_turn_with_nothing_new_still_sends_a_list() {
+    // The agent loop can call again with the assistant reply as the last
+    // message and nothing after it. Chaining skips that reply because the
+    // server already holds it, which leaves no new items. The backend
+    // rejects the empty case with "Input must be a list".
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let _first = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "first").await;
+        let second = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_2", "gpt-5.6-luna", "second").await;
+        second
+    });
+
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("first")]).await;
+    run_turn(&client, &[user("first"), Message::assistant("first")]).await;
+
+    let frame = server.await.expect("server");
+    let input = frame.get("input").expect("input");
+    assert!(
+        input.is_array(),
+        "input must be a list even when the turn adds nothing new, got {input}"
+    );
+}

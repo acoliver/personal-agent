@@ -42,16 +42,16 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # rev. When #66 lands, flip all of these back to
 # https://github.com/janfeddersen-wq/serdesAI.git at the merged rev in one
 # commit; nothing else in this crate needs to change.
-serdes-ai = { git = "https://github.com/acoliver/serdesAI.git", rev = "bd6aefc96f699276afb6384257b101039a663b5f", package = "serdes-ai", features = ["openai", "anthropic", "mcp"] }
-serdes-ai-agent = { git = "https://github.com/acoliver/serdesAI.git", rev = "bd6aefc96f699276afb6384257b101039a663b5f", package = "serdes-ai-agent" }
-serdes-ai-tools = { git = "https://github.com/acoliver/serdesAI.git", rev = "bd6aefc96f699276afb6384257b101039a663b5f", package = "serdes-ai-tools" }
-serdes-ai-mcp = { git = "https://github.com/acoliver/serdesAI.git", rev = "bd6aefc96f699276afb6384257b101039a663b5f", package = "serdes-ai-mcp", features = ["client", "reqwest"] }
-serdes-ai-models = { git = "https://github.com/acoliver/serdesAI.git", rev = "bd6aefc96f699276afb6384257b101039a663b5f", package = "serdes-ai-models" }
-serdes-ai-core = { git = "https://github.com/acoliver/serdesAI.git", rev = "bd6aefc96f699276afb6384257b101039a663b5f", package = "serdes-ai-core" }
+serdes-ai = { git = "https://github.com/acoliver/serdesAI.git", rev = "e675674ef802a0ac90c03cd8bcdbd5114fabb44f", package = "serdes-ai", features = ["openai", "anthropic", "mcp"] }
+serdes-ai-agent = { git = "https://github.com/acoliver/serdesAI.git", rev = "e675674ef802a0ac90c03cd8bcdbd5114fabb44f", package = "serdes-ai-agent" }
+serdes-ai-tools = { git = "https://github.com/acoliver/serdesAI.git", rev = "e675674ef802a0ac90c03cd8bcdbd5114fabb44f", package = "serdes-ai-tools" }
+serdes-ai-mcp = { git = "https://github.com/acoliver/serdesAI.git", rev = "e675674ef802a0ac90c03cd8bcdbd5114fabb44f", package = "serdes-ai-mcp", features = ["client", "reqwest"] }
+serdes-ai-models = { git = "https://github.com/acoliver/serdesAI.git", rev = "e675674ef802a0ac90c03cd8bcdbd5114fabb44f", package = "serdes-ai-models" }
+serdes-ai-core = { git = "https://github.com/acoliver/serdesAI.git", rev = "e675674ef802a0ac90c03cd8bcdbd5114fabb44f", package = "serdes-ai-core" }
 # Responses protocol client (codex / Open Responses) over WebSocket, plus the
 # PKCE OAuth flow used to authenticate against the ChatGPT backend.
-serdes-ai-responses = { git = "https://github.com/acoliver/serdesAI.git", rev = "bd6aefc96f699276afb6384257b101039a663b5f", package = "serdes-ai-responses" }
-serdes-ai-providers = { git = "https://github.com/acoliver/serdesAI.git", rev = "bd6aefc96f699276afb6384257b101039a663b5f", package = "serdes-ai-providers" }
+serdes-ai-responses = { git = "https://github.com/acoliver/serdesAI.git", rev = "e675674ef802a0ac90c03cd8bcdbd5114fabb44f", package = "serdes-ai-responses" }
+serdes-ai-providers = { git = "https://github.com/acoliver/serdesAI.git", rev = "e675674ef802a0ac90c03cd8bcdbd5114fabb44f", package = "serdes-ai-providers" }
 urlencoding = "2.1"
 tiny_http = "0.12"
 once_cell = "1.19"

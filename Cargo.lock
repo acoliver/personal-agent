@@ -5988,7 +5988,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "futures",
  "serdes-ai-agent",
@@ -6009,7 +6009,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-agent"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6031,7 +6031,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-core"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "base64",
@@ -6050,7 +6050,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-macros"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -6061,7 +6061,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-mcp"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "base64",
@@ -6083,7 +6083,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-models"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6111,7 +6111,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-output"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6131,7 +6131,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-providers"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "base64",
@@ -6152,7 +6152,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-responses"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "base64",
@@ -6176,7 +6176,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-retries"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6191,7 +6191,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-streaming"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "bytes",
@@ -6211,7 +6211,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-tools"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6230,7 +6230,7 @@ dependencies = [
 [[package]]
 name = "serdes-ai-toolsets"
 version = "0.3.0"
-source = "git+https://github.com/acoliver/serdesAI.git?rev=bd6aefc96f699276afb6384257b101039a663b5f#bd6aefc96f699276afb6384257b101039a663b5f"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "indexmap",
