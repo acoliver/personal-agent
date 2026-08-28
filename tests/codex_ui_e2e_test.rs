@@ -196,19 +196,54 @@ impl Drop for ProfileGuard {
     }
 }
 
+/// Name given to every profile this file installs.
+///
+/// Used to find and remove leftovers, so it has to be distinctive.
+const TEST_PROFILE_NAME: &str = "Codex UI E2E";
+
+/// Delete profiles left by an earlier run of this file.
+///
+/// These tests write into the developer's real profile directory, so a run
+/// that is killed rather than finished leaves its profile behind. One was
+/// found still installed and pointing at an account that no longer existed,
+/// which made an unrelated chat fail with an authentication error. `Drop`
+/// cannot help when the process never unwinds, so each run clears the last
+/// one's debris before starting.
+fn sweep_leftover_profiles() {
+    let Ok(entries) = fs::read_dir(profiles_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        if value.get("name").and_then(serde_json::Value::as_str) == Some(TEST_PROFILE_NAME) {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
 /// Install a single codex profile and make it the default.
 ///
 /// `account` empty writes a profile with no signed-in account, which is what
 /// the sign-in scenario needs.
 fn install_codex_profile(account: &str) -> ProfileGuard {
     let _ = fs::create_dir_all(profiles_dir());
+    sweep_leftover_profiles();
     let default_path = profiles_dir().join("default.json");
     let original_default = fs::read_to_string(&default_path).ok();
 
     let id = Uuid::new_v4().to_string();
     let profile = serde_json::json!({
         "id": id,
-        "name": "Codex UI E2E",
+        "name": TEST_PROFILE_NAME,
         "provider_id": "openai-codex",
         "model_id": env_or(MODEL_ENV, DEFAULT_MODEL),
         "base_url": ENDPOINT,
