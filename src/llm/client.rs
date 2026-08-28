@@ -64,6 +64,29 @@ pub enum StreamEvent {
     Error(String),
 }
 
+/// Sampling and length controls for one turn.
+///
+/// All `None` means the endpoint refuses them and the request must go out
+/// without them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SamplingSettings {
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub max_tokens: Option<u32>,
+}
+
+impl SamplingSettings {
+    /// Carry nothing.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+        }
+    }
+}
+
 /// Token usage accumulated from a provider's terminal stream event.
 ///
 /// Providers that confirm completion on the wire report usage there; the rest
@@ -182,20 +205,37 @@ impl LlmClient {
     }
 
     /// Build model settings from profile parameters
-    fn model_settings(&self) -> ModelSettings {
-        // The codex backend rejects the sampling and length knobs outright,
-        // answering `Unsupported parameter: temperature` and then the same for
+    /// The sampling and length controls a turn should carry, if any.
+    ///
+    /// There are two ways to start a turn, the direct client and the agent,
+    /// and they build their requests separately. Both ask here, because
+    /// answering this question twice is how a fixed bug came back: the direct
+    /// path stopped sending `temperature` while the agent path kept doing it,
+    /// and the agent path is the one the app uses.
+    #[must_use]
+    pub fn sampling(&self) -> SamplingSettings {
+        // The codex backend rejects these outright, answering
+        // `Unsupported parameter: temperature` and then the same for
         // `max_output_tokens`, so the turn never starts. Reasoning models take
         // a reasoning effort instead, which the transport sets from the
         // profile's thinking settings.
         if self.uses_open_responses() {
-            return ModelSettings::default();
+            return SamplingSettings::none();
         }
 
-        ModelSettings {
+        SamplingSettings {
             temperature: Some(self.profile.parameters.temperature),
             top_p: Some(self.profile.parameters.top_p),
-            max_tokens: self.profile.parameters.max_tokens.map(u64::from),
+            max_tokens: self.profile.parameters.max_tokens,
+        }
+    }
+
+    fn model_settings(&self) -> ModelSettings {
+        let sampling = self.sampling();
+        ModelSettings {
+            temperature: sampling.temperature,
+            top_p: sampling.top_p,
+            max_tokens: sampling.max_tokens.map(u64::from),
             ..ModelSettings::default()
         }
     }

@@ -115,9 +115,13 @@ fn other_providers_still_get_their_sampling_parameters() {
     profile.parameters.max_tokens = Some(4096);
 
     let client = LlmClient::from_profile(&profile).expect("client");
-    let settings = client.model_settings();
 
     assert!(!client.uses_open_responses());
+    assert_ne!(client.sampling(), SamplingSettings::none());
+    assert_eq!(client.sampling().temperature, Some(0.7));
+    assert_eq!(client.sampling().max_tokens, Some(4096));
+
+    let settings = client.model_settings();
     assert_eq!(settings.temperature, Some(0.7));
     assert_eq!(settings.max_tokens, Some(4096));
 }
