@@ -21,6 +21,16 @@ use super::device_code::{self, DeviceCode, PollOutcome, DEVICE_CODE_TTL_SECS};
 use super::store::{self, StoredOAuthToken};
 use super::{now_secs, OAuthError, TokenSet, CHATGPT_ISSUER};
 
+/// How long to hold the loopback callback open.
+///
+/// The upstream preset allows two minutes, which assumes the browser is
+/// already signed in. Someone entering an email, a password and a second
+/// factor runs out of time, and the failure lands after they have done the
+/// work. The device-code flow gets fifteen minutes for the same human effort,
+/// so the browser gets a comparable window; nothing is consumed by waiting
+/// beyond a bound socket the user can cancel.
+const BROWSER_SIGN_IN_TIMEOUT_SECS: u64 = 10 * 60;
+
 /// How a sign-in reaches the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignInMethod {
@@ -105,7 +115,7 @@ impl ChatGptSignIn {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            config: chatgpt_oauth_config(),
+            config: chatgpt_oauth_config().with_timeout(BROWSER_SIGN_IN_TIMEOUT_SECS),
             issuer: CHATGPT_ISSUER.to_string(),
             http: reqwest::Client::new(),
             open_browser: Arc::new(open_in_browser),
@@ -399,6 +409,21 @@ mod tests {
         ));
 
         assert_eq!(error, OAuthError::PortUnavailable(1455));
+    }
+
+    #[test]
+    fn the_browser_gets_long_enough_to_actually_sign_in() {
+        // The upstream preset allows two minutes, which is not enough for an
+        // email, a password and a second factor. Observed running out while a
+        // real sign-in was in progress.
+        let config = ChatGptSignIn::new().config;
+
+        assert_eq!(config.callback_timeout_secs, BROWSER_SIGN_IN_TIMEOUT_SECS);
+        assert!(
+            config.callback_timeout_secs >= 5 * 60,
+            "a sign-in with a second factor needs more than {}s",
+            config.callback_timeout_secs
+        );
     }
 
     #[test]
