@@ -279,6 +279,7 @@ impl ProfileEditorView {
                         cx.listener(|this, _, _window, cx| {
                             this.state.data.api_type = this.state.data.api_type.next();
                             this.state.data.apply_api_type_change();
+                            this.request_account_refresh();
                             cx.notify();
                         }),
                     )

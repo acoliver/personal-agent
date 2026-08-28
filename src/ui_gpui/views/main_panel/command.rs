@@ -69,8 +69,11 @@ impl MainPanel {
             // ── settings-only forwarding ─────────────────────────────
             ExportDirectoryLoaded { .. }
             | SkillsLoaded { .. }
-            | CodexAccountsListed { .. }
             | ToolApprovalPolicyUpdated { .. } => self.forward_to_settings(cmd, cx),
+
+            // The editor needs these too: without them its account row can
+            // only offer a fresh sign-in, even for an account already held.
+            CodexAccountsListed { .. } => self.forward_accounts(cmd, cx),
 
             // ── model selector + profile editor ─────────────────────────
             ModelSearchResults { .. }
@@ -191,6 +194,23 @@ impl MainPanel {
     fn forward_to_settings(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
         if let Some(ref settings) = self.settings_view {
             settings.update(cx, |view, cx| {
+                view.handle_command(cmd, cx);
+            });
+        }
+    }
+
+    /// Route the account list to everything that shows accounts.
+    ///
+    /// Settings lists them; the profile editor offers them, so a profile can
+    /// attach a sign-in that already happened.
+    fn forward_accounts(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        if let Some(ref settings) = self.settings_view {
+            settings.update(cx, |view, cx| {
+                view.handle_command(cmd.clone(), cx);
+            });
+        }
+        if let Some(ref editor) = self.profile_editor_view {
+            editor.update(cx, |view, cx| {
                 view.handle_command(cmd, cx);
             });
         }

@@ -174,6 +174,17 @@ pub(super) enum ActiveField {
     SystemPrompt,
 }
 
+/// An account the user has already signed into.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CodexAccountChoice {
+    /// Slug stored on the profile and used as the keychain key.
+    pub account: String,
+    /// Email when known, otherwise a shortened account id.
+    pub label: String,
+    /// Plan name, empty when the provider did not report one.
+    pub plan: String,
+}
+
 /// Profile data for the editor
 /// @plan PLAN-20250130-GPUIREDUX.P08
 #[derive(Clone, Debug, Default)]
@@ -191,6 +202,9 @@ pub struct ProfileEditorData {
     pub oauth_account: String,
     /// Human-readable label for the signed-in account, when known.
     pub oauth_account_label: String,
+    /// Accounts already signed in, so an existing one can be attached without
+    /// running a fresh sign-in.
+    pub available_accounts: Vec<CodexAccountChoice>,
     /// Plan name reported by the identity provider, when known.
     pub oauth_account_plan: String,
     pub temperature: f32,
@@ -353,6 +367,76 @@ impl ProfileEditorView {
     pub fn set_bridge(&mut self, bridge: Arc<GpuiBridge>) {
         self.bridge = Some(bridge);
         self.request_api_key_refresh();
+    }
+
+    /// Ask for the signed-in accounts, so the row can offer them.
+    ///
+    /// Only for account-authenticated types: a profile using an API key has
+    /// no use for the list, and asking reads the keychain.
+    fn request_account_refresh(&self) {
+        if self.state.data.api_type.requires_oauth_account() {
+            self.emit(&UserEvent::ListCodexAccounts);
+        }
+    }
+
+    /// Remember the accounts the user can attach, and refresh what is shown
+    /// for the one already selected.
+    pub(super) fn adopt_accounts(
+        &mut self,
+        accounts: &[crate::presentation::view_command::CodexAccountInfo],
+    ) {
+        self.state.data.available_accounts = accounts
+            .iter()
+            .map(|account| CodexAccountChoice {
+                account: account.account.clone(),
+                label: account.label.clone(),
+                plan: account.plan.clone().unwrap_or_default(),
+            })
+            .collect();
+        self.adopt_account_details();
+    }
+
+    /// Fill in the display name and plan for the selected account from the
+    /// account list.
+    ///
+    /// A profile stores only the slug, so a freshly loaded profile has nothing
+    /// to show until the accounts arrive.
+    pub(super) fn adopt_account_details(&mut self) {
+        let selected = self.state.data.oauth_account.trim().to_string();
+        if selected.is_empty() {
+            return;
+        }
+        if let Some(found) = self
+            .state
+            .data
+            .available_accounts
+            .iter()
+            .find(|choice| choice.account == selected)
+        {
+            self.state.data.oauth_account_label.clone_from(&found.label);
+            self.state.data.oauth_account_plan.clone_from(&found.plan);
+        }
+    }
+
+    /// Attach the next known account, so a profile can use a sign-in that
+    /// already happened instead of running another one.
+    pub(super) fn cycle_oauth_account(&mut self) {
+        let accounts = self.state.data.available_accounts.clone();
+        if accounts.is_empty() {
+            return;
+        }
+        let current = self.state.data.oauth_account.trim();
+        let next = accounts
+            .iter()
+            .position(|choice| choice.account == current)
+            .map_or(0, |at| (at + 1) % accounts.len());
+        let choice = &accounts[next];
+        self.state.data.oauth_account.clone_from(&choice.account);
+        self.state
+            .data
+            .oauth_account_label
+            .clone_from(&choice.label);
+        self.state.data.oauth_account_plan.clone_from(&choice.plan);
     }
 
     fn request_api_key_refresh(&self) {
@@ -712,6 +796,7 @@ impl ProfileEditorView {
                 self.state.data.api_type = ApiType::from_provider_id(&provider_id);
                 self.state.data.key_label = api_key_label;
                 self.state.data.oauth_account = oauth_account;
+                self.request_account_refresh();
                 // The load payload carries the slug only. Keeping the previous
                 // profile's label and plan would caption this account with
                 // someone else's name.
@@ -740,6 +825,10 @@ impl ProfileEditorView {
 
             ViewCommand::ApiKeysListed { keys } => {
                 self.state.data.available_keys = keys.iter().map(|k| k.label.clone()).collect();
+            }
+
+            ViewCommand::CodexAccountsListed { accounts } => {
+                self.adopt_accounts(&accounts);
             }
 
             ViewCommand::CodexSignInCompleted {
