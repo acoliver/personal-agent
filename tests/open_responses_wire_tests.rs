@@ -570,39 +570,37 @@ async fn the_chosen_effort_reaches_the_wire() {
     // The point of the change. Effort used to be bucketed out of a token
     // budget, which could not express anything above high, so a profile set
     // to xhigh silently went out as high.
-    for level in [
-        ReasoningEffort::Low,
-        ReasoningEffort::High,
-        ReasoningEffort::XHigh,
-        ReasoningEffort::Max,
-        ReasoningEffort::Other("something_new".to_string()),
-    ] {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let server = tokio::spawn(async move {
-            let mut peer = accept(&listener).await;
-            let frame = read_frame(&mut peer).await;
-            stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
-            frame
-        });
+    //
+    // Only one level is driven end to end on purpose. Every live session
+    // occupies a slot in a process-global cache bounded at MAX_LIVE_SESSIONS,
+    // and a test that opens several at once evicts sessions belonging to
+    // tests running alongside it, closing their sockets. The rest of the
+    // ladder is covered where no socket is involved, in the unit tests for
+    // `reasoning_for`.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
 
-        let mut model_profile = profile(&format!("ws://{addr}/v1/responses"));
-        model_profile.parameters.enable_thinking = true;
-        // A budget that used to bucket to "low", to prove it no longer
-        // has any say.
-        model_profile.parameters.thinking_budget = Some(1_024);
-        model_profile.parameters.reasoning_effort = Some(level.clone());
+    let mut model_profile = profile(&format!("ws://{addr}/v1/responses"));
+    model_profile.parameters.enable_thinking = true;
+    // A budget that used to bucket to "low", to prove it no longer has a say.
+    model_profile.parameters.thinking_budget = Some(1_024);
+    model_profile.parameters.reasoning_effort = Some(ReasoningEffort::XHigh);
 
-        let client = LlmClient::from_profile(&model_profile)
-            .expect("client")
-            .for_conversation(Uuid::new_v4());
-        run_turn(&client, &[user("think")]).await;
+    let client = LlmClient::from_profile(&model_profile)
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("think")]).await;
 
-        let frame = server.await.expect("server");
-        assert_eq!(
-            frame["reasoning"]["effort"].as_str(),
-            Some(level.as_str()),
-            "frame was {frame}"
-        );
-    }
+    let frame = server.await.expect("server");
+    assert_eq!(
+        frame["reasoning"]["effort"].as_str(),
+        Some("xhigh"),
+        "frame was {frame}"
+    );
 }
