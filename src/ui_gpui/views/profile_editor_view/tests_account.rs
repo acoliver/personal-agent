@@ -350,3 +350,36 @@ async fn a_profile_without_a_stored_effort_takes_the_default(cx: &mut TestAppCon
         );
     });
 }
+
+#[gpui::test]
+async fn choosing_the_selected_level_again_leaves_it_to_the_model(cx: &mut TestAppContext) {
+    // Expressing no preference has to stay reachable. Otherwise a single
+    // click commits the profile to some level for good.
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        let high = crate::models::ReasoningEffort::High;
+        let xhigh = crate::models::ReasoningEffort::XHigh;
+
+        view.toggle_reasoning_effort(&high);
+        assert_eq!(view.state.data.reasoning_effort, Some(high.clone()));
+
+        view.toggle_reasoning_effort(&xhigh);
+        assert_eq!(
+            view.state.data.reasoning_effort,
+            Some(xhigh.clone()),
+            "a different level replaces the current one"
+        );
+
+        view.toggle_reasoning_effort(&xhigh);
+        assert_eq!(
+            view.state.data.reasoning_effort, None,
+            "the selected level clears back to no preference"
+        );
+    });
+}

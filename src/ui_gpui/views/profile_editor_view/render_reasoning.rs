@@ -13,6 +13,20 @@ use crate::models::ReasoningEffort;
 use crate::ui_gpui::theme::Theme;
 
 impl ProfileEditorView {
+    /// Pick a level, or clear it when it is already the chosen one.
+    ///
+    /// Clearing has to stay reachable. Without it a single click commits the
+    /// profile to some level for good, and "leave it to the model" is a real
+    /// answer rather than the absence of one.
+    pub(super) fn toggle_reasoning_effort(&mut self, choice: &ReasoningEffort) {
+        self.state.data.reasoning_effort =
+            if self.state.data.reasoning_effort.as_ref() == Some(choice) {
+                None
+            } else {
+                Some(choice.clone())
+            };
+    }
+
     /// Render the effort ladder, or nothing when the model takes no effort.
     ///
     /// Only levels the model declares are offered. There is no free-text
@@ -27,7 +41,7 @@ impl ProfileEditorView {
         let hint = if selected.is_none() {
             "How hard the model thinks. Not a token amount. Unset leaves it to the model."
         } else {
-            "How hard the model thinks. Not a token amount."
+            "How hard the model thinks. Click the selected level again to leave it to the model."
         };
         let offered = capabilities.reasoning_efforts().to_vec();
 
@@ -83,7 +97,7 @@ impl ProfileEditorView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, cx| {
-                    this.state.data.reasoning_effort = Some(choice.clone());
+                    this.toggle_reasoning_effort(&choice);
                     cx.notify();
                 }),
             )

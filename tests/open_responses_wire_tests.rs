@@ -17,6 +17,15 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{accept_async, WebSocketStream};
 use uuid::Uuid;
 
+/// Serialises tests that hold a live session.
+///
+/// Sessions live in a process-global cache bounded at `MAX_LIVE_SESSIONS`.
+/// Tests in a binary run in parallel, so once the number of concurrent
+/// sessions reaches that bound the cache evicts one belonging to a test still
+/// using it, and that test's socket is closed under it. Holding this while a
+/// session is live keeps the tests independent of how many of them there are.
+static LIVE_SESSION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 type Peer = WebSocketStream<TcpStream>;
 
 /// Accept one websocket connection.
@@ -157,6 +166,7 @@ async fn run_turn(client: &LlmClient, history: &[Message]) -> Vec<StreamEvent> {
 
 #[tokio::test]
 async fn the_turn_frame_is_flat_and_carries_no_response_wrapper() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = tokio::spawn(async move {
@@ -186,6 +196,7 @@ async fn the_turn_frame_is_flat_and_carries_no_response_wrapper() {
 
 #[tokio::test]
 async fn a_chained_turn_sends_only_the_new_input() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = tokio::spawn(async move {
@@ -236,6 +247,7 @@ async fn a_chained_turn_sends_only_the_new_input() {
 
 #[tokio::test]
 async fn text_deltas_and_usage_reach_the_ui() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
@@ -282,6 +294,7 @@ async fn text_deltas_and_usage_reach_the_ui() {
 
 #[tokio::test]
 async fn reasoning_summary_deltas_arrive_as_thinking() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
@@ -333,6 +346,7 @@ async fn reasoning_summary_deltas_arrive_as_thinking() {
 
 #[tokio::test]
 async fn an_unknown_frame_does_not_end_the_stream() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
@@ -375,6 +389,7 @@ async fn an_unknown_frame_does_not_end_the_stream() {
 
 #[tokio::test]
 async fn two_conversations_do_not_share_one_socket() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = tokio::spawn(async move {
@@ -535,6 +550,7 @@ async fn the_agent_path_also_asks_for_reasoning() {
 
 #[tokio::test]
 async fn a_chained_turn_with_nothing_new_still_sends_a_list() {
+    let _live = LIVE_SESSION.lock().await;
     // The agent loop can call again with the assistant reply as the last
     // message and nothing after it. Chaining skips that reply because the
     // server already holds it, which leaves no new items. The backend
@@ -567,6 +583,7 @@ async fn a_chained_turn_with_nothing_new_still_sends_a_list() {
 
 #[tokio::test]
 async fn the_chosen_effort_reaches_the_wire() {
+    let _live = LIVE_SESSION.lock().await;
     // The point of the change. Effort used to be bucketed out of a token
     // budget, which could not express anything above high, so a profile set
     // to xhigh silently went out as high.
