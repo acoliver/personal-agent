@@ -100,7 +100,8 @@ covers as many profiles as you like. Otherwise press **Sign in with ChatGPT**.
 
 Your browser opens on OpenAI's sign-in page. Finish signing in there and the
 app picks up the result on its own; the sheet shows the link and a countdown
-while it waits.
+while it waits. There is no hurry: the app waits ten minutes, which is enough
+for a password and a second factor. Cancel closes it immediately.
 
 If your browser is on another machine, or something else is already using port
 1455 (the Codex CLI, for example), the app switches to a device code by itself.
