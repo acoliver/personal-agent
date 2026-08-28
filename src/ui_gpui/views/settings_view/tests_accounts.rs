@@ -33,6 +33,7 @@ async fn listed_accounts_land_in_state(cx: &mut TestAppContext) {
         view.handle_command(
             ViewCommand::CodexAccountsListed {
                 accounts: vec![account("chatgpt-a", false, vec!["Codex"])],
+                unreadable: 0,
             },
             cx,
         );
@@ -50,12 +51,14 @@ async fn a_later_list_replaces_the_earlier_one(cx: &mut TestAppContext) {
         view.handle_command(
             ViewCommand::CodexAccountsListed {
                 accounts: vec![account("chatgpt-a", false, vec![])],
+                unreadable: 0,
             },
             cx,
         );
         view.handle_command(
             ViewCommand::CodexAccountsListed {
                 accounts: Vec::new(),
+                unreadable: 0,
             },
             cx,
         );
@@ -273,4 +276,43 @@ async fn signing_in_from_settings_opens_the_sheet(cx: &mut TestAppContext) {
         Some(crate::presentation::view_command::ViewId::CodexSignIn),
         "should show the sheet that reports progress"
     );
+}
+
+#[test]
+fn an_unreadable_account_is_not_reported_as_no_accounts() {
+    // The keychain refusing to answer and having never signed in look the
+    // same from here. Saying "none yet" to someone who is signed in sends
+    // them to sign in again for nothing.
+    assert_eq!(
+        SettingsView::empty_accounts_message(0),
+        "No ChatGPT accounts yet."
+    );
+    assert_eq!(
+        SettingsView::empty_accounts_message(1),
+        "A saved account could not be read. Your keychain may be locked."
+    );
+    assert_eq!(
+        SettingsView::empty_accounts_message(3),
+        "3 saved accounts could not be read. Your keychain may be locked."
+    );
+}
+
+#[gpui::test]
+async fn a_failed_read_is_remembered_by_the_panel(cx: &mut gpui::TestAppContext) {
+    let (bridge, _rx) = make_bridge();
+    let view = cx.new(SettingsView::new);
+
+    view.update(cx, |this, cx| {
+        this.set_bridge(bridge);
+        this.handle_command(
+            ViewCommand::CodexAccountsListed {
+                accounts: vec![],
+                unreadable: 2,
+            },
+            cx,
+        );
+
+        assert!(this.state.accounts.is_empty());
+        assert_eq!(this.state.unreadable_accounts, 2);
+    });
 }

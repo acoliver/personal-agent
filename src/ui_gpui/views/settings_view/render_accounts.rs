@@ -33,11 +33,16 @@ impl SettingsView {
                     .collect::<Vec<_>>(),
             )
             .when(self.state.accounts.is_empty(), |block| {
+                let unreadable = self.state.unreadable_accounts;
                 block.child(
                     div()
                         .text_size(px(Theme::font_size_small()))
-                        .text_color(Theme::text_muted())
-                        .child("No ChatGPT accounts yet."),
+                        .text_color(if unreadable > 0 {
+                            Theme::error()
+                        } else {
+                            Theme::text_muted()
+                        })
+                        .child(Self::empty_accounts_message(unreadable)),
                 )
             })
             .child(Self::render_add_account_button(cx))
@@ -227,6 +232,22 @@ impl SettingsView {
     fn left(count: i64, unit: &str) -> String {
         let plural = if count == 1 { "" } else { "s" };
         format!("Signed in, {count} {unit}{plural} left")
+    }
+
+    /// What to say when no accounts could be shown.
+    ///
+    /// "None yet" and "the keychain would not answer" look identical from
+    /// here, and telling a signed-in user they have no accounts sends them to
+    /// sign in again for no reason.
+    #[must_use]
+    pub fn empty_accounts_message(unreadable: usize) -> String {
+        match unreadable {
+            0 => "No ChatGPT accounts yet.".to_string(),
+            1 => "A saved account could not be read. Your keychain may be locked.".to_string(),
+            many => {
+                format!("{many} saved accounts could not be read. Your keychain may be locked.")
+            }
+        }
     }
 
     /// The third line of an account row.

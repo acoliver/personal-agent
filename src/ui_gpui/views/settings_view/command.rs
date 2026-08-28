@@ -31,8 +31,12 @@ impl SettingsView {
 
     fn apply_profile_command(&mut self, command: &ViewCommand) -> bool {
         match command {
-            ViewCommand::CodexAccountsListed { accounts } => {
+            ViewCommand::CodexAccountsListed {
+                accounts,
+                unreadable,
+            } => {
                 self.state.accounts.clone_from(accounts);
+                self.state.unreadable_accounts = *unreadable;
                 true
             }
             ViewCommand::ShowSettings {

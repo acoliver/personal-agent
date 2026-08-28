@@ -44,6 +44,9 @@ pub struct SettingsState {
     pub profiles: Vec<ProfileItem>,
     /// Signed-in `ChatGPT` accounts, shown under Models.
     pub accounts: Vec<crate::presentation::view_command::CodexAccountInfo>,
+    /// Known accounts that could not be read, so an empty list is not
+    /// reported as "none yet" when the keychain refused to answer.
+    pub unreadable_accounts: usize,
     pub mcps: Vec<McpItem>,
     pub skills: Vec<SkillItem>,
     pub selected_profile_id: Option<Uuid>,
@@ -114,6 +117,7 @@ impl Default for SettingsState {
         Self {
             profiles: Vec::new(),
             accounts: Vec::new(),
+            unreadable_accounts: 0,
             mcps: Vec::new(),
             skills: Vec::new(),
             selected_profile_id: None,

@@ -250,7 +250,12 @@ pub enum ViewCommand {
     },
 
     /// The current set of signed-in accounts.
-    CodexAccountsListed { accounts: Vec<CodexAccountInfo> },
+    CodexAccountsListed {
+        accounts: Vec<CodexAccountInfo>,
+        /// Known accounts that could not be read, so an empty list is not
+        /// reported as "no accounts yet" when the keychain simply refused.
+        unreadable: usize,
+    },
 
     /// A stored grant expired and cannot be renewed without the user.
     CodexReauthRequired { account: String },

@@ -827,7 +827,7 @@ impl ProfileEditorView {
                 self.state.data.available_keys = keys.iter().map(|k| k.label.clone()).collect();
             }
 
-            ViewCommand::CodexAccountsListed { accounts } => {
+            ViewCommand::CodexAccountsListed { accounts, .. } => {
                 self.adopt_accounts(&accounts);
             }
 

@@ -150,6 +150,7 @@ async fn an_account_signed_in_elsewhere_can_be_attached(cx: &mut gpui::TestAppCo
         this.handle_command(
             ViewCommand::CodexAccountsListed {
                 accounts: vec![account_choice("chatgpt-a", "a@example.com")],
+                unreadable: 0,
             },
             cx,
         );
@@ -183,6 +184,7 @@ async fn switching_walks_the_accounts(cx: &mut gpui::TestAppContext) {
                     account_choice("chatgpt-a", "a@example.com"),
                     account_choice("chatgpt-b", "b@example.com"),
                 ],
+                unreadable: 0,
             },
             cx,
         );
@@ -214,6 +216,7 @@ async fn a_loaded_profile_gets_its_account_details_from_the_list(cx: &mut gpui::
                     account_choice("chatgpt-a", "a@example.com"),
                     account_choice("chatgpt-b", "b@example.com"),
                 ],
+                unreadable: 0,
             },
             cx,
         );

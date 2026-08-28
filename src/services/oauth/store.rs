@@ -281,33 +281,59 @@ pub async fn delete_async(account: &str) -> Result<(), OAuthError> {
     off_runtime("forget a sign-in", move || delete(&account)).await
 }
 
+/// What a read of the stored accounts found.
+///
+/// `unreadable` matters: an empty list because there are no accounts and an
+/// empty list because the keychain would not answer mean opposite things to a
+/// user, and saying "no accounts yet" for the second is untrue.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct AccountsRead {
+    /// Accounts that were read.
+    pub accounts: Vec<(String, StoredOAuthToken)>,
+    /// How many known accounts could not be read.
+    pub unreadable: usize,
+}
+
 /// [`load_all`], off the runtime.
-pub async fn load_all_async() -> Vec<(String, StoredOAuthToken)> {
+///
+/// A read that fails outright reports every known account as unreadable,
+/// which is what the index says exists.
+pub async fn load_all_async() -> AccountsRead {
     off_runtime("list saved sign-ins", || Ok(load_all()))
         .await
         .unwrap_or_else(|error| {
             tracing::warn!(%error, "Reading stored OAuth accounts failed");
-            Vec::new()
+            AccountsRead {
+                accounts: Vec::new(),
+                unreadable: list_accounts().len(),
+            }
         })
 }
 
-/// Load every stored grant, skipping records that cannot be read.
+/// Load every stored grant, counting the ones that could not be read.
 ///
-/// A corrupt entry should not hide the accounts that are fine, so this reports
-/// what it can and logs the rest.
+/// A corrupt or unreachable entry should not hide the accounts that are fine,
+/// so this reports what it can and counts the rest.
 #[must_use]
-pub fn load_all() -> Vec<(String, StoredOAuthToken)> {
-    list_accounts()
+pub fn load_all() -> AccountsRead {
+    let mut unreadable = 0;
+    let accounts = list_accounts()
         .into_iter()
         .filter_map(|account| match load(&account) {
             Ok(Some(token)) => Some((account, token)),
             Ok(None) => None,
             Err(error) => {
                 tracing::warn!(account = %account, %error, "Skipping unreadable OAuth record");
+                unreadable += 1;
                 None
             }
         })
-        .collect()
+        .collect();
+
+    AccountsRead {
+        accounts,
+        unreadable,
+    }
 }
 
 /// Mark an account as requiring a fresh sign-in and drop its dead access token.

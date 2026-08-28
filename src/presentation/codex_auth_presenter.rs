@@ -249,8 +249,9 @@ impl CodexAuthPresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
     ) {
         let profiles = profile_service.list().await.unwrap_or_default();
-        let accounts = store::load_all_async()
-            .await
+        let read = store::load_all_async().await;
+        let accounts = read
+            .accounts
             .into_iter()
             .map(|(account, record)| {
                 let used_by = profiles
@@ -271,7 +272,10 @@ impl CodexAuthPresenter {
             })
             .collect();
 
-        let _ = view_tx.send(ViewCommand::CodexAccountsListed { accounts });
+        let _ = view_tx.send(ViewCommand::CodexAccountsListed {
+            accounts,
+            unreadable: read.unreadable,
+        });
     }
 
     /// Drop an in-flight sign-in, releasing its callback server.

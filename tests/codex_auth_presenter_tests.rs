@@ -460,14 +460,14 @@ async fn the_account_list_names_the_profiles_using_each_account() {
         .expect("publish");
 
     let listed = expect_command(&mut h.rx, |c| match c {
-        ViewCommand::CodexAccountsListed { accounts } => {
+        ViewCommand::CodexAccountsListed { accounts, .. } => {
             accounts.iter().any(|a| a.account == account)
         }
         _ => false,
     })
     .await;
     match listed {
-        ViewCommand::CodexAccountsListed { accounts } => {
+        ViewCommand::CodexAccountsListed { accounts, .. } => {
             let entry = accounts
                 .iter()
                 .find(|a| a.account == account)
@@ -502,7 +502,7 @@ async fn signing_out_forgets_the_account_and_refreshes_the_list() {
         .expect("publish");
 
     expect_command(&mut h.rx, |c| match c {
-        ViewCommand::CodexAccountsListed { accounts } => {
+        ViewCommand::CodexAccountsListed { accounts, .. } => {
             !accounts.iter().any(|a| a.account == account)
         }
         _ => false,
