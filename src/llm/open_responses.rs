@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use crate::llm::error::LlmError;
 use crate::llm::provider_quirks::ProviderQuirks;
-use crate::models::{capabilities_for, ModelProfile, ReasoningEffort};
+use crate::models::{capabilities_for, ModelProfile};
 use crate::services::oauth::{refresh, store, OAuthError};
 
 /// The transport sentinel that selects this client in the quirks manifest.
@@ -340,14 +340,15 @@ fn reasoning_for(profile: &ModelProfile) -> Option<ReasoningSettings> {
     if !profile.parameters.enable_thinking {
         return None;
     }
-    let effort = profile
-        .parameters
-        .reasoning_effort
-        .clone()
-        .unwrap_or(ReasoningEffort::Medium);
     let capabilities = capabilities_for(&profile.provider_id);
     Some(ReasoningSettings {
-        effort: Some(effort.as_str().to_string()),
+        // Absent when the user has not chosen, so the backend applies its own
+        // default rather than this client asserting one.
+        effort: profile
+            .parameters
+            .reasoning_effort
+            .as_ref()
+            .map(|effort| effort.as_str().to_string()),
         summary: capabilities
             .reasoning_summary()
             .then(|| serde_json::Value::String("auto".to_string())),
@@ -414,7 +415,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::models::{AuthConfig, ModelParameters};
+    use crate::models::{AuthConfig, ModelParameters, ReasoningEffort};
 
     fn profile(enable_thinking: bool, budget: Option<u32>) -> ModelProfile {
         let mut profile = ModelProfile::new(
@@ -441,10 +442,29 @@ mod tests {
     }
 
     #[test]
-    fn thinking_enabled_sends_an_effort_and_a_summary() {
+    fn thinking_enabled_without_a_chosen_level_still_asks_for_a_summary() {
+        // The summary is what makes reasoning visible. It is requested even
+        // when the level is left to the model.
         let reasoning = reasoning_for(&profile(true, Some(10_000))).expect("reasoning");
 
-        assert_eq!(reasoning.effort.as_deref(), Some("medium"));
+        assert_eq!(
+            reasoning.effort, None,
+            "an unchosen level must not be asserted by this client"
+        );
+        assert_eq!(
+            reasoning.summary,
+            Some(serde_json::Value::String("auto".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_chosen_level_is_sent_alongside_the_summary() {
+        let mut p = profile(true, Some(10_000));
+        p.parameters.reasoning_effort = Some(ReasoningEffort::High);
+
+        let reasoning = reasoning_for(&p).expect("reasoning");
+
+        assert_eq!(reasoning.effort.as_deref(), Some("high"));
         assert_eq!(
             reasoning.summary,
             Some(serde_json::Value::String("auto".to_string()))
@@ -492,14 +512,13 @@ mod tests {
 
     #[test]
     fn a_token_budget_no_longer_decides_the_level() {
-        // Every one of these bucketed differently before; none of them
-        // should move the level now.
+        // Every one of these bucketed differently before. None of them should
+        // produce a level now, chosen or otherwise.
         for budget in [Some(1_024), Some(10_000), Some(64_000), None] {
             let reasoning = reasoning_for(&profile(true, budget)).expect("reasoning");
             assert_eq!(
-                reasoning.effort.as_deref(),
-                Some("medium"),
-                "budget {budget:?} changed the effort"
+                reasoning.effort, None,
+                "budget {budget:?} was still read as an effort"
             );
         }
     }

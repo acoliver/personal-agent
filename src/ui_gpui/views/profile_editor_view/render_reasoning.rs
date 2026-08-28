@@ -24,6 +24,11 @@ impl ProfileEditorView {
     ) -> impl IntoElement {
         let capabilities = self.capabilities();
         let selected = self.state.data.reasoning_effort.clone();
+        let hint = if selected.is_none() {
+            "How hard the model thinks. Not a token amount. Unset leaves it to the model."
+        } else {
+            "How hard the model thinks. Not a token amount."
+        };
         let offered = capabilities.reasoning_efforts().to_vec();
 
         div().flex().flex_col().gap(px(8.0)).when(
@@ -31,18 +36,16 @@ impl ProfileEditorView {
             move |section| {
                 section
                     .child(Self::render_label("REASONING EFFORT"))
-                    .child(
-                        div().flex().flex_row().flex_wrap().gap(px(6.0)).children(
-                            offered
-                                .into_iter()
-                                .map(|effort| Self::render_effort_choice(&effort, &selected, cx)),
-                        ),
-                    )
+                    .child(div().flex().flex_row().flex_wrap().gap(px(6.0)).children(
+                        offered.into_iter().map(|effort| {
+                            Self::render_effort_choice(&effort, selected.as_ref(), cx)
+                        }),
+                    ))
                     .child(
                         div()
                             .text_size(px(Theme::font_size_small()))
                             .text_color(Theme::text_secondary())
-                            .child("How hard the model thinks. Not a token amount."),
+                            .child(hint),
                     )
             },
         )
@@ -51,10 +54,10 @@ impl ProfileEditorView {
     /// One selectable level.
     fn render_effort_choice(
         effort: &ReasoningEffort,
-        selected: &ReasoningEffort,
+        selected: Option<&ReasoningEffort>,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        let is_selected = effort == selected;
+        let is_selected = selected == Some(effort);
         let choice = effort.clone();
         let element_id = format!("effort-{}", effort.as_str());
 
@@ -80,7 +83,7 @@ impl ProfileEditorView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, cx| {
-                    this.state.data.reasoning_effort = choice.clone();
+                    this.state.data.reasoning_effort = Some(choice.clone());
                     cx.notify();
                 }),
             )

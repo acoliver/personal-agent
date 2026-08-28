@@ -218,7 +218,9 @@ pub struct ProfileEditorData {
     ///
     /// Held alongside the budget rather than instead of it: they are
     /// different settings and a model may accept either, both, or neither.
-    pub reasoning_effort: ReasoningEffort,
+    /// `None` means the user has expressed no preference, which is not the
+    /// same as choosing the level that happens to be the default.
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub system_prompt: String,
 }
 
@@ -237,7 +239,7 @@ impl ProfileEditorData {
             context_limit: Self::DEFAULT_CONTEXT_LIMIT,
             show_thinking: true,
             thinking_budget: 10000,
-            reasoning_effort: ReasoningEffort::Medium,
+            reasoning_effort: None,
             system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
             ..Default::default()
         }
@@ -751,10 +753,14 @@ impl ProfileEditorView {
             } else {
                 None
             },
-            reasoning_effort: self
-                .capabilities()
-                .takes_reasoning_effort()
-                .then(|| self.state.data.reasoning_effort.as_str().to_string()),
+            reasoning_effort: self.capabilities().takes_reasoning_effort().then(|| {
+                self.state
+                    .data
+                    .reasoning_effort
+                    .as_ref()
+                    .map(|effort| effort.as_str().to_string())
+                    .unwrap_or_default()
+            }),
             // Issue #182: carry the editor's "CONTEXT LIMIT" field through
             // to the presenter so it actually gets persisted.
             context_window_size: Some(self.state.data.context_limit as usize),

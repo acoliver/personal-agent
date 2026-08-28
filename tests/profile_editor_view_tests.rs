@@ -1,5 +1,4 @@
 use personal_agent::models::profile::DEFAULT_SYSTEM_PROMPT;
-use personal_agent::models::ReasoningEffort;
 use personal_agent::presentation::view_command::{ApiKeyInfo, ViewCommand};
 use personal_agent::ui_gpui::views::{ApiType, AuthMethod, ProfileEditorData, ProfileEditorState};
 use uuid::Uuid;
@@ -220,7 +219,7 @@ fn profile_editor_state_construction_preserves_is_new_and_payloads() {
         show_thinking: false,
         enable_extended_thinking: true,
         thinking_budget: 2048,
-        reasoning_effort: ReasoningEffort::default(),
+        reasoning_effort: None,
         system_prompt: "Be concise".to_string(),
     };
 
@@ -474,7 +473,7 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         show_thinking: true,
         enable_extended_thinking: true,
         thinking_budget: 512,
-        reasoning_effort: ReasoningEffort::default(),
+        reasoning_effort: None,
         system_prompt: "Use tools when appropriate".to_string(),
     };
     let created = ProfileEditorData {
@@ -498,7 +497,7 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         show_thinking: false,
         enable_extended_thinking: false,
         thinking_budget: 999,
-        reasoning_effort: ReasoningEffort::default(),
+        reasoning_effort: None,
         system_prompt: "Custom prompt".to_string(),
     };
 

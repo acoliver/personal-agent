@@ -101,6 +101,10 @@ impl FromStr for ReasoningEffort {
     type Err = std::convert::Infallible;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
+        // Known levels are matched case-insensitively, but an unknown one is
+        // kept exactly as written. Lowercasing it here would change the value
+        // sent to a backend that may well be case-sensitive about a level
+        // this build has never heard of.
         Ok(match value.trim().to_ascii_lowercase().as_str() {
             "none" => Self::None,
             "minimal" => Self::Minimal,
@@ -111,7 +115,7 @@ impl FromStr for ReasoningEffort {
             "max" => Self::Max,
             "ultra" => Self::Ultra,
             "persistent" => Self::Persistent,
-            other => Self::Other(other.to_string()),
+            _ => Self::Other(value.trim().to_string()),
         })
     }
 }
@@ -220,11 +224,17 @@ impl ModelCapabilities {
             max_tokens: false,
             thinking_budget: false,
             reasoning: ReasoningSupport {
+                // Provisional. Only medium and high have been seen accepted
+                // by the live endpoint; the rest are offered because a
+                // refused level fails loudly, whereas withholding one leaves
+                // the user unable to ask for the mode they pay for. Reading
+                // the backend's per-model list replaces this guess.
                 levels: vec![
                     ReasoningEffort::Low,
                     ReasoningEffort::Medium,
                     ReasoningEffort::High,
                     ReasoningEffort::XHigh,
+                    ReasoningEffort::Max,
                 ],
                 summary: true,
             },
@@ -234,14 +244,16 @@ impl ModelCapabilities {
 
 /// Read a level out of stored text.
 ///
-/// An empty string means the profile predates the setting and gets the
-/// default rather than a level parsed from nothing.
+/// Blank means the profile carries no choice, which stays absent rather than
+/// becoming a level nobody picked. Sending an explicit default would record a
+/// decision the user never made and pin the turn if the backend's own default
+/// ever moves.
 #[must_use]
-pub fn effort_from_stored(stored: &str) -> ReasoningEffort {
+pub fn effort_from_stored(stored: &str) -> Option<ReasoningEffort> {
     if stored.trim().is_empty() {
-        ReasoningEffort::default()
+        None
     } else {
-        stored.parse().unwrap_or_default()
+        stored.parse().ok()
     }
 }
 
@@ -360,6 +372,7 @@ mod tests {
     fn a_model_only_accepts_the_levels_it_declares() {
         let caps = ModelCapabilities::codex_reasoning();
         assert!(caps.accepts(&ReasoningEffort::XHigh));
+        assert!(caps.accepts(&ReasoningEffort::Max));
         assert!(!caps.accepts(&ReasoningEffort::Ultra));
     }
 }
@@ -389,20 +402,32 @@ mod lookup_tests {
     }
 
     #[test]
-    fn stored_text_that_is_absent_becomes_the_default() {
-        // A profile written before the setting existed carries no level.
+    fn stored_text_that_is_absent_stays_absent() {
+        // No choice recorded is not the same as choosing the default. Turning
+        // one into the other would pin a level nobody picked.
         for blank in ["", "   "] {
             assert_eq!(
                 super::effort_from_stored(blank),
-                ReasoningEffort::Medium,
-                "blank {blank:?} should not parse as a level"
+                None,
+                "blank {blank:?} should not become a level"
             );
         }
     }
 
     #[test]
     fn stored_text_that_names_a_level_is_honoured() {
-        assert_eq!(super::effort_from_stored("xhigh"), ReasoningEffort::XHigh);
+        assert_eq!(
+            super::effort_from_stored("xhigh"),
+            Some(ReasoningEffort::XHigh)
+        );
+    }
+
+    #[test]
+    fn an_unknown_level_keeps_its_original_spelling() {
+        // Lowercasing an unrecognised level would change the value sent to a
+        // backend that may be case-sensitive about it.
+        let parsed: ReasoningEffort = "Future_Level".parse().expect("infallible");
+        assert_eq!(parsed.as_str(), "Future_Level");
     }
 
     #[test]

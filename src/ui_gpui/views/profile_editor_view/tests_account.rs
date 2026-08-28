@@ -323,7 +323,7 @@ async fn a_stored_effort_survives_a_trip_through_the_editor(cx: &mut TestAppCont
 
         assert_eq!(
             view.state.data.reasoning_effort,
-            crate::models::ReasoningEffort::XHigh,
+            Some(crate::models::ReasoningEffort::XHigh),
             "a small budget must not drag the level back down"
         );
     });
@@ -331,8 +331,9 @@ async fn a_stored_effort_survives_a_trip_through_the_editor(cx: &mut TestAppCont
 
 #[gpui::test]
 async fn a_profile_without_a_stored_effort_takes_the_default(cx: &mut TestAppContext) {
-    // A profile written before the setting existed has no level. It gets the
-    // backend default, not a number reinterpreted as one.
+    // A profile written before the setting existed has no level, and keeps
+    // none: the backend applies its own default rather than this client
+    // recording a choice nobody made.
     let (bridge, _events) = make_bridge();
     let view = cx.new(|cx| {
         let mut view = ProfileEditorView::new(cx);
@@ -344,8 +345,7 @@ async fn a_profile_without_a_stored_effort_takes_the_default(cx: &mut TestAppCon
         view.handle_command(load_with_effort("", Some(64_000)), cx);
 
         assert_eq!(
-            view.state.data.reasoning_effort,
-            crate::models::ReasoningEffort::Medium,
+            view.state.data.reasoning_effort, None,
             "a large budget must not be reinterpreted as a level"
         );
     });
