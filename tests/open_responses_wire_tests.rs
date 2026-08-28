@@ -478,7 +478,13 @@ async fn thinking_puts_a_reasoning_block_on_the_wire() {
 }
 
 #[tokio::test]
-async fn thinking_off_sends_no_reasoning_block() {
+async fn an_effort_model_asks_for_a_summary_even_with_no_level_chosen() {
+    // This asserted that no reasoning block went out at all, which turned
+    // out to be why a freshly created codex profile never reasoned: the flag
+    // it keyed on is set by a budget checkbox the editor does not show for a
+    // provider that takes levels. The block goes out; the level is simply
+    // absent until one is chosen, and `none` is how reasoning is refused.
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
 
@@ -489,12 +495,22 @@ async fn thinking_off_sends_no_reasoning_block() {
         frame
     });
 
-    let client =
-        LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses"))).expect("client");
-    let _ = run_turn(&client, &[user("hi")]).await;
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("hi")]).await;
 
     let frame = server.await.expect("server");
-    assert!(frame.get("reasoning").is_none(), "frame was {frame}");
+    let reasoning = frame.get("reasoning").expect("reasoning block");
+    assert!(
+        reasoning.get("effort").is_none(),
+        "no level was chosen, so none should be asserted: {frame}"
+    );
+    assert_eq!(
+        reasoning.get("summary").and_then(Value::as_str),
+        Some("auto"),
+        "the summary is what makes thinking visible: {frame}"
+    );
 }
 
 #[tokio::test]

@@ -230,6 +230,10 @@ impl ModelCapabilities {
                 // the user unable to ask for the mode they pay for. Reading
                 // the backend's per-model list replaces this guess.
                 levels: vec![
+                    // `none` is how reasoning is turned off on these models.
+                    // There is no separate switch, so leaving it out would
+                    // make "off" unreachable.
+                    ReasoningEffort::None,
                     ReasoningEffort::Low,
                     ReasoningEffort::Medium,
                     ReasoningEffort::High,

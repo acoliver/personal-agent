@@ -337,10 +337,16 @@ fn user_agent() -> String {
 /// A profile written before the level existed carries no choice, so it gets
 /// the backend's own default rather than a number reinterpreted as a level.
 fn reasoning_for(profile: &ModelProfile) -> Option<ReasoningSettings> {
-    if !profile.parameters.enable_thinking {
+    let capabilities = capabilities_for(&profile.provider_id);
+    // `enable_thinking` belongs to models that take a token budget, where it
+    // switches the budget on. For a model whose control is the ladder, the
+    // ladder is the switch: an explicit `none` turns reasoning off, and the
+    // editor does not even show the budget checkbox. Consulting the flag here
+    // meant a new profile could never reason at all, because nothing in the
+    // UI could set it.
+    if !capabilities.takes_reasoning_effort() && !profile.parameters.enable_thinking {
         return None;
     }
-    let capabilities = capabilities_for(&profile.provider_id);
     Some(ReasoningSettings {
         // Absent when the user has not chosen, so the backend applies its own
         // default rather than this client asserting one.
@@ -437,8 +443,64 @@ mod tests {
     }
 
     #[test]
-    fn thinking_disabled_sends_no_reasoning_block() {
-        assert!(reasoning_for(&profile(false, Some(10_000))).is_none());
+    fn a_codex_profile_reasons_without_the_budget_switch() {
+        // The exact shape a freshly created codex profile has: a chosen
+        // level, and enable_thinking false because the checkbox that sets it
+        // is a budget control the editor does not show for this provider.
+        // Consulting that flag here made the chosen level unreachable.
+        let mut p = profile(false, None);
+        p.provider_id = "openai-codex".to_string();
+        p.parameters.reasoning_effort = Some(ReasoningEffort::Max);
+
+        let reasoning = reasoning_for(&p).expect("a chosen level must be sent");
+
+        assert_eq!(reasoning.effort.as_deref(), Some("max"));
+    }
+
+    #[test]
+    fn reasoning_can_still_be_turned_off_on_a_codex_profile() {
+        // With no budget checkbox, `none` is the only way to say "do not
+        // reason". It has to reach the wire rather than being read as absent.
+        let mut p = profile(false, None);
+        p.provider_id = "openai-codex".to_string();
+        p.parameters.reasoning_effort = Some(ReasoningEffort::None);
+
+        let reasoning = reasoning_for(&p).expect("reasoning block");
+
+        assert_eq!(reasoning.effort.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn a_budget_provider_still_honours_its_switch() {
+        // The flag keeps its meaning where the control exists.
+        let mut p = profile(false, Some(10_000));
+        p.provider_id = "anthropic".to_string();
+
+        assert!(
+            reasoning_for(&p).is_none(),
+            "a budget model with thinking off sends nothing"
+        );
+    }
+
+    #[test]
+    fn the_budget_switch_does_not_silence_an_effort_model() {
+        // This asserted the opposite until a freshly made codex profile
+        // turned out never to reason: `enable_thinking` is set by a checkbox
+        // that belongs to the budget control, and the editor does not show
+        // that control for a provider which takes levels instead. Honouring
+        // the flag here left the setting unreachable.
+        let reasoning = reasoning_for(&profile(false, Some(10_000)))
+            .expect("an effort model is not switched off by a budget flag");
+
+        assert_eq!(
+            reasoning.effort, None,
+            "no level was chosen, so none is asserted"
+        );
+        assert_eq!(
+            reasoning.summary,
+            Some(serde_json::Value::String("auto".to_string())),
+            "summaries are still requested so thinking can be shown"
+        );
     }
 
     #[test]
