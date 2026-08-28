@@ -103,3 +103,20 @@ async fn loading_a_profile_drops_the_previous_account_caption(cx: &mut TestAppCo
         assert!(view.state.data.oauth_account_plan.is_empty());
     });
 }
+
+#[test]
+fn the_responses_types_do_not_offer_sampling_controls() {
+    // The endpoint refuses temperature and max_output_tokens, so the client
+    // omits them. Offering the fields would invite a value that is silently
+    // discarded.
+    assert!(!ApiType::ChatGptCodex.honours_sampling_parameters());
+    assert!(!ApiType::OpenResponses.honours_sampling_parameters());
+}
+
+#[test]
+fn every_other_type_still_offers_them() {
+    assert!(ApiType::Anthropic.honours_sampling_parameters());
+    assert!(ApiType::OpenAI.honours_sampling_parameters());
+    assert!(ApiType::Local.honours_sampling_parameters());
+    assert!(ApiType::Custom("something".to_string()).honours_sampling_parameters());
+}

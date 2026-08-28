@@ -102,6 +102,20 @@ impl ApiType {
         matches!(self, Self::ChatGptCodex)
     }
 
+    /// Whether a turn on this type carries temperature, top-p, and a token
+    /// cap.
+    ///
+    /// The Responses endpoint refuses all three: it answers
+    /// `Unsupported parameter: temperature`, and once that is dropped, the
+    /// same for `max_output_tokens`. The client omits them, so offering the
+    /// controls would invite the user to set a value that is silently thrown
+    /// away. Reasoning effort is the knob these models actually take, and the
+    /// thinking controls below still apply.
+    #[must_use]
+    pub const fn honours_sampling_parameters(&self) -> bool {
+        !matches!(self, Self::ChatGptCodex | Self::OpenResponses)
+    }
+
     /// The endpoint this type manages on the user's behalf, when it manages
     /// one. A managed endpoint is shown read-only until the user unlocks it.
     #[must_use]

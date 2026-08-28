@@ -835,8 +835,13 @@ impl ProfileEditorView {
                     .flex()
                     .flex_col()
                     .gap(px(12.0))
-                    .child(self.render_temperature_section(cx))
-                    .child(self.render_max_tokens_section(cx))
+                    .when(
+                        self.state.data.api_type.honours_sampling_parameters(),
+                        |el| {
+                            el.child(self.render_temperature_section(cx))
+                                .child(self.render_max_tokens_section(cx))
+                        },
+                    )
                     .child(self.render_advanced_request_parameters_section(cx))
                     .child(self.render_context_limit_section(cx))
                     .child(self.render_show_thinking_section(cx))
