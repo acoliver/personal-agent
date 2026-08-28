@@ -476,3 +476,54 @@ async fn thinking_off_sends_no_reasoning_block() {
     let frame = server.await.expect("server");
     assert!(frame.get("reasoning").is_none(), "frame was {frame}");
 }
+
+#[tokio::test]
+async fn the_agent_path_also_asks_for_reasoning() {
+    // The app runs agent mode, not the direct path. A sampling bug once
+    // shipped because it was fixed in one and verified in the other, so the
+    // reasoning block is pinned on the path the app actually takes.
+    use personal_agent::llm::client_agent::{AgentClientExt, McpToolContext};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let client = LlmClient::from_profile(&thinking_profile(
+        &format!("ws://{addr}/v1/responses"),
+        20_000,
+    ))
+    .expect("client");
+    let agent = client
+        .create_agent(vec![], "You are terse.")
+        .await
+        .expect("agent");
+    let _ = client
+        .run_agent_stream(
+            &agent,
+            &[user("think about it")],
+            McpToolContext::default(),
+            |_event| {},
+        )
+        .await;
+
+    let frame = server.await.expect("server");
+    let reasoning = frame
+        .get("reasoning")
+        .unwrap_or_else(|| panic!("the agent path dropped the reasoning block: {frame}"));
+    assert_eq!(
+        reasoning.get("effort").and_then(Value::as_str),
+        Some("high"),
+        "frame was {frame}"
+    );
+    assert_eq!(
+        reasoning.get("summary").and_then(Value::as_str),
+        Some("auto"),
+        "frame was {frame}"
+    );
+}
