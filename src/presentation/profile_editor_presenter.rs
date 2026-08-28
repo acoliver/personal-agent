@@ -97,6 +97,8 @@ impl ProfileEditorPresenter {
     /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn start(&mut self) -> Result<(), PresenterError> {
         if self.running.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -147,6 +149,8 @@ impl ProfileEditorPresenter {
     /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -302,6 +306,7 @@ impl ProfileEditorPresenter {
     fn profile_auth_from_payload(profile: &crate::events::types::ModelProfile) -> AuthConfig {
         match profile.auth.clone() {
             Some(ModelProfileAuth::Keychain { label }) => AuthConfig::Keychain { label },
+            Some(ModelProfileAuth::OAuth { account }) => AuthConfig::OAuth { account },
             Some(ModelProfileAuth::None) => AuthConfig::None,
             None => AuthConfig::Keychain {
                 label: String::new(),
@@ -396,6 +401,8 @@ impl ProfileEditorPresenter {
         }
     }
 
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     async fn publish_profile_save_result(
         event_bus_tx: &broadcast::Sender<AppEvent>,
         view_tx: &broadcast::Sender<ViewCommand>,
@@ -547,6 +554,8 @@ impl ProfileEditorPresenter {
     /// Handle profile domain events
     ///
     /// @plan PLAN-20250125-REFACTOR.P12
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     async fn handle_profile_event(view_tx: &broadcast::Sender<ViewCommand>, event: ProfileEvent) {
         match event {
             ProfileEvent::TestStarted { id: _id } => {

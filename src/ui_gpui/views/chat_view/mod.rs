@@ -95,6 +95,16 @@ pub struct ChatView {
 }
 
 impl ChatView {
+    /// Ask for a sign-in from the expired-session banner and open the sheet.
+    pub fn start_codex_reauth(&mut self) {
+        self.state.codex_reauth_account = None;
+        self.emit(UserEvent::StartCodexSignIn {
+            method: crate::events::types::CodexSignInMethod::Browser,
+        });
+        crate::ui_gpui::navigation_channel()
+            .request_navigate(crate::presentation::view_command::ViewId::CodexSignIn);
+    }
+
     pub fn new(state: ChatState, cx: &mut gpui::Context<Self>) -> Self {
         let conversation_list =
             cx.new(|child_cx| ConversationListView::new(ConversationListMode::Inline, child_cx));

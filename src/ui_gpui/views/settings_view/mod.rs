@@ -8,6 +8,7 @@ mod backup_actions;
 mod command;
 mod input_handler;
 mod render;
+mod render_accounts;
 mod render_appearance;
 mod render_backup_panel;
 mod render_skills;
@@ -41,6 +42,11 @@ pub(super) enum ActiveField {
 #[allow(clippy::struct_excessive_bools)]
 pub struct SettingsState {
     pub profiles: Vec<ProfileItem>,
+    /// Signed-in `ChatGPT` accounts, shown under Models.
+    pub accounts: Vec<crate::presentation::view_command::CodexAccountInfo>,
+    /// Known accounts that could not be read, so an empty list is not
+    /// reported as "none yet" when the keychain refused to answer.
+    pub unreadable_accounts: usize,
     pub mcps: Vec<McpItem>,
     pub skills: Vec<SkillItem>,
     pub selected_profile_id: Option<Uuid>,
@@ -110,6 +116,8 @@ impl Default for SettingsState {
     fn default() -> Self {
         Self {
             profiles: Vec::new(),
+            accounts: Vec::new(),
+            unreadable_accounts: 0,
             mcps: Vec::new(),
             skills: Vec::new(),
             selected_profile_id: None,
@@ -766,11 +774,17 @@ impl SettingsView {
         .detach();
     }
 
-    pub(super) const fn select_category(&mut self, category: SettingsCategory) {
+    pub(super) fn select_category(&mut self, category: SettingsCategory) {
         self.state.selected_category = category;
         self.state.theme_dropdown_open = false;
         self.state.active_field = None;
         self.ime_marked_byte_count = 0;
+        // Reading stored accounts touches the keychain, so it happens when the
+        // panel that shows them is opened rather than at startup. Asking on
+        // each visit also keeps the list current after a sign-in elsewhere.
+        if category == SettingsCategory::Models {
+            self.emit(&UserEvent::ListCodexAccounts);
+        }
     }
 
     pub(super) const fn toggle_theme_dropdown(&mut self) {

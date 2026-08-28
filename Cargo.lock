@@ -35,7 +35,7 @@ checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
 dependencies = [
  "cfg-if",
  "cipher",
- "cpufeatures",
+ "cpufeatures 0.2.17",
  "zeroize",
 ]
 
@@ -940,6 +940,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chacha20"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.0",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1313,6 +1324,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpufeatures"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1440,6 +1460,12 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "data-encoding"
+version = "2.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "data-url"
@@ -2375,6 +2401,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
+ "rand_core 0.10.1",
  "wasip2",
  "wasip3",
 ]
@@ -2983,10 +3010,10 @@ dependencies = [
  "http",
  "hyper",
  "hyper-util",
- "rustls",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "tokio",
- "tokio-rustls",
+ "tokio-rustls 0.26.4",
  "tower-service",
  "webpki-roots",
 ]
@@ -4416,6 +4443,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "openssl-probe"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
+
+[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4561,6 +4594,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "async-trait",
+ "base64",
  "bytes",
  "chrono",
  "cocoa 0.26.0",
@@ -4601,6 +4635,8 @@ dependencies = [
  "serdes-ai-core",
  "serdes-ai-mcp",
  "serdes-ai-models",
+ "serdes-ai-providers",
+ "serdes-ai-responses",
  "serdes-ai-tools",
  "sha2",
  "smol",
@@ -4609,6 +4645,7 @@ dependencies = [
  "tiktoken-rs",
  "tiny_http",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
  "toml 0.8.23",
  "tracing",
@@ -4734,7 +4771,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d1fe60d06143b2430aa532c94cfe9e29783047f06c0d7fd359a9a51b729fa25"
 dependencies = [
  "cfg-if",
- "cpufeatures",
+ "cpufeatures 0.2.17",
  "opaque-debug",
  "universal-hash",
 ]
@@ -4966,7 +5003,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.1.2",
- "rustls",
+ "rustls 0.23.37",
  "socket2",
  "thiserror 2.0.18",
  "tokio",
@@ -4986,7 +5023,7 @@ dependencies = [
  "rand 0.9.2",
  "ring",
  "rustc-hash 2.1.2",
- "rustls",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.18",
@@ -5052,6 +5089,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
+dependencies = [
+ "chacha20",
+ "getrandom 0.4.2",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "rand_chacha"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5088,6 +5136,12 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rangemap"
@@ -5326,14 +5380,14 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
- "tokio-rustls",
+ "tokio-rustls 0.26.4",
  "tokio-util",
  "tower",
  "tower-http",
@@ -5522,6 +5576,20 @@ dependencies = [
 
 [[package]]
 name = "rustls"
+version = "0.22.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf4ef73721ac7bcd79b2b315da7779d8fc09718c6b3d2d1b2d94850eb8c18432"
+dependencies = [
+ "log",
+ "ring",
+ "rustls-pki-types",
+ "rustls-webpki 0.102.8",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls"
 version = "0.23.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
@@ -5529,9 +5597,31 @@ dependencies = [
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki",
+ "rustls-webpki 0.103.10",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rustls-native-certs"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5bfb394eeed242e909609f56089eecfe5fda225042e8b171791b9c95f5931e5"
+dependencies = [
+ "openssl-probe",
+ "rustls-pemfile",
+ "rustls-pki-types",
+ "schannel",
+ "security-framework 2.11.1",
+]
+
+[[package]]
+name = "rustls-pemfile"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
@@ -5542,6 +5632,17 @@ checksum = "be040f8b0a225e40375822a563fa9524378b9d63112f53e19ffff34df5d33fdd"
 dependencies = [
  "web-time",
  "zeroize",
+]
+
+[[package]]
+name = "rustls-webpki"
+version = "0.102.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+dependencies = [
+ "ring",
+ "rustls-pki-types",
+ "untrusted",
 ]
 
 [[package]]
@@ -5609,6 +5710,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "schannel"
+version = "0.1.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5877,8 +5987,8 @@ dependencies = [
 
 [[package]]
 name = "serdes-ai"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "futures",
  "serdes-ai-agent",
@@ -5892,14 +6002,14 @@ dependencies = [
  "serdes-ai-streaming",
  "serdes-ai-tools",
  "serdes-ai-toolsets",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
 [[package]]
 name = "serdes-ai-agent"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5912,7 +6022,7 @@ dependencies = [
  "serdes-ai-core",
  "serdes-ai-models",
  "serdes-ai-tools",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "uuid",
@@ -5920,8 +6030,8 @@ dependencies = [
 
 [[package]]
 name = "serdes-ai-core"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "base64",
@@ -5932,15 +6042,15 @@ dependencies = [
  "mime",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "url",
  "uuid",
 ]
 
 [[package]]
 name = "serdes-ai-macros"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -5950,8 +6060,8 @@ dependencies = [
 
 [[package]]
 name = "serdes-ai-mcp"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "base64",
@@ -5963,7 +6073,7 @@ dependencies = [
  "serdes-ai-core",
  "serdes-ai-tools",
  "serdes-ai-toolsets",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "url",
@@ -5972,8 +6082,8 @@ dependencies = [
 
 [[package]]
 name = "serdes-ai-models"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5988,8 +6098,10 @@ dependencies = [
  "serde_json",
  "serdes-ai-core",
  "serdes-ai-output",
+ "serdes-ai-retries",
+ "serdes-ai-streaming",
  "serdes-ai-tools",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -5998,8 +6110,8 @@ dependencies = [
 
 [[package]]
 name = "serdes-ai-output"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6011,15 +6123,15 @@ dependencies = [
  "serdes-ai-macros",
  "serdes-ai-tools",
  "serdes-ai-toolsets",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "serdes-ai-providers"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "base64",
@@ -6031,31 +6143,55 @@ dependencies = [
  "serdes-ai-core",
  "serdes-ai-models",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "urlencoding",
 ]
 
 [[package]]
+name = "serdes-ai-responses"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "futures",
+ "parking_lot",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serdes-ai-core",
+ "serdes-ai-models",
+ "serdes-ai-streaming",
+ "serdes-ai-tools",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "serdes-ai-retries"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
- "rand 0.8.5",
+ "rand 0.10.2",
  "reqwest",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "serdes-ai-streaming"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "bytes",
@@ -6066,15 +6202,16 @@ dependencies = [
  "serde",
  "serde_json",
  "serdes-ai-core",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 
 [[package]]
 name = "serdes-ai-tools"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6085,15 +6222,15 @@ dependencies = [
  "serde_json",
  "serdes-ai-core",
  "serdes-ai-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "serdes-ai-toolsets"
-version = "0.2.6"
-source = "git+https://github.com/janfeddersen-wq/serdesAI.git?rev=be5774b5c618a71fe899ac5b8c6a5e958ea42a5d#be5774b5c618a71fe899ac5b8c6a5e958ea42a5d"
+version = "0.3.0"
+source = "git+https://github.com/acoliver/serdesAI.git?rev=e675674ef802a0ac90c03cd8bcdbd5114fabb44f#e675674ef802a0ac90c03cd8bcdbd5114fabb44f"
 dependencies = [
  "async-trait",
  "indexmap",
@@ -6102,9 +6239,20 @@ dependencies = [
  "serde_json",
  "serdes-ai-core",
  "serdes-ai-tools",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest",
 ]
 
 [[package]]
@@ -6120,7 +6268,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
- "cpufeatures",
+ "cpufeatures 0.2.17",
  "digest",
 ]
 
@@ -6824,11 +6972,22 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "775e0c0f0adb3a2f22a00c4745d728b479985fc15ee7ca6a2608388c5569860f"
+dependencies = [
+ "rustls 0.22.4",
+ "rustls-pki-types",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-rustls"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
- "rustls",
+ "rustls 0.23.37",
  "tokio",
 ]
 
@@ -6841,6 +7000,22 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38"
+dependencies = [
+ "futures-util",
+ "log",
+ "rustls 0.22.4",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.25.0",
+ "tungstenite",
 ]
 
 [[package]]
@@ -7129,6 +7304,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ef1a641ea34f399a848dea702823bbecfb4c486f911735368f1f137cb8257e1"
+dependencies = [
+ "byteorder",
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.8.5",
+ "rustls 0.22.4",
+ "rustls-pki-types",
+ "sha1",
+ "thiserror 1.0.69",
+ "url",
+ "utf-8",
 ]
 
 [[package]]

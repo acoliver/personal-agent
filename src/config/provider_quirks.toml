@@ -62,3 +62,20 @@ base_url = "https://api.moonshot.ai/v1"
 [moonshotai-cn]
 transport = "openai"
 base_url = "https://api.moonshot.cn/v1"
+
+# ChatGPT / Codex. Authenticated with a ChatGPT subscription (OAuth), not an
+# API key, and spoken over the Responses protocol on a websocket. The
+# "open-responses" transport selects that client; the scheme of base_url picks
+# websocket vs HTTP.
+[openai-codex]
+transport = "open-responses"
+base_url = "wss://chatgpt.com/backend-api/codex/responses"
+
+[openai-codex.headers]
+OpenAI-Beta = "responses_websockets=2026-02-06"
+originator = "personal-agent"
+
+# Any Open Responses-compatible endpoint. The user supplies the URL and
+# either an API key or an OAuth account.
+[open-responses]
+transport = "open-responses"

@@ -381,7 +381,8 @@ impl ChatServiceImpl {
             TitleGenerationRequest::for_untitled_conversation(&conversation, &profile);
 
         let client = LlmClient::from_profile(&profile)
-            .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?;
+            .map_err(|e| ServiceError::Internal(format!("Failed to create LLM client: {e}")))?
+            .for_conversation(conversation.id);
         let mut messages = Self::build_llm_messages(&conversation, &profile);
         strip_thinking_from_previous_turns(&mut messages);
         let compression_config = self.load_compression_config().await;
@@ -562,6 +563,8 @@ impl ChatServiceImpl {
     /// @plan PLAN-20260416-ISSUE173.P14-CR4
     /// @requirement REQ-173-001.1
     #[allow(clippy::too_many_arguments)]
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     async fn spawn_stream_task(
         &self,
         conversation_id: Uuid,

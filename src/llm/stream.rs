@@ -71,6 +71,13 @@ pub async fn send_message_stream(
                 .trim()
                 .to_string()
         }
+        AuthConfig::OAuth { .. } => {
+            return Err(LlmError::Auth(
+                "OAuth profiles require the Responses transport; this legacy agent path only \
+                 speaks API-key providers"
+                    .to_string(),
+            ))
+        }
     };
 
     // Build model spec string (e.g., "openai:gpt-4o")

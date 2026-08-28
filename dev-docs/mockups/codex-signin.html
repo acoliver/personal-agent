@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - ChatGPT Sign-in Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .annotation {
+    font-size: 11px;
+    color: #6a9955;
+    font-style: italic;
+    margin-top: 8px;
+    max-width: 620px;
+    line-height: 1.6;
+  }
+  .mockup-wrapper { display: flex; flex-direction: column; align-items: center; }
+
+  .panel {
+    width: 620px;
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .top-bar {
+    height: 44px;
+    background: #171717;
+    border-bottom: 1px solid #3a3a3a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+  }
+  .title { font-size: 15px; font-weight: 600; color: #e5e5e5; }
+  .body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .line { font-size: 13px; color: #e5e5e5; }
+  .muted { font-size: 12px; color: #888; }
+  .link {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: #6a9955;
+    word-break: break-all;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .waiting {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: #bbb;
+  }
+  .countdown { color: #888; font-variant-numeric: tabular-nums; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .btn-primary { background: #6a9955; color: #101010; font-weight: 600; }
+  .btn-secondary { background: #262626; color: #e5e5e5; border-color: #3a3a3a; }
+  .row { display: flex; gap: 8px; }
+  .spread { display: flex; gap: 8px; justify-content: space-between; }
+  .code {
+    align-self: flex-start;
+    padding: 8px 16px;
+    background: #262626;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 22px;
+    letter-spacing: 4px;
+    font-weight: 600;
+    color: #e5e5e5;
+  }
+  .ok { color: #6a9955; }
+  .err { color: #d16969; }
+</style>
+</head>
+<body>
+
+<h1>PersonalAgent &mdash; ChatGPT sign-in</h1>
+<h2>Issue #214</h2>
+
+<div class="mockup-wrapper">
+  <div class="panel">
+    <div class="top-bar">
+      <div class="title">Sign in with ChatGPT</div>
+      <div class="muted" style="cursor:pointer">Cancel</div>
+    </div>
+    <div class="body">
+      <div class="line">Your browser is opening. If it did not, click here:</div>
+      <div class="link">https://auth.openai.com/oauth/authorize?response_type=code&amp;client_id=app_EMoam&hellip;</div>
+      <div class="row"><div class="btn btn-secondary">Copy link</div></div>
+      <div class="waiting">
+        <span>Waiting for you to finish signing in&hellip;</span>
+        <span class="countdown">1:47</span>
+      </div>
+      <div class="muted">Listening on localhost:1455.</div>
+      <div class="row"><div class="btn btn-secondary">Use a device code</div></div>
+    </div>
+  </div>
+  <div class="annotation">
+    Default path. The browser opens on its own; the link is clickable and
+    copyable so a failed auto-open is recoverable. "Use a device code" is for
+    a headless box or a browser on another machine.
+  </div>
+</div>
+
+<div class="mockup-wrapper">
+  <div class="panel">
+    <div class="top-bar">
+      <div class="title">Sign in with ChatGPT</div>
+      <div class="muted" style="cursor:pointer">Cancel</div>
+    </div>
+    <div class="body">
+      <div class="muted">Port 1455 is in use, so we switched to a device code.</div>
+      <div class="line">1. &nbsp;Open this page on any device</div>
+      <div class="link">https://auth.openai.com/codex/device</div>
+      <div class="row">
+        <div class="btn btn-secondary">Copy link</div>
+        <div class="btn btn-secondary">Open here</div>
+      </div>
+      <div class="line">2. &nbsp;Paste the code. It is already on your clipboard.</div>
+      <div class="code">BXFD-KM2Q</div>
+      <div class="row"><div class="btn btn-secondary">Copy code</div></div>
+      <div class="waiting">
+        <span>Waiting for approval&hellip;</span>
+        <span class="countdown">14:12</span>
+      </div>
+      <div class="muted">Only continue if you started this sign-in.</div>
+    </div>
+  </div>
+  <div class="annotation">
+    Reached automatically when the browser flow cannot start, or by pressing
+    "Use a device code". The code goes on the clipboard the moment it arrives,
+    without a button press, because pasting it is the next thing the user does.
+    The first line explains the switch and is omitted when the user chose this
+    deliberately. The last line is lifted from the Codex CLI's own prompt.
+  </div>
+</div>
+
+<div class="mockup-wrapper">
+  <div class="panel">
+    <div class="top-bar">
+      <div class="title">Sign in with ChatGPT</div>
+      <div class="muted" style="cursor:pointer">Cancel</div>
+    </div>
+    <div class="body">
+      <div class="line ok">Signed in as andrew@example.com</div>
+      <div class="muted">ChatGPT Pro</div>
+      <div class="row"><div class="btn btn-primary">Done</div></div>
+    </div>
+  </div>
+  <div class="annotation">Success. "Done" returns to the profile editor, which has already adopted the account.</div>
+</div>
+
+<div class="mockup-wrapper">
+  <div class="panel">
+    <div class="top-bar">
+      <div class="title">Sign in with ChatGPT</div>
+      <div class="muted" style="cursor:pointer">Cancel</div>
+    </div>
+    <div class="body">
+      <div class="line err">Sign-in timed out.</div>
+      <div class="muted">sign-in timed out</div>
+      <div class="row">
+        <div class="btn btn-primary">Try again</div>
+        <div class="btn btn-secondary">Use a device code</div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">
+    Every failure gets its own message and its own way forward: an expired code
+    offers "Get a new code", an issuer without device login offers "Use my
+    browser", a cancellation offers nothing. A busy port never reaches this
+    screen because it is handled by falling through to a device code.
+  </div>
+</div>
+
+</body>
+</html>

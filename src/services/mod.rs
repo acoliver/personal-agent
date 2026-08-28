@@ -33,6 +33,7 @@ pub mod mcp_registry;
 pub mod mcp_registry_impl;
 pub mod models_registry;
 pub mod models_registry_impl;
+pub mod oauth;
 pub mod profile;
 pub mod profile_impl;
 pub mod profile_migration;

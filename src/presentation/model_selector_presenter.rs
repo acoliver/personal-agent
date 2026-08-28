@@ -83,6 +83,8 @@ impl ModelSelectorPresenter {
     /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn start(&mut self) -> Result<(), PresenterError> {
         if self.running.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -124,6 +126,8 @@ impl ModelSelectorPresenter {
     /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
             .store(false, std::sync::atomic::Ordering::Relaxed);

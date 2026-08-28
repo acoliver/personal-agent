@@ -223,6 +223,12 @@ pub struct ChatState {
     pub cursor_position: usize,
     pub composer_focused: bool,
 
+    /// Account whose `ChatGPT` session expired mid-conversation, if any.
+    ///
+    /// Set when a refresh failed permanently: the turn cannot run until the
+    /// user signs in again, so the chat says so rather than surfacing a raw
+    /// provider error.
+    pub codex_reauth_account: Option<String>,
     pub conversation_title: String,
     pub current_model: String,
     pub profiles: Vec<ProfileSummary>,
@@ -277,6 +283,7 @@ impl Default for ChatState {
             streaming: StreamingState::Idle,
             show_thinking: false,
             thinking_content: None,
+            codex_reauth_account: None,
             composer_focused: false,
 
             input_text: String::new(),

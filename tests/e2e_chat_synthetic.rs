@@ -86,11 +86,14 @@ async fn test_real_chat_with_synthetic_api() {
         AuthConfig::None => {
             println!("No API key required (local model)");
         }
+        AuthConfig::OAuth { account } => {
+            assert!(!account.is_empty(), "OAuth account must not be empty");
+            println!("OAuth account: {account} [OK]");
+        }
     }
 
-    let api_key_override_present = std::env::var("PA_E2E_API_KEY")
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty());
+    let api_key_override_present =
+        std::env::var("PA_E2E_API_KEY").is_ok_and(|value| !value.trim().is_empty());
 
     if !api_key_override_present {
         if let AuthConfig::Keychain { label } = &profile.auth {

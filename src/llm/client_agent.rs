@@ -403,7 +403,7 @@ impl AgentClientExt for crate::llm::LlmClient {
         );
         self.set_api_key_env();
 
-        let model = self.build_agent_model()?;
+        let model = self.build_agent_model().await?;
         let builder = self.build_agent_builder(model, system_prompt);
         // Register native tools first (they appear first in tool list)
         let builder = register_native_tools(builder);
@@ -606,10 +606,10 @@ impl crate::llm::LlmClient {
         Ok(())
     }
 
-    fn build_agent_model(&self) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+    async fn build_agent_model(&self) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
         let base_url = self.base_url_override();
         let provider = self.get_serdes_provider();
-        self.build_model(provider, base_url)
+        self.build_model(provider, base_url).await
     }
 
     fn build_agent_builder(
@@ -617,20 +617,32 @@ impl crate::llm::LlmClient {
         model: std::sync::Arc<dyn serdes_ai::Model>,
         system_prompt: &str,
     ) -> AgentBuilder<McpToolContext> {
-        let mut builder = AgentBuilder::from_arc(model)
-            .temperature(self.profile.parameters.temperature)
-            .top_p(self.profile.parameters.top_p)
-            .parallel_tool_calls(true);
+        let mut builder = AgentBuilder::from_arc(model).parallel_tool_calls(true);
 
-        if let Some(max_tokens) = self.profile.parameters.max_tokens {
+        // Asked, not decided here: see `LlmClient::sampling`.
+        let sampling = self.sampling();
+        if let Some(temperature) = sampling.temperature {
+            builder = builder.temperature(temperature);
+        }
+        if let Some(top_p) = sampling.top_p {
+            builder = builder.top_p(top_p);
+        }
+        if let Some(max_tokens) = sampling.max_tokens {
             builder = builder.max_tokens(u64::from(max_tokens));
         }
 
-        if !system_prompt.is_empty() {
-            builder = builder.system_prompt(system_prompt);
-        }
+        Self::with_system_prompt(builder, system_prompt)
+    }
 
-        builder
+    fn with_system_prompt(
+        builder: AgentBuilder<McpToolContext>,
+        system_prompt: &str,
+    ) -> AgentBuilder<McpToolContext> {
+        if system_prompt.is_empty() {
+            builder
+        } else {
+            builder.system_prompt(system_prompt)
+        }
     }
 
     fn register_mcp_tools(

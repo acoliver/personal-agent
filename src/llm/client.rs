@@ -64,6 +64,39 @@ pub enum StreamEvent {
     Error(String),
 }
 
+/// Sampling and length controls for one turn.
+///
+/// All `None` means the endpoint refuses them and the request must go out
+/// without them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SamplingSettings {
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub max_tokens: Option<u32>,
+}
+
+impl SamplingSettings {
+    /// Carry nothing.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+        }
+    }
+}
+
+/// Token usage accumulated from a provider's terminal stream event.
+///
+/// Providers that confirm completion on the wire report usage there; the rest
+/// leave both fields `None`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct StreamUsage {
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+}
+
 /// LLM client that uses `SerdesAI`
 #[derive(Clone)]
 pub struct LlmClient {
@@ -72,6 +105,12 @@ pub struct LlmClient {
     /// Base URL from models.dev registry (if available)
     pub(crate) registry_base_url: Option<String>,
     pub(crate) quirks: ProviderQuirks,
+    /// Conversation this client is serving, when it is serving one.
+    ///
+    /// Session-stateful transports keep the wire conversation alive between
+    /// turns and key it on this. Absent means "build a throwaway model",
+    /// which is what connection tests and one-shot calls want.
+    pub(crate) conversation_id: Option<uuid::Uuid>,
 }
 
 impl LlmClient {
@@ -94,7 +133,19 @@ impl LlmClient {
             api_key,
             registry_base_url,
             quirks: resolve_provider_quirks(profile),
+            conversation_id: None,
         })
+    }
+
+    /// Bind this client to a conversation.
+    ///
+    /// Session-stateful transports keep one wire conversation per chat, so
+    /// callers that have a conversation should say so; otherwise every turn
+    /// opens a fresh session and replays the whole history.
+    #[must_use]
+    pub const fn for_conversation(mut self, conversation_id: uuid::Uuid) -> Self {
+        self.conversation_id = Some(conversation_id);
+        self
     }
 
     /// Get the base URL from models.dev registry for a provider
@@ -137,6 +188,10 @@ impl LlmClient {
                 }
                 Ok(key.trim().to_string())
             }
+            // OAuth profiles carry a bearer token, not an API key. The token
+            // is resolved per request in the open-responses transport, which
+            // is the only transport that accepts an OAuth profile.
+            AuthConfig::OAuth { .. } => Ok(String::new()),
         }
     }
 
@@ -150,13 +205,44 @@ impl LlmClient {
     }
 
     /// Build model settings from profile parameters
-    fn model_settings(&self) -> ModelSettings {
-        ModelSettings {
+    /// The sampling and length controls a turn should carry, if any.
+    ///
+    /// There are two ways to start a turn, the direct client and the agent,
+    /// and they build their requests separately. Both ask here, because
+    /// answering this question twice is how a fixed bug came back: the direct
+    /// path stopped sending `temperature` while the agent path kept doing it,
+    /// and the agent path is the one the app uses.
+    #[must_use]
+    pub fn sampling(&self) -> SamplingSettings {
+        // The codex backend rejects these outright, answering
+        // `Unsupported parameter: temperature` and then the same for
+        // `max_output_tokens`, so the turn never starts. Reasoning models take
+        // a reasoning effort instead, which the transport sets from the
+        // profile's thinking settings.
+        if self.uses_open_responses() {
+            return SamplingSettings::none();
+        }
+
+        SamplingSettings {
             temperature: Some(self.profile.parameters.temperature),
             top_p: Some(self.profile.parameters.top_p),
-            max_tokens: self.profile.parameters.max_tokens.map(u64::from),
+            max_tokens: self.profile.parameters.max_tokens,
+        }
+    }
+
+    fn model_settings(&self) -> ModelSettings {
+        let sampling = self.sampling();
+        ModelSettings {
+            temperature: sampling.temperature,
+            top_p: sampling.top_p,
+            max_tokens: sampling.max_tokens.map(u64::from),
             ..ModelSettings::default()
         }
+    }
+
+    /// Whether this profile talks the Responses protocol.
+    pub(crate) fn uses_open_responses(&self) -> bool {
+        self.quirks.serdes_provider.as_deref() == Some(crate::llm::open_responses::TRANSPORT)
     }
 
     fn build_model_requests(messages: &[Message]) -> Vec<ModelRequest> {
@@ -189,13 +275,40 @@ impl LlmClient {
                         }
                     }
                     Role::Assistant => {
-                        req.add_user_prompt(format!("[Assistant]: {}", m.content));
+                        // The assistant's own turn has to go back as an
+                        // assistant turn. Flattening it into a user prompt
+                        // breaks role alternation, and on session-stateful
+                        // transports it makes the client resend a reply the
+                        // server already holds.
+                        use serdes_ai::core::messages::request::ModelRequestPart;
+                        req.parts.push(ModelRequestPart::ModelResponse(Box::new(
+                            Self::assistant_response(m),
+                        )));
                     }
                     Role::System => req.add_system_prompt(m.content.clone()),
                 }
                 req
             })
             .collect()
+    }
+
+    /// Rebuild a stored assistant turn as a model response, including any tool
+    /// calls it made, so the provider sees the turn it actually produced.
+    fn assistant_response(message: &Message) -> ModelResponse {
+        use serdes_ai::core::messages::{ModelResponsePart, TextPart, ToolCallPart};
+
+        let mut response = ModelResponse::new();
+        if !message.content.is_empty() {
+            response
+                .parts
+                .push(ModelResponsePart::Text(TextPart::new(&message.content)));
+        }
+        for tool_use in &message.tool_uses {
+            let mut call = ToolCallPart::new(&tool_use.name, tool_use.input.to_string());
+            call.tool_call_id = Some(tool_use.id.clone());
+            response.parts.push(ModelResponsePart::ToolCall(call));
+        }
+        response
     }
 
     pub(crate) fn base_url_override(&self) -> Option<&str> {
@@ -219,13 +332,13 @@ impl LlmClient {
             .collect()
     }
 
-    fn build_model_and_params(
+    async fn build_model_and_params(
         &self,
         tools: &[crate::llm::tools::Tool],
     ) -> StdResult<(std::sync::Arc<dyn serdes_ai::Model>, ModelRequestParameters), LlmError> {
         let base_url = self.base_url_override();
         let provider = self.get_serdes_provider();
-        let model = self.build_model(provider, base_url)?;
+        let model = self.build_model(provider, base_url).await?;
         let tool_defs = Self::build_tool_definitions(tools);
         let params = ModelRequestParameters::new().with_tools(tool_defs);
         Ok((model, params))
@@ -253,6 +366,7 @@ impl LlmClient {
     fn handle_stream_event<F>(
         event: ModelResponseStreamEvent,
         pending_tool_calls: &mut HashMap<usize, (String, String, String)>,
+        usage: &mut StreamUsage,
         on_event: &mut F,
     ) where
         F: FnMut(StreamEvent) + Send,
@@ -297,15 +411,35 @@ impl LlmClient {
             ModelResponseStreamEvent::PartEnd(end) => {
                 Self::emit_tool_use(pending_tool_calls, end.index, on_event);
             }
+            ModelResponseStreamEvent::StreamComplete(complete) => {
+                // Providers that confirm completion on the wire (Anthropic
+                // `message_stop`, the Responses `response.completed` frame)
+                // report usage here. Record it; the single terminal
+                // `Complete` is still emitted once the stream is drained, so
+                // providers that never send this event behave as before.
+                usage.input_tokens = complete.input_tokens.and_then(|v| u32::try_from(v).ok());
+                usage.output_tokens = complete.output_tokens.and_then(|v| u32::try_from(v).ok());
+            }
         }
     }
 
     /// Build a model with extended configuration (thinking support, etc.)
-    pub(crate) fn build_model(
+    pub(crate) async fn build_model(
         &self,
         provider: &str,
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        if provider == super::open_responses::TRANSPORT {
+            return self.build_open_responses_model(base_url).await;
+        }
+
+        if self.profile.auth.requires_oauth_account() {
+            return Err(LlmError::Auth(format!(
+                "OAuth profiles need the Responses transport; provider '{}' speaks API keys",
+                self.profile.provider_id
+            )));
+        }
+
         if provider == "openai" {
             return self.build_openai_model_with_quirks(base_url);
         }
@@ -349,6 +483,26 @@ impl LlmClient {
         );
 
         Ok(std::sync::Arc::new(wrapper))
+    }
+
+    /// Build (or reuse) an `OpenAI` Responses model.
+    ///
+    /// Deliberately not wrapped in `NormalizingSseModel`: that wrapper repairs
+    /// Chat Completions SSE, and this client already emits well-formed stream
+    /// events.
+    async fn build_open_responses_model(
+        &self,
+        base_url: Option<&str>,
+    ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        let endpoint = base_url.unwrap_or(self.profile.base_url.as_str());
+        super::open_responses::model_for(super::open_responses::SessionRequest {
+            profile: &self.profile,
+            quirks: &self.quirks,
+            endpoint,
+            conversation_id: self.conversation_id,
+            api_key: &self.api_key,
+        })
+        .await
     }
 
     fn build_openai_model_with_quirks(
@@ -437,7 +591,7 @@ impl LlmClient {
         self.set_api_key_env();
 
         let model_requests = Self::build_model_requests(messages);
-        let (model, params) = self.build_model_and_params(tools)?;
+        let (model, params) = self.build_model_and_params(tools).await?;
 
         // Make the request using the model directly
         let response = model
@@ -483,7 +637,7 @@ impl LlmClient {
         self.set_api_key_env();
 
         let model_requests = Self::build_model_requests(messages);
-        let (model, params) = self.build_model_and_params(tools)?;
+        let (model, params) = self.build_model_and_params(tools).await?;
 
         // Use the model directly for streaming
         let mut stream = match model
@@ -499,11 +653,17 @@ impl LlmClient {
         };
 
         let mut pending_tool_calls: HashMap<usize, (String, String, String)> = HashMap::new();
+        let mut usage = StreamUsage::default();
 
         while let Some(event_result) = stream.next().await {
             match event_result {
                 Ok(event) => {
-                    Self::handle_stream_event(event, &mut pending_tool_calls, &mut on_event);
+                    Self::handle_stream_event(
+                        event,
+                        &mut pending_tool_calls,
+                        &mut usage,
+                        &mut on_event,
+                    );
                 }
                 Err(e) => {
                     let err_msg = debug_error_message(&e);
@@ -514,8 +674,8 @@ impl LlmClient {
         }
 
         on_event(StreamEvent::Complete {
-            input_tokens: None,
-            output_tokens: None,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
         });
         Ok(())
     }
@@ -710,128 +870,5 @@ impl Message {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serdes_ai::core::messages::parts::ToolCallArgs;
-    use serdes_ai::core::{ModelResponse, ModelResponsePart};
-
-    #[test]
-    fn parse_response_includes_tool_uses_and_thinking() {
-        crate::services::secure_store::use_mock_backend();
-        crate::services::secure_store::api_keys::store("_test_parse_resp", "fake-key-for-test")
-            .expect("store test key");
-
-        let profile = ModelProfile {
-            provider_id: "anthropic".to_string(),
-            model_id: "claude-3-opus".to_string(),
-            auth: AuthConfig::Keychain {
-                label: "_test_parse_resp".to_string(),
-            },
-            ..Default::default()
-        };
-
-        let _client = LlmClient::from_profile(&profile).unwrap();
-
-        // Clean up test key
-        let _ = crate::services::secure_store::api_keys::delete("_test_parse_resp");
-        let response = ModelResponse {
-            parts: vec![
-                ModelResponsePart::Thinking(serdes_ai::core::messages::parts::ThinkingPart::new(
-                    "Let me think",
-                )),
-                ModelResponsePart::Text(serdes_ai::core::messages::parts::TextPart::new(
-                    "Final answer",
-                )),
-                ModelResponsePart::ToolCall(
-                    serdes_ai::core::messages::parts::ToolCallPart::new(
-                        "get_weather",
-                        ToolCallArgs::json(serde_json::json!({"city": "NYC"})),
-                    )
-                    .with_tool_call_id("toolu_123"),
-                ),
-            ],
-            ..ModelResponse::new()
-        };
-
-        let message = LlmClient::parse_response(response, &[]);
-
-        assert_eq!(message.role, Role::Assistant);
-        assert_eq!(message.content, "Final answer");
-        assert_eq!(message.thinking_content, Some("Let me think".to_string()));
-        assert_eq!(message.tool_uses.len(), 1);
-        assert_eq!(message.tool_uses[0].name, "get_weather");
-        assert_eq!(message.tool_uses[0].id, "toolu_123");
-    }
-
-    #[test]
-    fn message_builder_tracks_tool_results() {
-        let message =
-            Message::user("input").with_tool_results(vec![crate::llm::tools::ToolResult::success(
-                "toolu_1", "ok",
-            )]);
-
-        let requests = LlmClient::build_model_requests(&[message]);
-        let prompt = requests[0].user_prompts().next().unwrap();
-        assert_eq!(prompt.as_text(), Some("input"));
-
-        assert!(requests[0].parts.iter().any(|part| matches!(
-            part,
-            serdes_ai::core::messages::ModelRequestPart::ToolReturn(_)
-        )));
-    }
-
-    #[test]
-    fn build_model_wraps_non_openai_with_normalizer() {
-        crate::services::secure_store::use_mock_backend();
-        crate::services::secure_store::api_keys::store("_test_build_model", "test-key")
-            .expect("store test key");
-
-        let profile = ModelProfile {
-            provider_id: "anthropic".to_string(),
-            model_id: "claude-3-opus".to_string(),
-            auth: AuthConfig::Keychain {
-                label: "_test_build_model".to_string(),
-            },
-            parameters: crate::models::profile::ModelParameters {
-                max_tokens_field_name: Some("max_completion_tokens".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let client = LlmClient::from_profile(&profile).unwrap();
-        // Verify that build_model succeeds for non-OpenAI providers
-        let result = client.build_model("anthropic", None);
-        assert!(result.is_ok(), "build_model should succeed for anthropic");
-
-        let _ = crate::services::secure_store::api_keys::delete("_test_build_model");
-    }
-
-    #[test]
-    fn build_model_openai_uses_quirks_path() {
-        crate::services::secure_store::use_mock_backend();
-        crate::services::secure_store::api_keys::store("_test_build_openai", "test-key")
-            .expect("store test key");
-
-        let profile = ModelProfile {
-            provider_id: "openai".to_string(),
-            model_id: "gpt-4.1".to_string(),
-            auth: AuthConfig::Keychain {
-                label: "_test_build_openai".to_string(),
-            },
-            parameters: crate::models::profile::ModelParameters {
-                max_tokens_field_name: Some("max_completion_tokens".to_string()),
-                extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let client = LlmClient::from_profile(&profile).unwrap();
-        // Verify that build_model succeeds for OpenAI providers (uses quirks path)
-        let result = client.build_model("openai", None);
-        assert!(result.is_ok(), "build_model should succeed for openai");
-
-        let _ = crate::services::secure_store::api_keys::delete("_test_build_openai");
-    }
-}
+#[path = "client_tests.rs"]
+mod tests;

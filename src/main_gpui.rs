@@ -30,9 +30,9 @@ use personal_agent::events::types::UserEvent;
 use personal_agent::events::EventBus;
 use personal_agent::llm::client_agent::ApprovalGate;
 use personal_agent::presentation::{
-    ApiKeyManagerPresenter, ChatPresenter, ErrorPresenter, HistoryPresenter, McpAddPresenter,
-    McpConfigurePresenter, ModelSelectorPresenter, ProfileEditorPresenter, SettingsPresenter,
-    ViewCommand,
+    ApiKeyManagerPresenter, ChatPresenter, CodexAuthPresenter, ErrorPresenter, HistoryPresenter,
+    McpAddPresenter, McpConfigurePresenter, ModelSelectorPresenter, ProfileEditorPresenter,
+    SettingsPresenter, ViewCommand,
 };
 use personal_agent::services::{
     AppSettingsService, AppSettingsServiceImpl, BackupService, BackupServiceImpl, ChatService,
@@ -720,6 +720,8 @@ async fn create_presenter_channels_and_bridges(
         tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(100);
     let (api_key_manager_view_tx, _) =
         tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(100);
+    let (codex_auth_view_tx, _) =
+        tokio::sync::broadcast::channel::<personal_agent::presentation::ViewCommand>(100);
 
     let bridges = vec![
         spawn_broadcast_to_mpsc_view_command_bridge(
@@ -752,6 +754,11 @@ async fn create_presenter_channels_and_bridges(
             view_tx.clone(),
             "ApiKeyManagerPresenter",
         ),
+        spawn_broadcast_to_mpsc_view_command_bridge(
+            codex_auth_view_tx.subscribe(),
+            view_tx.clone(),
+            "CodexAuthPresenter",
+        ),
     ];
 
     let settings_view_tx_for_snapshot = settings_view_tx.clone();
@@ -767,6 +774,7 @@ async fn create_presenter_channels_and_bridges(
         mcp_add_view_tx,
         mcp_configure_view_tx,
         api_key_manager_view_tx,
+        codex_auth_view_tx,
     )
     .await;
 
@@ -793,6 +801,7 @@ async fn start_all_presenters(
     api_key_manager_view_tx: tokio::sync::broadcast::Sender<
         personal_agent::presentation::ViewCommand,
     >,
+    codex_auth_view_tx: tokio::sync::broadcast::Sender<personal_agent::presentation::ViewCommand>,
 ) {
     macro_rules! start_presenter {
         ($name:expr, $presenter:expr) => {
@@ -851,6 +860,9 @@ async fn start_all_presenters(
         api_key_manager_view_tx,
     );
 
+    let mut codex_auth =
+        CodexAuthPresenter::new(services.profile.clone(), event_bus, codex_auth_view_tx);
+
     let mut error = ErrorPresenter::new_with_event_bus(event_bus, view_tx);
 
     start_presenter!("ChatPresenter", chat);
@@ -861,6 +873,7 @@ async fn start_all_presenters(
     start_presenter!("McpAddPresenter", mcp_add);
     start_presenter!("McpConfigurePresenter", mcp_configure);
     start_presenter!("ApiKeyManagerPresenter", api_key_manager);
+    start_presenter!("CodexAuthPresenter", codex_auth);
     start_presenter!("ErrorPresenter", error);
-    info!("All 9 presenters started");
+    info!("All 10 presenters started");
 }

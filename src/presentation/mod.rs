@@ -41,6 +41,7 @@ pub mod api_key_manager_presenter;
 pub mod chat_presenter;
 mod chat_presenter_emoji;
 mod chat_presenter_event;
+pub mod codex_auth_presenter;
 
 mod chat_presenter_export;
 mod chat_presenter_handlers;
@@ -100,6 +101,7 @@ pub trait Presenter: Send + Sync {
 
 pub use api_key_manager_presenter::ApiKeyManagerPresenter;
 pub use chat_presenter::ChatPresenter;
+pub use codex_auth_presenter::CodexAuthPresenter;
 pub use conversation_export::render_export_content;
 pub use error_presenter::ErrorPresenter;
 pub use history_presenter::HistoryPresenter;

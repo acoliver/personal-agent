@@ -1,7 +1,6 @@
 //! Render implementation for `ProfileEditorView`.
 
-use super::{ActiveField, ApiType, ProfileEditorView};
-use crate::config::default_api_base_url_for_provider;
+use super::{ActiveField, ProfileEditorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
@@ -278,23 +277,9 @@ impl ProfileEditorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _window, cx| {
-                            this.state.data.api_type = match this.state.data.api_type {
-                                ApiType::Anthropic => ApiType::OpenAI,
-                                ApiType::OpenAI => ApiType::Local,
-                                ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
-                            };
-
-                            // Clear key_label when switching to Local (no key needed)
-                            if matches!(this.state.data.api_type, ApiType::Local) {
-                                this.state.data.key_label.clear();
-                            }
-
-                            if this.state.data.base_url.trim().is_empty() {
-                                this.state.data.base_url = default_api_base_url_for_provider(
-                                    &this.state.data.api_type.provider_id(),
-                                );
-                            }
-
+                            this.state.data.api_type = this.state.data.api_type.next();
+                            this.state.data.apply_api_type_change();
+                            this.request_account_refresh();
                             cx.notify();
                         }),
                     )
@@ -329,10 +314,16 @@ impl ProfileEditorView {
             )
     }
 
-    /// Render auth method dropdown
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    /// Render API key label dropdown and "Manage Keys" button.
+    /// Render the credential control: an API key label, or the account row for
+    /// providers that authenticate with a sign-in. and "Manage Keys" button.
     fn render_key_label_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // Account-authenticated providers show who is signed in instead of a
+        // key to pick.
+        if self.state.data.api_type.requires_oauth_account() {
+            return self.render_account_section(cx);
+        }
+
         // For Local provider, show "No API key required" message instead of key dropdown
         if !self.state.data.api_type.requires_api_key() {
             return div()
@@ -845,8 +836,13 @@ impl ProfileEditorView {
                     .flex()
                     .flex_col()
                     .gap(px(12.0))
-                    .child(self.render_temperature_section(cx))
-                    .child(self.render_max_tokens_section(cx))
+                    .when(
+                        self.state.data.api_type.honours_sampling_parameters(),
+                        |el| {
+                            el.child(self.render_temperature_section(cx))
+                                .child(self.render_max_tokens_section(cx))
+                        },
+                    )
                     .child(self.render_advanced_request_parameters_section(cx))
                     .child(self.render_context_limit_section(cx))
                     .child(self.render_show_thinking_section(cx))
