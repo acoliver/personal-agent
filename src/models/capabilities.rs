@@ -38,7 +38,28 @@ pub enum ReasoningEffort {
 }
 
 impl ReasoningEffort {
-    /// The exact value that goes on the wire.
+    /// The value that goes on the wire, which is not always the name.
+    ///
+    /// Two levels are local names rather than wire values, and the codex
+    /// client translates both before sending:
+    ///
+    /// - `Ultra` is sent as `max`. It is the same request; upstream keeps the
+    ///   separate name for presentation.
+    /// - `Persistent` is sent as `disabled`, which is what the Responses API
+    ///   calls that mode.
+    ///
+    /// Sending either name verbatim would be a value the endpoint does not
+    /// know.
+    #[must_use]
+    pub fn wire_value(&self) -> &str {
+        match self {
+            Self::Ultra => "max",
+            Self::Persistent => "disabled",
+            other => other.as_str(),
+        }
+    }
+
+    /// The name this level is stored and displayed under.
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
@@ -241,8 +262,12 @@ impl ModelCapabilities {
                     ReasoningEffort::High,
                     ReasoningEffort::XHigh,
                     ReasoningEffort::Max,
-                    ReasoningEffort::Ultra,
-                    ReasoningEffort::Persistent,
+                    // Ultra and Persistent are deliberately absent. Ultra is
+                    // sent as `max`, so offering both would be two names for
+                    // one request. Persistent is sent as `disabled`, which is
+                    // not a rung on an effort ladder and would read as the
+                    // opposite of what it does. Both remain in the type so a
+                    // profile carrying one still works.
                 ],
                 summary: true,
             },
@@ -381,8 +406,11 @@ mod tests {
         let caps = ModelCapabilities::codex_reasoning();
         assert!(caps.accepts(&ReasoningEffort::XHigh));
         assert!(caps.accepts(&ReasoningEffort::Max));
-        assert!(caps.accepts(&ReasoningEffort::Ultra));
-        assert!(caps.accepts(&ReasoningEffort::Persistent));
+        assert!(!caps.accepts(&ReasoningEffort::Ultra), "ultra is max");
+        assert!(
+            !caps.accepts(&ReasoningEffort::Persistent),
+            "persistent is not an effort tier"
+        );
         assert!(
             !caps.accepts(&ReasoningEffort::Other("invented".to_string())),
             "only declared levels are offered"
@@ -433,6 +461,29 @@ mod lookup_tests {
             super::effort_from_stored("xhigh"),
             Some(ReasoningEffort::XHigh)
         );
+    }
+
+    #[test]
+    fn the_two_local_names_are_translated_before_sending() {
+        // Upstream keeps these as settings names and translates them on the
+        // request. Sending either verbatim would be a value the endpoint does
+        // not know.
+        assert_eq!(ReasoningEffort::Ultra.wire_value(), "max");
+        assert_eq!(ReasoningEffort::Persistent.wire_value(), "disabled");
+    }
+
+    #[test]
+    fn every_other_level_is_sent_under_its_own_name() {
+        for effort in ReasoningEffort::known() {
+            if matches!(effort, ReasoningEffort::Ultra | ReasoningEffort::Persistent) {
+                continue;
+            }
+            assert_eq!(
+                effort.wire_value(),
+                effort.as_str(),
+                "{effort:?} should not be translated"
+            );
+        }
     }
 
     #[test]

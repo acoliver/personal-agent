@@ -354,7 +354,7 @@ fn reasoning_for(profile: &ModelProfile) -> Option<ReasoningSettings> {
             .parameters
             .reasoning_effort
             .as_ref()
-            .map(|effort| effort.as_str().to_string()),
+            .map(|effort| effort.wire_value().to_string()),
         summary: capabilities
             .reasoning_summary()
             .then(|| serde_json::Value::String("auto".to_string())),
@@ -550,15 +550,31 @@ mod tests {
     #[test]
     fn the_ladder_above_high_is_reachable() {
         // The bucketing this replaced could not express these at all.
-        for level in [
-            ReasoningEffort::XHigh,
-            ReasoningEffort::Max,
-            ReasoningEffort::Ultra,
-        ] {
+        for level in [ReasoningEffort::XHigh, ReasoningEffort::Max] {
             let mut p = profile(true, None);
             p.parameters.reasoning_effort = Some(level.clone());
             let reasoning = reasoning_for(&p).expect("reasoning");
             assert_eq!(reasoning.effort.as_deref(), Some(level.as_str()));
+        }
+    }
+
+    #[test]
+    fn a_stored_local_name_is_translated_on_the_way_out() {
+        // This asserted that ultra went out as "ultra" until the upstream
+        // client turned out to translate it. Both of these are settings names
+        // rather than wire values, and the endpoint would not know either.
+        for (level, expected) in [
+            (ReasoningEffort::Ultra, "max"),
+            (ReasoningEffort::Persistent, "disabled"),
+        ] {
+            let mut p = profile(true, None);
+            p.parameters.reasoning_effort = Some(level.clone());
+            let reasoning = reasoning_for(&p).expect("reasoning");
+            assert_eq!(
+                reasoning.effort.as_deref(),
+                Some(expected),
+                "{level:?} must not be sent under its own name"
+            );
         }
     }
 
