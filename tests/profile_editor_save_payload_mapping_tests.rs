@@ -205,6 +205,7 @@ fn payload(max_tokens: Option<u32>, max_tokens_field_name: &str) -> EventModelPr
             enable_thinking: Some(true),
             thinking_budget: Some(12000),
             context_window_size: None,
+            reasoning_effort: None,
         }),
         system_prompt: Some("Be concise".to_string()),
     }

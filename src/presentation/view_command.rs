@@ -373,6 +373,9 @@ pub enum ViewCommand {
         show_thinking: bool,
         enable_thinking: bool,
         thinking_budget: Option<u32>,
+        /// Stored reasoning effort as its wire string, empty when the
+        /// profile has never had one set.
+        reasoning_effort: String,
         system_prompt: String,
     },
 

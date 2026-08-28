@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
 use personal_agent::llm::{LlmClient, Message, StreamEvent};
+use personal_agent::models::ReasoningEffort;
 use personal_agent::models::{AuthConfig, ModelProfile};
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
@@ -410,11 +411,15 @@ async fn two_conversations_do_not_share_one_socket() {
     );
 }
 
-/// A profile with thinking on, which should put a reasoning block on the wire.
-fn thinking_profile(endpoint: &str, budget: u32) -> ModelProfile {
+/// A profile with thinking on at a stated level.
+///
+/// The budget is set too, deliberately: it must have no bearing on the
+/// effort that goes out.
+fn thinking_profile(endpoint: &str, effort: ReasoningEffort) -> ModelProfile {
     let mut profile = profile(endpoint);
     profile.parameters.enable_thinking = true;
-    profile.parameters.thinking_budget = Some(budget);
+    profile.parameters.thinking_budget = Some(20_000);
+    profile.parameters.reasoning_effort = Some(effort);
     profile
 }
 
@@ -435,7 +440,7 @@ async fn thinking_puts_a_reasoning_block_on_the_wire() {
 
     let client = LlmClient::from_profile(&thinking_profile(
         &format!("ws://{addr}/v1/responses"),
-        20_000,
+        ReasoningEffort::High,
     ))
     .expect("client");
     let _ = run_turn(&client, &[user("think about it")]).await;
@@ -496,7 +501,7 @@ async fn the_agent_path_also_asks_for_reasoning() {
 
     let client = LlmClient::from_profile(&thinking_profile(
         &format!("ws://{addr}/v1/responses"),
-        20_000,
+        ReasoningEffort::High,
     ))
     .expect("client");
     let agent = client
@@ -558,4 +563,46 @@ async fn a_chained_turn_with_nothing_new_still_sends_a_list() {
         input.is_array(),
         "input must be a list even when the turn adds nothing new, got {input}"
     );
+}
+
+#[tokio::test]
+async fn the_chosen_effort_reaches_the_wire() {
+    // The point of the change. Effort used to be bucketed out of a token
+    // budget, which could not express anything above high, so a profile set
+    // to xhigh silently went out as high.
+    for level in [
+        ReasoningEffort::Low,
+        ReasoningEffort::High,
+        ReasoningEffort::XHigh,
+        ReasoningEffort::Max,
+        ReasoningEffort::Other("something_new".to_string()),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let mut peer = accept(&listener).await;
+            let frame = read_frame(&mut peer).await;
+            stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+            frame
+        });
+
+        let mut model_profile = profile(&format!("ws://{addr}/v1/responses"));
+        model_profile.parameters.enable_thinking = true;
+        // A budget that used to bucket to "low", to prove it no longer
+        // has any say.
+        model_profile.parameters.thinking_budget = Some(1_024);
+        model_profile.parameters.reasoning_effort = Some(level.clone());
+
+        let client = LlmClient::from_profile(&model_profile)
+            .expect("client")
+            .for_conversation(Uuid::new_v4());
+        run_turn(&client, &[user("think")]).await;
+
+        let frame = server.await.expect("server");
+        assert_eq!(
+            frame["reasoning"]["effort"].as_str(),
+            Some(level.as_str()),
+            "frame was {frame}"
+        );
+    }
 }

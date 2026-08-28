@@ -1,5 +1,6 @@
 //! Domain models for `PersonalAgent`
 
+mod capabilities;
 mod context_state;
 mod conversation;
 mod conversation_export;
@@ -8,6 +9,9 @@ mod skill;
 pub mod profile;
 mod search;
 
+pub use capabilities::{
+    capabilities_for, effort_from_stored, ModelCapabilities, ReasoningEffort, ReasoningSupport,
+};
 pub use context_state::{CompressionPhase, ContextState};
 pub use conversation::{Conversation, ConversationMetadata, Message, MessageRole};
 pub use skill::{Skill, SkillMetadata, SkillSource};

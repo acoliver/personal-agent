@@ -293,6 +293,12 @@ impl SettingsPresenter {
                     show_thinking: profile.parameters.show_thinking,
                     enable_thinking: profile.parameters.enable_thinking,
                     thinking_budget: profile.parameters.thinking_budget,
+                    reasoning_effort: profile
+                        .parameters
+                        .reasoning_effort
+                        .as_ref()
+                        .map(|effort| effort.as_str().to_string())
+                        .unwrap_or_default(),
                     system_prompt: profile.system_prompt,
                 });
                 let _ = view_tx.send(ViewCommand::NavigateTo {

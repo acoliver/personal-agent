@@ -710,6 +710,11 @@ pub struct ModelProfileParameters {
     pub show_thinking: Option<bool>,
     pub enable_thinking: Option<bool>,
     pub thinking_budget: Option<u32>,
+    /// Reasoning effort level, for models that take one.
+    ///
+    /// Carried as the wire string so this payload stays free of domain
+    /// types. `None` means the profile keeps whatever it already had.
+    pub reasoning_effort: Option<String>,
     /// Context window size (the editor field labeled "CONTEXT LIMIT").
     ///
     /// Lives at the profile level on disk

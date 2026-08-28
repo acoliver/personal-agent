@@ -342,6 +342,9 @@ impl ProfileEditorPresenter {
             if let Some(thinking_budget) = payload_parameters.thinking_budget {
                 parameters.thinking_budget = Some(thinking_budget);
             }
+            if let Some(level) = payload_parameters.reasoning_effort {
+                parameters.reasoning_effort = level.parse().ok();
+            }
         }
         parameters
     }

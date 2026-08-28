@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use crate::llm::error::LlmError;
 use crate::llm::provider_quirks::ProviderQuirks;
-use crate::models::ModelProfile;
+use crate::models::{capabilities_for, ModelProfile, ReasoningEffort};
 use crate::services::oauth::{refresh, store, OAuthError};
 
 /// The transport sentinel that selects this client in the quirks manifest.
@@ -329,25 +329,29 @@ fn user_agent() -> String {
 
 /// Map profile thinking settings onto Responses reasoning settings.
 ///
-/// The Responses API takes an effort level rather than a token budget, so the
-/// configured budget buckets into one.
+/// The configured level goes out as chosen. An earlier version derived it
+/// from `thinking_budget` by bucketing the token count, which asserted a
+/// correspondence that does not exist and capped the user at `high`, because
+/// the ladder above it had no bucket to fall into.
+///
+/// A profile written before the level existed carries no choice, so it gets
+/// the backend's own default rather than a number reinterpreted as a level.
 fn reasoning_for(profile: &ModelProfile) -> Option<ReasoningSettings> {
     if !profile.parameters.enable_thinking {
         return None;
     }
+    let effort = profile
+        .parameters
+        .reasoning_effort
+        .clone()
+        .unwrap_or(ReasoningEffort::Medium);
+    let capabilities = capabilities_for(&profile.provider_id);
     Some(ReasoningSettings {
-        effort: Some(effort_for_budget(profile.parameters.thinking_budget).to_string()),
-        summary: Some(serde_json::Value::String("auto".to_string())),
+        effort: Some(effort.as_str().to_string()),
+        summary: capabilities
+            .reasoning_summary()
+            .then(|| serde_json::Value::String("auto".to_string())),
     })
-}
-
-/// Bucket a token budget into a Responses effort level.
-const fn effort_for_budget(budget: Option<u32>) -> &'static str {
-    match budget {
-        Some(budget) if budget < 4_096 => "low",
-        Some(budget) if budget >= 16_384 => "high",
-        _ => "medium",
-    }
 }
 
 #[cfg(test)]
@@ -425,6 +429,7 @@ mod tests {
         profile.parameters = ModelParameters {
             enable_thinking,
             thinking_budget: budget,
+            reasoning_effort: None,
             ..profile.parameters
         };
         profile
@@ -447,13 +452,56 @@ mod tests {
     }
 
     #[test]
-    fn budget_buckets_into_an_effort_level() {
-        assert_eq!(effort_for_budget(Some(1_024)), "low");
-        assert_eq!(effort_for_budget(Some(4_096)), "medium");
-        assert_eq!(effort_for_budget(Some(10_000)), "medium");
-        assert_eq!(effort_for_budget(Some(16_384)), "high");
-        assert_eq!(effort_for_budget(Some(64_000)), "high");
-        assert_eq!(effort_for_budget(None), "medium");
+    fn the_chosen_level_goes_out_as_chosen() {
+        let mut p = profile(true, Some(1_024));
+        p.parameters.reasoning_effort = Some(ReasoningEffort::XHigh);
+
+        let reasoning = reasoning_for(&p).expect("reasoning");
+
+        assert_eq!(
+            reasoning.effort.as_deref(),
+            Some("xhigh"),
+            "a small budget must not drag the level back down"
+        );
+    }
+
+    #[test]
+    fn the_ladder_above_high_is_reachable() {
+        // The bucketing this replaced could not express these at all.
+        for level in [
+            ReasoningEffort::XHigh,
+            ReasoningEffort::Max,
+            ReasoningEffort::Ultra,
+        ] {
+            let mut p = profile(true, None);
+            p.parameters.reasoning_effort = Some(level.clone());
+            let reasoning = reasoning_for(&p).expect("reasoning");
+            assert_eq!(reasoning.effort.as_deref(), Some(level.as_str()));
+        }
+    }
+
+    #[test]
+    fn a_level_this_build_does_not_know_still_reaches_the_wire() {
+        let mut p = profile(true, None);
+        p.parameters.reasoning_effort = Some(ReasoningEffort::Other("newthing".to_string()));
+
+        let reasoning = reasoning_for(&p).expect("reasoning");
+
+        assert_eq!(reasoning.effort.as_deref(), Some("newthing"));
+    }
+
+    #[test]
+    fn a_token_budget_no_longer_decides_the_level() {
+        // Every one of these bucketed differently before; none of them
+        // should move the level now.
+        for budget in [Some(1_024), Some(10_000), Some(64_000), None] {
+            let reasoning = reasoning_for(&profile(true, budget)).expect("reasoning");
+            assert_eq!(
+                reasoning.effort.as_deref(),
+                Some("medium"),
+                "budget {budget:?} changed the effort"
+            );
+        }
     }
 
     #[test]

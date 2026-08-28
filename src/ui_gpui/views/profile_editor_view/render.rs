@@ -808,6 +808,7 @@ impl ProfileEditorView {
     /// Render the content area
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_content(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let capabilities = self.capabilities();
         div()
             .id("profile-editor-content")
             .flex_1()
@@ -836,17 +837,19 @@ impl ProfileEditorView {
                     .flex()
                     .flex_col()
                     .gap(px(12.0))
-                    .when(
-                        self.state.data.api_type.honours_sampling_parameters(),
-                        |el| {
-                            el.child(self.render_temperature_section(cx))
-                                .child(self.render_max_tokens_section(cx))
-                        },
-                    )
+                    .when(capabilities.sampling, |el| {
+                        el.child(self.render_temperature_section(cx))
+                    })
+                    .when(capabilities.max_tokens, |el| {
+                        el.child(self.render_max_tokens_section(cx))
+                    })
                     .child(self.render_advanced_request_parameters_section(cx))
                     .child(self.render_context_limit_section(cx))
                     .child(self.render_show_thinking_section(cx))
-                    .child(self.render_extended_thinking_section(cx)),
+                    .child(self.render_reasoning_effort_section(cx))
+                    .when(capabilities.thinking_budget, |el| {
+                        el.child(self.render_extended_thinking_section(cx))
+                    }),
             )
             // System Prompt
             .child(self.render_system_prompt_section(cx))

@@ -146,6 +146,12 @@ impl ProfileServiceImpl {
                     .as_u64()
                     .map(|v| u32::try_from(v.min(u64::from(u32::MAX))).unwrap_or(u32::MAX));
             }
+            if let Some(Value::String(level)) = obj
+                .get("reasoning_effort")
+                .or_else(|| obj.get("reasoning.effort"))
+            {
+                params.reasoning_effort = level.parse().ok();
+            }
         }
 
         if let Some(Value::Object(obj)) = ephemeral {
