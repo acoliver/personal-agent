@@ -25,6 +25,7 @@ fn profile_load_command(account: &str) -> ViewCommand {
         show_thinking: false,
         enable_thinking: false,
         thinking_budget: None,
+        reasoning_effort: String::new(),
         system_prompt: String::new(),
     }
 }
@@ -109,16 +110,39 @@ fn the_responses_types_do_not_offer_sampling_controls() {
     // The endpoint refuses temperature and max_output_tokens, so the client
     // omits them. Offering the fields would invite a value that is silently
     // discarded.
-    assert!(!ApiType::ChatGptCodex.honours_sampling_parameters());
-    assert!(!ApiType::OpenResponses.honours_sampling_parameters());
+    assert!(!ApiType::ChatGptCodex.capabilities().sampling);
+    assert!(!ApiType::ChatGptCodex.capabilities().max_tokens);
+    assert!(!ApiType::OpenResponses.capabilities().sampling);
+    assert!(!ApiType::OpenResponses.capabilities().max_tokens);
 }
 
 #[test]
 fn every_other_type_still_offers_them() {
-    assert!(ApiType::Anthropic.honours_sampling_parameters());
-    assert!(ApiType::OpenAI.honours_sampling_parameters());
-    assert!(ApiType::Local.honours_sampling_parameters());
-    assert!(ApiType::Custom("something".to_string()).honours_sampling_parameters());
+    for api_type in [
+        ApiType::Anthropic,
+        ApiType::OpenAI,
+        ApiType::Local,
+        ApiType::Custom("something".to_string()),
+    ] {
+        assert!(api_type.capabilities().sampling, "{api_type:?}");
+        assert!(api_type.capabilities().max_tokens, "{api_type:?}");
+    }
+}
+
+#[test]
+fn the_responses_types_offer_an_effort_ladder_instead() {
+    // The trade the endpoint actually makes: no sampling, but a level.
+    let caps = ApiType::ChatGptCodex.capabilities();
+    assert!(caps.takes_reasoning_effort());
+    assert!(caps.accepts(&crate::models::ReasoningEffort::XHigh));
+}
+
+#[test]
+fn a_budget_provider_is_not_given_an_effort_control() {
+    // Two axes, not one. Anthropic takes a token budget and no level.
+    let caps = ApiType::Anthropic.capabilities();
+    assert!(caps.thinking_budget);
+    assert!(!caps.takes_reasoning_effort());
 }
 
 fn account_choice(slug: &str, label: &str) -> CodexAccountInfo {
@@ -239,4 +263,163 @@ async fn cycling_with_no_accounts_changes_nothing(cx: &mut gpui::TestAppContext)
 
         assert!(this.state.data.oauth_account.is_empty());
     });
+}
+
+/// A codex `ProfileEditorLoad` carrying a stored effort and a budget.
+fn load_with_effort(effort: &str, budget: Option<u32>) -> ViewCommand {
+    match profile_load_command("someone") {
+        ViewCommand::ProfileEditorLoad {
+            id,
+            name,
+            provider_id,
+            model_id,
+            base_url,
+            api_key_label,
+            oauth_account,
+            temperature,
+            max_tokens,
+            max_tokens_field_name,
+            extra_request_fields,
+            context_limit,
+            show_thinking,
+            system_prompt,
+            ..
+        } => ViewCommand::ProfileEditorLoad {
+            id,
+            name,
+            provider_id,
+            model_id,
+            base_url,
+            api_key_label,
+            oauth_account,
+            temperature,
+            max_tokens,
+            max_tokens_field_name,
+            extra_request_fields,
+            context_limit,
+            show_thinking,
+            system_prompt,
+            enable_thinking: true,
+            thinking_budget: budget,
+            reasoning_effort: effort.to_string(),
+        },
+        other => other,
+    }
+}
+
+#[gpui::test]
+async fn a_stored_effort_survives_a_trip_through_the_editor(cx: &mut TestAppContext) {
+    // The level the user picked comes back out as picked, rather than being
+    // rebuilt from a token count.
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.handle_command(load_with_effort("xhigh", Some(1_024)), cx);
+
+        assert_eq!(
+            view.state.data.reasoning_effort,
+            Some(crate::models::ReasoningEffort::XHigh),
+            "a small budget must not drag the level back down"
+        );
+    });
+}
+
+#[gpui::test]
+async fn a_profile_without_a_stored_effort_takes_the_default(cx: &mut TestAppContext) {
+    // A profile written before the setting existed has no level, and keeps
+    // none: the backend applies its own default rather than this client
+    // recording a choice nobody made.
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.handle_command(load_with_effort("", Some(64_000)), cx);
+
+        assert_eq!(
+            view.state.data.reasoning_effort, None,
+            "a large budget must not be reinterpreted as a level"
+        );
+    });
+}
+
+#[gpui::test]
+async fn choosing_the_selected_level_again_leaves_it_to_the_model(cx: &mut TestAppContext) {
+    // Expressing no preference has to stay reachable. Otherwise a single
+    // click commits the profile to some level for good.
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        let high = crate::models::ReasoningEffort::High;
+        let xhigh = crate::models::ReasoningEffort::XHigh;
+
+        view.toggle_reasoning_effort(&high);
+        assert_eq!(view.state.data.reasoning_effort, Some(high.clone()));
+
+        view.toggle_reasoning_effort(&xhigh);
+        assert_eq!(
+            view.state.data.reasoning_effort,
+            Some(xhigh.clone()),
+            "a different level replaces the current one"
+        );
+
+        view.toggle_reasoning_effort(&xhigh);
+        assert_eq!(
+            view.state.data.reasoning_effort, None,
+            "the selected level clears back to no preference"
+        );
+    });
+}
+
+#[gpui::test]
+async fn every_offered_level_survives_a_save(cx: &mut TestAppContext) {
+    // A level reported as chosen came back off disk as a different one, so
+    // the whole ladder is checked through the save payload rather than just
+    // the one level that happened to be tried by hand.
+    let (bridge, events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    for level in crate::models::capabilities_for("openai-codex")
+        .reasoning_efforts()
+        .to_vec()
+    {
+        view.update(cx, |view: &mut ProfileEditorView, cx| {
+            view.handle_command(profile_load_command("someone"), cx);
+            view.state.data.reasoning_effort = Some(level.clone());
+            view.emit_save_profile();
+            let _ = cx;
+        });
+
+        let saved: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                UserEvent::SaveProfile { profile } => profile.parameters,
+                _ => None,
+            })
+            .collect();
+        let saved = saved.last().expect("a save payload");
+
+        assert_eq!(
+            saved.reasoning_effort.as_deref(),
+            Some(level.as_str()),
+            "{level:?} did not reach the save payload intact"
+        );
+    }
 }

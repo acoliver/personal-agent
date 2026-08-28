@@ -10,6 +10,7 @@ fn model_profile_apply_parameters_and_auth() {
         extra_request_fields: Some(serde_json::json!({"reasoning": {"effort": "medium"}})),
 
         thinking_budget: Some(256),
+        reasoning_effort: None,
         enable_thinking: true,
         show_thinking: true,
     };

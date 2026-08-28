@@ -9,12 +9,22 @@ use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
 use personal_agent::llm::{LlmClient, Message, StreamEvent};
+use personal_agent::models::ReasoningEffort;
 use personal_agent::models::{AuthConfig, ModelProfile};
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{accept_async, WebSocketStream};
 use uuid::Uuid;
+
+/// Serialises tests that hold a live session.
+///
+/// Sessions live in a process-global cache bounded at `MAX_LIVE_SESSIONS`.
+/// Tests in a binary run in parallel, so once the number of concurrent
+/// sessions reaches that bound the cache evicts one belonging to a test still
+/// using it, and that test's socket is closed under it. Holding this while a
+/// session is live keeps the tests independent of how many of them there are.
+static LIVE_SESSION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 type Peer = WebSocketStream<TcpStream>;
 
@@ -156,6 +166,7 @@ async fn run_turn(client: &LlmClient, history: &[Message]) -> Vec<StreamEvent> {
 
 #[tokio::test]
 async fn the_turn_frame_is_flat_and_carries_no_response_wrapper() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = tokio::spawn(async move {
@@ -185,6 +196,7 @@ async fn the_turn_frame_is_flat_and_carries_no_response_wrapper() {
 
 #[tokio::test]
 async fn a_chained_turn_sends_only_the_new_input() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = tokio::spawn(async move {
@@ -235,6 +247,7 @@ async fn a_chained_turn_sends_only_the_new_input() {
 
 #[tokio::test]
 async fn text_deltas_and_usage_reach_the_ui() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
@@ -281,6 +294,7 @@ async fn text_deltas_and_usage_reach_the_ui() {
 
 #[tokio::test]
 async fn reasoning_summary_deltas_arrive_as_thinking() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
@@ -332,6 +346,7 @@ async fn reasoning_summary_deltas_arrive_as_thinking() {
 
 #[tokio::test]
 async fn an_unknown_frame_does_not_end_the_stream() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
@@ -374,6 +389,7 @@ async fn an_unknown_frame_does_not_end_the_stream() {
 
 #[tokio::test]
 async fn two_conversations_do_not_share_one_socket() {
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = tokio::spawn(async move {
@@ -410,11 +426,15 @@ async fn two_conversations_do_not_share_one_socket() {
     );
 }
 
-/// A profile with thinking on, which should put a reasoning block on the wire.
-fn thinking_profile(endpoint: &str, budget: u32) -> ModelProfile {
+/// A profile with thinking on at a stated level.
+///
+/// The budget is set too, deliberately: it must have no bearing on the
+/// effort that goes out.
+fn thinking_profile(endpoint: &str, effort: ReasoningEffort) -> ModelProfile {
     let mut profile = profile(endpoint);
     profile.parameters.enable_thinking = true;
-    profile.parameters.thinking_budget = Some(budget);
+    profile.parameters.thinking_budget = Some(20_000);
+    profile.parameters.reasoning_effort = Some(effort);
     profile
 }
 
@@ -435,7 +455,7 @@ async fn thinking_puts_a_reasoning_block_on_the_wire() {
 
     let client = LlmClient::from_profile(&thinking_profile(
         &format!("ws://{addr}/v1/responses"),
-        20_000,
+        ReasoningEffort::High,
     ))
     .expect("client");
     let _ = run_turn(&client, &[user("think about it")]).await;
@@ -458,7 +478,13 @@ async fn thinking_puts_a_reasoning_block_on_the_wire() {
 }
 
 #[tokio::test]
-async fn thinking_off_sends_no_reasoning_block() {
+async fn an_effort_model_asks_for_a_summary_even_with_no_level_chosen() {
+    // This asserted that no reasoning block went out at all, which turned
+    // out to be why a freshly created codex profile never reasoned: the flag
+    // it keyed on is set by a budget checkbox the editor does not show for a
+    // provider that takes levels. The block goes out; the level is simply
+    // absent until one is chosen, and `none` is how reasoning is refused.
+    let _live = LIVE_SESSION.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
 
@@ -469,12 +495,22 @@ async fn thinking_off_sends_no_reasoning_block() {
         frame
     });
 
-    let client =
-        LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses"))).expect("client");
-    let _ = run_turn(&client, &[user("hi")]).await;
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("hi")]).await;
 
     let frame = server.await.expect("server");
-    assert!(frame.get("reasoning").is_none(), "frame was {frame}");
+    let reasoning = frame.get("reasoning").expect("reasoning block");
+    assert!(
+        reasoning.get("effort").is_none(),
+        "no level was chosen, so none should be asserted: {frame}"
+    );
+    assert_eq!(
+        reasoning.get("summary").and_then(Value::as_str),
+        Some("auto"),
+        "the summary is what makes thinking visible: {frame}"
+    );
 }
 
 #[tokio::test]
@@ -496,7 +532,7 @@ async fn the_agent_path_also_asks_for_reasoning() {
 
     let client = LlmClient::from_profile(&thinking_profile(
         &format!("ws://{addr}/v1/responses"),
-        20_000,
+        ReasoningEffort::High,
     ))
     .expect("client");
     let agent = client
@@ -530,6 +566,7 @@ async fn the_agent_path_also_asks_for_reasoning() {
 
 #[tokio::test]
 async fn a_chained_turn_with_nothing_new_still_sends_a_list() {
+    let _live = LIVE_SESSION.lock().await;
     // The agent loop can call again with the assistant reply as the last
     // message and nothing after it. Chaining skips that reply because the
     // server already holds it, which leaves no new items. The backend
@@ -557,5 +594,46 @@ async fn a_chained_turn_with_nothing_new_still_sends_a_list() {
     assert!(
         input.is_array(),
         "input must be a list even when the turn adds nothing new, got {input}"
+    );
+}
+
+#[tokio::test]
+async fn the_chosen_effort_reaches_the_wire() {
+    let _live = LIVE_SESSION.lock().await;
+    // The point of the change. Effort used to be bucketed out of a token
+    // budget, which could not express anything above high, so a profile set
+    // to xhigh silently went out as high.
+    //
+    // Only one level is driven end to end on purpose. Every live session
+    // occupies a slot in a process-global cache bounded at MAX_LIVE_SESSIONS,
+    // and a test that opens several at once evicts sessions belonging to
+    // tests running alongside it, closing their sockets. The rest of the
+    // ladder is covered where no socket is involved, in the unit tests for
+    // `reasoning_for`.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let mut model_profile = profile(&format!("ws://{addr}/v1/responses"));
+    model_profile.parameters.enable_thinking = true;
+    // A budget that used to bucket to "low", to prove it no longer has a say.
+    model_profile.parameters.thinking_budget = Some(1_024);
+    model_profile.parameters.reasoning_effort = Some(ReasoningEffort::XHigh);
+
+    let client = LlmClient::from_profile(&model_profile)
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("think")]).await;
+
+    let frame = server.await.expect("server");
+    assert_eq!(
+        frame["reasoning"]["effort"].as_str(),
+        Some("xhigh"),
+        "frame was {frame}"
     );
 }

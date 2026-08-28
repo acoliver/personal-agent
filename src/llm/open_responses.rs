@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use crate::llm::error::LlmError;
 use crate::llm::provider_quirks::ProviderQuirks;
-use crate::models::ModelProfile;
+use crate::models::{capabilities_for, ModelProfile};
 use crate::services::oauth::{refresh, store, OAuthError};
 
 /// The transport sentinel that selects this client in the quirks manifest.
@@ -329,25 +329,49 @@ fn user_agent() -> String {
 
 /// Map profile thinking settings onto Responses reasoning settings.
 ///
-/// The Responses API takes an effort level rather than a token budget, so the
-/// configured budget buckets into one.
+/// The configured level goes out as chosen. An earlier version derived it
+/// from `thinking_budget` by bucketing the token count, which asserted a
+/// correspondence that does not exist and capped the user at `high`, because
+/// the ladder above it had no bucket to fall into.
+///
+/// A profile written before the level existed carries no choice, so it gets
+/// the backend's own default rather than a number reinterpreted as a level.
 fn reasoning_for(profile: &ModelProfile) -> Option<ReasoningSettings> {
-    if !profile.parameters.enable_thinking {
+    let capabilities = capabilities_for(&profile.provider_id);
+    // Which control decides depends on what the provider declares.
+    //
+    // A provider offering levels is switched by the ladder itself: `none`
+    // turns reasoning off, and the editor shows no budget checkbox, so
+    // consulting `enable_thinking` here would leave a new profile unable to
+    // reason at all because nothing in the UI could set it.
+    //
+    // A provider taking a token budget keeps that flag as its switch.
+    //
+    // A provider declaring neither gets no reasoning block. A custom provider
+    // can route to this transport through the quirks manifest and declare no
+    // reasoning support at all; a stale `enable_thinking` left on such a
+    // profile must not put a parameter on the wire that the endpoint never
+    // advertised.
+    let reasoning_wanted = if capabilities.takes_reasoning_effort() {
+        true
+    } else {
+        capabilities.thinking_budget && profile.parameters.enable_thinking
+    };
+    if !reasoning_wanted {
         return None;
     }
     Some(ReasoningSettings {
-        effort: Some(effort_for_budget(profile.parameters.thinking_budget).to_string()),
-        summary: Some(serde_json::Value::String("auto".to_string())),
+        // Absent when the user has not chosen, so the backend applies its own
+        // default rather than this client asserting one.
+        effort: profile
+            .parameters
+            .reasoning_effort
+            .as_ref()
+            .map(|effort| effort.wire_value().to_string()),
+        summary: capabilities
+            .reasoning_summary()
+            .then(|| serde_json::Value::String("auto".to_string())),
     })
-}
-
-/// Bucket a token budget into a Responses effort level.
-const fn effort_for_budget(budget: Option<u32>) -> &'static str {
-    match budget {
-        Some(budget) if budget < 4_096 => "low",
-        Some(budget) if budget >= 16_384 => "high",
-        _ => "medium",
-    }
 }
 
 #[cfg(test)]
@@ -410,7 +434,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::models::{AuthConfig, ModelParameters};
+    use crate::models::{AuthConfig, ModelParameters, ReasoningEffort};
 
     fn profile(enable_thinking: bool, budget: Option<u32>) -> ModelProfile {
         let mut profile = ModelProfile::new(
@@ -425,21 +449,97 @@ mod tests {
         profile.parameters = ModelParameters {
             enable_thinking,
             thinking_budget: budget,
+            reasoning_effort: None,
             ..profile.parameters
         };
         profile
     }
 
     #[test]
-    fn thinking_disabled_sends_no_reasoning_block() {
-        assert!(reasoning_for(&profile(false, Some(10_000))).is_none());
+    fn a_codex_profile_reasons_without_the_budget_switch() {
+        // The exact shape a freshly created codex profile has: a chosen
+        // level, and enable_thinking false because the checkbox that sets it
+        // is a budget control the editor does not show for this provider.
+        // Consulting that flag here made the chosen level unreachable.
+        let mut p = profile(false, None);
+        p.provider_id = "openai-codex".to_string();
+        p.parameters.reasoning_effort = Some(ReasoningEffort::Max);
+
+        let reasoning = reasoning_for(&p).expect("a chosen level must be sent");
+
+        assert_eq!(reasoning.effort.as_deref(), Some("max"));
     }
 
     #[test]
-    fn thinking_enabled_sends_an_effort_and_a_summary() {
+    fn reasoning_can_still_be_turned_off_on_a_codex_profile() {
+        // With no budget checkbox, `none` is the only way to say "do not
+        // reason". It has to reach the wire rather than being read as absent.
+        let mut p = profile(false, None);
+        p.provider_id = "openai-codex".to_string();
+        p.parameters.reasoning_effort = Some(ReasoningEffort::None);
+
+        let reasoning = reasoning_for(&p).expect("reasoning block");
+
+        assert_eq!(reasoning.effort.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn a_provider_declaring_no_reasoning_gets_no_reasoning_block() {
+        // A custom provider can reach this transport through the quirks
+        // manifest without declaring any reasoning support. A flag left set
+        // on the profile must not send a parameter it never advertised.
+        let mut p = profile(true, Some(10_000));
+        p.provider_id = "some-custom-provider".to_string();
+
+        assert!(
+            reasoning_for(&p).is_none(),
+            "nothing declared, so nothing asked for"
+        );
+    }
+
+    #[test]
+    fn a_budget_provider_still_honours_its_switch() {
+        // The flag keeps its meaning where the control exists.
+        let mut p = profile(false, Some(10_000));
+        p.provider_id = "anthropic".to_string();
+
+        assert!(
+            reasoning_for(&p).is_none(),
+            "a budget model with thinking off sends nothing"
+        );
+    }
+
+    #[test]
+    fn the_budget_switch_does_not_silence_an_effort_model() {
+        // This asserted the opposite until a freshly made codex profile
+        // turned out never to reason: `enable_thinking` is set by a checkbox
+        // that belongs to the budget control, and the editor does not show
+        // that control for a provider which takes levels instead. Honouring
+        // the flag here left the setting unreachable.
+        let reasoning = reasoning_for(&profile(false, Some(10_000)))
+            .expect("an effort model is not switched off by a budget flag");
+
+        assert_eq!(
+            reasoning.effort, None,
+            "no level was chosen, so none is asserted"
+        );
+        assert_eq!(
+            reasoning.summary,
+            Some(serde_json::Value::String("auto".to_string())),
+            "summaries are still requested so thinking can be shown"
+        );
+    }
+
+    #[test]
+    fn thinking_enabled_without_a_chosen_level_still_asks_for_a_summary() {
+        // The summary is what makes reasoning visible. It is requested even
+        // when the level is left to the model.
         let reasoning = reasoning_for(&profile(true, Some(10_000))).expect("reasoning");
 
-        assert_eq!(reasoning.effort.as_deref(), Some("medium"));
+        assert_eq!(
+            reasoning.effort, None,
+            "an unchosen level must not be asserted by this client"
+        );
         assert_eq!(
             reasoning.summary,
             Some(serde_json::Value::String("auto".to_string()))
@@ -447,13 +547,85 @@ mod tests {
     }
 
     #[test]
-    fn budget_buckets_into_an_effort_level() {
-        assert_eq!(effort_for_budget(Some(1_024)), "low");
-        assert_eq!(effort_for_budget(Some(4_096)), "medium");
-        assert_eq!(effort_for_budget(Some(10_000)), "medium");
-        assert_eq!(effort_for_budget(Some(16_384)), "high");
-        assert_eq!(effort_for_budget(Some(64_000)), "high");
-        assert_eq!(effort_for_budget(None), "medium");
+    fn a_chosen_level_is_sent_alongside_the_summary() {
+        let mut p = profile(true, Some(10_000));
+        p.parameters.reasoning_effort = Some(ReasoningEffort::High);
+
+        let reasoning = reasoning_for(&p).expect("reasoning");
+
+        assert_eq!(reasoning.effort.as_deref(), Some("high"));
+        assert_eq!(
+            reasoning.summary,
+            Some(serde_json::Value::String("auto".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_chosen_level_goes_out_as_chosen() {
+        let mut p = profile(true, Some(1_024));
+        p.parameters.reasoning_effort = Some(ReasoningEffort::XHigh);
+
+        let reasoning = reasoning_for(&p).expect("reasoning");
+
+        assert_eq!(
+            reasoning.effort.as_deref(),
+            Some("xhigh"),
+            "a small budget must not drag the level back down"
+        );
+    }
+
+    #[test]
+    fn the_ladder_above_high_is_reachable() {
+        // The bucketing this replaced could not express these at all.
+        for level in [ReasoningEffort::XHigh, ReasoningEffort::Max] {
+            let mut p = profile(true, None);
+            p.parameters.reasoning_effort = Some(level.clone());
+            let reasoning = reasoning_for(&p).expect("reasoning");
+            assert_eq!(reasoning.effort.as_deref(), Some(level.as_str()));
+        }
+    }
+
+    #[test]
+    fn a_stored_local_name_is_translated_on_the_way_out() {
+        // This asserted that ultra went out as "ultra" until the upstream
+        // client turned out to translate it. Both of these are settings names
+        // rather than wire values, and the endpoint would not know either.
+        for (level, expected) in [
+            (ReasoningEffort::Ultra, "max"),
+            (ReasoningEffort::Persistent, "disabled"),
+        ] {
+            let mut p = profile(true, None);
+            p.parameters.reasoning_effort = Some(level.clone());
+            let reasoning = reasoning_for(&p).expect("reasoning");
+            assert_eq!(
+                reasoning.effort.as_deref(),
+                Some(expected),
+                "{level:?} must not be sent under its own name"
+            );
+        }
+    }
+
+    #[test]
+    fn a_level_this_build_does_not_know_still_reaches_the_wire() {
+        let mut p = profile(true, None);
+        p.parameters.reasoning_effort = Some(ReasoningEffort::Other("newthing".to_string()));
+
+        let reasoning = reasoning_for(&p).expect("reasoning");
+
+        assert_eq!(reasoning.effort.as_deref(), Some("newthing"));
+    }
+
+    #[test]
+    fn a_token_budget_no_longer_decides_the_level() {
+        // Every one of these bucketed differently before. None of them should
+        // produce a level now, chosen or otherwise.
+        for budget in [Some(1_024), Some(10_000), Some(64_000), None] {
+            let reasoning = reasoning_for(&profile(true, budget)).expect("reasoning");
+            assert_eq!(
+                reasoning.effort, None,
+                "budget {budget:?} was still read as an effort"
+            );
+        }
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod ime;
 mod render;
 mod render_account;
 mod render_advanced;
+mod render_reasoning;
 
 use gpui::FocusHandle;
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use uuid::Uuid;
 
 use crate::config::default_api_base_url_for_provider;
 use crate::events::types::{ModelProfileAuth, ModelProfileParameters, UserEvent};
+use crate::models::{capabilities_for, effort_from_stored, ModelCapabilities, ReasoningEffort};
 use crate::presentation::view_command::{ViewCommand, ViewId};
 use crate::ui_gpui::bridge::GpuiBridge;
 
@@ -102,18 +104,15 @@ impl ApiType {
         matches!(self, Self::ChatGptCodex)
     }
 
-    /// Whether a turn on this type carries temperature, top-p, and a token
-    /// cap.
-    ///
-    /// The Responses endpoint refuses all three: it answers
-    /// `Unsupported parameter: temperature`, and once that is dropped, the
-    /// same for `max_output_tokens`. The client omits them, so offering the
-    /// controls would invite the user to set a value that is silently thrown
-    /// away. Reasoning effort is the knob these models actually take, and the
-    /// thinking controls below still apply.
+    /// Which parameters this type's models accept, so the editor offers a
+    /// control only where setting it means something. The Responses endpoint
+    /// answers `Unsupported parameter: temperature`, and the same for
+    /// `max_output_tokens`, so offering those would invite the user to set a
+    /// value that is thrown away. Reasoning effort is what these models take
+    /// instead.
     #[must_use]
-    pub const fn honours_sampling_parameters(&self) -> bool {
-        !matches!(self, Self::ChatGptCodex | Self::OpenResponses)
+    pub fn capabilities(&self) -> ModelCapabilities {
+        capabilities_for(&self.provider_id())
     }
 
     /// The endpoint this type manages on the user's behalf, when it manages
@@ -215,6 +214,13 @@ pub struct ProfileEditorData {
     pub show_thinking: bool,
     pub enable_extended_thinking: bool,
     pub thinking_budget: u32,
+    /// The chosen reasoning effort, for models that take one.
+    ///
+    /// Held alongside the budget rather than instead of it: they are
+    /// different settings and a model may accept either, both, or neither.
+    /// `None` means the user has expressed no preference, which is not the
+    /// same as choosing the level that happens to be the default.
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub system_prompt: String,
 }
 
@@ -233,6 +239,7 @@ impl ProfileEditorData {
             context_limit: Self::DEFAULT_CONTEXT_LIMIT,
             show_thinking: true,
             thinking_budget: 10000,
+            reasoning_effort: None,
             system_prompt: crate::models::profile::DEFAULT_SYSTEM_PROMPT.to_string(),
             ..Default::default()
         }
@@ -353,6 +360,15 @@ pub struct ProfileEditorView {
 }
 
 impl ProfileEditorView {
+    /// What the selected model accepts.
+    ///
+    /// Every parameter control asks this rather than testing the API type,
+    /// so adding a provider means describing it once.
+    #[must_use]
+    pub fn capabilities(&self) -> ModelCapabilities {
+        self.state.data.api_type.capabilities()
+    }
+
     pub fn new(cx: &mut gpui::Context<Self>) -> Self {
         Self {
             state: ProfileEditorState::new_profile(),
@@ -737,6 +753,14 @@ impl ProfileEditorView {
             } else {
                 None
             },
+            reasoning_effort: self.capabilities().takes_reasoning_effort().then(|| {
+                self.state
+                    .data
+                    .reasoning_effort
+                    .as_ref()
+                    .map(|effort| effort.as_str().to_string())
+                    .unwrap_or_default()
+            }),
             // Issue #182: carry the editor's "CONTEXT LIMIT" field through
             // to the presenter so it actually gets persisted.
             context_window_size: Some(self.state.data.context_limit as usize),
@@ -786,6 +810,7 @@ impl ProfileEditorView {
                 show_thinking,
                 enable_thinking,
                 thinking_budget,
+                reasoning_effort,
                 system_prompt,
             } => {
                 self.state.is_new = false;
@@ -819,6 +844,7 @@ impl ProfileEditorView {
                 self.state.data.show_thinking = show_thinking;
                 self.state.data.enable_extended_thinking = enable_thinking;
                 self.state.data.thinking_budget = thinking_budget.unwrap_or(10_000);
+                self.state.data.reasoning_effort = effort_from_stored(&reasoning_effort);
                 self.state.data.system_prompt = system_prompt;
                 self.state.active_field = None;
             }

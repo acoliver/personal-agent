@@ -1,5 +1,6 @@
 //! Model profile definitions
 
+use super::capabilities::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -122,6 +123,14 @@ pub struct ModelParameters {
     pub max_tokens_field_name: Option<String>,
     pub extra_request_fields: Option<serde_json::Value>,
     pub thinking_budget: Option<u32>,
+    /// How hard a reasoning model should think.
+    ///
+    /// Separate from `thinking_budget` on purpose. A budget is a token
+    /// count; an effort is a named level the backend interprets, with no
+    /// token equivalence. A model may take either, both, or neither, so
+    /// neither field is derived from the other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub enable_thinking: bool,
     pub show_thinking: bool,
 }
@@ -153,6 +162,7 @@ impl Default for ModelParameters {
             max_tokens_field_name: Some("max_tokens".to_string()),
             extra_request_fields: Some(serde_json::json!({})),
             thinking_budget: None,
+            reasoning_effort: None,
             enable_thinking: false,
             show_thinking: false,
         }
