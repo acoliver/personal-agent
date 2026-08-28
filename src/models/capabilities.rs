@@ -224,11 +224,13 @@ impl ModelCapabilities {
             max_tokens: false,
             thinking_budget: false,
             reasoning: ReasoningSupport {
-                // Provisional. Only medium and high have been seen accepted
+                // Provisional. Medium, high and max have been seen accepted
                 // by the live endpoint; the rest are offered because a
                 // refused level fails loudly, whereas withholding one leaves
-                // the user unable to ask for the mode they pay for. Reading
-                // the backend's per-model list replaces this guess.
+                // the user unable to ask for the mode they pay for. Every
+                // name here appears in the protocol the codex client speaks,
+                // so none is invented. Reading the backend's per-model list
+                // replaces this guess.
                 levels: vec![
                     // `none` is how reasoning is turned off on these models.
                     // There is no separate switch, so leaving it out would
@@ -239,6 +241,8 @@ impl ModelCapabilities {
                     ReasoningEffort::High,
                     ReasoningEffort::XHigh,
                     ReasoningEffort::Max,
+                    ReasoningEffort::Ultra,
+                    ReasoningEffort::Persistent,
                 ],
                 summary: true,
             },
@@ -377,7 +381,12 @@ mod tests {
         let caps = ModelCapabilities::codex_reasoning();
         assert!(caps.accepts(&ReasoningEffort::XHigh));
         assert!(caps.accepts(&ReasoningEffort::Max));
-        assert!(!caps.accepts(&ReasoningEffort::Ultra));
+        assert!(caps.accepts(&ReasoningEffort::Ultra));
+        assert!(caps.accepts(&ReasoningEffort::Persistent));
+        assert!(
+            !caps.accepts(&ReasoningEffort::Other("invented".to_string())),
+            "only declared levels are offered"
+        );
     }
 }
 

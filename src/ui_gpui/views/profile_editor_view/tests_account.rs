@@ -383,3 +383,43 @@ async fn choosing_the_selected_level_again_leaves_it_to_the_model(cx: &mut TestA
         );
     });
 }
+
+#[gpui::test]
+async fn every_offered_level_survives_a_save(cx: &mut TestAppContext) {
+    // A level reported as chosen came back off disk as a different one, so
+    // the whole ladder is checked through the save payload rather than just
+    // the one level that happened to be tried by hand.
+    let (bridge, events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    for level in crate::models::capabilities_for("openai-codex")
+        .reasoning_efforts()
+        .to_vec()
+    {
+        view.update(cx, |view: &mut ProfileEditorView, cx| {
+            view.handle_command(profile_load_command("someone"), cx);
+            view.state.data.reasoning_effort = Some(level.clone());
+            view.emit_save_profile();
+            let _ = cx;
+        });
+
+        let saved: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                UserEvent::SaveProfile { profile } => profile.parameters,
+                _ => None,
+            })
+            .collect();
+        let saved = saved.last().expect("a save payload");
+
+        assert_eq!(
+            saved.reasoning_effort.as_deref(),
+            Some(level.as_str()),
+            "{level:?} did not reach the save payload intact"
+        );
+    }
+}
