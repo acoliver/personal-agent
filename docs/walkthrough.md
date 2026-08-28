@@ -93,8 +93,10 @@ If you have a ChatGPT subscription, you can use it directly and skip the API
 key entirely.
 
 In the profile editor, set **API TYPE** to `ChatGPT (Codex)`. The API-key row is
-replaced by an **ACCOUNT** row, and the endpoint fills itself in. Press
-**Sign in with ChatGPT**.
+replaced by an **ACCOUNT** row, and the endpoint fills itself in.
+
+If you have signed in before, pick the account from the dropdown; one sign-in
+covers as many profiles as you like. Otherwise press **Sign in with ChatGPT**.
 
 Your browser opens on OpenAI's sign-in page. Finish signing in there and the
 app picks up the result on its own; the sheet shows the link and a countdown
@@ -165,6 +167,20 @@ and complete the sign-in; the conversation carries on afterwards.
 Nothing to do. OpenAI registers that exact port for this sign-in, so it cannot
 be changed, and the app falls through to a device code with the code already on
 your clipboard.
+
+### macOS asks for my keychain password, or accounts will not load
+
+The accounts list saying a saved account could not be read, or a message about
+the keychain not answering, means macOS is holding the request behind a prompt.
+Enter your login password and choose **Always Allow**.
+
+This happens when the app binary changes, because macOS grants keychain access
+per binary. A released build asks once. A build you compiled yourself asks
+again after every rebuild, since each one is a new binary as far as the
+keychain is concerned.
+
+The message is deliberately not "no accounts yet": a grant that cannot be read
+is not the same as never having signed in, and signing in again would not help.
 
 ### The model call fails with an authentication error
 
