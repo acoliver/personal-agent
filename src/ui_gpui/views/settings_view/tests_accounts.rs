@@ -149,6 +149,31 @@ fn remaining_time_reads_in_a_sensible_unit() {
 }
 
 #[test]
+fn a_single_unit_is_not_pluralised() {
+    let mut info = account("chatgpt-a", false, vec![]);
+
+    info.expires_in_secs = Some(60);
+    assert_eq!(
+        SettingsView::account_status_line(&info),
+        "Signed in, 1 minute left"
+    );
+
+    info.expires_in_secs = Some(2 * 60 * 60);
+    assert_eq!(
+        SettingsView::account_status_line(&info),
+        "Signed in, 2 hours left"
+    );
+
+    // The hour branch starts at two hours, so one hour is reached only from a
+    // grant that has already run most of its life down.
+    info.expires_in_secs = Some(60 * 60 + 30);
+    assert_eq!(
+        SettingsView::account_status_line(&info),
+        "Signed in, 60 minutes left"
+    );
+}
+
+#[test]
 fn an_account_at_zero_reports_renewing_rather_than_expired() {
     let mut info = account("chatgpt-a", false, vec![]);
     info.expires_in_secs = Some(0);

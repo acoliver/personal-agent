@@ -217,10 +217,16 @@ impl SettingsView {
 
         match secs {
             s if s < MINUTE => "Signed in, expires shortly".to_string(),
-            s if s < 2 * HOUR => format!("Signed in, {} minutes left", s / MINUTE),
-            s if s < DAY => format!("Signed in, {} hours left", s / HOUR),
+            s if s < 2 * HOUR => Self::left(s / MINUTE, "minute"),
+            s if s < DAY => Self::left(s / HOUR, "hour"),
             _ => "Signed in".to_string(),
         }
+    }
+
+    /// "Signed in, 1 minute left" / "Signed in, 5 minutes left".
+    fn left(count: i64, unit: &str) -> String {
+        let plural = if count == 1 { "" } else { "s" };
+        format!("Signed in, {count} {unit}{plural} left")
     }
 
     /// The third line of an account row.
