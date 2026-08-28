@@ -246,3 +246,57 @@ async fn a_live_tool_call_round_trips() {
     println!("-- final answer: {text}");
     assert!(!text.trim().is_empty(), "the chained turn returned no text");
 }
+
+/// The same turn, through the agent.
+///
+/// There are two ways to start a turn and the app uses this one. The direct
+/// path above stopped sending `temperature` while the agent kept doing it, so
+/// every turn in the running app failed with
+/// `Unsupported parameter: temperature` while these tests were green. Covering
+/// only the direct path is what let that ship.
+#[tokio::test]
+#[ignore = "Requires PA_E2E_CODEX_* configuration and network access"]
+async fn a_live_turn_through_the_agent_streams_text() {
+    use personal_agent::llm::client_agent::{AgentClientExt, McpToolContext};
+
+    let account = seed_account();
+    let client = LlmClient::from_profile(&profile(&account))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+
+    let agent = client
+        .create_agent(vec![], "You are terse.")
+        .await
+        .expect("the agent must build for an OAuth profile");
+
+    let collected: Arc<Mutex<Vec<StreamEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&collected);
+    client
+        .run_agent_stream(
+            &agent,
+            &[Message::user("Reply with exactly: agent ok")],
+            McpToolContext::default(),
+            move |event| {
+                sink.lock().expect("event sink").push(event);
+            },
+        )
+        .await
+        .expect("the agent turn must not error");
+
+    let events = collected.lock().expect("event sink").clone();
+    let errors: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::Error(message) => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(errors.is_empty(), "agent turn reported errors: {errors:?}");
+
+    let text = text_of(&events);
+    println!("-- agent reply: {}", text.trim());
+    assert!(
+        !text.trim().is_empty(),
+        "the agent path returned no text; events were {events:?}"
+    );
+}
