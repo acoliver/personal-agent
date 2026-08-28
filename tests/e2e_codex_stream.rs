@@ -14,7 +14,6 @@ use std::sync::{Arc, Mutex};
 
 use personal_agent::llm::{LlmClient, Message, StreamEvent};
 use personal_agent::models::{AuthConfig, ModelProfile};
-use personal_agent::services::secure_store;
 use uuid::Uuid;
 
 const ACCOUNT_ENV: &str = "PA_E2E_CODEX_ACCOUNT";
@@ -44,13 +43,11 @@ fn seed_account() -> String {
         "set {ACCOUNT_ENV} to the account slug to test with"
     );
 
-    if let Ok(blob) = std::env::var(TOKEN_ENV) {
-        if !blob.trim().is_empty() {
-            secure_store::oauth_tokens::store(&account, blob.trim())
-                .expect("seed the grant into the keychain");
-        }
-    }
-
+    // Deliberately no keychain write. `store::load` reads TOKEN_ENV directly,
+    // so a grant supplied that way needs no seeding, and writing it would
+    // leave real credentials in the developer's login keychain under a test
+    // account that nothing cleans up. With TOKEN_ENV unset this falls through
+    // to whatever the app itself stored.
     let stored = personal_agent::services::oauth::store::load(&account)
         .expect("read the seeded grant")
         .unwrap_or_else(|| {
