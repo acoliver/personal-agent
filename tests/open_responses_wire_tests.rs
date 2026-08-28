@@ -409,3 +409,70 @@ async fn two_conversations_do_not_share_one_socket() {
         "a fresh conversation starts an unchained turn: {frame}"
     );
 }
+
+/// A profile with thinking on, which should put a reasoning block on the wire.
+fn thinking_profile(endpoint: &str, budget: u32) -> ModelProfile {
+    let mut profile = profile(endpoint);
+    profile.parameters.enable_thinking = true;
+    profile.parameters.thinking_budget = Some(budget);
+    profile
+}
+
+#[tokio::test]
+async fn thinking_puts_a_reasoning_block_on_the_wire() {
+    // A live turn against the real backend came back with zero reasoning
+    // tokens, which leaves two possibilities: the model declined, or the
+    // request never asked. This settles which, without a network.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let client = LlmClient::from_profile(&thinking_profile(
+        &format!("ws://{addr}/v1/responses"),
+        20_000,
+    ))
+    .expect("client");
+    let _ = run_turn(&client, &[user("think about it")]).await;
+
+    let frame = server.await.expect("server");
+    let reasoning = frame
+        .get("reasoning")
+        .unwrap_or_else(|| panic!("no reasoning block in frame: {frame}"));
+
+    assert_eq!(
+        reasoning.get("effort").and_then(Value::as_str),
+        Some("high"),
+        "frame was {frame}"
+    );
+    assert_eq!(
+        reasoning.get("summary").and_then(Value::as_str),
+        Some("auto"),
+        "a summary must be requested or the backend sends no reasoning deltas; frame was {frame}"
+    );
+}
+
+#[tokio::test]
+async fn thinking_off_sends_no_reasoning_block() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let client =
+        LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses"))).expect("client");
+    let _ = run_turn(&client, &[user("hi")]).await;
+
+    let frame = server.await.expect("server");
+    assert!(frame.get("reasoning").is_none(), "frame was {frame}");
+}
