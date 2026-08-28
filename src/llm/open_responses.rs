@@ -338,13 +338,26 @@ fn user_agent() -> String {
 /// the backend's own default rather than a number reinterpreted as a level.
 fn reasoning_for(profile: &ModelProfile) -> Option<ReasoningSettings> {
     let capabilities = capabilities_for(&profile.provider_id);
-    // `enable_thinking` belongs to models that take a token budget, where it
-    // switches the budget on. For a model whose control is the ladder, the
-    // ladder is the switch: an explicit `none` turns reasoning off, and the
-    // editor does not even show the budget checkbox. Consulting the flag here
-    // meant a new profile could never reason at all, because nothing in the
-    // UI could set it.
-    if !capabilities.takes_reasoning_effort() && !profile.parameters.enable_thinking {
+    // Which control decides depends on what the provider declares.
+    //
+    // A provider offering levels is switched by the ladder itself: `none`
+    // turns reasoning off, and the editor shows no budget checkbox, so
+    // consulting `enable_thinking` here would leave a new profile unable to
+    // reason at all because nothing in the UI could set it.
+    //
+    // A provider taking a token budget keeps that flag as its switch.
+    //
+    // A provider declaring neither gets no reasoning block. A custom provider
+    // can route to this transport through the quirks manifest and declare no
+    // reasoning support at all; a stale `enable_thinking` left on such a
+    // profile must not put a parameter on the wire that the endpoint never
+    // advertised.
+    let reasoning_wanted = if capabilities.takes_reasoning_effort() {
+        true
+    } else {
+        capabilities.thinking_budget && profile.parameters.enable_thinking
+    };
+    if !reasoning_wanted {
         return None;
     }
     Some(ReasoningSettings {
@@ -468,6 +481,20 @@ mod tests {
         let reasoning = reasoning_for(&p).expect("reasoning block");
 
         assert_eq!(reasoning.effort.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn a_provider_declaring_no_reasoning_gets_no_reasoning_block() {
+        // A custom provider can reach this transport through the quirks
+        // manifest without declaring any reasoning support. A flag left set
+        // on the profile must not send a parameter it never advertised.
+        let mut p = profile(true, Some(10_000));
+        p.provider_id = "some-custom-provider".to_string();
+
+        assert!(
+            reasoning_for(&p).is_none(),
+            "nothing declared, so nothing asked for"
+        );
     }
 
     #[test]
