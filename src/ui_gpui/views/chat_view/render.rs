@@ -822,6 +822,10 @@ impl ChatView {
             .flex_col()
             // Title bar (32px)
             .child(self.render_title_bar(cx))
+            // Expired ChatGPT session, with a way back in
+            .when(self.state.codex_reauth_account.is_some(), |d| {
+                d.child(Self::render_codex_reauth_bar(cx))
+            })
             // Export feedback row
             .when(self.state.export_feedback_message.is_some(), |d| {
                 d.child(self.render_export_feedback_bar())
@@ -832,6 +836,46 @@ impl ChatView {
             .child(self.render_input_bar(cx))
         // Note: Dropdown overlays are now rendered at root level in render()
         // to avoid being clipped by the flex container
+    }
+
+    /// The banner shown when a stored `ChatGPT` session expired mid-conversation.
+    ///
+    /// A refresh that fails permanently is not a provider error the user can
+    /// act on, so the chat says what happened and offers the one thing that
+    /// fixes it.
+    fn render_codex_reauth_bar(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("chat-codex-reauth-bar")
+            .w_full()
+            .px(px(12.0))
+            .py(px(6.0))
+            .bg(Theme::bg_darker())
+            .border_b_1()
+            .border_color(Theme::border())
+            .flex()
+            .items_center()
+            .justify_between()
+            .text_size(px(Theme::font_size_ui()))
+            .text_color(Theme::error())
+            .child("Your ChatGPT session expired.")
+            .child(
+                div()
+                    .id("btn-chat-codex-reauth")
+                    .px(px(10.0))
+                    .py(px(2.0))
+                    .bg(Theme::accent())
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .text_color(Theme::accent_fg())
+                    .child("Sign in again")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.start_codex_reauth();
+                            cx.notify();
+                        }),
+                    ),
+            )
     }
 }
 

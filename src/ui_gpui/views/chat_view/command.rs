@@ -149,6 +149,10 @@ impl ChatView {
                 self.state.show_thinking = !self.state.show_thinking;
                 cx.notify();
             }
+            cmd @ (ViewCommand::CodexReauthRequired { .. }
+            | ViewCommand::CodexSignInCompleted { .. }) => {
+                self.apply_codex_command(cmd, cx);
+            }
             ViewCommand::SetEmojiFilterVisibility { enabled } => {
                 tracing::info!(
                     "ChatView: SetEmojiFilterVisibility received, enabled={}",
@@ -241,5 +245,24 @@ impl ChatView {
             self.emit(crate::events::types::UserEvent::SearchConversations { query });
         }
         cx.notify();
+    }
+
+    /// Drive the expired-session banner.
+    fn apply_codex_command(&mut self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        match cmd {
+            ViewCommand::CodexReauthRequired { account } => {
+                self.state.codex_reauth_account = Some(account);
+                cx.notify();
+            }
+            // The banner names one account; clear it only when that account is
+            // the one that just signed back in.
+            ViewCommand::CodexSignInCompleted { account, .. }
+                if self.state.codex_reauth_account.as_deref() == Some(account.as_str()) =>
+            {
+                self.state.codex_reauth_account = None;
+                cx.notify();
+            }
+            _ => {}
+        }
     }
 }

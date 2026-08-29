@@ -83,22 +83,10 @@ fn apply_api_keys_listed(state: &mut ProfileEditorState, keys: Vec<ApiKeyInfo>) 
     state.data.available_keys = keys.into_iter().map(|key| key.label).collect();
 }
 
+/// Advance the picker exactly the way the editor's dropdown does.
 fn cycle_api_type(data: &mut ProfileEditorData) {
-    data.api_type = match data.api_type.clone() {
-        ApiType::Anthropic => ApiType::OpenAI,
-        ApiType::OpenAI => ApiType::Local,
-        ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
-    };
-
-    if data.base_url.trim().is_empty() {
-        data.base_url =
-            personal_agent::config::default_api_base_url_for_provider(&match &data.api_type {
-                ApiType::Anthropic => "anthropic".to_string(),
-                ApiType::OpenAI => "openai".to_string(),
-                ApiType::Local => "local".to_string(),
-                ApiType::Custom(provider) => provider.clone(),
-            });
-    }
+    data.api_type = data.api_type.next();
+    data.apply_api_type_change();
 }
 
 fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types::ModelProfile {
@@ -108,7 +96,11 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
         .and_then(|raw| Uuid::parse_str(raw).ok())
         .unwrap_or_else(Uuid::new_v4);
 
-    let auth = if data.api_type.requires_api_key() {
+    let auth = if data.api_type.requires_oauth_account() {
+        Some(personal_agent::events::types::ModelProfileAuth::OAuth {
+            account: data.oauth_account.clone(),
+        })
+    } else if data.api_type.requires_api_key() {
         Some(personal_agent::events::types::ModelProfileAuth::Keychain {
             label: data.key_label.clone(),
         })
@@ -130,12 +122,7 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
     personal_agent::events::types::ModelProfile {
         id,
         name: data.name.clone(),
-        provider_id: Some(match &data.api_type {
-            ApiType::Anthropic => "anthropic".to_string(),
-            ApiType::OpenAI => "openai".to_string(),
-            ApiType::Local => "local".to_string(),
-            ApiType::Custom(provider) => provider.clone(),
-        }),
+        provider_id: Some(data.api_type.provider_id()),
         model_id: Some(data.model_id.clone()),
         base_url: Some(data.base_url.clone()),
         auth,
@@ -152,6 +139,7 @@ fn emit_save_payload(data: &ProfileEditorData) -> personal_agent::events::types:
             } else {
                 None
             },
+            reasoning_effort: None,
             context_window_size: Some(data.context_limit as usize),
         }),
         system_prompt: Some(data.system_prompt.clone()),
@@ -218,6 +206,10 @@ fn profile_editor_state_construction_preserves_is_new_and_payloads() {
         base_url: "https://api.openai.com/v1".to_string(),
         key_label: "openai-key".to_string(),
         available_keys: vec!["openai-key".to_string()],
+        available_accounts: Vec::new(),
+        oauth_account: String::new(),
+        oauth_account_label: String::new(),
+        oauth_account_plan: String::new(),
         temperature: 0.2,
         max_tokens: "8192".to_string(),
         max_tokens_field_name: "max_completion_tokens".to_string(),
@@ -227,6 +219,7 @@ fn profile_editor_state_construction_preserves_is_new_and_payloads() {
         show_thinking: false,
         enable_extended_thinking: true,
         thinking_budget: 2048,
+        reasoning_effort: None,
         system_prompt: "Be concise".to_string(),
     };
 
@@ -400,7 +393,7 @@ fn api_keys_listed_replaces_available_keys_in_order() {
 }
 
 #[test]
-fn api_type_cycling_updates_empty_base_url_only() {
+fn api_type_cycling_fills_an_empty_base_url_and_keeps_a_set_one() {
     let mut data = ProfileEditorData::new();
     cycle_api_type(&mut data);
     assert_eq!(data.api_type, ApiType::OpenAI);
@@ -409,19 +402,51 @@ fn api_type_cycling_updates_empty_base_url_only() {
         personal_agent::config::default_api_base_url_for_provider("openai")
     );
 
+    // Skip past the managed-endpoint types to one that respects a custom URL.
+    data.api_type = ApiType::Local;
     let preserved_url = "https://custom.host/v1".to_string();
     data.base_url = preserved_url.clone();
     cycle_api_type(&mut data);
-    assert_eq!(data.api_type, ApiType::Local);
-    assert_eq!(data.base_url, preserved_url);
+    assert_eq!(data.api_type, ApiType::Anthropic);
+    assert_eq!(
+        data.base_url, preserved_url,
+        "a URL the user set is not overwritten"
+    );
 
     data.base_url.clear();
     cycle_api_type(&mut data);
-    assert_eq!(data.api_type, ApiType::Anthropic);
+    assert_eq!(data.api_type, ApiType::OpenAI);
     assert_eq!(
         data.base_url,
-        personal_agent::config::default_api_base_url_for_provider("anthropic")
+        personal_agent::config::default_api_base_url_for_provider("openai")
     );
+}
+
+#[test]
+fn a_managed_endpoint_replaces_whatever_the_user_typed() {
+    let mut data = ProfileEditorData::new();
+    data.base_url = "https://custom.host/v1".to_string();
+
+    data.api_type = ApiType::ChatGptCodex;
+    data.apply_api_type_change();
+
+    assert_eq!(
+        data.base_url, "wss://chatgpt.com/backend-api/codex/responses",
+        "the ChatGPT provider owns its endpoint; a stale URL would break it"
+    );
+}
+
+#[test]
+fn open_responses_leaves_the_endpoint_to_the_user() {
+    let mut data = ProfileEditorData::new();
+    data.base_url = "wss://my-own-server.test/v1/responses".to_string();
+
+    data.api_type = ApiType::OpenResponses;
+    data.apply_api_type_change();
+
+    assert_eq!(data.base_url, "wss://my-own-server.test/v1/responses");
+    assert!(data.api_type.requires_api_key());
+    assert!(!data.api_type.requires_oauth_account());
 }
 
 #[test]
@@ -435,6 +460,10 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         base_url: "https://api.anthropic.com/v1".to_string(),
         key_label: "anthropic-key".to_string(),
         available_keys: vec![],
+        available_accounts: Vec::new(),
+        oauth_account: String::new(),
+        oauth_account_label: String::new(),
+        oauth_account_plan: String::new(),
         temperature: 0.4,
         max_tokens: "9000".to_string(),
         max_tokens_field_name: "max_completion_tokens".to_string(),
@@ -444,6 +473,7 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         show_thinking: true,
         enable_extended_thinking: true,
         thinking_budget: 512,
+        reasoning_effort: None,
         system_prompt: "Use tools when appropriate".to_string(),
     };
     let created = ProfileEditorData {
@@ -454,6 +484,10 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         base_url: "http://localhost:1234/v1".to_string(),
         key_label: "local-key".to_string(),
         available_keys: vec![],
+        available_accounts: Vec::new(),
+        oauth_account: String::new(),
+        oauth_account_label: String::new(),
+        oauth_account_plan: String::new(),
         temperature: 0.9,
         extra_request_fields: "{}".to_string(),
 
@@ -463,6 +497,7 @@ fn save_payload_conversion_uses_existing_or_generated_ids_and_thinking_rules() {
         show_thinking: false,
         enable_extended_thinking: false,
         thinking_budget: 999,
+        reasoning_effort: None,
         system_prompt: "Custom prompt".to_string(),
     };
 
@@ -537,6 +572,7 @@ fn command_payload_shapes_used_by_profile_editor_match_expectations() {
         model_id: "gpt-4.1".to_string(),
         base_url: "https://api.openai.com/v1".to_string(),
         api_key_label: "openai-key".to_string(),
+        oauth_account: String::new(),
         temperature: 0.7,
         max_tokens: Some(8192),
         max_tokens_field_name: "max_completion_tokens".to_string(),
@@ -547,6 +583,7 @@ fn command_payload_shapes_used_by_profile_editor_match_expectations() {
         enable_thinking: false,
         thinking_budget: None,
         system_prompt: "prompt".to_string(),
+        reasoning_effort: String::new(),
     };
 
     assert!(matches!(

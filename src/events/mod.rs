@@ -23,4 +23,4 @@ pub mod types;
 pub use bus::EventBus;
 pub use error::EventBusError;
 pub use global::{emit, subscribe};
-pub use types::AppEvent;
+pub use types::{AppEvent, SystemEvent};

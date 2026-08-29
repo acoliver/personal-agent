@@ -90,6 +90,8 @@ impl ApiKeyManagerPresenter {
     /// # Errors
     ///
     /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
             .store(false, std::sync::atomic::Ordering::Relaxed);

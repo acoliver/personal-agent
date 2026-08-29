@@ -507,6 +507,7 @@ fn make_profile(id: Uuid, name: &str, provider_id: &str, model_id: &str) -> Mode
             thinking_budget: Some(128),
             enable_thinking: true,
             show_thinking: true,
+            reasoning_effort: None,
         },
         system_prompt: format!("prompt for {name}"),
         context_window_size: 128_000,
@@ -530,6 +531,7 @@ fn make_legacy_profile(id: Uuid, name: &str, provider_id: &str, model_id: &str) 
             max_tokens_field_name: None,
             extra_request_fields: None,
             thinking_budget: Some(128),
+            reasoning_effort: None,
             enable_thinking: true,
             show_thinking: true,
         },
@@ -1161,6 +1163,7 @@ mod settings_presenter_tests {
                 model_id: profile.model_id.clone(),
                 base_url: profile.base_url.clone(),
                 api_key_label: "editor-key".to_string(),
+                oauth_account: String::new(),
                 temperature: profile.parameters.temperature,
                 max_tokens: profile.parameters.max_tokens,
                 max_tokens_field_name: profile
@@ -1181,6 +1184,7 @@ mod settings_presenter_tests {
                 show_thinking: profile.parameters.show_thinking,
                 enable_thinking: profile.parameters.enable_thinking,
                 thinking_budget: profile.parameters.thinking_budget,
+                reasoning_effort: String::new(),
                 system_prompt: profile.system_prompt.clone(),
             }
         );
@@ -1222,6 +1226,7 @@ mod settings_presenter_tests {
                 model_id: legacy_profile.model_id.clone(),
                 base_url: legacy_profile.base_url.clone(),
                 api_key_label: "legacy-editor-key".to_string(),
+                oauth_account: String::new(),
                 temperature: legacy_profile.parameters.temperature,
                 max_tokens: legacy_profile.parameters.max_tokens,
                 max_tokens_field_name: "max_tokens".to_string(),
@@ -1232,6 +1237,7 @@ mod settings_presenter_tests {
                 show_thinking: legacy_profile.parameters.show_thinking,
                 enable_thinking: legacy_profile.parameters.enable_thinking,
                 thinking_budget: legacy_profile.parameters.thinking_budget,
+                reasoning_effort: String::new(),
                 system_prompt: legacy_profile.system_prompt.clone(),
             },
             "legacy profiles without max_tokens_field_name or extra_request_fields should use defaults"

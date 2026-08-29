@@ -75,6 +75,8 @@ impl SettingsPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P03
     /// @requirement REQ-025.4
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub(super) async fn handle_mcp_event(
         view_tx: &broadcast::Sender<ViewCommand>,
         event: McpEvent,
@@ -150,6 +152,8 @@ impl SettingsPresenter {
     ///
     /// @plan PLAN-20250128-PRESENTERS.P03
     /// @requirement REQ-025.4
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub(super) async fn handle_system_event(
         view_tx: &broadcast::Sender<ViewCommand>,
         event: SystemEvent,
@@ -254,8 +258,11 @@ impl SettingsPresenter {
             Ok(profile) => {
                 let api_key_label = match &profile.auth {
                     crate::models::AuthConfig::Keychain { label } => label.clone(),
-                    crate::models::AuthConfig::None => String::new(),
+                    crate::models::AuthConfig::None | crate::models::AuthConfig::OAuth { .. } => {
+                        String::new()
+                    }
                 };
+                let oauth_account = profile.auth.oauth_account().unwrap_or_default().to_string();
 
                 let _ = view_tx.send(ViewCommand::ProfileEditorLoad {
                     id: profile.id,
@@ -264,6 +271,7 @@ impl SettingsPresenter {
                     model_id: profile.model_id,
                     base_url: profile.base_url,
                     api_key_label,
+                    oauth_account,
                     temperature: profile.parameters.temperature,
                     max_tokens: profile.parameters.max_tokens,
                     max_tokens_field_name: profile
@@ -285,6 +293,12 @@ impl SettingsPresenter {
                     show_thinking: profile.parameters.show_thinking,
                     enable_thinking: profile.parameters.enable_thinking,
                     thinking_budget: profile.parameters.thinking_budget,
+                    reasoning_effort: profile
+                        .parameters
+                        .reasoning_effort
+                        .as_ref()
+                        .map(|effort| effort.as_str().to_string())
+                        .unwrap_or_default(),
                     system_prompt: profile.system_prompt,
                 });
                 let _ = view_tx.send(ViewCommand::NavigateTo {

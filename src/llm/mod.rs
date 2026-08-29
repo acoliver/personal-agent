@@ -9,6 +9,7 @@ pub mod error;
 pub mod events;
 pub mod mcp_tool_executor;
 mod normalizing_model;
+pub mod open_responses;
 mod provider_quirks;
 pub(crate) mod sse_normalize;
 mod stream;

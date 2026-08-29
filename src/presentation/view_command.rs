@@ -214,6 +214,52 @@ pub enum ViewCommand {
     /// An API key was stored successfully.
     ApiKeyStored { label: String },
 
+    // ===== ChatGPT / Codex Sign-in =====
+    /// A sign-in started. Everything the sheet needs to render immediately.
+    CodexSignInStarted {
+        /// The flow that actually started, which is not always what was asked
+        /// for: a bound callback port falls through to a device code.
+        method: CodexSignInMethod,
+        /// URL to show, and to open in a browser.
+        url: String,
+        /// Code the user types, for device-code sign-ins.
+        user_code: Option<String>,
+        /// Text the view puts on the clipboard without being asked. Carries
+        /// the user code, so a device-code sign-in needs no typing.
+        copy_to_clipboard: Option<String>,
+        /// Seconds until this attempt expires.
+        expires_in_secs: i64,
+        /// Set when the browser flow could not start and this took its place.
+        fell_back: bool,
+    },
+
+    /// Countdown tick for an in-flight sign-in.
+    CodexSignInProgress { remaining_secs: i64 },
+
+    /// A sign-in finished and the grant was stored.
+    CodexSignInCompleted {
+        account: String,
+        label: String,
+        plan: Option<String>,
+    },
+
+    /// A sign-in failed.
+    CodexSignInFailed {
+        reason: CodexSignInFailure,
+        message: String,
+    },
+
+    /// The current set of signed-in accounts.
+    CodexAccountsListed {
+        accounts: Vec<CodexAccountInfo>,
+        /// Known accounts that could not be read, so an empty list is not
+        /// reported as "no accounts yet" when the keychain simply refused.
+        unreadable: usize,
+    },
+
+    /// A stored grant expired and cannot be renewed without the user.
+    CodexReauthRequired { account: String },
+
     /// An API key was deleted successfully.
     ApiKeyDeleted { label: String },
 
@@ -317,6 +363,8 @@ pub enum ViewCommand {
         base_url: String,
         /// Keychain label for the API key (empty string = none set).
         api_key_label: String,
+        /// OAuth account slug (empty string = not an OAuth profile).
+        oauth_account: String,
         temperature: f64,
         max_tokens: Option<u32>,
         max_tokens_field_name: String,
@@ -325,6 +373,9 @@ pub enum ViewCommand {
         show_thinking: bool,
         enable_thinking: bool,
         thinking_budget: Option<u32>,
+        /// Stored reasoning effort as its wire string, empty when the
+        /// profile has never had one set.
+        reasoning_effort: String,
         system_prompt: String,
     },
 
@@ -532,6 +583,64 @@ pub struct ApiKeyInfo {
     pub used_by: Vec<String>,
 }
 
+/// How a sign-in reached the user, as the view sees it.
+pub use crate::events::types::CodexSignInMethod;
+
+/// Why a sign-in failed, so the sheet can offer the right way forward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CodexSignInFailure {
+    /// The user did not finish before the deadline.
+    TimedOut,
+    /// The callback could not be verified as ours.
+    StateMismatch,
+    /// A device code expired before it was approved.
+    DeviceCodeExpired,
+    /// This issuer does not serve device-code sign-in.
+    DeviceCodeUnsupported,
+    /// The identity provider rejected the exchange.
+    Rejected,
+    /// The flow could not reach the network.
+    Offline,
+    /// The grant could not be stored.
+    Storage,
+    /// The user cancelled.
+    Cancelled,
+}
+
+impl CodexSignInFailure {
+    /// Whether retrying the same flow could plausibly succeed.
+    #[must_use]
+    pub const fn is_retryable(self) -> bool {
+        matches!(
+            self,
+            Self::TimedOut | Self::Offline | Self::StateMismatch | Self::Rejected
+        )
+    }
+
+    /// Whether the sheet should offer a device code instead.
+    #[must_use]
+    pub const fn suggests_device_code(self) -> bool {
+        matches!(self, Self::TimedOut)
+    }
+}
+
+/// A signed-in account, as the settings list shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexAccountInfo {
+    /// Account slug, which is also the keychain key.
+    pub account: String,
+    /// Display name: email when known, otherwise a shortened account id.
+    pub label: String,
+    /// Subscription plan, when the identity provider reported one.
+    pub plan: Option<String>,
+    /// Set when the grant can no longer be renewed without the user.
+    pub needs_reauth: bool,
+    /// Seconds until the current access token expires.
+    pub expires_in_secs: Option<i64>,
+    /// Names of profiles authenticating with this account.
+    pub used_by: Vec<String>,
+}
+
 /// Profile summary for settings display
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
@@ -627,6 +736,8 @@ pub enum ViewId {
     McpConfigure,
     ModelSelector,
     ErrorLog,
+    /// The `ChatGPT` sign-in sheet.
+    CodexSignIn,
 }
 
 /// Modal identifier

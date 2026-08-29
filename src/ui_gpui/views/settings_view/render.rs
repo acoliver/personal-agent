@@ -849,9 +849,14 @@ impl SettingsView {
     /// Models panel: full-height profiles list + Refresh Models button.
     fn render_models_panel(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
+            // The accounts block sits below the profile list, and a normal
+            // number of profiles pushes it past the bottom of the panel.
+            // Without this its buttons cannot be reached at all.
+            .id("models-panel-scroll")
             .flex()
             .flex_col()
             .flex_1()
+            .overflow_y_scroll()
             .gap(px(6.0))
             .child(
                 div()
@@ -884,6 +889,7 @@ impl SettingsView {
                     ),
             )
             .child(self.render_profiles_section(cx))
+            .child(self.render_accounts_section(cx))
     }
 
     /// Security panel: renders tool approval controls, including skills auto-approve.

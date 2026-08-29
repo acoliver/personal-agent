@@ -100,6 +100,9 @@ impl MainPanel {
             ViewId::ApiKeyManager => focus_child!(self.api_key_manager_view),
             ViewId::ErrorLog => focus_child!(self.error_log_view),
             ViewId::McpConfigure => focus_child!(self.mcp_configure_view),
+            // The sign-in sheet has nothing to type into, so it takes no focus
+            // of its own and the panel keeps it.
+            ViewId::CodexSignIn => {}
         }
         window.focus(&self.focus_handle, cx);
     }
@@ -167,6 +170,13 @@ impl MainPanel {
                     d,
                     self.error_log_view.as_ref(),
                     "Loading error log...",
+                )
+            })
+            .when(current == ViewId::CodexSignIn, |d| {
+                Self::render_child_or_placeholder(
+                    d,
+                    self.codex_signin_view.as_ref(),
+                    "Starting sign-in...",
                 )
             })
     }

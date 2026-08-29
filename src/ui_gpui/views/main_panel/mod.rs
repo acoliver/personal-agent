@@ -23,6 +23,7 @@ use gpui::{prelude::*, Entity, FocusHandle, Subscription, Task};
 
 use crate::ui_gpui::views::api_key_manager_view::ApiKeyManagerView;
 use crate::ui_gpui::views::chat_view::{ChatState, ChatView};
+use crate::ui_gpui::views::codex_signin_view::CodexSignInView;
 use crate::ui_gpui::views::conversation_list::HistoryPanelView;
 use crate::ui_gpui::views::error_log_view::ErrorLogView;
 use crate::ui_gpui::views::mcp_add_view::McpAddView;
@@ -41,6 +42,7 @@ pub struct MainPanel {
     pub(super) settings_view: Option<Entity<SettingsView>>,
     pub(super) model_selector_view: Option<Entity<ModelSelectorView>>,
     pub(super) profile_editor_view: Option<Entity<ProfileEditorView>>,
+    pub(super) codex_signin_view: Option<Entity<CodexSignInView>>,
     pub(super) mcp_add_view: Option<Entity<McpAddView>>,
     pub(super) mcp_configure_view: Option<Entity<McpConfigureView>>,
     pub(super) api_key_manager_view: Option<Entity<ApiKeyManagerView>>,
@@ -56,6 +58,18 @@ pub struct MainPanel {
 }
 
 impl MainPanel {
+    /// Build the `ChatGPT` sign-in sheet.
+    fn init_codex_signin_view(
+        &mut self,
+        bridge: Option<&std::sync::Arc<crate::ui_gpui::bridge::GpuiBridge>>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let bridge = bridge.cloned();
+        self.codex_signin_view = Some(cx.new(|_cx: &mut gpui::Context<CodexSignInView>| {
+            bridge.map_or_else(CodexSignInView::new, CodexSignInView::with_bridge)
+        }));
+    }
+
     pub fn new(cx: &mut gpui::Context<Self>) -> Self {
         Self {
             navigation: NavigationState::new(),
@@ -65,6 +79,7 @@ impl MainPanel {
             settings_view: None,
             model_selector_view: None,
             profile_editor_view: None,
+            codex_signin_view: None,
             mcp_add_view: None,
             mcp_configure_view: None,
             api_key_manager_view: None,
@@ -189,7 +204,26 @@ impl MainPanel {
             view
         }));
 
-        // MCP Add view
+        // ChatGPT sign-in sheet
+        self.codex_signin_view = Some(cx.new(|_cx: &mut gpui::Context<CodexSignInView>| {
+            bridge.as_ref().map_or_else(CodexSignInView::new, |b| {
+                CodexSignInView::with_bridge(b.clone())
+            })
+        }));
+
+        self.init_codex_signin_view(bridge.as_ref(), cx);
+        self.init_secondary_views(bridge.as_ref(), cx);
+
+        self.apply_startup_state(cx);
+    }
+
+    /// Build the views that take a bridge and nothing else.
+    fn init_secondary_views(
+        &mut self,
+        bridge: Option<&std::sync::Arc<crate::ui_gpui::bridge::GpuiBridge>>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let bridge = bridge.cloned();
         self.mcp_add_view = Some(cx.new(|cx: &mut gpui::Context<McpAddView>| {
             let mut view = McpAddView::new(cx);
             if let Some(ref b) = bridge {
@@ -197,8 +231,6 @@ impl MainPanel {
             }
             view
         }));
-
-        // MCP Configure view
         self.mcp_configure_view = Some(cx.new(|cx: &mut gpui::Context<McpConfigureView>| {
             let mut view = McpConfigureView::new(cx);
             if let Some(ref b) = bridge {
@@ -206,8 +238,6 @@ impl MainPanel {
             }
             view
         }));
-
-        // API Key Manager view
         self.api_key_manager_view = Some(cx.new(|cx: &mut gpui::Context<ApiKeyManagerView>| {
             let mut view = ApiKeyManagerView::new(cx);
             if let Some(ref b) = bridge {
@@ -215,8 +245,6 @@ impl MainPanel {
             }
             view
         }));
-
-        // Error Log view
         self.error_log_view = Some(cx.new(|cx: &mut gpui::Context<ErrorLogView>| {
             let mut view = ErrorLogView::new(cx);
             if let Some(ref b) = bridge {
@@ -224,8 +252,6 @@ impl MainPanel {
             }
             view
         }));
-
-        self.apply_startup_state(cx);
     }
 
     /// Check if all views are initialized

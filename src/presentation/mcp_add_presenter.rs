@@ -93,6 +93,8 @@ impl McpAddPresenter {
     /// Returns `PresenterError` if presenter startup becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn start(&mut self) -> Result<(), PresenterError> {
         if self.running.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -134,6 +136,8 @@ impl McpAddPresenter {
     /// Returns `PresenterError` if presenter shutdown becomes fallible in the future.
     ///
     /// @plan PLAN-20250125-REFACTOR.P10
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn stop(&mut self) -> Result<(), PresenterError> {
         self.running
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -315,6 +319,8 @@ impl McpAddPresenter {
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
     /// @requirement REQ-WIRE-001
     /// @pseudocode component-005-mcp-flow.md lines 015-033
+    // Signature fixed by the shared call convention, not by the body.
+    #[allow(clippy::unused_async_trait_impl)]
     async fn on_mcp_add_next(
         _mcp_registry_service: &Arc<dyn McpRegistryService>,
         view_tx: &broadcast::Sender<ViewCommand>,

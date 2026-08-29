@@ -80,12 +80,36 @@ impl Default for NavigationChannel {
     }
 }
 
-/// Global navigation channel
+/// Global navigation channel used by the running app.
+#[cfg(not(test))]
 static NAVIGATION_CHANNEL: once_cell::sync::Lazy<NavigationChannel> =
     once_cell::sync::Lazy::new(NavigationChannel::new);
 
-/// Get the global navigation channel
+// One channel per test thread.
+//
+// The channel holds a single request, so tests sharing one instance clobber
+// each other: one asks for McpConfigure, another drains it, and the first
+// reads None. Each test runs on its own thread and drives its views
+// synchronously there, so a channel per thread removes the sharing rather than
+// guarding it. Locking was tried and self-deadlocked, because some tests take
+// the helper twice.
+#[cfg(test)]
+thread_local! {
+    static TEST_CHANNEL: &'static NavigationChannel =
+        Box::leak(Box::new(NavigationChannel::new()));
+}
+
+/// Get the navigation channel.
+///
+/// One global instance in the app; one per thread under test.
 #[must_use]
 pub fn navigation_channel() -> &'static NavigationChannel {
-    &NAVIGATION_CHANNEL
+    #[cfg(test)]
+    {
+        TEST_CHANNEL.with(|channel| *channel)
+    }
+    #[cfg(not(test))]
+    {
+        &NAVIGATION_CHANNEL
+    }
 }

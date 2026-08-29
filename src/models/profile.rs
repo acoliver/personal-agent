@@ -1,5 +1,6 @@
 //! Model profile definitions
 
+use super::capabilities::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -36,6 +37,11 @@ pub enum AuthConfig {
     Keychain { label: String },
     /// No authentication required (for local/offline models).
     None,
+    /// OAuth account; the token blob lives in the keychain under
+    /// `oauth:{account}`. Several profiles may share one account, so the slug
+    /// is the identity of the sign-in, not of the profile.
+    #[serde(rename = "oauth")]
+    OAuth { account: String },
 }
 
 impl<'de> serde::Deserialize<'de> for AuthConfig {
@@ -56,6 +62,14 @@ impl<'de> serde::Deserialize<'de> for AuthConfig {
                 Ok(Self::Keychain { label })
             }
             Some("none") => Ok(Self::None),
+            Some("oauth") => {
+                let account = map
+                    .get("account")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Ok(Self::OAuth { account })
+            }
             // Legacy and unknown formats map to empty keychain labels so the secret
             // must be re-stored before use.
             _ => Ok(Self::Keychain {
@@ -70,6 +84,7 @@ impl std::fmt::Debug for AuthConfig {
         match self {
             Self::Keychain { label } => f.debug_struct("Keychain").field("label", label).finish(),
             Self::None => f.debug_struct("None").finish(),
+            Self::OAuth { account } => f.debug_struct("OAuth").field("account", account).finish(),
         }
     }
 }
@@ -80,7 +95,22 @@ impl AuthConfig {
     pub const fn requires_api_key(&self) -> bool {
         match self {
             Self::Keychain { .. } => true,
-            Self::None => false,
+            Self::None | Self::OAuth { .. } => false,
+        }
+    }
+
+    /// Returns `true` if this auth config requires a signed-in OAuth account.
+    #[must_use]
+    pub const fn requires_oauth_account(&self) -> bool {
+        matches!(self, Self::OAuth { .. })
+    }
+
+    /// The OAuth account slug, when this profile authenticates with OAuth.
+    #[must_use]
+    pub const fn oauth_account(&self) -> Option<&str> {
+        match self {
+            Self::OAuth { account } => Some(account.as_str()),
+            Self::Keychain { .. } | Self::None => None,
         }
     }
 }
@@ -93,6 +123,14 @@ pub struct ModelParameters {
     pub max_tokens_field_name: Option<String>,
     pub extra_request_fields: Option<serde_json::Value>,
     pub thinking_budget: Option<u32>,
+    /// How hard a reasoning model should think.
+    ///
+    /// Separate from `thinking_budget` on purpose. A budget is a token
+    /// count; an effort is a named level the backend interprets, with no
+    /// token equivalence. A model may take either, both, or neither, so
+    /// neither field is derived from the other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub enable_thinking: bool,
     pub show_thinking: bool,
 }
@@ -124,6 +162,7 @@ impl Default for ModelParameters {
             max_tokens_field_name: Some("max_tokens".to_string()),
             extra_request_fields: Some(serde_json::json!({})),
             thinking_budget: None,
+            reasoning_effort: None,
             enable_thinking: false,
             show_thinking: false,
         }

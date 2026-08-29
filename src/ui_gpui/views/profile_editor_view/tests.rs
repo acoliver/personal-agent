@@ -4,6 +4,9 @@
 
 #![allow(clippy::future_not_send)]
 
+#[path = "tests_account.rs"]
+mod tests_account;
+
 use super::*;
 use flume;
 use gpui::{AppContext, TestAppContext};
@@ -18,6 +21,9 @@ pub(super) fn make_bridge() -> (Arc<GpuiBridge>, flume::Receiver<UserEvent>) {
     (Arc::new(GpuiBridge::new(user_tx, view_rx)), user_rx)
 }
 
+/// Take exclusive use of the global navigation channel for this test.
+///
+/// Drop any navigation request a test left in the global channel.
 pub(super) fn clear_navigation_requests() {
     while crate::ui_gpui::navigation_channel()
         .take_pending()
@@ -88,6 +94,7 @@ async fn profile_editor_load_and_api_key_listing_replace_visible_editor_state(
                 model_id: "claude-sonnet-4-20250514".to_string(),
                 base_url: "https://api.anthropic.com/v1".to_string(),
                 api_key_label: "anthropic-key".to_string(),
+                oauth_account: String::new(),
                 temperature: 0.25,
                 max_tokens: Some(8192),
                 max_tokens_field_name: "max_tokens".to_string(),
@@ -97,6 +104,7 @@ async fn profile_editor_load_and_api_key_listing_replace_visible_editor_state(
                 show_thinking: false,
                 enable_thinking: true,
                 thinking_budget: None,
+                reasoning_effort: String::new(),
                 system_prompt: "Use tools when helpful".to_string(),
             },
             cx,
@@ -199,7 +207,7 @@ async fn local_api_type_requires_no_key_and_can_be_saved(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-async fn api_type_cycles_through_anthropic_openai_local_anthropic(cx: &mut TestAppContext) {
+async fn api_type_cycles_through_every_choice_and_wraps(cx: &mut TestAppContext) {
     let view = cx.new(ProfileEditorView::new);
 
     view.update(cx, |view: &mut ProfileEditorView, _cx| {
@@ -207,30 +215,25 @@ async fn api_type_cycles_through_anthropic_openai_local_anthropic(cx: &mut TestA
         assert_eq!(view.state.data.api_type.display(), "Anthropic");
         assert!(view.state.data.api_type.requires_api_key());
 
-        // Cycle to OpenAI
-        view.state.data.api_type = match view.state.data.api_type {
-            ApiType::Anthropic => ApiType::OpenAI,
-            ApiType::OpenAI => ApiType::Local,
-            ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
-        };
+        view.state.data.api_type = view.state.data.api_type.next();
         assert_eq!(view.state.data.api_type.display(), "OpenAI");
         assert!(view.state.data.api_type.requires_api_key());
 
-        // Cycle to Local
-        view.state.data.api_type = match view.state.data.api_type {
-            ApiType::Anthropic => ApiType::OpenAI,
-            ApiType::OpenAI => ApiType::Local,
-            ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
-        };
+        view.state.data.api_type = view.state.data.api_type.next();
+        assert_eq!(view.state.data.api_type.display(), "ChatGPT (Codex)");
+        assert!(!view.state.data.api_type.requires_api_key());
+        assert!(view.state.data.api_type.requires_oauth_account());
+
+        view.state.data.api_type = view.state.data.api_type.next();
+        assert_eq!(view.state.data.api_type.display(), "Open Responses");
+        assert!(view.state.data.api_type.requires_api_key());
+
+        view.state.data.api_type = view.state.data.api_type.next();
         assert_eq!(view.state.data.api_type.display(), "Local Model");
         assert!(!view.state.data.api_type.requires_api_key());
+        assert!(!view.state.data.api_type.requires_oauth_account());
 
-        // Cycle back to Anthropic
-        view.state.data.api_type = match view.state.data.api_type {
-            ApiType::Anthropic => ApiType::OpenAI,
-            ApiType::OpenAI => ApiType::Local,
-            ApiType::Local | ApiType::Custom(_) => ApiType::Anthropic,
-        };
+        view.state.data.api_type = view.state.data.api_type.next();
         assert_eq!(view.state.data.api_type.display(), "Anthropic");
     });
 }
@@ -293,6 +296,7 @@ async fn model_selected_preserves_edit_state_for_issue_182(cx: &mut TestAppConte
                 model_id: "claude-3-5-sonnet".to_string(),
                 base_url: "https://api.anthropic.com/v1".to_string(),
                 api_key_label: "anthropic-key".to_string(),
+                oauth_account: String::new(),
                 temperature: 0.7,
                 max_tokens: Some(4096),
                 max_tokens_field_name: "max_tokens".to_string(),
@@ -301,6 +305,7 @@ async fn model_selected_preserves_edit_state_for_issue_182(cx: &mut TestAppConte
                 show_thinking: true,
                 enable_thinking: false,
                 thinking_budget: None,
+                reasoning_effort: String::new(),
                 system_prompt: "Be helpful.".to_string(),
             },
             cx,
@@ -417,6 +422,7 @@ async fn profile_editor_reset_clears_state_but_preserves_keys_for_issue_182(
                 model_id: "claude".to_string(),
                 base_url: "https://api.anthropic.com/v1".to_string(),
                 api_key_label: "anthropic-key".to_string(),
+                oauth_account: String::new(),
                 temperature: 0.7,
                 max_tokens: Some(4096),
                 max_tokens_field_name: "max_tokens".to_string(),
@@ -425,6 +431,7 @@ async fn profile_editor_reset_clears_state_but_preserves_keys_for_issue_182(
                 show_thinking: true,
                 enable_thinking: false,
                 thinking_budget: None,
+                reasoning_effort: String::new(),
                 system_prompt: "Old prompt".to_string(),
             },
             cx,
@@ -500,6 +507,7 @@ async fn reset_to_new_profile_helper_clears_edit_state_for_issue_182(cx: &mut Te
                 model_id: "claude-3-5-sonnet".to_string(),
                 base_url: "https://api.anthropic.com/v1".to_string(),
                 api_key_label: "anthropic-key".to_string(),
+                oauth_account: String::new(),
                 temperature: 0.7,
                 max_tokens: Some(4096),
                 max_tokens_field_name: "max_tokens".to_string(),
@@ -508,6 +516,7 @@ async fn reset_to_new_profile_helper_clears_edit_state_for_issue_182(cx: &mut Te
                 show_thinking: true,
                 enable_thinking: false,
                 thinking_budget: None,
+                reasoning_effort: String::new(),
                 system_prompt: "Be helpful.".to_string(),
             },
             cx,
@@ -561,6 +570,7 @@ async fn local_profile_load_keeps_save_enabled_for_issue_182(cx: &mut TestAppCon
                 base_url: "http://fed-net.internet-box.ch:8080/".to_string(),
                 // Local profiles have no keychain label.
                 api_key_label: String::new(),
+                oauth_account: String::new(),
                 temperature: 0.7,
                 max_tokens: Some(4096),
                 max_tokens_field_name: "max_tokens".to_string(),
@@ -569,6 +579,7 @@ async fn local_profile_load_keeps_save_enabled_for_issue_182(cx: &mut TestAppCon
                 show_thinking: true,
                 enable_thinking: false,
                 thinking_budget: None,
+                reasoning_effort: String::new(),
                 system_prompt: "Be helpful.".to_string(),
             },
             cx,
@@ -699,6 +710,7 @@ async fn profile_editor_load_preserves_empty_token_field_for_issue_205(cx: &mut 
                 model_id: "gpt-4.1".to_string(),
                 base_url: "https://api.openai.com/v1".to_string(),
                 api_key_label: "openai-key".to_string(),
+                oauth_account: String::new(),
                 temperature: 1.0,
                 max_tokens: None,
                 max_tokens_field_name: String::new(),
@@ -707,6 +719,7 @@ async fn profile_editor_load_preserves_empty_token_field_for_issue_205(cx: &mut 
                 show_thinking: true,
                 enable_thinking: false,
                 thinking_budget: None,
+                reasoning_effort: String::new(),
                 system_prompt: "Be helpful.".to_string(),
             },
             cx,
@@ -715,5 +728,264 @@ async fn profile_editor_load_preserves_empty_token_field_for_issue_205(cx: &mut 
         assert_eq!(view.state.data.max_tokens, "");
         assert_eq!(view.state.data.max_tokens_field_name, "");
         assert!(!view.state.advanced_request_parameters_expanded);
+    });
+}
+
+// ── ChatGPT (Codex) profiles ────────────────────────────────────────────
+
+#[gpui::test]
+async fn the_picker_offers_every_type_and_returns_to_the_start(cx: &mut TestAppContext) {
+    let seen: Vec<String> = {
+        let mut api_type = ApiType::Anthropic;
+        let mut seen = vec![api_type.display()];
+        for _ in 1..ApiType::CHOICES.len() {
+            api_type = api_type.next();
+            seen.push(api_type.display());
+        }
+        assert_eq!(api_type.next(), ApiType::Anthropic, "the picker wraps");
+        seen
+    };
+
+    assert_eq!(
+        seen,
+        vec![
+            "Anthropic",
+            "OpenAI",
+            "ChatGPT (Codex)",
+            "Open Responses",
+            "Local Model",
+        ]
+    );
+    let _ = cx;
+}
+
+#[gpui::test]
+async fn an_unrecognised_provider_leaves_the_picker_at_the_first_choice(cx: &mut TestAppContext) {
+    let custom = ApiType::Custom("something-else".to_string());
+
+    assert_eq!(custom.next(), ApiType::Anthropic);
+    let _ = cx;
+}
+
+#[gpui::test]
+async fn a_codex_profile_needs_an_account_not_a_key(cx: &mut TestAppContext) {
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        view.state.data.name = "Codex".to_string();
+        view.state.data.model_id = "gpt-5.6-luna".to_string();
+        view.state.data.api_type = ApiType::ChatGptCodex;
+        view.state.data.apply_api_type_change();
+
+        assert!(!view.state.data.api_type.requires_api_key());
+        assert!(view.state.data.api_type.requires_oauth_account());
+        assert!(
+            !view.state.data.can_save(),
+            "Save stays disabled until an account is signed in"
+        );
+
+        view.state.data.oauth_account = "chatgpt-acct-1".to_string();
+        assert!(view.state.data.can_save());
+    });
+}
+
+#[gpui::test]
+async fn choosing_codex_fills_in_the_managed_endpoint(cx: &mut TestAppContext) {
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        view.state.data.base_url = "https://example.test/v1".to_string();
+        view.state.data.api_type = ApiType::ChatGptCodex;
+        view.state.data.apply_api_type_change();
+
+        assert_eq!(
+            view.state.data.base_url,
+            "wss://chatgpt.com/backend-api/codex/responses"
+        );
+    });
+}
+
+#[gpui::test]
+async fn leaving_codex_drops_the_account(cx: &mut TestAppContext) {
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        view.state.data.api_type = ApiType::ChatGptCodex;
+        view.state.data.oauth_account = "chatgpt-acct-1".to_string();
+        view.state.data.oauth_account_label = "a@b.c".to_string();
+
+        view.state.data.api_type = ApiType::OpenAI;
+        view.state.data.apply_api_type_change();
+
+        assert!(
+            view.state.data.oauth_account.is_empty(),
+            "a key-authenticated provider cannot use an account"
+        );
+        assert!(view.state.data.oauth_account_label.is_empty());
+    });
+}
+
+#[gpui::test]
+async fn leaving_a_key_provider_drops_the_key_label(cx: &mut TestAppContext) {
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        view.state.data.api_type = ApiType::OpenAI;
+        view.state.data.key_label = "openai-key".to_string();
+
+        view.state.data.api_type = ApiType::ChatGptCodex;
+        view.state.data.apply_api_type_change();
+
+        assert!(view.state.data.key_label.is_empty());
+    });
+}
+
+#[gpui::test]
+async fn signing_in_asks_for_a_browser_flow(cx: &mut TestAppContext) {
+    clear_navigation_requests();
+    let (bridge, events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    while events.try_recv() == Ok(UserEvent::RefreshApiKeys) {}
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        view.start_codex_sign_in();
+    });
+
+    assert_eq!(
+        events.try_recv().expect("event emitted"),
+        UserEvent::StartCodexSignIn {
+            method: crate::events::types::CodexSignInMethod::Browser
+        }
+    );
+
+    // Starting a sign-in also navigates to the sheet. The navigation channel
+    // is a single global slot shared by every test in this binary, so a
+    // request left behind here surfaces as a stray navigation in another test.
+    clear_navigation_requests();
+}
+
+#[gpui::test]
+async fn a_completed_sign_in_populates_the_account_row(cx: &mut TestAppContext) {
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.state.data.api_type = ApiType::ChatGptCodex;
+        // Selecting the type is what fills in its managed endpoint.
+        view.state.data.apply_api_type_change();
+        view.handle_command(
+            ViewCommand::CodexSignInCompleted {
+                account: "chatgpt-acct-1".to_string(),
+                label: "andrew@example.com".to_string(),
+                plan: Some("ChatGPT Pro".to_string()),
+            },
+            cx,
+        );
+
+        assert_eq!(view.state.data.oauth_account, "chatgpt-acct-1");
+        assert_eq!(view.state.data.oauth_account_label, "andrew@example.com");
+        assert_eq!(view.state.data.oauth_account_plan, "ChatGPT Pro");
+        // A signed-in account is the credential this API type needs, so with
+        // the other required fields present Save becomes available.
+        view.state.data.name = "Codex".to_string();
+        view.state.data.model_id = "gpt-5.6-luna".to_string();
+        assert!(view.state.data.can_save());
+    });
+}
+
+#[gpui::test]
+async fn signing_out_clears_the_account_and_tells_the_presenter(cx: &mut TestAppContext) {
+    let (bridge, events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    while events.try_recv() == Ok(UserEvent::RefreshApiKeys) {}
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        view.state.data.api_type = ApiType::ChatGptCodex;
+        view.state.data.oauth_account = "chatgpt-acct-1".to_string();
+
+        view.sign_out_codex_account("chatgpt-acct-1".to_string());
+
+        assert!(view.state.data.oauth_account.is_empty());
+        assert!(!view.state.data.can_save());
+    });
+
+    assert_eq!(
+        events.try_recv().expect("event emitted"),
+        UserEvent::SignOutCodexAccount {
+            account: "chatgpt-acct-1".to_string()
+        }
+    );
+}
+
+#[gpui::test]
+async fn a_codex_profile_loads_with_its_account(cx: &mut TestAppContext) {
+    let (bridge, _events) = make_bridge();
+    let view = cx.new(|cx| {
+        let mut view = ProfileEditorView::new(cx);
+        view.set_bridge(bridge);
+        view
+    });
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.handle_command(
+            ViewCommand::ProfileEditorLoad {
+                id: Uuid::new_v4(),
+                name: "Codex".to_string(),
+                provider_id: "openai-codex".to_string(),
+                model_id: "gpt-5.6-luna".to_string(),
+                base_url: "wss://chatgpt.com/backend-api/codex/responses".to_string(),
+                api_key_label: String::new(),
+                oauth_account: "chatgpt-acct-1".to_string(),
+                temperature: 1.0,
+                max_tokens: Some(4096),
+                max_tokens_field_name: String::new(),
+                extra_request_fields: String::new(),
+                context_limit: Some(128_000),
+                show_thinking: false,
+                enable_thinking: false,
+                thinking_budget: None,
+                reasoning_effort: String::new(),
+                system_prompt: String::new(),
+            },
+            cx,
+        );
+
+        assert_eq!(view.state.data.api_type, ApiType::ChatGptCodex);
+        assert_eq!(view.state.data.oauth_account, "chatgpt-acct-1");
+        assert!(view.state.data.can_save());
     });
 }

@@ -183,6 +183,22 @@ pub enum UserEvent {
     /// User initiated OAuth flow
     StartMcpOAuth { id: Uuid, provider: String },
 
+    // ===== ChatGPT / Codex Sign-in =====
+    /// User asked to sign in to a `ChatGPT` account.
+    ///
+    /// `method` is a hint. The browser flow falls through to a device code on
+    /// its own when the fixed callback port is unavailable.
+    StartCodexSignIn { method: CodexSignInMethod },
+
+    /// User abandoned an in-flight sign-in.
+    CancelCodexSignIn,
+
+    /// User signed out of a `ChatGPT` account.
+    SignOutCodexAccount { account: String },
+
+    /// A view needs the current list of signed-in accounts.
+    ListCodexAccounts,
+
     // ===== Model Selector Actions =====
     /// User opened model selector
     OpenModelSelector,
@@ -635,6 +651,10 @@ pub enum SystemEvent {
 
     /// Models registry refresh failed
     ModelsRegistryRefreshFailed { error: String },
+
+    /// A stored OAuth grant can no longer be renewed; the user has to sign in
+    /// again before any profile using this account can run a turn.
+    OAuthReauthRequired { account: String },
 }
 
 // Placeholder types for event variants
@@ -647,6 +667,35 @@ pub enum ModelProfileAuth {
     Keychain { label: String },
     /// No authentication required (for local/offline models).
     None,
+    /// OAuth account, referenced by slug.
+    OAuth { account: String },
+}
+
+/// How a sign-in should reach the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub enum CodexSignInMethod {
+    /// Open a browser and listen on the loopback callback.
+    Browser,
+    /// Issue a code the user enters on any device.
+    DeviceCode,
+}
+
+impl From<CodexSignInMethod> for crate::services::oauth::SignInMethod {
+    fn from(value: CodexSignInMethod) -> Self {
+        match value {
+            CodexSignInMethod::Browser => Self::Browser,
+            CodexSignInMethod::DeviceCode => Self::DeviceCode,
+        }
+    }
+}
+
+impl From<crate::services::oauth::SignInMethod> for CodexSignInMethod {
+    fn from(value: crate::services::oauth::SignInMethod) -> Self {
+        match value {
+            crate::services::oauth::SignInMethod::Browser => Self::Browser,
+            crate::services::oauth::SignInMethod::DeviceCode => Self::DeviceCode,
+        }
+    }
 }
 
 /// Lightweight profile parameters payload for GPUI save flow
@@ -661,6 +710,11 @@ pub struct ModelProfileParameters {
     pub show_thinking: Option<bool>,
     pub enable_thinking: Option<bool>,
     pub thinking_budget: Option<u32>,
+    /// Reasoning effort level, for models that take one.
+    ///
+    /// Carried as the wire string so this payload stays free of domain
+    /// types. `None` means the profile keeps whatever it already had.
+    pub reasoning_effort: Option<String>,
     /// Context window size (the editor field labeled "CONTEXT LIMIT").
     ///
     /// Lives at the profile level on disk

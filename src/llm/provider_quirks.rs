@@ -74,6 +74,7 @@ pub fn effective_serdes_provider(
             "anthropic" => return "anthropic",
             "groq" => return "groq",
             "mistral" => return "mistral",
+            crate::llm::open_responses::TRANSPORT => return crate::llm::open_responses::TRANSPORT,
             _ => {}
         }
     }

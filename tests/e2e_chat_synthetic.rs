@@ -86,6 +86,10 @@ async fn test_real_chat_with_synthetic_api() {
         AuthConfig::None => {
             println!("No API key required (local model)");
         }
+        AuthConfig::OAuth { account } => {
+            assert!(!account.is_empty(), "OAuth account must not be empty");
+            println!("OAuth account: {account} [OK]");
+        }
     }
 
     let api_key_override_present =

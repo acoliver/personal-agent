@@ -1,0 +1,639 @@
+//! What `PersonalAgent` actually puts on the Responses websocket, and what it
+//! makes of what comes back.
+//!
+//! These run against a raw `tokio-tungstenite` peer on loopback. No network,
+//! no credentials, and the frames are written as literal JSON so a change in
+//! the wire shape fails here rather than in production.
+
+use std::time::Duration;
+
+use futures::{SinkExt, StreamExt};
+use personal_agent::llm::{LlmClient, Message, StreamEvent};
+use personal_agent::models::ReasoningEffort;
+use personal_agent::models::{AuthConfig, ModelProfile};
+use serde_json::{json, Value};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::{accept_async, WebSocketStream};
+use uuid::Uuid;
+
+/// Serialises tests that hold a live session.
+///
+/// Sessions live in a process-global cache bounded at `MAX_LIVE_SESSIONS`.
+/// Tests in a binary run in parallel, so once the number of concurrent
+/// sessions reaches that bound the cache evicts one belonging to a test still
+/// using it, and that test's socket is closed under it. Holding this while a
+/// session is live keeps the tests independent of how many of them there are.
+static LIVE_SESSION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+type Peer = WebSocketStream<TcpStream>;
+
+/// Accept one websocket connection.
+async fn accept(listener: &TcpListener) -> Peer {
+    let (stream, _) = listener.accept().await.expect("accept");
+    accept_async(stream).await.expect("websocket upgrade")
+}
+
+/// Read one turn frame from the client.
+async fn read_frame(peer: &mut Peer) -> Value {
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(5), peer.next())
+            .await
+            .expect("timed out waiting for a turn frame")
+            .expect("socket closed before a turn arrived")
+            .expect("socket error");
+        match message {
+            WsMessage::Text(text) => {
+                return serde_json::from_str(&text).expect("turn frame is JSON")
+            }
+            WsMessage::Close(_) => panic!("client closed before sending a turn"),
+            // Pings and binary frames are noise between turns.
+            _ => {}
+        }
+    }
+}
+
+async fn send(peer: &mut Peer, event: &Value) {
+    peer.send(WsMessage::Text(event.to_string()))
+        .await
+        .expect("send event");
+}
+
+/// A response object shaped the way the backend sends it, with one assistant
+/// message and usage.
+fn completed_response(id: &str, model: &str, text: &str) -> Value {
+    json!({
+        "id": id,
+        "object": "response",
+        "created_at": 0,
+        "status": "completed",
+        "model": model,
+        "output": [{
+            "type": "message",
+            "id": format!("msg_{id}"),
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": text, "annotations": []}]
+        }],
+        "usage": {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+    })
+}
+
+/// Stream one complete turn: item added, text delta, item done, completed.
+async fn stream_turn(peer: &mut Peer, id: &str, model: &str, text: &str) {
+    send(
+        peer,
+        &json!({
+            "type": "response.output_item.added",
+            "sequence_number": 1,
+            "output_index": 0,
+            "item": {
+                "type": "message",
+                "id": format!("msg_{id}"),
+                "role": "assistant",
+                "status": "in_progress",
+                "content": []
+            }
+        }),
+    )
+    .await;
+    send(
+        peer,
+        &json!({
+            "type": "response.output_text.delta",
+            "sequence_number": 2,
+            "item_id": format!("msg_{id}"),
+            "output_index": 0,
+            "content_index": 0,
+            "delta": text
+        }),
+    )
+    .await;
+    send(
+        peer,
+        &json!({
+            "type": "response.output_item.done",
+            "sequence_number": 3,
+            "output_index": 0,
+            "item": {
+                "type": "message",
+                "id": format!("msg_{id}"),
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": text, "annotations": []}]
+            }
+        }),
+    )
+    .await;
+    send(
+        peer,
+        &json!({
+            "type": "response.completed",
+            "sequence_number": 4,
+            "response": completed_response(id, model, text)
+        }),
+    )
+    .await;
+}
+
+fn profile(endpoint: &str) -> ModelProfile {
+    ModelProfile::new(
+        "Wire".to_string(),
+        "open-responses".to_string(),
+        "gpt-5.6-luna".to_string(),
+        endpoint.to_string(),
+        AuthConfig::None,
+    )
+}
+
+fn user(text: &str) -> Message {
+    Message::user(text)
+}
+
+/// Drain a streaming turn into the events `PersonalAgent` hands the UI.
+async fn run_turn(client: &LlmClient, history: &[Message]) -> Vec<StreamEvent> {
+    let collected = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&collected);
+    client
+        .request_stream(history, move |event| {
+            sink.lock().expect("event sink").push(event);
+        })
+        .await
+        .expect("stream");
+    let events = collected.lock().expect("event sink").clone();
+    events
+}
+
+#[tokio::test]
+async fn the_turn_frame_is_flat_and_carries_no_response_wrapper() {
+    let _live = LIVE_SESSION.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("hello")]).await;
+
+    let frame = server.await.expect("server task");
+    assert_eq!(frame["type"], "response.create");
+    assert_eq!(
+        frame["model"], "gpt-5.6-luna",
+        "the model belongs on the frame root; nested it parses as None"
+    );
+    assert!(
+        frame.get("response").is_none(),
+        "the codex frame is flat, not wrapped: {frame}"
+    );
+    assert!(frame.get("input").is_some(), "frame carries input: {frame}");
+}
+
+#[tokio::test]
+async fn a_chained_turn_sends_only_the_new_input() {
+    let _live = LIVE_SESSION.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let first = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "first").await;
+        let second = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_2", "gpt-5.6-luna", "second").await;
+        (first, second)
+    });
+
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+
+    let history = vec![user("first question")];
+    run_turn(&client, &history).await;
+
+    let history = vec![
+        user("first question"),
+        Message::assistant("first"),
+        user("second question"),
+    ];
+    run_turn(&client, &history).await;
+
+    let (first, second) = server.await.expect("server task");
+
+    assert!(
+        first["previous_response_id"].is_null(),
+        "the opening turn has nothing to chain onto: {first}"
+    );
+    assert_eq!(
+        second["previous_response_id"], "resp_1",
+        "the second turn chains onto the first: {second}"
+    );
+
+    let first_items = first["input"].as_array().expect("input array").len();
+    let second_items = second["input"].as_array().expect("input array").len();
+    assert!(
+        second_items < first_items + 2,
+        "the chained turn resent the history: first={first_items} second={second_items}"
+    );
+    assert_eq!(
+        second_items, 1,
+        "only the new user item goes out on a chained turn: {second}"
+    );
+}
+
+#[tokio::test]
+async fn text_deltas_and_usage_reach_the_ui() {
+    let _live = LIVE_SESSION.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let _ = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "haiku").await;
+    });
+
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    let events = run_turn(&client, &[user("hello")]).await;
+
+    let text: String = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::TextDelta(delta) => Some(delta.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "haiku");
+
+    let completions: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::Complete {
+                input_tokens,
+                output_tokens,
+            } => Some((*input_tokens, *output_tokens)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        completions.len(),
+        1,
+        "exactly one terminal event: {events:?}"
+    );
+    assert_eq!(
+        completions[0],
+        (Some(11), Some(7)),
+        "usage from the provider reaches the UI"
+    );
+}
+
+#[tokio::test]
+async fn reasoning_summary_deltas_arrive_as_thinking() {
+    let _live = LIVE_SESSION.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let _ = read_frame(&mut peer).await;
+        send(
+            &mut peer,
+            &json!({
+                "type": "response.output_item.added",
+                "sequence_number": 1,
+                "output_index": 0,
+                "item": {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": []
+                }
+            }),
+        )
+        .await;
+        send(
+            &mut peer,
+            &json!({
+                "type": "response.reasoning_summary_text.delta",
+                "sequence_number": 2,
+                "item_id": "rs_1",
+                "output_index": 0,
+                "summary_index": 0,
+                "delta": "weighing it up"
+            }),
+        )
+        .await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "done").await;
+    });
+
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    let events = run_turn(&client, &[user("think")]).await;
+
+    let thinking: String = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ThinkingDelta(delta) => Some(delta.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(thinking, "weighing it up");
+}
+
+#[tokio::test]
+async fn an_unknown_frame_does_not_end_the_stream() {
+    let _live = LIVE_SESSION.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let _ = read_frame(&mut peer).await;
+        // The codex backend interleaves quota frames the client has no
+        // meaning for. Skipping them is the contract.
+        send(
+            &mut peer,
+            &json!({
+                "type": "codex.rate_limits",
+                "sequence_number": 0,
+                "primary": {"used_percent": 12.5}
+            }),
+        )
+        .await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "still here").await;
+    });
+
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    let events = run_turn(&client, &[user("hello")]).await;
+
+    let text: String = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::TextDelta(delta) => Some(delta.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "still here");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Error(_))),
+        "an unknown frame is skipped, not surfaced: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn two_conversations_do_not_share_one_socket() {
+    let _live = LIVE_SESSION.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        let mut first = accept(&listener).await;
+        let _ = read_frame(&mut first).await;
+        stream_turn(&mut first, "resp_a", "gpt-5.6-luna", "a").await;
+
+        // A second conversation has to dial its own connection; if it shared
+        // the first socket this accept would never complete.
+        let mut second = accept(&listener).await;
+        let frame = read_frame(&mut second).await;
+        stream_turn(&mut second, "resp_b", "gpt-5.6-luna", "b").await;
+        frame
+    });
+
+    let endpoint = format!("ws://{addr}/v1/responses");
+    let first = LlmClient::from_profile(&profile(&endpoint))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&first, &[user("one")]).await;
+
+    let second = LlmClient::from_profile(&profile(&endpoint))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&second, &[user("two")]).await;
+
+    let frame = tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .expect("the second conversation opened its own socket")
+        .expect("server task");
+    assert!(
+        frame["previous_response_id"].is_null(),
+        "a fresh conversation starts an unchained turn: {frame}"
+    );
+}
+
+/// A profile with thinking on at a stated level.
+///
+/// The budget is set too, deliberately: it must have no bearing on the
+/// effort that goes out.
+fn thinking_profile(endpoint: &str, effort: ReasoningEffort) -> ModelProfile {
+    let mut profile = profile(endpoint);
+    profile.parameters.enable_thinking = true;
+    profile.parameters.thinking_budget = Some(20_000);
+    profile.parameters.reasoning_effort = Some(effort);
+    profile
+}
+
+#[tokio::test]
+async fn thinking_puts_a_reasoning_block_on_the_wire() {
+    // A live turn against the real backend came back with zero reasoning
+    // tokens, which leaves two possibilities: the model declined, or the
+    // request never asked. This settles which, without a network.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let client = LlmClient::from_profile(&thinking_profile(
+        &format!("ws://{addr}/v1/responses"),
+        ReasoningEffort::High,
+    ))
+    .expect("client");
+    let _ = run_turn(&client, &[user("think about it")]).await;
+
+    let frame = server.await.expect("server");
+    let reasoning = frame
+        .get("reasoning")
+        .unwrap_or_else(|| panic!("no reasoning block in frame: {frame}"));
+
+    assert_eq!(
+        reasoning.get("effort").and_then(Value::as_str),
+        Some("high"),
+        "frame was {frame}"
+    );
+    assert_eq!(
+        reasoning.get("summary").and_then(Value::as_str),
+        Some("auto"),
+        "a summary must be requested or the backend sends no reasoning deltas; frame was {frame}"
+    );
+}
+
+#[tokio::test]
+async fn an_effort_model_asks_for_a_summary_even_with_no_level_chosen() {
+    // This asserted that no reasoning block went out at all, which turned
+    // out to be why a freshly created codex profile never reasoned: the flag
+    // it keyed on is set by a budget checkbox the editor does not show for a
+    // provider that takes levels. The block goes out; the level is simply
+    // absent until one is chosen, and `none` is how reasoning is refused.
+    let _live = LIVE_SESSION.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("hi")]).await;
+
+    let frame = server.await.expect("server");
+    let reasoning = frame.get("reasoning").expect("reasoning block");
+    assert!(
+        reasoning.get("effort").is_none(),
+        "no level was chosen, so none should be asserted: {frame}"
+    );
+    assert_eq!(
+        reasoning.get("summary").and_then(Value::as_str),
+        Some("auto"),
+        "the summary is what makes thinking visible: {frame}"
+    );
+}
+
+#[tokio::test]
+async fn the_agent_path_also_asks_for_reasoning() {
+    // The app runs agent mode, not the direct path. A sampling bug once
+    // shipped because it was fixed in one and verified in the other, so the
+    // reasoning block is pinned on the path the app actually takes.
+    use personal_agent::llm::client_agent::{AgentClientExt, McpToolContext};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let client = LlmClient::from_profile(&thinking_profile(
+        &format!("ws://{addr}/v1/responses"),
+        ReasoningEffort::High,
+    ))
+    .expect("client");
+    let agent = client
+        .create_agent(vec![], "You are terse.")
+        .await
+        .expect("agent");
+    let _ = client
+        .run_agent_stream(
+            &agent,
+            &[user("think about it")],
+            McpToolContext::default(),
+            |_event| {},
+        )
+        .await;
+
+    let frame = server.await.expect("server");
+    let reasoning = frame
+        .get("reasoning")
+        .unwrap_or_else(|| panic!("the agent path dropped the reasoning block: {frame}"));
+    assert_eq!(
+        reasoning.get("effort").and_then(Value::as_str),
+        Some("high"),
+        "frame was {frame}"
+    );
+    assert_eq!(
+        reasoning.get("summary").and_then(Value::as_str),
+        Some("auto"),
+        "frame was {frame}"
+    );
+}
+
+#[tokio::test]
+async fn a_chained_turn_with_nothing_new_still_sends_a_list() {
+    let _live = LIVE_SESSION.lock().await;
+    // The agent loop can call again with the assistant reply as the last
+    // message and nothing after it. Chaining skips that reply because the
+    // server already holds it, which leaves no new items. The backend
+    // rejects the empty case with "Input must be a list".
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let _first = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "first").await;
+        let second = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_2", "gpt-5.6-luna", "second").await;
+        second
+    });
+
+    let client = LlmClient::from_profile(&profile(&format!("ws://{addr}/v1/responses")))
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("first")]).await;
+    run_turn(&client, &[user("first"), Message::assistant("first")]).await;
+
+    let frame = server.await.expect("server");
+    let input = frame.get("input").expect("input");
+    assert!(
+        input.is_array(),
+        "input must be a list even when the turn adds nothing new, got {input}"
+    );
+}
+
+#[tokio::test]
+async fn the_chosen_effort_reaches_the_wire() {
+    let _live = LIVE_SESSION.lock().await;
+    // The point of the change. Effort used to be bucketed out of a token
+    // budget, which could not express anything above high, so a profile set
+    // to xhigh silently went out as high.
+    //
+    // Only one level is driven end to end on purpose. Every live session
+    // occupies a slot in a process-global cache bounded at MAX_LIVE_SESSIONS,
+    // and a test that opens several at once evicts sessions belonging to
+    // tests running alongside it, closing their sockets. The rest of the
+    // ladder is covered where no socket is involved, in the unit tests for
+    // `reasoning_for`.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        let mut peer = accept(&listener).await;
+        let frame = read_frame(&mut peer).await;
+        stream_turn(&mut peer, "resp_1", "gpt-5.6-luna", "ok").await;
+        frame
+    });
+
+    let mut model_profile = profile(&format!("ws://{addr}/v1/responses"));
+    model_profile.parameters.enable_thinking = true;
+    // A budget that used to bucket to "low", to prove it no longer has a say.
+    model_profile.parameters.thinking_budget = Some(1_024);
+    model_profile.parameters.reasoning_effort = Some(ReasoningEffort::XHigh);
+
+    let client = LlmClient::from_profile(&model_profile)
+        .expect("client")
+        .for_conversation(Uuid::new_v4());
+    run_turn(&client, &[user("think")]).await;
+
+    let frame = server.await.expect("server");
+    assert_eq!(
+        frame["reasoning"]["effort"].as_str(),
+        Some("xhigh"),
+        "frame was {frame}"
+    );
+}
