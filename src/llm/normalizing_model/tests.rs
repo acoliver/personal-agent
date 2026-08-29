@@ -363,7 +363,9 @@ fn text_deltas(events: &[Result<ModelResponseStreamEvent, ModelError>]) -> Strin
                 ModelResponsePartDelta::Text(text) => Some(text.content_delta.clone()),
                 _ => None,
             },
-            ModelResponseStreamEvent::PartEnd(_) => None,
+            ModelResponseStreamEvent::PartEnd(_) | ModelResponseStreamEvent::StreamComplete(_) => {
+                None
+            }
         })
         .collect()
 }
