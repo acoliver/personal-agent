@@ -12,42 +12,27 @@ pub fn transcript() -> Vec<(Role, &'static str)> {
         ),
         (
             Role::Assistant,
-            r"### Streaming over the Responses socket
+            r"### Streaming selection matrix
 
-Open the socket first, then send the request frame. The server replies with a `response.created` event, followed by a run of delta events. Each delta carries a fragment of the assistant message; concatenate them in arrival order.
-
-- `response.output_text.delta` carries the visible text
-- `response.reasoning.delta` carries thinking, if enabled
+- `response.output_text.delta` appends **visible text**
+- `response.reasoning.delta` carries thinking
 - `response.completed` closes the run
 
 ```rust
-while let Some(frame) = socket.next().await {
-    match parse(frame)? {
-        Event::Delta(text) => buffer.push_str(&text),
-        Event::Completed => break,
-    }
+while let Some(delta) = socket.next().await {
+    buffer.push_str(delta?);
 }
 ```
 
-> Apply deltas in arrival order. Reordering fragments corrupts the visible response.
+> Apply deltas in arrival order.
 
-Full protocol notes are in the [Responses WebSocket guide](https://platform.openai.com/docs/guides/realtime-websocket).
-
----
-
-![socket event timeline](https://example.com/socket-event-timeline.png)",
-        ),
-        (Role::User, "And what closes it if the model stalls?"),
-        (
-            Role::Assistant,
-            r"An idle timer. If no frame arrives for the configured window, the client sends a close frame and surfaces a timeout to the caller, leaving whatever text had already been buffered.
-
-| setting | default |
+| event | timeout |
 |:--|--:|
-| `idle_timeout` | 90s |
-| `connect_timeout` | 15s |
+| `response.created` | 15s |
+| `response.output_text.delta` | 90s |
+| `response.completed` | none |
 
-> Preserve the buffered text when reporting the timeout so the caller can decide whether to retry.",
+Read the [Responses WebSocket guide](https://platform.openai.com/docs/guides/realtime-websocket).",
         ),
         (Role::User, "Got it. Thanks."),
     ]

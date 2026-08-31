@@ -333,6 +333,15 @@ struct SurfaceColors {
     foreground: gpui::Hsla,
 }
 
+impl SurfaceColors {
+    fn on_theme_background(background: gpui::Hsla) -> Self {
+        Self {
+            background,
+            foreground: crate::ui_gpui::theme::Theme::text_primary(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct LeafLocation<'a> {
     surface: SurfaceColors,
@@ -446,9 +455,7 @@ fn render_block(
         MarkdownBlock::CodeBlock { language, code } => {
             render_code_block(language.as_ref(), code, separator, context)
         }
-        MarkdownBlock::BlockQuote { blocks } => {
-            render_blockquote(blocks, text_color, separator, context)
-        }
+        MarkdownBlock::BlockQuote { blocks } => render_blockquote(blocks, separator, context),
         MarkdownBlock::List {
             ordered,
             start,
@@ -465,7 +472,7 @@ fn render_block(
             alignments,
             header,
             rows,
-        } => render_table(alignments, header, rows, text_color, separator, context),
+        } => render_table(alignments, header, rows, separator, context),
         MarkdownBlock::ThematicBreak => render_thematic_break(),
         MarkdownBlock::ImageFallback { alt } => {
             render_image_fallback(alt, surface, separator, context)
@@ -695,10 +702,7 @@ fn render_code_block(
 ) -> gpui::AnyElement {
     use crate::ui_gpui::theme::Theme;
     use gpui::{font, TextRun};
-    let surface = SurfaceColors {
-        background: Theme::bg_dark(),
-        foreground: Theme::text_primary(),
-    };
+    let surface = SurfaceColors::on_theme_background(Theme::bg_dark());
     let mut block = div()
         .flex()
         .flex_col()
@@ -734,14 +738,10 @@ fn render_code_block(
 
 fn render_blockquote(
     children: &[MarkdownBlock],
-    text_color: gpui::Hsla,
     separator: &str,
     context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::AnyElement {
-    let surface = SurfaceColors {
-        background: crate::ui_gpui::theme::Theme::bg_base(),
-        foreground: text_color,
-    };
+    let surface = SurfaceColors::on_theme_background(crate::ui_gpui::theme::Theme::bg_base());
     div()
         .w_full()
         .border_l_2()
@@ -750,7 +750,11 @@ fn render_blockquote(
         .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
         .bg(surface.background)
         .children(render_blocks(
-            children, text_color, surface, separator, context,
+            children,
+            surface.foreground,
+            surface,
+            separator,
+            context,
         ))
         .into_any_element()
 }
@@ -827,19 +831,14 @@ fn align_table_content(alignment: &Alignment, content: gpui::AnyElement) -> gpui
 fn render_table_cell(
     cell: &TableCell,
     alignment: &Alignment,
-    text_color: gpui::Hsla,
-    background: gpui::Hsla,
+    surface: SurfaceColors,
     separator: &str,
     context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::Div {
-    let surface = SurfaceColors {
-        background,
-        foreground: text_color,
-    };
     let cell_element = spans_to_styled_text(
         &cell.spans,
         &cell.links,
-        text_color,
+        surface.foreground,
         surface,
         separator,
         context,
@@ -849,7 +848,7 @@ fn render_table_cell(
         .min_w(px(120.0))
         .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
         .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-        .bg(background)
+        .bg(surface.background)
         .border_1()
         .border_color(crate::ui_gpui::theme::Theme::border())
         .child(align_table_content(alignment, cell_element))
@@ -859,7 +858,6 @@ fn render_table(
     alignments: &[Alignment],
     header: &[TableCell],
     rows: &[Vec<TableCell>],
-    text_color: gpui::Hsla,
     separator: &str,
     context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::AnyElement {
@@ -869,29 +867,29 @@ fn render_table(
         .max(alignments.len());
     let grid_cols = u16::try_from(col_count.max(1)).unwrap_or(u16::MAX);
     let mut table_grid = div().grid().grid_cols(grid_cols).w_full();
+    let header_surface =
+        SurfaceColors::on_theme_background(crate::ui_gpui::theme::Theme::bg_dark());
     for (column, cell) in header.iter().enumerate() {
         let cell_separator = if column == 0 { separator } else { "\t" };
         table_grid = table_grid.child(render_table_cell(
             cell,
             alignments.get(column).unwrap_or(&Alignment::None),
-            text_color,
-            crate::ui_gpui::theme::Theme::bg_dark(),
+            header_surface,
             cell_separator,
             context,
         ));
     }
     for (row_index, row) in rows.iter().enumerate() {
-        let background = if row_index % 2 == 0 {
-            crate::ui_gpui::theme::Theme::bg_base()
+        let surface = if row_index % 2 == 0 {
+            SurfaceColors::on_theme_background(crate::ui_gpui::theme::Theme::bg_base())
         } else {
-            crate::ui_gpui::theme::Theme::bg_dark()
+            SurfaceColors::on_theme_background(crate::ui_gpui::theme::Theme::bg_dark())
         };
         for (column, cell) in row.iter().enumerate() {
             table_grid = table_grid.child(render_table_cell(
                 cell,
                 alignments.get(column).unwrap_or(&Alignment::None),
-                text_color,
-                background,
+                surface,
                 if column == 0 { "\n" } else { "\t" },
                 context,
             ));
@@ -937,3 +935,5 @@ pub use markdown_parser::parse_markdown_blocks;
 
 #[cfg(test)]
 mod markdown_content_tests;
+#[cfg(test)]
+mod selection_surface_tests;

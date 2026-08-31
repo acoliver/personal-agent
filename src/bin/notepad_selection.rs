@@ -316,6 +316,17 @@ fn color_hex(color: Hsla) -> String {
     )
 }
 
+fn print_resolved_hsla(name: &str, color: Hsla) {
+    println!(
+        "resolved-hsla {name} h={:.6} s={:.6} l={:.6} a={:.6} hex={}",
+        color.h,
+        color.s,
+        color.l,
+        color.a,
+        color_hex(color),
+    );
+}
+
 fn activate_and_verify_theme() -> Result<ResolvedPalette, String> {
     let catalog = ThemeCatalog::load_bundled()
         .map_err(|error| format!("failed to load embedded theme catalog: {error}"))?;
@@ -330,6 +341,15 @@ fn activate_and_verify_theme() -> Result<ResolvedPalette, String> {
     }
 
     set_active_theme_slug(GREEN_SCREEN_SLUG);
+    for (name, color) in [
+        ("bg_base", Theme::bg_base()),
+        ("bg_dark", Theme::bg_dark()),
+        ("text_primary", Theme::text_primary()),
+        ("user_bubble_bg", Theme::user_bubble_bg()),
+        ("user_bubble_text", Theme::user_bubble_text()),
+    ] {
+        print_resolved_hsla(name, color);
+    }
     let palette = ResolvedPalette {
         user_bubble_bg: color_hex(Theme::user_bubble_bg()),
         user_bubble_text: color_hex(Theme::user_bubble_text()),

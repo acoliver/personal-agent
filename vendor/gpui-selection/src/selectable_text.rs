@@ -2,12 +2,14 @@
 // Changes: removed the upstream Theme dependency, require explicit surface
 // colors, build one StyledText from caller-provided runs, register scroll/copy
 // metadata, recolor selected glyphs in the surface background color, and retain
-// one owning-window refresh subscription per selectable-text element.
+// one owning-window refresh subscription per selectable-text element. Selected
+// runs now suppress their own backgrounds, and low-contrast surface pairs use a
+// black-or-white selected glyph fallback.
 
 use std::ops::Range;
 
 use gpui::{
-    transparent_black, App, BorderStyle, Bounds, Corners, Edges, Element, ElementId,
+    hsla, transparent_black, App, BorderStyle, Bounds, Corners, Edges, Element, ElementId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
     PaintQuad, Pixels, Point, SharedString, StyledText, Subscription, TextRun, Window,
 };
@@ -43,6 +45,8 @@ impl SelectableText {
         surface_background: Hsla,
         surface_foreground: Hsla,
     ) -> Self {
+        let (selection_color, selected_text_color) =
+            legible_selection_colors(surface_foreground, surface_background);
         Self {
             id: id.into(),
             text: text.into(),
@@ -51,8 +55,8 @@ impl SelectableText {
             document_order: 0,
             scroll_offset: Point::default(),
             copy_separator_before: "\n".into(),
-            selection_color: surface_foreground,
-            selected_text_color: surface_background,
+            selection_color,
+            selected_text_color,
         }
     }
 
@@ -97,6 +101,44 @@ impl SelectableText {
                 border_style: BorderStyle::default(),
             });
         }
+    }
+}
+
+const MIN_SELECTION_CONTRAST: f32 = 4.5;
+
+fn legible_selection_colors(quad: Hsla, glyph: Hsla) -> (Hsla, Hsla) {
+    if contrast_ratio(quad, glyph) >= MIN_SELECTION_CONTRAST {
+        return (quad, glyph);
+    }
+
+    let black = hsla(0.0, 0.0, 0.0, 1.0);
+    let white = hsla(0.0, 0.0, 1.0, 1.0);
+    let glyph = if contrast_ratio(quad, black) >= contrast_ratio(quad, white) {
+        black
+    } else {
+        white
+    };
+    (quad, glyph)
+}
+
+fn contrast_ratio(first: Hsla, second: Hsla) -> f32 {
+    let first = relative_luminance(first);
+    let second = relative_luminance(second);
+    let lighter = first.max(second);
+    let darker = first.min(second);
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+fn relative_luminance(color: Hsla) -> f32 {
+    let rgba = color.to_rgb();
+    0.2126 * linearized(rgba.r) + 0.7152 * linearized(rgba.g) + 0.0722 * linearized(rgba.b)
+}
+
+fn linearized(channel: f32) -> f32 {
+    if channel <= 0.04045 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
     }
 }
 
@@ -172,6 +214,7 @@ fn append_run_segment(
     run.len = end - start;
     if let Some(color) = color {
         run.color = color;
+        run.background_color = None;
     }
     result.push(run);
 }
@@ -329,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_run_recolor_preserves_every_other_property() {
+    fn selected_run_recolor_removes_the_run_background() {
         let mut source = TextRun {
             len: 10,
             font: font("Inline Code"),
@@ -356,6 +399,7 @@ mod tests {
         let mut selected = source.clone();
         selected.len = 5;
         selected.color = selected_color;
+        selected.background_color = None;
         let mut after = source.clone();
         after.len = 3;
         assert_eq!(runs, [before, selected, after]);
@@ -373,5 +417,23 @@ mod tests {
             super::recolor_selected_runs(&[source.clone()], None, hsla(0., 0., 0., 1.)),
             [source]
         );
+    }
+
+    #[test]
+    fn low_contrast_selection_uses_black_or_white_glyphs() {
+        let black = hsla(0.0, 0.0, 0.0, 1.0);
+        let (quad, glyph) = super::legible_selection_colors(black, black);
+
+        assert_eq!(quad, black);
+        assert_eq!(glyph, hsla(0.0, 0.0, 1.0, 1.0));
+        assert!(super::contrast_ratio(quad, glyph) >= super::MIN_SELECTION_CONTRAST);
+    }
+
+    #[test]
+    fn contrasting_surface_selection_pair_is_preserved() {
+        let quad = hsla(0.28, 0.29, 0.47, 1.0);
+        let glyph = hsla(0.0, 0.0, 0.0, 1.0);
+
+        assert_eq!(super::legible_selection_colors(quad, glyph), (quad, glyph));
     }
 }
