@@ -275,9 +275,9 @@ impl Render for NotepadSelection {
             .on_key_down(cx.listener(|_, event, window, cx| {
                 Self::handle_key_down(event, window, cx);
             }))
-            .child(TextSelectionLayer)
             .child(Self::render_title_bar())
             .child(self.render_chat_area())
+            .child(TextSelectionLayer)
     }
 }
 

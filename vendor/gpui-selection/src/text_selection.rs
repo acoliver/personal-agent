@@ -1915,10 +1915,14 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
         let Some(state) = mouse_move_state.upgrade() else {
             return;
         };
-        state.update(cx, |state, cx| {
-            state.update_in_window(event.position, window, cx)
+        let is_selecting = state.update(cx, |state, cx| {
+            state.update_in_window(event.position, window, cx);
+            state.is_selecting
         });
         WindowSelectionState::resolve_content_keys(&state, cx);
+        if is_selecting {
+            window.refresh();
+        }
     });
 
     let mouse_up_state = state.downgrade();
