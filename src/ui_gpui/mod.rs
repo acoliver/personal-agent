@@ -25,6 +25,7 @@ pub mod theme;
 pub mod theme_catalog;
 #[cfg(target_os = "macos")]
 pub mod tray_bridge;
+pub mod vendor;
 pub mod views;
 
 pub use app_store::{is_store_managed, GpuiAppSnapshot, GpuiAppStore};
