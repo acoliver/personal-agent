@@ -8,7 +8,12 @@
 #![allow(clippy::needless_pass_by_ref_mut)]
 // Presenter start/stop/handler methods use async signatures for consistency
 // with the async runtime even when individual implementations have no awaits.
+// Rust 1.98 split the trait-impl case out into its own lint; both names cover
+// the same deliberate choice. `unknown_lints` keeps the newer name from
+// breaking builds on toolchains that predate the split.
+#![allow(unknown_lints)]
 #![allow(clippy::unused_async)]
+#![allow(clippy::unused_async_trait_impl)]
 
 pub mod agent;
 pub mod backup;

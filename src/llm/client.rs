@@ -464,14 +464,12 @@ impl LlmClient {
         // Wrap with normalizer to apply max_tokens_field_name and extra_request_fields
         // for all providers, not just OpenAI. This ensures consistent behavior.
         let resolved_base_url = base_url.unwrap_or("").to_string();
-        let http_client = HttpClient::builder()
-            .build()
-            .map_err(|e| LlmError::InvalidConfig(format!("failed to build HTTP client: {e}")))?;
 
         let wrapper = super::normalizing_model::NormalizingSseModel::new(
             super::normalizing_model::NormalizingSseModelConfig {
                 inner,
-                client: http_client,
+                default_headers: reqwest::header::HeaderMap::new(),
+                idle_read_timeout: super::normalizing_model::DEFAULT_STREAM_IDLE_READ_TIMEOUT,
                 api_key: self.api_key.clone(),
                 base_url: resolved_base_url,
                 model_name: self.profile.model_id.clone(),
@@ -480,7 +478,7 @@ impl LlmClient {
                 max_tokens_field_name: self.profile.parameters.max_tokens_field_name.clone(),
                 extra_request_fields: self.profile.parameters.extra_request_fields.clone(),
             },
-        );
+        )?;
 
         Ok(std::sync::Arc::new(wrapper))
     }
@@ -509,9 +507,11 @@ impl LlmClient {
         &self,
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        let quirks_headers = self.quirks_header_map()?;
+
         let mut client_builder = HttpClient::builder();
 
-        if let Some(headers) = self.quirks_header_map()? {
+        if let Some(headers) = quirks_headers.clone() {
             client_builder = client_builder.default_headers(headers);
         }
 
@@ -521,7 +521,7 @@ impl LlmClient {
 
         let mut config = ExtendedModelConfig::new()
             .with_api_key(&self.api_key)
-            .with_client(http_client.clone())
+            .with_client(http_client)
             .with_timeout(Self::request_timeout());
 
         let resolved_base_url = base_url.unwrap_or("https://api.openai.com/v1").to_string();
@@ -536,11 +536,14 @@ impl LlmClient {
             .map_err(|e| LlmError::SerdesAi(e.to_string()))?;
 
         // Wrap with SSE normalizer — some providers (e.g. Kimi) send `data:{json}`
-        // without the space that serdes-ai's parser requires.
+        // without the space that serdes-ai's parser requires. The wrapper's
+        // streaming client re-applies the quirks headers and owns the idle
+        // read timeout.
         let wrapper = super::normalizing_model::NormalizingSseModel::new(
             super::normalizing_model::NormalizingSseModelConfig {
                 inner,
-                client: http_client,
+                default_headers: quirks_headers.unwrap_or_default(),
+                idle_read_timeout: super::normalizing_model::DEFAULT_STREAM_IDLE_READ_TIMEOUT,
                 api_key: self.api_key.clone(),
                 base_url: resolved_base_url,
                 model_name: self.profile.model_id.clone(),
@@ -549,7 +552,7 @@ impl LlmClient {
                 max_tokens_field_name: self.profile.parameters.max_tokens_field_name.clone(),
                 extra_request_fields: self.profile.parameters.extra_request_fields.clone(),
             },
-        );
+        )?;
 
         Ok(std::sync::Arc::new(wrapper))
     }
