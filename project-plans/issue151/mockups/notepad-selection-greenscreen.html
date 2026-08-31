@@ -1,0 +1,269 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Notepad selection prototype — Green Screen</title>
+<style>
+  /* Green Screen palette, read from assets/themes/green-screen.json
+     background      #000000
+     text.primary    #6a9955   text.muted #6a9955
+     panel.border    #6a9955
+     input.bg        #000000   -> assistant bubble bg, bg_darker
+     panel.headerBg  #000000   -> bg_dark (code block bg)
+     message.userBorder #6a9955 -> user bubble bg
+     selection.fg    #000000   -> user bubble text, selection foreground
+     selection.bg    #6a9955   -> selection background
+     accent.primary  #6a9955   -> link color (see issue #223)
+     Font: base 14 -> mono 12.6, ui 11.9, small 10.92
+     Spacing: XS 4  SM 8  MD 12  LG 16   Radius: MD 6  LG 8  user bubble 12 */
+  :root{
+    --bg:#000000;
+    --fg:#6a9955;
+    --muted:#6a9955;
+    --border:#6a9955;
+    --user-bg:#6a9955;
+    --user-fg:#000000;
+    --sel-bg:#6a9955;
+    --sel-fg:#000000;
+    --code-bg:#000000;
+    --mono:"Menlo","SF Mono",ui-monospace,monospace;
+    --fs-body:14px;
+    --fs-mono:12.6px;
+    --fs-ui:11.9px;
+    --fs-small:10.92px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:#141414;font-family:var(--mono);}
+  .frame{width:1240px;margin:0 auto;padding:22px 0 30px;}
+  .cap{color:#8a8a8a;font-size:12px;margin:0 0 10px 2px;letter-spacing:.02em;}
+  .cap b{color:#ddd;font-weight:600;}
+
+  /* ---- app window ---- */
+  .win{width:760px;background:var(--bg);border:1px solid #2a2a2a;border-radius:10px;
+       overflow:hidden;box-shadow:0 10px 34px rgba(0,0,0,.6);}
+  .titlebar{display:flex;align-items:center;justify-content:space-between;
+            padding:8px 12px;border-bottom:1px solid var(--border);}
+  .title{color:var(--fg);font-size:var(--fs-ui);}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--fg);display:inline-block;margin-right:7px;vertical-align:1px;}
+  .tools{display:flex;gap:8px;}
+  .tool{color:var(--fg);font-size:var(--fs-small);border:1px solid var(--border);
+        border-radius:4px;padding:2px 7px;}
+
+  .chat{padding:16px 16px 8px;display:flex;flex-direction:column;gap:16px;
+        height:812px;overflow:hidden;}
+
+  /* ---- assistant message: no visible container in Green Screen,
+          assistant_bubble_bg == background == #000000 and no border width ---- */
+  .asst{display:flex;flex-direction:column;align-items:flex-start;width:100%;gap:8px;}
+  .asst .body{width:100%;padding:8px 12px;border-radius:8px;
+              background:#000;color:var(--fg);font-size:var(--fs-body);line-height:1.5;}
+  .via{font-size:var(--fs-small);color:var(--muted);opacity:.75;}
+
+  /* ---- user message: right aligned, max 300px, green fill, black text ---- */
+  .userrow{width:100%;display:flex;justify-content:flex-end;}
+  .user{max-width:300px;padding:10px;border-radius:12px;background:var(--user-bg);
+        color:var(--user-fg);font-size:var(--fs-mono);line-height:1.5;}
+
+  /* ---- markdown ---- */
+  h3.md{font-size:16.8px;font-weight:700;margin:0 0 6px;}
+  p.md{margin:0 0 8px;}
+  p.md:last-child{margin-bottom:0;}
+  ul.md{margin:0 0 8px;padding:0;list-style:none;}
+  ul.md li{display:flex;gap:6px;margin-bottom:2px;}
+  code.inl{background:#000;border:1px solid rgba(106,153,85,.45);border-radius:3px;
+           padding:0 3px;font-size:var(--fs-mono);}
+  pre.md{margin:0 0 8px;padding:8px;border-radius:6px;background:var(--code-bg);
+         border:1px solid rgba(106,153,85,.35);
+         font-size:var(--fs-mono);line-height:1.45;white-space:pre;overflow:hidden;}
+  pre.md .lang{display:block;font-size:var(--fs-ui);opacity:.7;margin-bottom:4px;}
+  table.md{border-collapse:collapse;font-size:var(--fs-mono);margin:0 0 8px;}
+  table.md td,table.md th{border:1px solid rgba(106,153,85,.4);padding:2px 8px;text-align:left;}
+  table.md th{font-weight:700;}
+  table.md tr:nth-child(even) td{background:rgba(106,153,85,.08);}
+  a.md{color:#6a9955;text-decoration:underline;}
+
+  /* ---- selection ---- */
+  .sel{background:var(--sel-bg);color:var(--sel-fg);}          /* on dark surfaces */
+  a.md.sel{color:var(--sel-fg);text-decoration-color:var(--sel-fg);}
+  .sel-inv{background:#000000;color:#6a9955;}                   /* inside the user bubble */
+  .selline{background:var(--sel-bg);color:var(--sel-fg);display:block;}
+  .cursor{display:inline-block;width:2px;height:1.05em;background:var(--fg);
+          vertical-align:-2px;margin-left:1px;}
+
+  /* ---- status strip ---- */
+  .status{border-top:1px solid var(--border);padding:6px 12px;display:flex;
+          justify-content:space-between;color:var(--muted);font-size:var(--fs-small);}
+
+  /* ---- annotation column ---- */
+  .layout{display:flex;gap:26px;align-items:flex-start;}
+  .notes{width:430px;color:#cfcfcf;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:12.5px;line-height:1.55;}
+  .notes h2{font-size:13px;color:#fff;margin:0 0 8px;letter-spacing:.03em;text-transform:uppercase;}
+  .notes h3{font-size:12.5px;color:#fff;margin:18px 0 5px;}
+  .notes p{margin:0 0 9px;}
+  .notes ul{margin:0 0 10px;padding-left:16px;}
+  .notes li{margin-bottom:5px;}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px;border:1px solid #444;}
+  .warn{border-left:3px solid #c9a227;background:#241f10;padding:8px 10px;margin:0 0 10px;}
+  .warn b{color:#f0c94a;}
+  .ok{border-left:3px solid #6a9955;background:#0e1a0e;padding:8px 10px;margin:0 0 10px;}
+  .ok b{color:#8fd06a;}
+  code.n{background:#232323;border-radius:3px;padding:1px 4px;font-family:var(--mono);font-size:11.5px;color:#d8d8d8;}
+  .mini{width:100%;background:#000;border:1px solid #2a2a2a;border-radius:6px;padding:9px 11px;
+        font-family:var(--mono);font-size:11.5px;color:#6a9955;white-space:pre-wrap;line-height:1.45;}
+</style>
+</head>
+<body>
+<div class="frame">
+  <p class="cap"><b>Notepad selection prototype</b> &mdash; static transcript, Green Screen theme, one drag selection spanning four messages</p>
+  <div class="layout">
+
+  <div class="win">
+    <div class="titlebar">
+      <div class="title"><span class="dot"></span>notepad &mdash; selection prototype (static transcript)</div>
+      <div class="tools"><span class="tool">theme: green-screen</span><span class="tool">⌘C</span></div>
+    </div>
+
+    <div class="chat">
+
+      <!-- 1. user -->
+      <div class="userrow"><div class="user">
+        <p class="md">How do I stream tokens from the Responses websocket?</p>
+      </div></div>
+
+      <!-- 2. assistant, selection starts mid-paragraph -->
+      <div class="asst">
+        <div class="body">
+          <h3 class="md">Streaming over the Responses socket</h3>
+          <p class="md">Open the socket first, then send the request frame. The server
+          replies with a <code class="inl">response.created</code> event, followed by a run of
+          <span class="sel">delta events. Each delta carries a fragment of the assistant
+          message; concatenate them in arrival order.</span></p>
+          <ul class="md">
+            <li><span class="sel">•</span><span class="sel">response.output_text.delta carries the visible text</span></li>
+            <li><span class="sel">•</span><span class="sel">response.reasoning.delta carries thinking, if enabled</span></li>
+            <li><span class="sel">•</span><span class="sel">response.completed closes the run</span></li>
+          </ul>
+          <pre class="md"><span class="lang sel">rust</span><span class="selline">while let Some(frame) = socket.next().await {</span><span class="selline">    match parse(frame)? {</span><span class="selline">        Event::Delta(text) =&gt; buffer.push_str(&amp;text),</span><span class="selline">        Event::Completed =&gt; break,</span><span class="selline">    }</span><span class="selline">}</span></pre>
+          <p class="md"><span class="sel">Full protocol notes are in</span> <a class="md sel" href="#">docs/responses-websocket.md</a><span class="sel">.</span></p>
+        </div>
+        <div class="via"><span class="sel">via gpt-5-codex</span></div>
+      </div>
+
+      <!-- 3. user, selection continues (inverted so it reads on the green fill) -->
+      <div class="userrow"><div class="user">
+        <p class="md"><span class="sel-inv">And what closes it if the model stalls?</span></p>
+      </div></div>
+
+      <!-- 4. assistant, selection ends mid-sentence -->
+      <div class="asst">
+        <div class="body">
+          <p class="md"><span class="sel">An idle timer. If no frame arrives for the configured
+          window the client sends a close frame and surfaces a</span><span class="cursor"></span> timeout to the
+          caller, leaving whatever text had already been buffered.</p>
+          <table class="md">
+            <tr><th>setting</th><th>default</th></tr>
+            <tr><td>idle_timeout</td><td>90s</td></tr>
+            <tr><td>connect_timeout</td><td>15s</td></tr>
+          </table>
+        </div>
+        <div class="via">via gpt-5-codex</div>
+      </div>
+
+      <!-- 5. user, not selected -->
+      <div class="userrow"><div class="user">
+        <p class="md">Got it. Thanks.</p>
+      </div></div>
+
+    </div>
+
+    <div class="status">
+      <span>selection: 4 messages &middot; 612 chars</span>
+      <span>⌘C copies visible text, no markdown syntax</span>
+    </div>
+  </div>
+
+  <!-- ---------------- annotations ---------------- -->
+  <div class="notes">
+    <h2>What this prototype proves</h2>
+    <p>A standalone binary with a hardcoded transcript, rendering through the real
+    markdown pipeline and the real theme, where one press-and-drag selects
+    continuously from the middle of one message, through the model label, through a
+    user bubble, and into the next message. ⌘C copies the lot.</p>
+
+    <h3>Rendering is unchanged while selecting</h3>
+    <p>Headings stay bold, the code block keeps its background and monospace, the
+    table keeps its grid, the link keeps its underline. Selection paints
+    <i>behind</i> the glyphs; it does not swap in a flat renderer. That was the
+    failure mode of PR #159.</p>
+
+    <h3>Colors, straight from the theme file</h3>
+    <ul>
+      <li><span class="swatch" style="background:#000"></span><code class="n">background</code> #000000</li>
+      <li><span class="swatch" style="background:#6a9955"></span><code class="n">text.primary</code> #6a9955</li>
+      <li><span class="swatch" style="background:#6a9955"></span><code class="n">message.userBorder</code> #6a9955 &rarr; user bubble fill</li>
+      <li><span class="swatch" style="background:#000"></span><code class="n">selection.fg</code> #000000</li>
+      <li><span class="swatch" style="background:#6a9955"></span><code class="n">selection.bg</code> #6a9955</li>
+    </ul>
+
+    <div class="warn">
+      <b>Design decision needed.</b> In Green Screen the selection background and the
+      user bubble fill are the same #6a9955, and the selection foreground and the
+      user bubble text are the same #000000. A naive highlight inside a user bubble
+      is invisible: identical pixels selected and unselected. The mockup shows the
+      fix, inverting inside that bubble to black-on-green. Any theme where
+      <code class="n">selection.bg</code> is close to a surface fill has this problem;
+      Green Screen is just where they are identical.
+    </div>
+
+    <div class="warn">
+      <b>Also visible here.</b> The link in message 2 is #6a9955 on #000000, so it
+      reads fine in the assistant message. Put the same link in a <i>user</i> bubble
+      and it is #6a9955 on #6a9955, which is issue #223.
+    </div>
+
+    <div class="ok">
+      <b>Note on the assistant bubble.</b> In Green Screen there is no visible
+      assistant container: <code class="n">assistant_bubble_bg</code> resolves to
+      <code class="n">input.bg</code> #000000, the same as the window background, and no
+      border width is set. That is faithful to the shipping app and is why the
+      theme reads like a terminal. Only user messages get a filled bubble.
+    </div>
+
+    <h3>What ⌘C puts on the clipboard</h3>
+    <div class="mini">delta events. Each delta carries a fragment of the assistant
+message; concatenate them in arrival order.
+
+• response.output_text.delta carries the visible text
+• response.reasoning.delta carries thinking, if enabled
+• response.completed closes the run
+
+rust
+while let Some(frame) = socket.next().await {
+    match parse(frame)? {
+        Event::Delta(text) =&gt; buffer.push_str(&amp;text),
+        Event::Completed =&gt; break,
+    }
+}
+
+Full protocol notes are in docs/responses-websocket.md.
+
+via gpt-5-codex
+
+And what closes it if the model stalls?
+
+An idle timer. If no frame arrives for the configured
+window the client sends a close frame and surfaces a</div>
+
+    <h3>Open questions this raises</h3>
+    <ul>
+      <li>Should <code class="n">via gpt-5-codex</code> be selectable at all, or skipped the way browsers skip <code class="n">user-select:none</code> chrome?</li>
+      <li>Should copied output carry role labels (<code class="n">You:</code> / <code class="n">Assistant:</code>) between messages, or just blank lines as shown?</li>
+      <li>Should the code block copy verbatim, or keep its fence?</li>
+      <li>Does the table copy as tab-separated cells or as a markdown grid?</li>
+    </ul>
+  </div>
+
+  </div>
+</div>
+</body>
+</html>
