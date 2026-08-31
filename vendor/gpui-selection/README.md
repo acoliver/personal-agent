@@ -10,6 +10,7 @@ PersonalAgent made these changes to the upstream source:
 - removed the unrelated `TextViewState` registry from `GlobalState`;
 - gated tests that require newer GPUI test-support APIs;
 - allowed dead code while the package remains unwired;
+- added upstream's selectable-text participant with explicit surface colors, selected-glyph recoloring, scroll offsets, and participant-defined copy separators;
 - marked the vendored source modules to skip rustfmt so `cargo fmt --all` preserves upstream formatting; and
 - added Apache-2.0 section 4(b) modification notices to changed files.
 

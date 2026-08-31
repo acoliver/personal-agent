@@ -3,17 +3,16 @@
 #[path = "notepad_selection/transcript.rs"]
 mod transcript;
 
-use std::sync::Arc;
-
 use gpui::{
-    div, px, size, App, AppContext, Application, Bounds, Context, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
-    Styled, Window, WindowBounds, WindowKind, WindowOptions,
+    div, px, size, App, AppContext, Application, Bounds, ClipboardItem, Context, FocusHandle, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, WindowBounds, WindowKind, WindowOptions,
 };
+use gpui_selection_vendor::{GlobalState, SelectableText, TextSelection, TextSelectionLayer};
 use personal_agent::ui_gpui::{
-    components::{
-        markdown_content::{blocks_to_elements_with_color, parse_markdown_blocks},
-        AssistantBubble,
+    components::markdown_content::{
+        blocks_to_elements_with_leaf_factory, parse_markdown_blocks, MarkdownLeaf,
+        MarkdownLeafFactory,
     },
     theme::{active_theme_slug, is_valid_theme_slug, set_active_theme_slug, Theme},
     theme_catalog::ThemeCatalog,
@@ -81,12 +80,29 @@ impl ResolvedPalette {
 
 struct NotepadSelection {
     chat_scroll_handle: ScrollHandle,
+    focus_handle: FocusHandle,
 }
 
 impl NotepadSelection {
-    fn new() -> Self {
+    fn new(cx: &mut Context<Self>) -> Self {
         Self {
             chat_scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
+        }
+    }
+
+    fn handle_key_down(event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App) {
+        let modifiers = &event.keystroke.modifiers;
+        let copy_modifier = if cfg!(target_os = "macos") {
+            modifiers.platform
+        } else {
+            modifiers.control
+        };
+        if copy_modifier && event.keystroke.key.eq_ignore_ascii_case("c") {
+            let selected = TextSelection::selected_text(window, cx);
+            if !selected.is_empty() {
+                cx.write_to_clipboard(ClipboardItem::new_string(selected));
+            }
         }
     }
 
@@ -117,9 +133,21 @@ impl NotepadSelection {
             )
     }
 
-    fn render_user_message(markdown: &str) -> gpui::AnyElement {
+    fn render_user_message(
+        markdown: &str,
+        factory: &mut dyn MarkdownLeafFactory,
+        document_order: &mut u64,
+        first_separator: &str,
+    ) -> gpui::AnyElement {
         let blocks = parse_markdown_blocks(markdown);
-        let rendered = blocks_to_elements_with_color(&blocks, Theme::user_bubble_text());
+        let rendered = blocks_to_elements_with_leaf_factory(
+            &blocks,
+            Theme::user_bubble_text(),
+            Theme::user_bubble_bg(),
+            factory,
+            document_order,
+            first_separator,
+        );
         let bubble = div()
             .max_w(px(300.0))
             .px(px(10.0))
@@ -136,23 +164,85 @@ impl NotepadSelection {
             .into_any_element()
     }
 
-    fn render_assistant_message(markdown: &str) -> gpui::AnyElement {
-        let content = Arc::new(markdown.to_string());
-        let blocks = Arc::new(parse_markdown_blocks(markdown));
-        AssistantBubble::new(content)
-            .with_cached_blocks(blocks)
-            .model_id("gpt-5-codex")
+    fn render_assistant_message(
+        markdown: &str,
+        factory: &mut dyn MarkdownLeafFactory,
+        document_order: &mut u64,
+        first_separator: &str,
+    ) -> gpui::AnyElement {
+        let blocks = parse_markdown_blocks(markdown);
+        let rendered = blocks_to_elements_with_leaf_factory(
+            &blocks,
+            Theme::text_primary(),
+            Theme::assistant_bubble_bg(),
+            factory,
+            document_order,
+            first_separator,
+        );
+        div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .w_full()
+            .gap(px(Theme::SPACING_SM))
+            .child(Theme::assistant_bubble(
+                div()
+                    .w_full()
+                    .px(px(Theme::SPACING_MD))
+                    .py(px(Theme::SPACING_SM))
+                    .rounded(px(Theme::RADIUS_LG))
+                    .children(rendered),
+            ))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(Theme::text_muted())
+                    .child("via gpt-5-codex"),
+            )
             .into_any_element()
     }
 
-    fn render_message(role: Role, markdown: &str) -> gpui::AnyElement {
+    fn render_message(
+        role: Role,
+        markdown: &str,
+        factory: &mut dyn MarkdownLeafFactory,
+        document_order: &mut u64,
+        first_separator: &str,
+    ) -> gpui::AnyElement {
         match role {
-            Role::User => Self::render_user_message(markdown),
-            Role::Assistant => Self::render_assistant_message(markdown),
+            Role::User => {
+                Self::render_user_message(markdown, factory, document_order, first_separator)
+            }
+            Role::Assistant => {
+                Self::render_assistant_message(markdown, factory, document_order, first_separator)
+            }
         }
     }
 
     fn render_chat_area(&self) -> impl IntoElement {
+        let mut factory = SelectionLeafFactory {
+            scroll_offset: self.chat_scroll_handle.offset(),
+        };
+        let mut document_order = 0;
+        let mut messages = Vec::new();
+        for (index, (role, markdown)) in transcript().into_iter().enumerate() {
+            let separator = if index == 0 { "" } else { "\n\n" };
+            messages.push(
+                div()
+                    .id(SharedString::from(format!("msg-{index}")))
+                    .w_full()
+                    .flex()
+                    .justify_start()
+                    .child(Self::render_message(
+                        role,
+                        markdown,
+                        &mut factory,
+                        &mut document_order,
+                        separator,
+                    )),
+            );
+        }
+
         div()
             .id("chat-area")
             .flex_1()
@@ -168,24 +258,12 @@ impl NotepadSelection {
             .items_stretch()
             .justify_start()
             .gap(px(Theme::SPACING_SM))
-            .children(
-                transcript()
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (role, markdown))| {
-                        div()
-                            .id(SharedString::from(format!("msg-{index}")))
-                            .w_full()
-                            .flex()
-                            .justify_start()
-                            .child(Self::render_message(role, markdown))
-                    }),
-            )
+            .children(messages)
     }
 }
 
 impl Render for NotepadSelection {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .flex()
@@ -193,8 +271,34 @@ impl Render for NotepadSelection {
             .bg(Theme::bg_base())
             .text_color(Theme::text_primary())
             .font_family(Theme::mono_font_family())
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|_, event, window, cx| {
+                Self::handle_key_down(event, window, cx);
+            }))
+            .child(TextSelectionLayer)
             .child(Self::render_title_bar())
             .child(self.render_chat_area())
+    }
+}
+
+struct SelectionLeafFactory {
+    scroll_offset: gpui::Point<gpui::Pixels>,
+}
+
+impl MarkdownLeafFactory for SelectionLeafFactory {
+    fn create_leaf(&mut self, leaf: MarkdownLeaf) -> gpui::AnyElement {
+        let id = SharedString::from(format!("selection-leaf-{}", leaf.document_order));
+        SelectableText::new(
+            id,
+            leaf.plain_text,
+            leaf.text_runs,
+            leaf.surface_background,
+            leaf.surface_foreground,
+        )
+        .document_order(leaf.document_order)
+        .scroll_offset(self.scroll_offset)
+        .copy_separator_before(leaf.copy_separator_before)
+        .into_any_element()
     }
 }
 
@@ -247,6 +351,7 @@ fn main() {
     }
 
     Application::new().run(|cx: &mut App| {
+        GlobalState::init(cx);
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
         cx.open_window(
             WindowOptions {
@@ -257,7 +362,12 @@ fn main() {
                 titlebar: None,
                 ..Default::default()
             },
-            |_window, cx| cx.new(|_| NotepadSelection::new()),
+            |window, cx| {
+                let view = cx.new(NotepadSelection::new);
+                let focus_handle = view.read(cx).focus_handle.clone();
+                window.focus(&focus_handle, cx);
+                view
+            },
         )
         .expect("failed to open notepad selection window");
         cx.activate(true);

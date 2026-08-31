@@ -2,7 +2,8 @@
 // Changes: adjusted crate-relative imports, rewrote Rust 2024 let chains for this
 // project's Rust 2021 edition, routed window auto-scroll through participant
 // callbacks because pinned GPUI exposes a private return type from
-// Window::dispatch_event, and gated tests requiring newer GPUI test-support APIs.
+// Window::dispatch_event, added participant-defined copy separators, exposed
+// cached run projection, and gated tests requiring newer GPUI test-support APIs.
 
 use std::{
     collections::HashMap,
@@ -213,6 +214,7 @@ pub struct TextSelectionRegistration {
     scope: TextSelectionScopeId,
     document_order: u64,
     text_bounds: Vec<Bounds<Pixels>>,
+    copy_separator_before: String,
 }
 
 impl TextSelectionRegistration {
@@ -225,6 +227,7 @@ impl TextSelectionRegistration {
             scope: TextSelectionScopeId::default(),
             document_order: 0,
             text_bounds: Vec::new(),
+            copy_separator_before: "\n".to_string(),
         }
     }
 
@@ -249,6 +252,13 @@ impl TextSelectionRegistration {
     /// Sets the glyph-bearing bounds used to reject blank-only gestures.
     pub fn with_text_bounds(mut self, text_bounds: Vec<Bounds<Pixels>>) -> Self {
         self.text_bounds = text_bounds;
+        self
+    }
+
+    /// Sets the text inserted before this participant when earlier selected
+    /// participants precede it in document order.
+    pub fn with_copy_separator_before(mut self, separator: impl Into<String>) -> Self {
+        self.copy_separator_before = separator.into();
         self
     }
 
@@ -280,6 +290,11 @@ impl TextSelectionRegistration {
     /// Returns the glyph-bearing bounds used to reject blank-only gestures.
     pub fn text_bounds(&self) -> &[Bounds<Pixels>] {
         &self.text_bounds
+    }
+
+    /// Returns the copy separator preceding this participant.
+    pub fn copy_separator_before(&self) -> &str {
+        &self.copy_separator_before
     }
 }
 
@@ -503,20 +518,30 @@ struct CopyItem {
     document_order: u64,
     callback: Option<CopyCallback>,
     fallback: String,
+    separator_before: String,
 }
 
 fn resolve_copy_items(mut items: Vec<CopyItem>, cx: &mut App) -> String {
     items.sort_by_key(|item| item.document_order);
-    items
+    let resolved = items
         .into_iter()
         .map(|item| {
-            item.callback
+            let text = item
+                .callback
                 .map(|callback| callback(cx))
-                .unwrap_or(item.fallback)
+                .unwrap_or(item.fallback);
+            (item.separator_before, text)
         })
-        .filter(|text| !text.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+        .filter(|(_, text)| !text.trim().is_empty())
+        .collect::<Vec<_>>();
+    let mut output = String::new();
+    for (index, (separator, text)) in resolved.into_iter().enumerate() {
+        if index > 0 {
+            output.push_str(&separator);
+        }
+        output.push_str(&text);
+    }
+    output
 }
 
 fn dispatch_clear_handlers(handlers: Vec<ClearHandler>, cx: &mut App) {
@@ -651,10 +676,11 @@ impl SelectableTextState {
         }
     }
 
-    fn copy_item(&self, document_order: u64) -> Option<CopyItem> {
+    fn copy_item(&self, document_order: u64, separator_before: &str) -> Option<CopyItem> {
         (self.snapshot.is_some() || self.local_selection).then(|| CopyItem {
             document_order,
             callback: self.copy.clone(),
+            separator_before: separator_before.to_string(),
             fallback: self
                 .projected_copy_text
                 .clone()
@@ -721,6 +747,13 @@ impl TextSelectionHandle {
     /// Projects the current snapshot onto plain-text runs and caches their copy text.
     pub fn update_runs(&self, runs: &[TextSelectionRun], cx: &mut App) -> TextSelectionProjection {
         self.0.update(cx, |state, _| state.update_runs(runs))
+    }
+
+    /// Projects the current snapshot onto the runs retained from the previous
+    /// paint. This lets elements prepare selected-glyph styling during layout.
+    pub fn project_cached_runs(&self, cx: &App) -> TextSelectionProjection {
+        let state = self.0.read(cx);
+        project_ranges(state.snapshot, &state.runs)
     }
 
     /// Subscribes to participant selection notifications.
@@ -1065,9 +1098,10 @@ impl WindowSelectionState {
             .values()
             .filter_map(|registration| {
                 let participant = registration.participant.upgrade()?;
-                participant
-                    .read(cx)
-                    .copy_item(registration.registration.document_order)
+                participant.read(cx).copy_item(
+                    registration.registration.document_order,
+                    &registration.registration.copy_separator_before,
+                )
             })
             .collect()
     }

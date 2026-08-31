@@ -300,6 +300,45 @@ fn extract_language(info: &str) -> Option<String> {
     }
 }
 
+/// The complete input supplied to an optional markdown leaf factory.
+pub struct MarkdownLeaf {
+    /// Visible plain text, with markdown syntax removed.
+    pub plain_text: gpui::SharedString,
+    /// Styling runs used by the shipping renderer.
+    pub text_runs: Vec<gpui::TextRun>,
+    /// Monotonic reading-order position assigned by the caller.
+    pub document_order: u64,
+    /// Separator inserted before this leaf when copied after another leaf.
+    pub copy_separator_before: gpui::SharedString,
+    /// Background of the surface containing this leaf.
+    pub surface_background: gpui::Hsla,
+    /// Foreground of the surface containing this leaf.
+    pub surface_foreground: gpui::Hsla,
+}
+
+/// Builds an alternate element from a markdown text leaf.
+pub trait MarkdownLeafFactory {
+    /// Replaces one leaf while retaining its text, styling, and reading order.
+    fn create_leaf(&mut self, leaf: MarkdownLeaf) -> gpui::AnyElement;
+}
+
+struct MarkdownRenderContext<'a> {
+    factory: Option<&'a mut dyn MarkdownLeafFactory>,
+    next_document_order: &'a mut u64,
+}
+
+#[derive(Clone, Copy)]
+struct SurfaceColors {
+    background: gpui::Hsla,
+    foreground: gpui::Hsla,
+}
+
+#[derive(Clone, Copy)]
+struct LeafLocation<'a> {
+    surface: SurfaceColors,
+    separator: &'a str,
+}
+
 /// Convert intermediate representation blocks to GPUI elements.
 ///
 /// Phase 2 of the two-phase IR pipeline. This function takes the IR produced
@@ -321,37 +360,117 @@ pub fn blocks_to_elements_with_color(
     blocks: &[MarkdownBlock],
     text_color: gpui::Hsla,
 ) -> Vec<gpui::AnyElement> {
+    let mut next_document_order = 0;
+    let mut context = MarkdownRenderContext {
+        factory: None,
+        next_document_order: &mut next_document_order,
+    };
+    render_blocks(
+        blocks,
+        text_color,
+        SurfaceColors {
+            background: crate::ui_gpui::theme::Theme::bg_base(),
+            foreground: text_color,
+        },
+        "",
+        &mut context,
+    )
+}
+
+/// Renders the real markdown IR while replacing every visible text leaf.
+#[must_use]
+pub fn blocks_to_elements_with_leaf_factory(
+    blocks: &[MarkdownBlock],
+    text_color: gpui::Hsla,
+    surface_background: gpui::Hsla,
+    factory: &mut dyn MarkdownLeafFactory,
+    next_document_order: &mut u64,
+    first_copy_separator: &str,
+) -> Vec<gpui::AnyElement> {
+    let mut context = MarkdownRenderContext {
+        factory: Some(factory),
+        next_document_order,
+    };
+    render_blocks(
+        blocks,
+        text_color,
+        SurfaceColors {
+            background: surface_background,
+            foreground: text_color,
+        },
+        first_copy_separator,
+        &mut context,
+    )
+}
+
+fn render_blocks(
+    blocks: &[MarkdownBlock],
+    text_color: gpui::Hsla,
+    surface: SurfaceColors,
+    first_separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
+) -> Vec<gpui::AnyElement> {
     blocks
         .iter()
-        .map(|block| match block {
-            MarkdownBlock::Paragraph { spans, links } => {
-                render_paragraph_with_color(spans, links, text_color)
-            }
-            MarkdownBlock::Heading {
-                level,
-                spans,
-                links,
-            } => render_heading_with_color(*level, spans, links, text_color),
-            MarkdownBlock::CodeBlock { language, code } => {
-                render_code_block(language.as_ref(), code)
-            }
-            MarkdownBlock::BlockQuote { blocks } => {
-                render_blockquote_with_color(blocks, text_color)
-            }
-            MarkdownBlock::List {
-                ordered,
-                start,
-                items,
-            } => render_list_with_color(*ordered, *start, items, text_color),
-            MarkdownBlock::Table {
-                alignments,
-                header,
-                rows,
-            } => render_table_with_color(alignments, header, rows, text_color),
-            MarkdownBlock::ThematicBreak => render_thematic_break(),
-            MarkdownBlock::ImageFallback { alt } => render_image_fallback(alt),
+        .enumerate()
+        .map(|(index, block)| {
+            let separator = if index == 0 { first_separator } else { "\n\n" };
+            render_block(block, text_color, surface, separator, context)
         })
         .collect()
+}
+
+fn render_block(
+    block: &MarkdownBlock,
+    text_color: gpui::Hsla,
+    surface: SurfaceColors,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
+) -> gpui::AnyElement {
+    match block {
+        MarkdownBlock::Paragraph { spans, links } => {
+            render_paragraph(spans, links, text_color, surface, separator, context)
+        }
+        MarkdownBlock::Heading {
+            level,
+            spans,
+            links,
+        } => render_heading(
+            *level,
+            spans,
+            links,
+            text_color,
+            LeafLocation { surface, separator },
+            context,
+        ),
+        MarkdownBlock::CodeBlock { language, code } => {
+            render_code_block(language.as_ref(), code, separator, context)
+        }
+        MarkdownBlock::BlockQuote { blocks } => {
+            render_blockquote(blocks, text_color, separator, context)
+        }
+        MarkdownBlock::List {
+            ordered,
+            start,
+            items,
+        } => render_list(
+            *ordered,
+            *start,
+            items,
+            text_color,
+            LeafLocation { surface, separator },
+            context,
+        ),
+        MarkdownBlock::Table {
+            alignments,
+            header,
+            rows,
+        } => render_table(alignments, header, rows, text_color, separator, context),
+        MarkdownBlock::ThematicBreak => render_thematic_break(),
+        MarkdownBlock::ImageFallback { alt } => {
+            render_image_fallback(alt, surface, separator, context)
+        }
+    }
 }
 
 /// Public API: Render markdown content to GPUI elements.
@@ -393,7 +512,6 @@ pub(crate) fn is_safe_url(raw: &str) -> bool {
 fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::TextRun {
     use gpui::{font, FontStyle, FontWeight, StrikethroughStyle, TextRun, UnderlineStyle};
 
-    // For links, use accent color. For non-links, use the provided text_color
     let mut run = TextRun {
         len: span.text.len(),
         color: if span.link_url.is_some() {
@@ -432,23 +550,52 @@ fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::Te
     run
 }
 
+fn next_leaf(
+    text: String,
+    runs: Vec<gpui::TextRun>,
+    surface: SurfaceColors,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
+) -> MarkdownLeaf {
+    let plain_text = gpui::SharedString::from(text);
+    let document_order = *context.next_document_order;
+    *context.next_document_order = document_order.saturating_add(1);
+    MarkdownLeaf {
+        plain_text,
+        text_runs: runs,
+        document_order,
+        copy_separator_before: separator.to_string().into(),
+        surface_background: surface.background,
+        surface_foreground: surface.foreground,
+    }
+}
+
 /// @plan:PLAN-20260402-MARKDOWN.P06
 /// @requirement:REQ-MD-RENDER-002
 fn spans_to_styled_text(
     spans: &[MarkdownInline],
     links: &[(Range<usize>, String)],
     text_color: gpui::Hsla,
+    surface: SurfaceColors,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::AnyElement {
-    use gpui::StyledText;
-
     let mut text = String::new();
     let mut runs = Vec::with_capacity(spans.len());
     for span in spans {
         text.push_str(&span.text);
         runs.push(inline_to_text_run(span, text_color));
     }
+    let leaf = next_leaf(text, runs, surface, separator, context);
+    if let Some(factory) = context.factory.as_deref_mut() {
+        return div()
+            .w_full()
+            .min_w(px(0.0))
+            .child(factory.create_leaf(leaf))
+            .into_any_element();
+    }
 
-    let styled = StyledText::new(text).with_runs(runs);
+    let styled = gpui::StyledText::new(leaf.plain_text).with_runs(leaf.text_runs);
     if links.is_empty() {
         return div()
             .w_full()
@@ -459,7 +606,6 @@ fn spans_to_styled_text(
 
     let ranges: Vec<Range<usize>> = links.iter().map(|(range, _)| range.clone()).collect();
     let links_owned: Vec<String> = links.iter().map(|(_, url)| url.clone()).collect();
-
     div()
         .w_full()
         .min_w(px(0.0))
@@ -478,24 +624,29 @@ fn spans_to_styled_text(
         .into_any_element()
 }
 
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_paragraph_with_color(
+fn render_paragraph(
     spans: &[MarkdownInline],
     links: &[(Range<usize>, String)],
     text_color: gpui::Hsla,
+    surface: SurfaceColors,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::AnyElement {
     div()
         .text_size(px(crate::ui_gpui::theme::Theme::font_size_body()))
-        .child(spans_to_styled_text(spans, links, text_color))
+        .child(spans_to_styled_text(
+            spans, links, text_color, surface, separator, context,
+        ))
         .into_any_element()
 }
 
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_heading_with_color(
+fn render_heading(
     level: u8,
     spans: &[MarkdownInline],
     links: &[(Range<usize>, String)],
     text_color: gpui::Hsla,
+    location: LeafLocation<'_>,
+    context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::AnyElement {
     let size = match level {
         1 => crate::ui_gpui::theme::Theme::font_size_h1(),
@@ -505,80 +656,142 @@ fn render_heading_with_color(
         5 => crate::ui_gpui::theme::Theme::font_size_mono(),
         _ => crate::ui_gpui::theme::Theme::font_size_ui(),
     };
-
     div()
         .w_full()
         .min_w(px(0.0))
         .text_size(px(size))
         .font_weight(gpui::FontWeight::BOLD)
-        .child(spans_to_styled_text(spans, links, text_color))
+        .child(spans_to_styled_text(
+            spans,
+            links,
+            text_color,
+            location.surface,
+            location.separator,
+            context,
+        ))
         .into_any_element()
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-005
-fn render_code_block(language: Option<&String>, code: &str) -> gpui::AnyElement {
+fn raw_selectable_leaf(
+    text: String,
+    run: gpui::TextRun,
+    surface: SurfaceColors,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
+) -> Option<gpui::AnyElement> {
+    context.factory.as_ref()?;
+    let leaf = next_leaf(text, vec![run], surface, separator, context);
+    context
+        .factory
+        .as_deref_mut()
+        .map(|factory| factory.create_leaf(leaf))
+}
+
+fn render_code_block(
+    language: Option<&String>,
+    code: &str,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
+) -> gpui::AnyElement {
+    use crate::ui_gpui::theme::Theme;
+    use gpui::{font, TextRun};
+    let surface = SurfaceColors {
+        background: Theme::bg_dark(),
+        foreground: Theme::text_primary(),
+    };
     let mut block = div()
         .flex()
         .flex_col()
-        .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
+        .gap(px(Theme::SPACING_XS))
         .w_full()
-        .px(px(crate::ui_gpui::theme::Theme::SPACING_SM))
-        .py(px(crate::ui_gpui::theme::Theme::SPACING_SM))
-        .rounded(px(crate::ui_gpui::theme::Theme::RADIUS_MD))
-        .bg(crate::ui_gpui::theme::Theme::bg_dark())
-        .text_color(crate::ui_gpui::theme::Theme::text_primary())
-        .font_family(crate::ui_gpui::theme::Theme::mono_font_family_name())
-        .font_features(crate::ui_gpui::theme::Theme::mono_font_features())
-        .text_size(px(crate::ui_gpui::theme::Theme::font_size_mono()));
-
+        .px(px(Theme::SPACING_SM))
+        .py(px(Theme::SPACING_SM))
+        .rounded(px(Theme::RADIUS_MD))
+        .bg(surface.background)
+        .text_color(surface.foreground)
+        .font_family(Theme::mono_font_family_name())
+        .font_features(Theme::mono_font_features())
+        .text_size(px(Theme::font_size_mono()));
     if let Some(lang) = language {
         block = block.child(
             div()
-                .text_size(px(crate::ui_gpui::theme::Theme::font_size_ui()))
-                .text_color(crate::ui_gpui::theme::Theme::text_muted())
+                .text_size(px(Theme::font_size_ui()))
+                .text_color(Theme::text_muted())
                 .child(lang.clone()),
         );
     }
-
-    block.child(code.to_string()).into_any_element()
+    let mut code_run = TextRun {
+        len: code.len(),
+        color: surface.foreground,
+        font: font(Theme::mono_font_family_name()),
+        ..Default::default()
+    };
+    code_run.font.features = Theme::mono_font_features();
+    let code_element = raw_selectable_leaf(code.to_string(), code_run, surface, separator, context)
+        .unwrap_or_else(|| code.to_string().into_any_element());
+    block.child(code_element).into_any_element()
 }
 
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_blockquote_with_color(
+fn render_blockquote(
     children: &[MarkdownBlock],
     text_color: gpui::Hsla,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::AnyElement {
+    let surface = SurfaceColors {
+        background: crate::ui_gpui::theme::Theme::bg_base(),
+        foreground: text_color,
+    };
     div()
         .w_full()
         .border_l_2()
         .border_color(crate::ui_gpui::theme::Theme::accent())
         .pl(px(crate::ui_gpui::theme::Theme::SPACING_SM))
         .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-        .bg(crate::ui_gpui::theme::Theme::bg_base())
-        .children(blocks_to_elements_with_color(children, text_color))
+        .bg(surface.background)
+        .children(render_blocks(
+            children, text_color, surface, separator, context,
+        ))
         .into_any_element()
 }
 
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_list_with_color(
+fn list_prefix(
+    prefix: String,
+    surface: SurfaceColors,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
+) -> gpui::AnyElement {
+    let run = gpui::TextRun {
+        len: prefix.len(),
+        color: crate::ui_gpui::theme::Theme::text_muted(),
+        ..Default::default()
+    };
+    raw_selectable_leaf(prefix.clone(), run, surface, separator, context)
+        .unwrap_or_else(|| prefix.into_any_element())
+}
+
+fn render_list(
     ordered: bool,
     start: u64,
     items: &[Vec<MarkdownBlock>],
     text_color: gpui::Hsla,
+    location: LeafLocation<'_>,
+    context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::AnyElement {
     let mut list = div()
         .flex()
         .flex_col()
         .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
         .w_full();
-
-    for (idx, item_blocks) in items.iter().enumerate() {
+    for (index, item_blocks) in items.iter().enumerate() {
         let prefix = if ordered {
-            format!("{}. ", start.saturating_add(idx as u64))
+            format!("{}. ", start.saturating_add(index as u64))
         } else {
             "• ".to_string()
         };
+        let prefix_separator = if index == 0 { location.separator } else { "\n" };
+        let prefix = list_prefix(prefix, location.surface, prefix_separator, context);
+        let item_content = render_blocks(item_blocks, text_color, location.surface, "", context);
         list = list.child(
             div()
                 .flex()
@@ -595,95 +808,98 @@ fn render_list_with_color(
                         .flex()
                         .flex_col()
                         .gap(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                        .children(blocks_to_elements_with_color(item_blocks, text_color)),
+                        .children(item_content),
                 ),
         );
     }
-
     list.into_any_element()
 }
 
-/// @plan:PLAN-20260402-ISSUE153.P02
-fn render_table_with_color(
+fn align_table_content(alignment: &Alignment, content: gpui::AnyElement) -> gpui::Div {
+    let base = div().w_full().min_w(px(0.0)).flex();
+    match alignment {
+        Alignment::Center => base.justify_center().child(content),
+        Alignment::Right => base.justify_end().child(content),
+        Alignment::Left | Alignment::None => base.justify_start().child(content),
+    }
+}
+
+fn render_table_cell(
+    cell: &TableCell,
+    alignment: &Alignment,
+    text_color: gpui::Hsla,
+    background: gpui::Hsla,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
+) -> gpui::Div {
+    let surface = SurfaceColors {
+        background,
+        foreground: text_color,
+    };
+    let cell_element = spans_to_styled_text(
+        &cell.spans,
+        &cell.links,
+        text_color,
+        surface,
+        separator,
+        context,
+    );
+    div()
+        .w_full()
+        .min_w(px(120.0))
+        .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
+        .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
+        .bg(background)
+        .border_1()
+        .border_color(crate::ui_gpui::theme::Theme::border())
+        .child(align_table_content(alignment, cell_element))
+}
+
+fn render_table(
     alignments: &[Alignment],
     header: &[TableCell],
     rows: &[Vec<TableCell>],
     text_color: gpui::Hsla,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
 ) -> gpui::AnyElement {
     let col_count = header
         .len()
         .max(rows.first().map_or(0, Vec::len))
         .max(alignments.len());
     let grid_cols = u16::try_from(col_count.max(1)).unwrap_or(u16::MAX);
-
-    let align_content = |alignment: &Alignment, content: gpui::AnyElement| match alignment {
-        Alignment::Center => div()
-            .w_full()
-            .min_w(px(0.0))
-            .flex()
-            .justify_center()
-            .child(content),
-        Alignment::Right => div()
-            .w_full()
-            .min_w(px(0.0))
-            .flex()
-            .justify_end()
-            .child(content),
-        Alignment::Left | Alignment::None => div()
-            .w_full()
-            .min_w(px(0.0))
-            .flex()
-            .justify_start()
-            .child(content),
-    };
-
     let mut table_grid = div().grid().grid_cols(grid_cols).w_full();
-
-    for (col_idx, cell) in header.iter().enumerate() {
-        let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
-        let content = spans_to_styled_text(&cell.spans, &cell.links, text_color);
-
-        table_grid = table_grid.child(
-            div()
-                .w_full()
-                .min_w(px(120.0))
-                .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                .bg(crate::ui_gpui::theme::Theme::bg_dark())
-                .border_1()
-                .border_color(crate::ui_gpui::theme::Theme::border())
-                .child(align_content(alignment, content)),
-        );
+    for (column, cell) in header.iter().enumerate() {
+        let cell_separator = if column == 0 { separator } else { "\t" };
+        table_grid = table_grid.child(render_table_cell(
+            cell,
+            alignments.get(column).unwrap_or(&Alignment::None),
+            text_color,
+            crate::ui_gpui::theme::Theme::bg_dark(),
+            cell_separator,
+            context,
+        ));
     }
-
-    for (row_idx, row) in rows.iter().enumerate() {
-        for (col_idx, cell) in row.iter().enumerate() {
-            let alignment = alignments.get(col_idx).unwrap_or(&Alignment::None);
-            let content = spans_to_styled_text(&cell.spans, &cell.links, text_color);
-
-            table_grid = table_grid.child(
-                div()
-                    .w_full()
-                    .min_w(px(120.0))
-                    .px(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                    .py(px(crate::ui_gpui::theme::Theme::SPACING_XS))
-                    .bg(if row_idx % 2 == 0 {
-                        crate::ui_gpui::theme::Theme::bg_base()
-                    } else {
-                        crate::ui_gpui::theme::Theme::bg_dark()
-                    })
-                    .border_1()
-                    .border_color(crate::ui_gpui::theme::Theme::border())
-                    .child(align_content(alignment, content)),
-            );
+    for (row_index, row) in rows.iter().enumerate() {
+        let background = if row_index % 2 == 0 {
+            crate::ui_gpui::theme::Theme::bg_base()
+        } else {
+            crate::ui_gpui::theme::Theme::bg_dark()
+        };
+        for (column, cell) in row.iter().enumerate() {
+            table_grid = table_grid.child(render_table_cell(
+                cell,
+                alignments.get(column).unwrap_or(&Alignment::None),
+                text_color,
+                background,
+                if column == 0 { "\n" } else { "\t" },
+                context,
+            ));
         }
     }
-
     div().w_full().child(table_grid).into_any_element()
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-010
 fn render_thematic_break() -> gpui::AnyElement {
     div()
         .h(px(1.0))
@@ -692,13 +908,24 @@ fn render_thematic_break() -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P06
-/// @requirement:REQ-MD-RENDER-011
-fn render_image_fallback(alt: &str) -> gpui::AnyElement {
+fn render_image_fallback(
+    alt: &str,
+    surface: SurfaceColors,
+    separator: &str,
+    context: &mut MarkdownRenderContext<'_>,
+) -> gpui::AnyElement {
+    let text = format!("[image: {alt}]");
+    let run = gpui::TextRun {
+        len: text.len(),
+        color: crate::ui_gpui::theme::Theme::text_muted(),
+        ..Default::default()
+    };
+    let image_element = raw_selectable_leaf(text.clone(), run, surface, separator, context)
+        .unwrap_or_else(|| text.into_any_element());
     div()
         .text_color(crate::ui_gpui::theme::Theme::text_muted())
         .text_size(px(crate::ui_gpui::theme::Theme::font_size_mono()))
-        .child(format!("[image: {alt}]"))
+        .child(image_element)
         .into_any_element()
 }
 

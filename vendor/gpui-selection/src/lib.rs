@@ -10,6 +10,8 @@
 //! - remove the unrelated `TextViewState` registry from `GlobalState`;
 //! - gate out upstream tests that require newer GPUI test-support APIs;
 //! - allow dead code while this compile-only spike remains unwired;
+//! - add the upstream selectable-text participant with explicit surface colors,
+//!   selected-glyph recoloring, scroll offsets, and copy separators;
 //! - mark the source modules to skip rustfmt so the root package's
 //!   `cargo fmt --all` preserves upstream formatting;
 //! - add Apache-2.0 section 4(b) modification notices to changed files.
@@ -20,6 +22,7 @@
 mod auto_scroll;
 #[rustfmt::skip]
 mod global_state;
+mod selectable_text;
 #[rustfmt::skip]
 mod text_boundary;
 #[rustfmt::skip]
@@ -27,6 +30,7 @@ mod text_selection;
 
 pub use auto_scroll::AutoScroll;
 pub use global_state::{DeferredPopover, GlobalState};
+pub use selectable_text::SelectableText;
 pub use text_selection::{
     TextSelection, TextSelectionContentKey, TextSelectionCoverage, TextSelectionEndpoint,
     TextSelectionEvent, TextSelectionHandle, TextSelectionLayer, TextSelectionProjection,
