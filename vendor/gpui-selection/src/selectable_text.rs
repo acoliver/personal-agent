@@ -1,14 +1,15 @@
 // NOTICE: PersonalAgent modified this file from gpui-component commit c5ade48.
 // Changes: removed the upstream Theme dependency, require explicit surface
 // colors, build one StyledText from caller-provided runs, register scroll/copy
-// metadata, and recolor selected glyphs in the surface background color.
+// metadata, recolor selected glyphs in the surface background color, and retain
+// one owning-window refresh subscription per selectable-text element.
 
 use std::ops::Range;
 
 use gpui::{
     transparent_black, App, BorderStyle, Bounds, Corners, Edges, Element, ElementId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    PaintQuad, Pixels, Point, SharedString, StyledText, TextRun, Window,
+    PaintQuad, Pixels, Point, SharedString, StyledText, Subscription, TextRun, Window,
 };
 
 use crate::{TextSelectionHandle, TextSelectionRegistration, TextSelectionRun};
@@ -204,10 +205,13 @@ impl Element for SelectableText {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let handle = window.with_element_state(
             global_id.expect("SelectableText must have a stable element id"),
-            |retained: Option<TextSelectionHandle>, _| {
-                let handle =
-                    retained.unwrap_or_else(|| TextSelectionHandle::new(self.text.clone(), cx));
-                (handle.clone(), handle)
+            |retained: Option<(TextSelectionHandle, Subscription)>, window| {
+                let state = retained.unwrap_or_else(|| {
+                    let handle = TextSelectionHandle::new(self.text.clone(), cx);
+                    let subscription = handle.refresh_window_on_change(window, cx);
+                    (handle, subscription)
+                });
+                (state.0.clone(), state)
             },
         );
         let projection = handle.project_cached_runs(cx);
