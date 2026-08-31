@@ -307,7 +307,8 @@ fn extract_language(info: &str) -> Option<String> {
 /// Uses text_primary() for text color.
 ///
 /// @plan:PLAN-20260402-MARKDOWN.P06
-pub(crate) fn blocks_to_elements(blocks: &[MarkdownBlock]) -> Vec<gpui::AnyElement> {
+#[must_use]
+pub fn blocks_to_elements(blocks: &[MarkdownBlock]) -> Vec<gpui::AnyElement> {
     blocks_to_elements_with_color(blocks, crate::ui_gpui::theme::Theme::text_primary())
 }
 
@@ -315,7 +316,8 @@ pub(crate) fn blocks_to_elements(blocks: &[MarkdownBlock]) -> Vec<gpui::AnyEleme
 /// Used by user message bubbles which need user_bubble_text() color.
 ///
 /// @plan:PLAN-20260402-ISSUE153.P02
-pub(crate) fn blocks_to_elements_with_color(
+#[must_use]
+pub fn blocks_to_elements_with_color(
     blocks: &[MarkdownBlock],
     text_color: gpui::Hsla,
 ) -> Vec<gpui::AnyElement> {
@@ -359,6 +361,7 @@ pub(crate) fn blocks_to_elements_with_color(
 ///
 /// @plan:PLAN-20260402-MARKDOWN.P06
 /// @requirement:REQ-MD-RENDER-040
+#[must_use]
 #[allow(dead_code)]
 pub fn render_markdown(content: &str) -> Vec<gpui::AnyElement> {
     let blocks = parse_markdown_blocks(content);

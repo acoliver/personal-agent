@@ -28,7 +28,7 @@ pub mod emoji_filter_icon;
 pub mod copy_icons;
 
 // Issue 62: Markdown Rendering (TDD Phase)
-pub(crate) mod markdown_content;
+pub mod markdown_content;
 
 // Phase 02: Component Library additions
 pub mod divider;
