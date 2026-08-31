@@ -10,13 +10,19 @@
 //! - remove the unrelated `TextViewState` registry from `GlobalState`;
 //! - gate out upstream tests that require newer GPUI test-support APIs;
 //! - allow dead code while this compile-only spike remains unwired;
+//! - mark the source modules to skip rustfmt so the root package's
+//!   `cargo fmt --all` preserves upstream formatting;
 //! - add Apache-2.0 section 4(b) modification notices to changed files.
 
 #![allow(dead_code)]
 
+#[rustfmt::skip]
 mod auto_scroll;
+#[rustfmt::skip]
 mod global_state;
+#[rustfmt::skip]
 mod text_boundary;
+#[rustfmt::skip]
 mod text_selection;
 
 pub use auto_scroll::AutoScroll;

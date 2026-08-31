@@ -2712,6 +2712,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-selection-vendor"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+]
+
+[[package]]
 name = "gpui_macros"
 version = "0.1.0"
 source = "git+https://github.com/zed-industries/zed?rev=c67328ab2e0d572718575e02ae07db37552e1cbe#c67328ab2e0d572718575e02ae07db37552e1cbe"
@@ -4606,6 +4613,7 @@ dependencies = [
  "futures",
  "glob",
  "gpui",
+ "gpui-selection-vendor",
  "ignore",
  "image",
  "keyring",
