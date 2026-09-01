@@ -3,8 +3,9 @@
 // project's Rust 2021 edition, routed window auto-scroll through participant
 // callbacks because pinned GPUI exposes a private return type from
 // Window::dispatch_event, added participant-defined copy separators, exposed
-// cached run projection, added delayed drag start for selectable links, and gated
-// tests requiring newer GPUI test-support APIs.
+// cached run projection, added delayed drag start for selectable links, exposed
+// window-selection endpoint content keys, and gated tests requiring newer GPUI
+// test-support APIs.
 
 use std::{
     collections::HashMap,
@@ -1123,6 +1124,13 @@ impl WindowSelectionState {
             })
     }
 
+    fn content_keys(&self) -> Option<[TextSelectionContentKey; 2]> {
+        self.did_hit_text.then_some([
+            self.anchor.as_ref()?.content_key?,
+            self.cursor.as_ref()?.content_key?,
+        ])
+    }
+
     /// Returns the current resolved selection endpoints.
     pub fn snapshot(&self) -> Option<TextSelectionSnapshot> {
         if !self.did_hit_text {
@@ -1627,6 +1635,17 @@ impl TextSelection {
         resolve_copy_items(items, cx)
     }
 
+
+    /// Returns the stable content identities captured at both selection endpoints.
+    ///
+    /// The keys remain available while endpoint participants are temporarily
+    /// unregistered, allowing callers to reject stale virtualized selections.
+    pub fn content_keys(
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<[TextSelectionContentKey; 2]> {
+        live_text_selection_state(window, cx)?.read(cx).content_keys()
+    }
     /// Returns whether the window has a geometry selection or any participant
     /// has an active participant-local selection such as select-all.
     pub fn has_selection(window: &mut Window, cx: &mut App) -> bool {
@@ -3509,6 +3528,13 @@ mod tests {
             assert_eq!(
                 snapshot.cursor().content_key(),
                 Some(TextSelectionContentKey::new(17))
+            );
+            assert_eq!(
+                TextSelection::content_keys(window, cx),
+                Some([
+                    TextSelectionContentKey::new(17),
+                    TextSelectionContentKey::new(17),
+                ])
             );
         });
 

@@ -15,6 +15,7 @@ mod emoji;
 mod focus;
 
 mod ime;
+mod message_selection;
 mod render;
 mod render_bars;
 #[cfg(test)]
@@ -72,6 +73,7 @@ use gpui::{
     prelude::*, px, Entity, FocusHandle, ListAlignment, ListOffset, ListScrollEvent, ListState,
     Pixels,
 };
+use message_selection::TranscriptSelectionRevisions;
 #[cfg(test)]
 use std::cell::Cell;
 use std::sync::Arc;
@@ -87,6 +89,7 @@ pub struct ChatView {
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
     pub(super) transcript_list_state: ListState,
+    transcript_selection_revisions: TranscriptSelectionRevisions,
     /// Embedded shared conversation list rendered inside the popout sidebar
     /// (Inline mode). The same component type is used for the popin History
     /// panel via `HistoryPanelView`.
@@ -118,6 +121,13 @@ impl ChatView {
 
         let conversation_list =
             cx.new(|child_cx| ConversationListView::new(ConversationListMode::Inline, child_cx));
+        let mut transcript_selection_revisions = TranscriptSelectionRevisions::default();
+        transcript_selection_revisions.sync(
+            state.active_conversation_id,
+            &state.messages,
+            &state.streaming,
+            state.filter_emoji,
+        );
         Self {
             state,
             focus_handle: cx.focus_handle(),
@@ -125,6 +135,7 @@ impl ChatView {
             conversation_id: None,
             selection_generation: 0,
             transcript_list_state,
+            transcript_selection_revisions,
             conversation_list,
             #[cfg(test)]
             maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
@@ -307,6 +318,7 @@ impl ChatView {
         self.state.active_conversation_id = Some(id);
         self.state.sync_conversation_dropdown_index();
         self.state.sync_conversation_title_from_active();
+        self.refresh_transcript_selection_revisions();
     }
 
     /// Emit a `UserEvent` through the bridge
@@ -806,6 +818,7 @@ impl ChatView {
             content: String::new(),
             done: false,
         };
+        self.refresh_transcript_selection_revisions();
         self.maybe_scroll_chat_to_bottom();
         cx.notify();
     }

@@ -22,7 +22,6 @@ use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels, SharedString,
 };
-use gpui_selection_vendor::TextSelection;
 use std::sync::Arc;
 
 impl ChatView {
@@ -121,6 +120,7 @@ impl ChatView {
                         self.emit(UserEvent::StopStreaming { conversation_id });
                     }
                     self.state.streaming = StreamingState::Idle;
+                    self.refresh_transcript_selection_revisions();
                     // Refocus so keyboard input works after stopping.
                     self.focus_composer(cx);
                     cx.notify();
@@ -146,22 +146,6 @@ impl ChatView {
             self.handle_platform_key(key, window, cx);
         }
         should_handle
-    }
-
-    fn copy_selection_or_input(&self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
-        let selected_text = TextSelection::selected_text(window, cx);
-        let text = if !selected_text.is_empty() {
-            selected_text
-        } else if self.sidebar_search_focused(cx) {
-            self.state.sidebar_search_query.clone()
-        } else if self.state.conversation_title_editing {
-            self.state.conversation_title_input.clone()
-        } else {
-            self.state.input_text.clone()
-        };
-        if !text.is_empty() {
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-        }
     }
 
     /// Handle Cmd+key shortcuts.
@@ -199,6 +183,7 @@ impl ChatView {
                 self.state.profile_dropdown_open = false;
                 self.state.chat_autoscroll_enabled = true;
                 self.scroll_transcript_to_bottom();
+                self.refresh_transcript_selection_revisions();
                 cx.notify();
             }
             "t" => {
@@ -302,11 +287,11 @@ impl ChatView {
                         cx.processor(move |this, index, _window, cx| {
                             let row = rows[index];
                             let document_order = document_orders[index];
-                            let selection = TranscriptSelectionContext {
+                            let selection = this.transcript_selection_context(
+                                row,
                                 scroll_offset,
                                 document_order,
-                                first_copy_separator: if document_order == 0 { "" } else { "\n\n" },
-                            };
+                            );
                             div()
                                 .w_full()
                                 .when(index + 1 < row_count, |d| d.pb(px(8.0)))
@@ -333,11 +318,12 @@ impl ChatView {
         row: TranscriptRow,
         show_thinking: bool,
         filter_emoji: bool,
-        selection: TranscriptSelectionContext,
+        selection: Option<TranscriptSelectionContext>,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::AnyElement {
         match row {
             TranscriptRow::Message(index) => {
+                let selection = selection.expect("message row requires selectable content");
                 let id = SharedString::from(format!("msg-{index}"));
                 div()
                     .id(id)
@@ -372,7 +358,7 @@ impl ChatView {
                     &self.state.streaming,
                     show_thinking,
                     filter_emoji,
-                    selection,
+                    selection.expect("streaming row requires selectable content"),
                 )
                 .into_any_element(),
         }
@@ -440,7 +426,8 @@ impl ChatView {
     ) -> gpui::AnyElement {
         let blocks = msg.get_or_parse_markdown();
         let text_color = Theme::user_bubble_text();
-        let mut factory = TranscriptSelectionLeafFactory::new(selection.scroll_offset);
+        let mut factory =
+            TranscriptSelectionLeafFactory::new(selection.scroll_offset, selection.content_key);
         let mut document_order = selection.document_order;
         let rendered = blocks_to_elements_with_leaf_factory(
             &blocks,
@@ -796,6 +783,7 @@ impl ChatView {
                                 this.emit(UserEvent::StopStreaming { conversation_id });
                             }
                             this.state.streaming = StreamingState::Idle;
+                            this.refresh_transcript_selection_revisions();
                             this.maybe_scroll_chat_to_bottom();
                             // Refocus the composer so keyboard input works
                             // immediately after stopping — without this,

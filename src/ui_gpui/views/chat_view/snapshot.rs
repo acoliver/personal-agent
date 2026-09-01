@@ -187,6 +187,7 @@ impl ChatView {
         }
 
         self.sync_conversation_list_state(cx);
+        self.refresh_transcript_selection_revisions();
 
         cx.notify();
     }

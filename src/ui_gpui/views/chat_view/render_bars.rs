@@ -655,6 +655,7 @@ impl ChatView {
                     this.state.profile_dropdown_open = false;
                     this.state.chat_autoscroll_enabled = true;
                     this.scroll_transcript_to_bottom();
+                    this.refresh_transcript_selection_revisions();
                     cx.notify();
                 }),
             )

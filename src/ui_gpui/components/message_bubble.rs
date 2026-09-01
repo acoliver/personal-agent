@@ -182,7 +182,10 @@ impl IntoElement for AssistantBubble {
             // No cache available: parse fresh
             parse_markdown_blocks(&content_text)
         };
-        let mut factory = TranscriptSelectionLeafFactory::new(self.selection.scroll_offset);
+        let mut factory = TranscriptSelectionLeafFactory::new(
+            self.selection.scroll_offset,
+            self.selection.content_key,
+        );
         let mut document_order = self.selection.document_order;
         let rendered = blocks_to_elements_with_leaf_factory(
             &blocks,

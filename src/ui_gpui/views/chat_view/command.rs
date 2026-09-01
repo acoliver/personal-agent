@@ -119,6 +119,7 @@ impl ChatView {
         self.state.chat_autoscroll_enabled = true;
         self.scroll_transcript_to_bottom();
         self.state.sync_conversation_title_from_active();
+        self.refresh_transcript_selection_revisions();
         cx.notify();
     }
 
@@ -159,6 +160,7 @@ impl ChatView {
                     enabled
                 );
                 self.state.filter_emoji = enabled;
+                self.refresh_transcript_selection_revisions();
                 cx.notify();
             }
             ViewCommand::ShowConversationExportFormat { format } => {

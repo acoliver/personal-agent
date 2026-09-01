@@ -5,7 +5,8 @@
 // one owning-window refresh subscription per selectable-text element. Selected
 // runs now suppress their own backgrounds, and low-contrast surface pairs use a
 // black-or-white selected glyph fallback. Safe links now activate on clicks while
-// pointer movement beyond the drag threshold remains a text-selection gesture.
+// pointer movement beyond the drag threshold remains a text-selection gesture,
+// and participant-defined content keys are attached to selection endpoints.
 
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
@@ -17,7 +18,8 @@ use gpui::{
 };
 
 use crate::{
-    GlobalState, TextSelection, TextSelectionHandle, TextSelectionRegistration, TextSelectionRun,
+    GlobalState, TextSelection, TextSelectionContentKey, TextSelectionHandle,
+    TextSelectionRegistration, TextSelectionRun,
 };
 
 /// Styled text that participates in window-scoped text selection.
@@ -30,6 +32,7 @@ pub struct SelectableText {
     document_order: u64,
     scroll_offset: Point<Pixels>,
     copy_separator_before: SharedString,
+    content_key: Option<TextSelectionContentKey>,
     selection_color: Hsla,
     selected_text_color: Hsla,
 }
@@ -62,6 +65,7 @@ impl SelectableText {
             document_order: 0,
             scroll_offset: Point::default(),
             copy_separator_before: "\n".into(),
+            content_key: None,
             selection_color,
             selected_text_color,
         }
@@ -89,6 +93,12 @@ impl SelectableText {
     /// after another selected leaf.
     pub fn copy_separator_before(mut self, separator: impl Into<SharedString>) -> Self {
         self.copy_separator_before = separator.into();
+        self
+    }
+
+    /// Attaches participant-defined stable content identity to selection endpoints.
+    pub fn content_key(mut self, content_key: TextSelectionContentKey) -> Self {
+        self.content_key = Some(content_key);
         self
     }
 
@@ -379,6 +389,9 @@ impl Element for SelectableText {
                 ((state.0.clone(), state.2.clone()), state)
             },
         );
+        if let Some(content_key) = self.content_key {
+            handle.resolve_content_key_with(move |_, _| Some(content_key), cx);
+        }
         let projection = handle.project_cached_runs(cx);
         let selected_ranges = projection.ranges().to_vec();
         let selected_range = selected_ranges.first().and_then(Option::as_ref);
