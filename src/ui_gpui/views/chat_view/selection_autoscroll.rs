@@ -108,7 +108,7 @@ impl ChatView {
     }
 
     /// Stops the owner loop, e.g. when the drag ended or the window is gone.
-    fn stop_selection_auto_scroll(&mut self) {
+    pub(super) fn stop_selection_auto_scroll(&mut self) {
         self.selection_auto_scroll.stop();
     }
 

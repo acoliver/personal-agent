@@ -178,6 +178,27 @@ impl TranscriptCopyDocument {
             format!("{}{}", leaf.separator_before, leaf.text)
         }
     }
+
+    /// Returns every message key in reading order and the complete copy text.
+    ///
+    /// Blank messages contribute their key (so freshness validation still
+    /// notices their replacement) without contributing text. Returns `None`
+    /// when the document has no messages or only blank text.
+    pub fn select_all_payload(&self) -> Option<(Vec<TextSelectionContentKey>, String)> {
+        let keys = self
+            .messages
+            .iter()
+            .map(|message| message.content_key)
+            .collect::<Vec<_>>();
+        let mut text = String::new();
+        for message in &self.messages {
+            append_message(&mut text, message);
+        }
+        if keys.is_empty() || text.trim().is_empty() {
+            return None;
+        }
+        Some((keys, text))
+    }
 }
 
 fn append_leaf(output: &mut String, leaf: &TranscriptCopyLeaf) {
@@ -455,5 +476,70 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn select_all_payload_returns_all_keys_and_complete_syntax_free_text() {
+        let keys = [
+            TextSelectionContentKey::new(21),
+            TextSelectionContentKey::new(22),
+            TextSelectionContentKey::new(23),
+        ];
+        let document = TranscriptCopyDocument::new(vec![
+            (
+                keys[0],
+                vec![
+                    leaf("plain text", ""),
+                    leaf("let code = 1;", "\n\n"),
+                    leaf("after code", "\n\n"),
+                ],
+            ),
+            (
+                keys[1],
+                vec![leaf("h1", ""), leaf("a\tb", "\n\n"), leaf("1\n2", "\n\n")],
+            ),
+            (keys[2], vec![leaf("closing", "")]),
+        ]);
+
+        let (payload_keys, text) = document
+            .select_all_payload()
+            .expect("non-blank document yields a select-all payload");
+
+        assert_eq!(payload_keys, keys);
+        assert_eq!(
+            text,
+            "plain text\n\nlet code = 1;\n\nafter code\n\nh1\n\na\tb\n\n1\n2\n\nclosing"
+        );
+    }
+
+    #[test]
+    fn select_all_payload_includes_blank_message_keys_for_freshness() {
+        let keys = [
+            TextSelectionContentKey::new(31),
+            TextSelectionContentKey::new(32),
+            TextSelectionContentKey::new(33),
+        ];
+        let document = TranscriptCopyDocument::new(vec![
+            (keys[0], vec![leaf("before", "")]),
+            (keys[1], vec![leaf("   ", "")]),
+            (keys[2], vec![leaf("after", "")]),
+        ]);
+
+        let (payload_keys, text) = document
+            .select_all_payload()
+            .expect("blank interior message does not blank the payload");
+
+        assert_eq!(payload_keys, keys);
+        assert_eq!(text, "before\n\nafter");
+    }
+
+    #[test]
+    fn select_all_payload_is_none_for_empty_or_blank_only_documents() {
+        assert_eq!(TranscriptCopyDocument::default().select_all_payload(), None);
+        let blank = TranscriptCopyDocument::new(vec![(
+            TextSelectionContentKey::new(41),
+            vec![leaf(" \n ", "")],
+        )]);
+        assert_eq!(blank.select_all_payload(), None);
     }
 }

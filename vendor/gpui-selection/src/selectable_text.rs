@@ -7,7 +7,9 @@
 // black-or-white selected glyph fallback. Safe links now activate on clicks while
 // pointer movement beyond the drag threshold remains a text-selection gesture,
 // participant-defined content keys are attached to selection endpoints, and
-// callers can install source-copy projections for virtualized text.
+// callers can install source-copy projections for virtualized text. The
+// registration also forwards the element's content key so logical whole-content
+// selections match virtualized participants by stable identity.
 
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
@@ -450,15 +452,16 @@ impl Element for SelectableText {
             .expect("SelectableText must complete layout before prepaint");
         styled_text.prepaint(global_id, inspector_id, bounds, &mut (), window, cx);
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        state.handle.register(
-            TextSelectionRegistration::new(hitbox.clone(), bounds)
-                .with_document_order(self.document_order)
-                .with_scroll_offset(self.scroll_offset)
-                .with_text_bounds(vec![styled_text.layout().bounds()])
-                .with_copy_separator_before(self.copy_separator_before.to_string()),
-            window,
-            cx,
-        );
+        let registration = TextSelectionRegistration::new(hitbox.clone(), bounds)
+            .with_document_order(self.document_order)
+            .with_scroll_offset(self.scroll_offset)
+            .with_text_bounds(vec![styled_text.layout().bounds()])
+            .with_copy_separator_before(self.copy_separator_before.to_string());
+        let registration = match self.content_key {
+            Some(content_key) => registration.with_content_key(content_key),
+            None => registration,
+        };
+        state.handle.register(registration, window, cx);
         hitbox
     }
 

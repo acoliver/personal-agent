@@ -250,10 +250,10 @@ impl super::ChatView {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(keys) = TextSelection::content_keys(window, cx) {
-            if !keys
-                .into_iter()
-                .all(|key| self.selection_content_key_is_current(key))
+        if let Some(keys) = TextSelection::selected_content_keys(window, cx) {
+            if keys
+                .iter()
+                .any(|key| !self.selection_content_key_is_current(*key))
             {
                 TextSelection::clear(window, cx);
                 return;
@@ -277,6 +277,132 @@ impl super::ChatView {
         };
         if !text.is_empty() {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        }
+    }
+
+    /// Installs a logical whole-transcript selection.
+    ///
+    /// The copy text is frozen from the current copy document, while visible
+    /// leaves rejoin by content key as virtualization mounts them. An empty
+    /// or blank-only transcript clears any selection instead.
+    pub(super) fn select_all_transcript(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.refresh_transcript_selection_revisions();
+        let rows = self.transcript_rows();
+        let payload = self.transcript_copy_document(&rows).select_all_payload();
+        self.stop_selection_auto_scroll();
+        match payload {
+            Some((keys, text)) => TextSelection::select_all(&keys, &text, window, cx),
+            None => TextSelection::clear(window, cx),
+        }
+        cx.notify();
+    }
+
+    /// Clears the engine selection and stops the host auto-scroll loop.
+    ///
+    /// Returns whether a selection existed before the call.
+    pub(super) fn clear_transcript_selection(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let had_selection = TextSelection::has_selection(window, cx);
+        if had_selection {
+            TextSelection::clear(window, cx);
+        }
+        self.stop_selection_auto_scroll();
+        had_selection
+    }
+
+    /// Handles select-all with editor and overlay precedence.
+    ///
+    /// Sidebar search ignores select-all, and an open title edit or dropdown
+    /// keeps the composer-style cursor move. Otherwise an existing window
+    /// selection owns the command and expands to the whole transcript, and
+    /// with no selection the composer keeps its cursor-to-end behavior.
+    pub(super) fn select_all_for_focused_surface(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.sidebar_search_focused(cx) {
+            // select-all is a no-op for sidebar search (single-line)
+        } else if self.state.conversation_title_editing
+            || self.state.conversation_dropdown_open
+            || self.state.profile_dropdown_open
+        {
+            self.handle_select_all(cx);
+        } else if TextSelection::has_selection(window, cx) {
+            self.select_all_transcript(window, cx);
+        } else {
+            self.handle_select_all(cx);
+        }
+    }
+
+    /// Handles Escape after editor and overlay cancel branches.
+    ///
+    /// A transcript selection clears (and stops its auto-scroll loop) without
+    /// stopping the stream; with no selection the streaming-stop behavior is
+    /// preserved.
+    pub(super) fn handle_escape_key(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.clear_transcript_selection(window, cx) {
+            cx.notify();
+            return;
+        }
+        if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
+            // @plan PLAN-20260416-ISSUE173.P14-CR7
+            // @requirement REQ-173-002.3
+            // Emit the StopStreaming event only when we have a
+            // conversation id to target, but always reset the local
+            // composer state so the UI exits Stop mode even if we
+            // have no active conversation id (the event and the
+            // local composer state are independent concerns).
+            if let Some(conversation_id) = self.state.active_conversation_id {
+                self.emit(crate::events::types::UserEvent::StopStreaming { conversation_id });
+            }
+            self.state.streaming = StreamingState::Idle;
+            self.refresh_transcript_selection_revisions();
+            // Refocus so keyboard input works after stopping.
+            self.focus_composer(cx);
+            cx.notify();
+        }
+    }
+
+    /// Whether a key event with these modifiers routes as a platform shortcut.
+    ///
+    /// The `platform` modifier (Command on macOS, Windows key on Windows,
+    /// Super on Linux) is distinct from Control. On non-macOS the Ctrl
+    /// branch decides first whenever Control is held: only an exact plain
+    /// Ctrl+A and Ctrl+C route, so Control combined with platform, shift,
+    /// alt, or function keeps its own meaning instead of selecting or
+    /// copying, and unmodified navigation keys keep their plain bindings.
+    /// Events without Control fall back to the platform modifier, which on
+    /// macOS preserves the existing Command routing unchanged.
+    pub(super) const fn routes_platform_shortcut(
+        modifiers: gpui::Modifiers,
+        key: &str,
+        non_macos: bool,
+    ) -> bool {
+        if non_macos && modifiers.control {
+            matches!(
+                modifiers,
+                gpui::Modifiers {
+                    control: true,
+                    shift: false,
+                    alt: false,
+                    platform: false,
+                    function: false,
+                }
+            ) && (key.eq_ignore_ascii_case("a") || key.eq_ignore_ascii_case("c"))
+        } else {
+            modifiers.platform
         }
     }
 }

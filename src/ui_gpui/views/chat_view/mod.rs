@@ -859,6 +859,10 @@ impl ChatView {
 mod approval_tests;
 
 #[cfg(test)]
+#[path = "message_selection_tests.rs"]
+mod message_selection_tests;
+
+#[cfg(test)]
 #[path = "mod_tests.rs"]
 mod mod_tests;
 

@@ -14,7 +14,11 @@
 //!   selected-glyph recoloring, scroll offsets, and copy separators;
 //! - mark the source modules to skip rustfmt so the root package's
 //!   `cargo fmt --all` preserves upstream formatting;
-//! - add Apache-2.0 section 4(b) modification notices to changed files.
+//! - add Apache-2.0 section 4(b) modification notices to changed files;
+//! - add window-owned logical whole-content selection (`TextSelection::select_all`)
+//!   matched by registration content keys with a frozen copy text, report every
+//!   dependent key through `TextSelection::selected_content_keys`, and project
+//!   full-coverage snapshots without endpoint geometry.
 
 #![allow(dead_code)]
 #![allow(clippy::cloned_ref_to_slice_refs)]

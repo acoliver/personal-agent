@@ -107,25 +107,7 @@ impl ChatView {
             "pagedown" => self.scroll_chat_page_down(cx),
             "backspace" => self.handle_backspace(cx),
             "enter" => self.handle_composer_enter(*modifiers, cx),
-            "escape" => {
-                if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
-                    // @plan PLAN-20260416-ISSUE173.P14-CR7
-                    // @requirement REQ-173-002.3
-                    // Emit the StopStreaming event only when we have a
-                    // conversation id to target, but always reset the local
-                    // composer state so the UI exits Stop mode even if we
-                    // have no active conversation id (the event and the
-                    // local composer state are independent concerns).
-                    if let Some(conversation_id) = self.state.active_conversation_id {
-                        self.emit(UserEvent::StopStreaming { conversation_id });
-                    }
-                    self.state.streaming = StreamingState::Idle;
-                    self.refresh_transcript_selection_revisions();
-                    // Refocus so keyboard input works after stopping.
-                    self.focus_composer(cx);
-                    cx.notify();
-                }
-            }
+            "escape" => self.handle_escape_key(window, cx),
             _ => {}
         }
     }
@@ -137,11 +119,11 @@ impl ChatView {
         cx: &mut gpui::Context<Self>,
     ) -> bool {
         let key = &event.keystroke.key;
-        let modifiers = &event.keystroke.modifiers;
-        let should_handle = modifiers.platform
-            || (cfg!(not(target_os = "macos"))
-                && modifiers.control
-                && key.eq_ignore_ascii_case("c"));
+        let should_handle = Self::routes_platform_shortcut(
+            event.keystroke.modifiers,
+            key,
+            cfg!(not(target_os = "macos")),
+        );
         if should_handle {
             self.handle_platform_key(key, window, cx);
         }
@@ -200,13 +182,7 @@ impl ChatView {
                     }
                 }
             }
-            "a" => {
-                if self.sidebar_search_focused(cx) {
-                    // select-all is a no-op for sidebar search (single-line)
-                } else {
-                    self.handle_select_all(cx);
-                }
-            }
+            "a" => self.select_all_for_focused_surface(window, cx),
             "c" => self.copy_selection_or_input(window, cx),
             "x" => {
                 if self.sidebar_search_focused(cx) {

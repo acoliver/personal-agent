@@ -11,9 +11,17 @@
 // Auto-scroll commands are also published through a window-scoped source that
 // outlives transient participants, drag updates are gated on an active gesture,
 // and a stationary-drag tick advances the endpoint at the window pointer.
+// Registrations can carry a stable content key, `TextSelection::select_all`
+// installs a window-owned logical whole-content selection matched by that key
+// with a frozen copy text, `TextSelection::selected_content_keys` reports every
+// key a copy depends on, and full-coverage snapshots project every run byte
+// without endpoint geometry while logical participants are never retained in
+// the virtual copy set. Painted runs now also cache under geometry-free
+// snapshots so participants remounting into an active logical selection still
+// converge their layout-side projection instead of repainting forever.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::Range,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
@@ -181,7 +189,6 @@ impl TextSelectionSnapshot {
     }
 
     /// Sets the portion of the receiving participant covered by this selection.
-    #[cfg(test)]
     pub(crate) const fn with_coverage(mut self, coverage: TextSelectionCoverage) -> Self {
         self.coverage = coverage;
         self
@@ -222,6 +229,7 @@ pub struct TextSelectionRegistration {
     document_order: u64,
     text_bounds: Vec<Bounds<Pixels>>,
     copy_separator_before: String,
+    content_key: Option<TextSelectionContentKey>,
 }
 
 impl TextSelectionRegistration {
@@ -235,6 +243,7 @@ impl TextSelectionRegistration {
             document_order: 0,
             text_bounds: Vec::new(),
             copy_separator_before: "\n".to_string(),
+            content_key: None,
         }
     }
 
@@ -266,6 +275,16 @@ impl TextSelectionRegistration {
     /// participants precede it in document order.
     pub fn with_copy_separator_before(mut self, separator: impl Into<String>) -> Self {
         self.copy_separator_before = separator.into();
+        self
+    }
+
+    /// Attaches the participant's stable content identity.
+    ///
+    /// Logical whole-content selections match registered participants by
+    /// this key, so virtualized participants rejoin when they remount with
+    /// the same content.
+    pub const fn with_content_key(mut self, content_key: TextSelectionContentKey) -> Self {
+        self.content_key = Some(content_key);
         self
     }
 
@@ -302,6 +321,11 @@ impl TextSelectionRegistration {
     /// Returns the copy separator preceding this participant.
     pub fn copy_separator_before(&self) -> &str {
         &self.copy_separator_before
+    }
+
+    /// Returns the participant's stable content identity, when it has one.
+    pub const fn content_key(&self) -> Option<TextSelectionContentKey> {
+        self.content_key
     }
 }
 
@@ -393,8 +417,16 @@ fn project_ranges(
         };
     };
     let Some(window_points) = snapshot.window_points() else {
+        // Without endpoint geometry only a whole-content selection knows its
+        // extent: every run contributes all of its bytes.
+        let ranges = match snapshot.coverage() {
+            TextSelectionCoverage::Full => runs.iter().map(|run| Some(0..run.text.len())).collect(),
+            TextSelectionCoverage::Bounded
+            | TextSelectionCoverage::FromStart
+            | TextSelectionCoverage::ToEnd => vec![None; runs.len()],
+        };
         return TextSelectionProjection {
-            ranges: vec![None; runs.len()],
+            ranges,
             is_active: true,
         };
     };
@@ -644,10 +676,17 @@ impl SelectableTextState {
     /// Clearing window selection invalidates the cache immediately, so copy
     /// never returns text from a previous projection while waiting to repaint.
     fn update_runs(&mut self, runs: &[TextSelectionRun]) -> TextSelectionProjection {
+        self.runs = runs.to_vec();
         if self.snapshot.is_some_and(|snapshot| snapshot.window_points().is_none()) {
+            // Geometry-free snapshots (logical whole-content selections) keep
+            // their copy text frozen at the window, so the projected-substring
+            // cache stays unset, but the runs themselves must cache: a
+            // participant that first paints while already logically selected
+            // (for example remounted by virtualization) otherwise never
+            // caches runs, leaves its layout-side projection empty, and
+            // repaints forever against the mismatch.
             return project_ranges(self.snapshot, runs);
         }
-        self.runs = runs.to_vec();
         let states = project_ranges(self.snapshot, runs);
         let mut selected_runs = runs
             .iter()
@@ -981,11 +1020,47 @@ impl WindowAutoScrollSource {
     }
 }
 
+/// Window-owned selection of whole participant contents by stable identity.
+///
+/// Installed by [`TextSelection::select_all`]. The complete copy text is
+/// frozen at install time, and registered participants match by content key,
+/// so virtualized participants neither need to stay mounted nor enter the
+/// virtual copy retention set: they rejoin by key when they register again.
+struct LogicalSelection {
+    keys: Vec<TextSelectionContentKey>,
+    key_set: HashSet<TextSelectionContentKey>,
+    text: String,
+}
+
+impl LogicalSelection {
+    fn new(keys: Vec<TextSelectionContentKey>, text: String) -> Self {
+        Self {
+            key_set: keys.iter().copied().collect(),
+            keys,
+            text,
+        }
+    }
+
+    fn contains(&self, key: TextSelectionContentKey) -> bool {
+        self.key_set.contains(&key)
+    }
+
+    /// The participant snapshot for a logically selected participant.
+    ///
+    /// Coverage is `Full` and no endpoint geometry is attached, so run
+    /// projection selects every byte of each run.
+    fn participant_snapshot() -> TextSelectionSnapshot {
+        let endpoint = TextSelectionEndpoint::new(None, Point::default());
+        TextSelectionSnapshot::new(endpoint, endpoint).with_coverage(TextSelectionCoverage::Full)
+    }
+}
+
 /// Window-local generic text-selection state.
 #[derive(Default)]
 struct WindowSelectionState {
     participants: HashMap<EntityId, ParticipantRegistration>,
     virtual_copy_participants: HashMap<EntityId, ParticipantRegistration>,
+    logical_selection: Option<LogicalSelection>,
     active_scope: TextSelectionScopeId,
     anchor: Option<SelectionEndpoint>,
     cursor: Option<SelectionEndpoint>,
@@ -1138,7 +1213,7 @@ impl WindowSelectionState {
             let Some(participant) = participant.upgrade() else {
                 continue;
             };
-            if participant.read(cx).snapshot.is_some() {
+            if participant.read(cx).snapshot.is_some() && self.logical_selection.is_none() {
                 registration.retained_selection = Some(TextSelectionHandle(participant));
                 self.virtual_copy_participants.insert(id, registration);
             } else if let Some(handler) = participant.update(cx, |state, cx| state.clear_state(cx)) {
@@ -1219,6 +1294,7 @@ impl WindowSelectionState {
         self.pending_extension_anchor = None;
         self.is_selecting = false;
         self.did_hit_text = false;
+        self.logical_selection = None;
         self.prune_dead_participants();
         let handlers = self
             .participants
@@ -1232,6 +1308,16 @@ impl WindowSelectionState {
     }
 
     fn copy_items(&self, cx: &App) -> Vec<CopyItem> {
+        if let Some(logical) = self.logical_selection.as_ref() {
+            // The logical selection carries its own frozen complete copy; the
+            // participating leaves only paint its highlight.
+            return vec![CopyItem {
+                document_order: 0,
+                callback: None,
+                fallback: logical.text.clone(),
+                separator_before: String::new(),
+            }];
+        }
         self.participants
             .values()
             .chain(self.virtual_copy_participants.values())
@@ -1250,9 +1336,11 @@ impl WindowSelectionState {
         resolve_copy_items(self.copy_items(cx), cx)
     }
 
-    /// Returns whether a drag or a participant-local selection is active.
+    /// Returns whether a drag, a logical whole-content selection, or a
+    /// participant-local selection is active.
     pub fn has_selection(&self, cx: &App) -> bool {
-        self.snapshot().is_some()
+        self.logical_selection.is_some()
+            || self.snapshot().is_some()
             || self.participants.values().any(|registration| {
                 registration
                     .participant
@@ -1266,6 +1354,19 @@ impl WindowSelectionState {
             self.anchor.as_ref()?.content_key?,
             self.cursor.as_ref()?.content_key?,
         ])
+    }
+
+    /// Returns every content identity the current selection depends on.
+    ///
+    /// A logical whole-content selection reports all of its frozen keys, so
+    /// any stale interior participant refuses the copy; a pointer selection
+    /// falls back to its two endpoint keys.
+    fn selected_content_keys(&self) -> Option<Vec<TextSelectionContentKey>> {
+        if let Some(logical) = self.logical_selection.as_ref() {
+            return Some(logical.keys.clone());
+        }
+        self.content_keys()
+            .map(|[anchor, cursor]| vec![anchor, cursor])
     }
 
     /// Returns the current resolved selection endpoints.
@@ -1345,6 +1446,7 @@ impl WindowSelectionState {
         self.pending_extension_anchor = None;
         self.is_selecting = false;
         self.did_hit_text = false;
+        self.logical_selection = None;
         self.prune_dead_participants();
         let handlers = self
             .participants
@@ -1617,6 +1719,23 @@ impl WindowSelectionState {
 
     fn publish_snapshots(&mut self, cx: &mut App) {
         self.prune_dead_participants();
+        if let Some(logical) = self.logical_selection.as_ref() {
+            let snapshot = LogicalSelection::participant_snapshot();
+            for registration in self.participants.values() {
+                let Some(participant) = registration.participant.upgrade() else {
+                    continue;
+                };
+                let selected = registration.registration.scope == self.active_scope
+                    && registration
+                        .registration
+                        .content_key
+                        .is_some_and(|key| logical.contains(key));
+                participant.update(cx, |state, cx| {
+                    state.set_snapshot(selected.then_some(snapshot), cx)
+                });
+            }
+            return;
+        }
         let snapshot = self.snapshot();
         let single_participant = self.single_participant();
         for (id, registration) in self
@@ -1891,6 +2010,54 @@ impl TextSelection {
     ) -> Option<[TextSelectionContentKey; 2]> {
         live_text_selection_state(window, cx)?.read(cx).content_keys()
     }
+
+    /// Returns every stable content identity the current selection depends on.
+    ///
+    /// A logical whole-content selection (see [`Self::select_all`]) reports
+    /// all of its frozen participant keys in logical order, so a stale
+    /// interior participant refuses the copy; a pointer selection reports
+    /// its two endpoint keys.
+    pub fn selected_content_keys(
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Vec<TextSelectionContentKey>> {
+        live_text_selection_state(window, cx)?.read(cx).selected_content_keys()
+    }
+
+    /// Selects whole participant contents by stable identity.
+    ///
+    /// `keys` lists the participant content identities in logical order and
+    /// `text` is the complete copy text, both frozen at install time. Any
+    /// pointer selection and its drag auto-scroll are cleared first.
+    /// Registered participants in the active scope whose registration content
+    /// key is in `keys` receive a whole-content (`Full`) snapshot; every other
+    /// participant is left unselected. Virtualized participants rejoin by
+    /// content key when they register again, so they are never retained in
+    /// the virtual copy set. Empty `keys`, or empty or blank-only `text`, is
+    /// rejected without changing the current selection: copy resolution drops
+    /// blank items, so a keyful but blank logical selection could otherwise
+    /// exist with no copyable text.
+    pub fn select_all(
+        keys: &[TextSelectionContentKey],
+        text: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if keys.is_empty() || text.trim().is_empty() {
+            return;
+        }
+        let window_id = window.window_handle().window_id();
+        let state = WindowSelectionState::acquire(window_id, cx);
+        let handlers = state.update(cx, |state, cx| {
+            let handlers = state.clear_state(cx);
+            state.logical_selection = Some(LogicalSelection::new(keys.to_vec(), text.to_string()));
+            state.publish_snapshots(cx);
+            handlers
+        });
+        dispatch_clear_handlers(handlers, cx);
+        window.refresh();
+    }
+
     /// Returns whether the window has a geometry selection or any participant
     /// has an active participant-local selection such as select-all.
     pub fn has_selection(window: &mut Window, cx: &mut App) -> bool {
@@ -3097,6 +3264,554 @@ mod window_auto_scroll_tests {
     }
 }
 
+#[cfg(test)]
+mod logical_select_all_tests {
+    use super::*;
+    use gpui::{
+        div, point, px, size, HitboxBehavior, Modifiers, MouseButton, ParentElement, Render,
+        SharedString, Styled, StyledText, TestAppContext,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    fn key(value: u64) -> TextSelectionContentKey {
+        TextSelectionContentKey::new(value)
+    }
+
+    #[derive(Clone)]
+    struct KeyedRegistration {
+        selection: TextSelectionHandle,
+        y: f32,
+        document_order: u64,
+        content_key: TextSelectionContentKey,
+        scope: TextSelectionScopeId,
+    }
+
+    struct LogicalSelectionView {
+        registrations: Rc<RefCell<Vec<KeyedRegistration>>>,
+    }
+
+    struct LogicalSelectionElement {
+        registrations: Rc<RefCell<Vec<KeyedRegistration>>>,
+    }
+
+    impl IntoElement for LogicalSelectionElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for LogicalSelectionElement {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            (window.request_layout(Style::default(), [], cx), ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            for registration in self.registrations.borrow().iter() {
+                let bounds = Bounds::new(
+                    point(px(0.), px(registration.y)),
+                    size(px(100.), px(10.)),
+                );
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                let entity = WindowSelectionState::existing(window, cx).unwrap_or_else(|| {
+                    WindowSelectionState::acquire(window.window_handle().window_id(), cx)
+                });
+                entity.update(cx, |state, cx| {
+                    state.register_participant(
+                        registration.selection.clone(),
+                        TextSelectionRegistration::new(hitbox, bounds)
+                            .with_document_order(registration.document_order)
+                            .with_text_bounds(vec![bounds])
+                            .with_scope(registration.scope)
+                            .with_content_key(registration.content_key),
+                        cx,
+                    )
+                });
+            }
+        }
+
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            _: &mut Self::PrepaintState,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+        }
+    }
+
+    impl Render for LogicalSelectionView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(TextSelectionLayer).child(
+                LogicalSelectionElement {
+                    registrations: Rc::clone(&self.registrations),
+                },
+            )
+        }
+    }
+
+    struct RunLayoutView {
+        texts: Vec<SharedString>,
+        layouts: Vec<TextLayout>,
+    }
+
+    impl Render for RunLayoutView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.layouts.clear();
+            let children = self
+                .texts
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    let text = StyledText::new(text.clone());
+                    self.layouts.push(text.layout().clone());
+                    div().absolute().top(px(index as f32 * 40.)).child(text)
+                })
+                .collect::<Vec<_>>();
+            div().size_full().children(children)
+        }
+    }
+
+    fn keyed(
+        selection: &TextSelectionHandle,
+        y: f32,
+        document_order: u64,
+        content_key: TextSelectionContentKey,
+    ) -> KeyedRegistration {
+        KeyedRegistration {
+            selection: selection.clone(),
+            y,
+            document_order,
+            content_key,
+            scope: TextSelectionScopeId::default(),
+        }
+    }
+
+    fn keyed_window<'a>(
+        cx: &'a mut TestAppContext,
+    ) -> (Rc<RefCell<Vec<KeyedRegistration>>>, &'a mut gpui::VisualTestContext) {
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let (_, window_cx) = cx.add_window_view({
+            let registrations = Rc::clone(&registrations);
+            move |_, _| LogicalSelectionView { registrations }
+        });
+        (registrations, window_cx)
+    }
+
+    #[gpui::test]
+    fn logical_select_all_publishes_frozen_copy_and_all_keys(cx: &mut TestAppContext) {
+        let (registrations, window_cx) = keyed_window(cx);
+        window_cx.update(|window, cx| {
+            let first = TextSelectionHandle::new("first text", cx);
+            let second = TextSelectionHandle::new("second text", cx);
+            *registrations.borrow_mut() = vec![
+                keyed(&first, 0., 0, key(1)),
+                keyed(&second, 20., 1, key(2)),
+            ];
+            _ = window.draw(cx);
+
+            TextSelection::select_all(&[key(1), key(2)], "frozen whole content", window, cx);
+
+            assert!(TextSelection::has_selection(window, cx));
+            assert_eq!(
+                TextSelection::selected_text(window, cx),
+                "frozen whole content"
+            );
+            assert_eq!(
+                TextSelection::selected_content_keys(window, cx),
+                Some(vec![key(1), key(2)])
+            );
+            assert_eq!(
+                first.snapshot(cx).unwrap().coverage(),
+                TextSelectionCoverage::Full
+            );
+            assert_eq!(
+                second.snapshot(cx).unwrap().coverage(),
+                TextSelectionCoverage::Full
+            );
+
+            // Replacing an existing logical selection refreezes the text.
+            TextSelection::select_all(&[key(1), key(2)], "replacement", window, cx);
+            assert_eq!(TextSelection::selected_text(window, cx), "replacement");
+        });
+    }
+
+    #[gpui::test]
+    fn select_all_rejects_empty_keys_or_blank_text(cx: &mut TestAppContext) {
+        let (registrations, window_cx) = keyed_window(cx);
+        window_cx.update(|window, cx| {
+            let participant = TextSelectionHandle::new("text", cx);
+            *registrations.borrow_mut() = vec![keyed(&participant, 0., 0, key(1))];
+            _ = window.draw(cx);
+
+            TextSelection::select_all(&[], "frozen", window, cx);
+            assert!(!TextSelection::has_selection(window, cx));
+            TextSelection::select_all(&[key(1)], "", window, cx);
+            assert!(!TextSelection::has_selection(window, cx));
+            TextSelection::select_all(&[key(1)], "   ", window, cx);
+            assert!(!TextSelection::has_selection(window, cx));
+            assert!(participant.snapshot(cx).is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn logical_selection_marks_only_frozen_keys_in_the_active_scope(cx: &mut TestAppContext) {
+        let (registrations, window_cx) = keyed_window(cx);
+        window_cx.update(|window, cx| {
+            let first = TextSelectionHandle::new("first", cx);
+            let second = TextSelectionHandle::new("second", cx);
+            let third = TextSelectionHandle::new("third", cx);
+            let mut modal = keyed(&third, 40., 2, key(3));
+            modal.scope = TextSelectionScopeId::from_raw(5);
+            *registrations.borrow_mut() = vec![
+                keyed(&first, 0., 0, key(1)),
+                keyed(&second, 20., 1, key(2)),
+                modal,
+            ];
+            _ = window.draw(cx);
+
+            TextSelection::select_all(&[key(1), key(3)], "frozen", window, cx);
+
+            assert_eq!(
+                first.snapshot(cx).unwrap().coverage(),
+                TextSelectionCoverage::Full
+            );
+            assert!(
+                second.snapshot(cx).is_none(),
+                "a key outside the frozen set is not marked"
+            );
+            assert!(
+                third.snapshot(cx).is_none(),
+                "a frozen key outside the active scope is not marked"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn virtualized_logical_participant_rejoins_by_content_key(cx: &mut TestAppContext) {
+        let (registrations, window_cx) = keyed_window(cx);
+        let participant = window_cx.update(|window, cx| {
+            let participant = TextSelectionHandle::new("mountable", cx);
+            *registrations.borrow_mut() = vec![keyed(&participant, 0., 0, key(5))];
+            _ = window.draw(cx);
+            participant
+        });
+        window_cx.update(|window, cx| {
+            TextSelection::select_all(&[key(5)], "frozen", window, cx);
+            assert!(participant.snapshot(cx).is_some());
+
+            // Unmount the participant in its own update cycle so the
+            // post-frame sweep observes it stale: it must clear the
+            // participant's state instead of retaining it virtually.
+            registrations.borrow_mut().clear();
+            _ = window.draw(cx);
+        });
+        window_cx.update(|window, cx| {
+            let state = WindowSelectionState::existing(window, cx).unwrap();
+            state.update(cx, |state, _| {
+                assert!(
+                    state.virtual_copy_participants.is_empty(),
+                    "logical participants are not retained virtually"
+                );
+            });
+            assert!(participant.snapshot(cx).is_none());
+
+            // The frozen copy survives without the participant mounted.
+            assert!(TextSelection::has_selection(window, cx));
+            assert_eq!(TextSelection::selected_text(window, cx), "frozen");
+            assert_eq!(
+                TextSelection::selected_content_keys(window, cx),
+                Some(vec![key(5)])
+            );
+        });
+
+        // Remount with the same content key: republished as Full.
+        window_cx.update(|window, cx| {
+            registrations
+                .borrow_mut()
+                .push(keyed(&participant, 0., 0, key(5)));
+            _ = window.draw(cx);
+            assert_eq!(
+                participant.snapshot(cx).unwrap().coverage(),
+                TextSelectionCoverage::Full
+            );
+
+            // A participant mounting with an unknown key stays unmarked.
+            let outsider = TextSelectionHandle::new("outsider", cx);
+            registrations
+                .borrow_mut()
+                .push(keyed(&outsider, 20., 1, key(6)));
+            _ = window.draw(cx);
+            assert!(outsider.snapshot(cx).is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn clear_and_new_pointer_press_end_logical_selection(cx: &mut TestAppContext) {
+        let (registrations, window_cx) = keyed_window(cx);
+        window_cx.update(|window, cx| {
+            let participant = TextSelectionHandle::new("pointer text", cx);
+            participant.resolve_content_key_with(|_, _| Some(key(1)), cx);
+            registrations
+                .borrow_mut()
+                .push(keyed(&participant, 0., 0, key(1)));
+            _ = window.draw(cx);
+
+            TextSelection::select_all(&[key(1)], "frozen", window, cx);
+            assert_eq!(
+                TextSelection::selected_content_keys(window, cx),
+                Some(vec![key(1)])
+            );
+        });
+
+        // A new pointer press replaces the logical selection with a gesture.
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(50.), px(5.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        window_cx.simulate_mouse_up(point(px(50.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.update(|window, cx| {
+            assert!(TextSelection::has_selection(window, cx));
+            assert_eq!(TextSelection::selected_text(window, cx), "pointer text");
+            assert_eq!(
+                TextSelection::selected_content_keys(window, cx),
+                Some(vec![key(1), key(1)]),
+                "a pointer selection reports its endpoint keys"
+            );
+
+            TextSelection::clear(window, cx);
+            assert_eq!(TextSelection::selected_content_keys(window, cx), None);
+            assert!(!TextSelection::has_selection(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    fn full_projection_without_geometry_returns_all_utf8_bytes(cx: &mut TestAppContext) {
+        let view = cx.add_window({
+            let texts: Vec<SharedString> = vec!["aé🙂z".into(), "".into()];
+            move |_, _| RunLayoutView {
+                texts,
+                layouts: Vec::new(),
+            }
+        });
+        cx.update_window(*view, |_, window, cx| {
+            let _ = window.draw(cx);
+        })
+        .unwrap();
+        let runs = cx.update(|cx| {
+            let view = view.read(cx).unwrap();
+            view.layouts
+                .iter()
+                .enumerate()
+                .map(|(index, layout)| {
+                    TextSelectionRun::new(
+                        view.texts[index].clone(),
+                        layout.clone(),
+                        layout.bounds(),
+                    )
+                    .with_document_order(index as u64)
+                })
+                .collect::<Vec<_>>()
+        });
+        let endpoint = TextSelectionEndpoint::new(None, Point::default());
+        let full_snapshot = TextSelectionSnapshot::new(endpoint, endpoint)
+            .with_coverage(TextSelectionCoverage::Full);
+        let bounded_snapshot = TextSelectionSnapshot::new(endpoint, endpoint);
+
+        let full = project_ranges(Some(full_snapshot), &runs);
+        assert_eq!(full.ranges(), &[Some(0..8), Some(0..0)]);
+        assert!(full.is_active());
+
+        let bounded = project_ranges(Some(bounded_snapshot), &runs);
+        assert_eq!(bounded.ranges(), &[None, None]);
+        assert!(bounded.is_active());
+
+        // The handle-level projection follows the same rule, matching the
+        // SelectableText paint path.
+        let handle_projection = cx.update(|cx| {
+            let handle = TextSelectionHandle::new("aé🙂z", cx);
+            handle.0.update(cx, |state, cx| {
+                state.set_snapshot(Some(full_snapshot), cx);
+            });
+            handle.update_runs(&runs[..1], cx)
+        });
+        assert_eq!(handle_projection.ranges(), &[Some(0..8)]);
+        assert!(handle_projection.is_active());
+    }
+}
+#[cfg(test)]
+mod selectable_text_bridge_tests {
+    use super::*;
+    use crate::SelectableText;
+    use gpui::{
+        div, hsla, App, ParentElement, Render, SharedString, Styled, TestAppContext, TextRun,
+        Window,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    const BRIDGE_TEXT: &str = "bridge text";
+
+    fn key(value: u64) -> TextSelectionContentKey {
+        TextSelectionContentKey::new(value)
+    }
+
+    fn bridge_runs() -> Vec<TextRun> {
+        vec![TextRun {
+            len: BRIDGE_TEXT.len(),
+            color: hsla(0., 0., 0., 1.),
+            ..Default::default()
+        }]
+    }
+
+    /// Returns the only registered participant, wrapped as a public handle.
+    ///
+    /// The participant is registered by the real `SelectableText` element;
+    /// reading the window state only observes what it published.
+    fn sole_participant(window: &Window, cx: &App) -> Option<TextSelectionHandle> {
+        let state = WindowSelectionState::existing(window, cx)?;
+        let participant = state
+            .read(cx)
+            .participants
+            .values()
+            .next()?
+            .participant
+            .upgrade()?;
+        Some(TextSelectionHandle(participant))
+    }
+
+    struct BridgeView {
+        mounted: Rc<Cell<bool>>,
+    }
+
+    impl Render for BridgeView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut root = div().size_full().child(TextSelectionLayer);
+            if self.mounted.get() {
+                root = root.child(
+                    SelectableText::new(
+                        SharedString::from("bridge-leaf"),
+                        BRIDGE_TEXT,
+                        bridge_runs(),
+                        hsla(0., 0., 1., 1.),
+                        hsla(0., 0., 0., 1.),
+                    )
+                    .content_key(key(7))
+                    .document_order(0),
+                );
+            }
+            root
+        }
+    }
+
+    #[gpui::test]
+    fn selectable_text_rejoins_logical_selection_after_remount(cx: &mut TestAppContext) {
+        let mounted = Rc::new(Cell::new(true));
+        let (_, window_cx) = cx.add_window_view({
+            let mounted = mounted.clone();
+            move |_, _| BridgeView { mounted }
+        });
+
+        // The first paint registers the real element as a participant.
+        let first = window_cx.update(|window, cx| {
+            _ = window.draw(cx);
+            let handle =
+                sole_participant(window, cx).expect("SelectableText registers itself on paint");
+            assert!(handle.snapshot(cx).is_none());
+            handle
+        });
+
+        // A logical whole-content selection marks the registered element
+        // Full, and the next paint projects the highlight over every byte.
+        window_cx.update(|window, cx| {
+            TextSelection::select_all(&[key(7)], "frozen bridge copy", window, cx);
+            assert_eq!(
+                first.snapshot(cx).expect("logically selected").coverage(),
+                TextSelectionCoverage::Full
+            );
+            _ = window.draw(cx);
+            let projection = first.project_cached_runs(cx);
+            assert!(projection.is_active());
+            assert_eq!(projection.ranges(), &[Some(0..BRIDGE_TEXT.len())]);
+        });
+
+        // Unmounting sweeps the participant away without retaining it; the
+        // frozen logical selection survives on its own.
+        window_cx.update(|window, cx| {
+            mounted.set(false);
+            _ = window.draw(cx);
+        });
+        window_cx.update(|window, cx| {
+            assert!(sole_participant(window, cx).is_none());
+            assert!(first.snapshot(cx).is_none());
+            assert!(TextSelection::has_selection(window, cx));
+            assert_eq!(
+                TextSelection::selected_text(window, cx),
+                "frozen bridge copy"
+            );
+            assert_eq!(
+                TextSelection::selected_content_keys(window, cx),
+                Some(vec![key(7)])
+            );
+        });
+
+        // Remounting a fresh SelectableText with the same content key
+        // rejoins the logical selection as Full.
+        window_cx.update(|window, cx| {
+            mounted.set(true);
+            _ = window.draw(cx);
+            let second = sole_participant(window, cx)
+                .expect("the remounted SelectableText registers again");
+            assert_ne!(
+                second.entity_id(),
+                first.entity_id(),
+                "the remounted element owns a fresh participant"
+            );
+            assert_eq!(
+                second
+                    .snapshot(cx)
+                    .expect("remounted content key rejoins")
+                    .coverage(),
+                TextSelectionCoverage::Full
+            );
+            _ = window.draw(cx);
+            assert_eq!(
+                second.project_cached_runs(cx).ranges(),
+                &[Some(0..BRIDGE_TEXT.len())]
+            );
+        });
+    }
+}
 #[cfg(all(test, any()))]
 mod tests {
     use super::*;
