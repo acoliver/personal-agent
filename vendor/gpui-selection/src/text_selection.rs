@@ -18,9 +18,16 @@
 // without endpoint geometry while logical participants are never retained in
 // the virtual copy set. Painted runs now also cache under geometry-free
 // snapshots so participants remounting into an active logical selection still
-// converge their layout-side projection instead of repainting forever.
+// converge their layout-side projection instead of repainting forever. A held
+// double-click now enters word-drag mode: both original word endpoints are
+// retained, every drag update snaps to whole UAX #29 word segments (forward,
+// reverse, cross-participant, and virtualized), geometric outside-text drags
+// extend only to edges covering the whole terminal run of the hit
+// participant, and deferred endpoint content keys are synchronized into the
+// retained originals.
 
 use std::{
+    cmp,
     collections::{HashMap, HashSet},
     ops::Range,
     rc::Rc,
@@ -34,7 +41,7 @@ use gpui::{
     SharedString, Style, Subscription, TextLayout, WeakEntity, Window,
 };
 
-use super::text_boundary::{line_range_at, word_range_at};
+use super::text_boundary::{line_range_at, word_range_at, WordSegments};
 use super::{AutoScroll, GlobalState};
 
 /// An opaque selection layer identifier.
@@ -500,6 +507,23 @@ fn points_for_multi_click(
     ))
 }
 
+/// Returns window points at the start of the first run and the end of the
+/// last run, in run document order, for whole-run word-drag edges.
+fn terminal_run_points(runs: &[TextSelectionRun]) -> Option<(Point<Pixels>, Point<Pixels>)> {
+    let first = runs
+        .iter()
+        .filter(|run| run.text.len() == run.layout.len())
+        .min_by_key(|run| run.document_order)?;
+    let last = runs
+        .iter()
+        .filter(|run| run.text.len() == run.layout.len())
+        .max_by_key(|run| run.document_order)?;
+    Some((
+        first.layout.position_for_index(0)?,
+        last.layout.position_for_index(last.text.len())?,
+    ))
+}
+
 fn point_in_selection_band(
     position: Point<Pixels>,
     char_width: Pixels,
@@ -627,6 +651,9 @@ struct SelectableTextState {
     fallback_copy_text: String,
     projected_copy_text: Option<String>,
     runs: Vec<TextSelectionRun>,
+    /// Lazily built UAX #29 word segments per current run, invalidated when
+    /// run text changes so drag updates never re-segment unchanged text.
+    word_segments: Vec<Option<WordSegments>>,
     local_selection: bool,
     snapshot: Option<TextSelectionSnapshot>,
     on_focus: Option<FocusCallback>,
@@ -644,6 +671,7 @@ impl SelectableTextState {
             fallback_copy_text: fallback_copy_text.into(),
             projected_copy_text: None,
             runs: Vec::new(),
+            word_segments: Vec::new(),
             local_selection: false,
             snapshot: None,
             on_focus: None,
@@ -676,7 +704,17 @@ impl SelectableTextState {
     /// Clearing window selection invalidates the cache immediately, so copy
     /// never returns text from a previous projection while waiting to repaint.
     fn update_runs(&mut self, runs: &[TextSelectionRun]) -> TextSelectionProjection {
+        let texts_changed = self.runs.len() != runs.len()
+            || self
+                .runs
+                .iter()
+                .zip(runs)
+                .any(|(previous, next)| previous.text != next.text);
         self.runs = runs.to_vec();
+        if texts_changed {
+            self.word_segments.clear();
+        }
+        self.word_segments.resize_with(self.runs.len(), || None);
         if self.snapshot.is_some_and(|snapshot| snapshot.window_points().is_none()) {
             // Geometry-free snapshots (logical whole-content selections) keep
             // their copy text frozen at the window, so the projected-substring
@@ -713,6 +751,53 @@ impl SelectableTextState {
     /// Installs the callback which focuses the participant when a drag begins in it.
     fn set_focus_handler(&mut self, callback: impl Fn(&mut Window, &mut App) + 'static) {
         self.on_focus = Some(Rc::new(callback));
+    }
+
+    /// Window points at the edges of the multi-click unit under `position`.
+    ///
+    /// Word clicks binary-search the cached UAX #29 segments for the current
+    /// run instead of re-segmenting the whole run from byte 0 on every drag
+    /// update.
+    fn multi_click_points(
+        &mut self,
+        position: Point<Pixels>,
+        click_count: usize,
+    ) -> Option<(Point<Pixels>, Point<Pixels>)> {
+        let index = self
+            .runs
+            .iter()
+            .position(|run| run.bounds.contains(&position))?;
+        if self.runs[index].text.len() != self.runs[index].layout.len() {
+            return None;
+        }
+        let offset = self.runs[index]
+            .layout
+            .index_for_position(position)
+            .ok()?;
+        let range = match click_count {
+            2 => self.word_range_at(index, offset)?,
+            3.. => line_range_at(&self.runs[index].text, offset),
+            _ => return None,
+        };
+        if range.is_empty() {
+            return None;
+        }
+        let run = &self.runs[index];
+        Some((
+            run.layout.position_for_index(range.start)?,
+            run.layout.position_for_index(range.end)?,
+        ))
+    }
+
+    /// The cached UAX #29 word segment containing `offset` in run `index`.
+    ///
+    /// The per-run cache is invalidated by [`Self::update_runs`] whenever run
+    /// text changes; its construction is the source of truth, so lookups
+    /// never revalidate the text.
+    fn word_range_at(&mut self, index: usize, offset: usize) -> Option<Range<usize>> {
+        let (segments, text) = (&mut self.word_segments[index], &self.runs[index].text);
+        let segments = segments.get_or_insert_with(|| WordSegments::new(text));
+        segments.range_at(text, offset)
     }
 
     fn clear_with(&mut self, callback: impl Fn(&mut App) + 'static) {
@@ -984,6 +1069,40 @@ impl SelectionEndpoint {
             .as_ref()
             .map(|participant| participant.entity_id())
     }
+
+    /// Whether both endpoints anchor the same participant-relative point.
+    fn same_point(&self, other: &Self) -> bool {
+        self.entity_id() == other.entity_id()
+            && self.document_order == other.document_order
+            && self.point == other.point
+    }
+}
+
+/// The retained endpoints of the word a held double-click selected.
+#[derive(Clone)]
+struct WordDragState {
+    original_start: SelectionEndpoint,
+    original_end: SelectionEndpoint,
+}
+
+/// Orders endpoints by document order, then by participant-relative point.
+fn compare_selection_positions(
+    first: &SelectionEndpoint,
+    second: &SelectionEndpoint,
+) -> cmp::Ordering {
+    first
+        .document_order
+        .cmp(&second.document_order)
+        .then_with(|| {
+            f32::from(first.point.y)
+                .partial_cmp(&f32::from(second.point.y))
+                .unwrap_or(cmp::Ordering::Equal)
+        })
+        .then_with(|| {
+            f32::from(first.point.x)
+                .partial_cmp(&f32::from(second.point.x))
+                .unwrap_or(cmp::Ordering::Equal)
+        })
 }
 
 /// Opaque lease on a window's drag auto-scroll command stream.
@@ -1065,6 +1184,7 @@ struct WindowSelectionState {
     anchor: Option<SelectionEndpoint>,
     cursor: Option<SelectionEndpoint>,
     pending_extension_anchor: Option<SelectionEndpoint>,
+    word_drag: Option<WordDragState>,
     is_selecting: bool,
     did_hit_text: bool,
     frame_generation: u64,
@@ -1099,8 +1219,36 @@ impl WindowSelectionState {
                 endpoint.content_key = Some(key);
                 endpoint.content_key_resolver = None;
             }
+            state.sync_word_drag_content_keys();
             state.publish_snapshots(cx);
         });
+    }
+
+    /// Synchronizes resolved endpoint content keys into the retained
+    /// word-drag originals, so reversal and virtualization clone endpoints
+    /// that already carry their resolved identity.
+    ///
+    /// Reverse drags anchor on the original word's end, so every newly
+    /// resolved endpoint is matched against both retained originals rather
+    /// than a positional pairing.
+    fn sync_word_drag_content_keys(&mut self) {
+        let Some(word) = self.word_drag.as_mut() else {
+            return;
+        };
+        for endpoint in [self.anchor.as_ref(), self.cursor.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let Some(key) = endpoint.content_key else {
+                continue;
+            };
+            for original in [&mut word.original_start, &mut word.original_end] {
+                if original.same_point(endpoint) {
+                    original.content_key = Some(key);
+                    original.content_key_resolver = None;
+                }
+            }
+        }
     }
     fn acquire(window_id: gpui::WindowId, cx: &mut App) -> Entity<Self> {
         if !cx.has_global::<SelectionStateRegistry>() {
@@ -1269,6 +1417,7 @@ impl WindowSelectionState {
     /// Ends the current gesture and keeps its selection visible.
     pub fn end(&mut self, cx: &mut App) {
         self.pending_extension_anchor = None;
+        self.word_drag = None;
         if !self.is_selecting {
             return;
         }
@@ -1292,6 +1441,7 @@ impl WindowSelectionState {
         self.anchor = None;
         self.cursor = None;
         self.pending_extension_anchor = None;
+        self.word_drag = None;
         self.is_selecting = false;
         self.did_hit_text = false;
         self.logical_selection = None;
@@ -1444,6 +1594,7 @@ impl WindowSelectionState {
         self.anchor = None;
         self.cursor = None;
         self.pending_extension_anchor = None;
+        self.word_drag = None;
         self.is_selecting = false;
         self.did_hit_text = false;
         self.logical_selection = None;
@@ -1503,34 +1654,34 @@ impl WindowSelectionState {
         else {
             return;
         };
+        // A multi-click resolves its unit once per gesture, so it can segment
+        // directly; the per-update drag path uses the cached segments.
         let points = points_for_multi_click(&participant.read(cx).runs, position, click_count);
-        let Some((anchor, cursor)) = points else {
+        let Some((anchor_point, cursor_point)) = points else {
             return;
         };
-        let Some(registration) = self.participants.get(&participant.entity_id()) else {
+        let Some(registration) = self
+            .participants
+            .get(&participant.entity_id())
+            .map(|entry| Rc::clone(&entry.registration))
+        else {
             return;
         };
-        let content_key_resolver = participant.read(cx).content_key_resolver.clone();
-        let to_endpoint = |point: Point<Pixels>| {
-            let content_point = point
-                - registration.registration.bounds.origin
-                - registration.registration.scroll_offset;
-            SelectionEndpoint {
-                participant: Some(participant.downgrade()),
-                point: content_point,
-                document_order: registration.registration.document_order,
-                inside: true,
-                inside_text: true,
-                content_key: None,
-                content_key_resolver: content_key_resolver
-                    .clone()
-                    .map(|resolver| (resolver, content_point)),
-            }
-        };
-        self.anchor = Some(to_endpoint(anchor));
-        self.cursor = Some(to_endpoint(cursor));
+        let anchor = Self::participant_endpoint(&participant, &registration, anchor_point, cx);
+        let cursor = Self::participant_endpoint(&participant, &registration, cursor_point, cx);
+        self.anchor = Some(anchor.clone());
+        self.cursor = Some(cursor.clone());
         self.did_hit_text = true;
         self.is_selecting = false;
+        if click_count == 2 {
+            // A held double-click keeps extending by whole words; triple and
+            // further clicks remain static line selections.
+            self.word_drag = Some(WordDragState {
+                original_start: anchor,
+                original_end: cursor,
+            });
+            self.is_selecting = true;
+        }
         participant.update(cx, |state, cx| state.focus(window, cx));
         self.publish_snapshots(cx);
     }
@@ -1572,6 +1723,7 @@ impl WindowSelectionState {
         if !extend && !already_prepared {
             self.clear(cx);
         }
+        self.word_drag = None;
         let endpoint = self.endpoint(position, window.as_deref(), cx);
         let focus_participant = endpoint
             .inside
@@ -1594,13 +1746,108 @@ impl WindowSelectionState {
         if !self.is_selecting {
             return;
         }
-        let endpoint = self.endpoint(position, window, cx);
-        self.did_hit_text |= endpoint.inside_text;
-        self.cursor = Some(endpoint);
+        if self.word_drag.is_some() {
+            self.update_word_drag(position, window, cx);
+        } else {
+            let endpoint = self.endpoint(position, window, cx);
+            self.did_hit_text |= endpoint.inside_text;
+            self.cursor = Some(endpoint);
+        }
         if window.is_none() {
             self.update_participant_auto_scroll(position, cx);
         }
         self.publish_snapshots(cx);
+    }
+
+    /// Builds a selection endpoint at a participant text-layout window point.
+    fn participant_endpoint(
+        participant: &Entity<SelectableTextState>,
+        registration: &TextSelectionRegistration,
+        window_point: Point<Pixels>,
+        cx: &App,
+    ) -> SelectionEndpoint {
+        let bounds = &registration.bounds;
+        let content_point = window_point - bounds.origin - registration.scroll_offset;
+        SelectionEndpoint {
+            participant: Some(participant.downgrade()),
+            point: content_point,
+            document_order: registration.document_order,
+            inside: true,
+            inside_text: true,
+            content_key: None,
+            content_key_resolver: participant
+                .read(cx)
+                .content_key_resolver
+                .clone()
+                .map(|resolver| (resolver, content_point)),
+        }
+    }
+
+    /// Advances a held double-click drag by whole word segments.
+    ///
+    /// Both endpoints of the originally double-clicked word are retained.
+    /// Every update resolves the word segment under the pointer and moves
+    /// only the selection edge the pointer crossed: dragging before the
+    /// original word anchors on the original end and snaps the cursor to the
+    /// target word's start, dragging after anchors on the original start and
+    /// snaps to the target word's end, and dragging back inside restores the
+    /// original word. Mapping failures keep the last valid word range, and
+    /// geometric outside-text drags extend only to an edge covering the hit
+    /// participant's whole terminal run, never a raw character endpoint.
+    fn update_word_drag(
+        &mut self,
+        position: Point<Pixels>,
+        window: Option<&Window>,
+        cx: &mut App,
+    ) {
+        let Some(word) = self.word_drag.clone() else {
+            return;
+        };
+        let hit = self.endpoint(position, window, cx);
+        self.did_hit_text |= hit.inside_text;
+        let Some(participant) = hit.participant.as_ref().and_then(WeakEntity::upgrade) else {
+            return;
+        };
+        let Some(registration) = self
+            .participants
+            .get(&participant.entity_id())
+            .map(|entry| Rc::clone(&entry.registration))
+        else {
+            return;
+        };
+        // Extract only the target word or terminal-run window points while
+        // the participant is borrowed; the selection state mutates after the
+        // borrow ends. Over text the compared endpoints and cursor candidates
+        // are the pointer's target word; geometrically outside text the hit
+        // position itself orders the gesture and the candidates are edges
+        // covering the hit participant's whole terminal run.
+        let points = participant.update(cx, |state, _| {
+            if hit.inside_text {
+                state.multi_click_points(position, 2)
+            } else {
+                terminal_run_points(&state.runs)
+            }
+        });
+        let Some((start_point, end_point)) = points else {
+            return;
+        };
+        let start = Self::participant_endpoint(&participant, &registration, start_point, cx);
+        let end = Self::participant_endpoint(&participant, &registration, end_point, cx);
+        let (reference_start, reference_end, before_cursor, after_cursor) = if hit.inside_text {
+            (start.clone(), end.clone(), start, end)
+        } else {
+            (hit.clone(), hit, start, end)
+        };
+        let (anchor, cursor) = match (
+            compare_selection_positions(&reference_start, &word.original_start),
+            compare_selection_positions(&reference_end, &word.original_end),
+        ) {
+            (cmp::Ordering::Less, _) => (word.original_end, before_cursor),
+            (_, cmp::Ordering::Greater) => (word.original_start, after_cursor),
+            _ => (word.original_start, word.original_end),
+        };
+        self.anchor = Some(anchor);
+        self.cursor = Some(cursor);
     }
 
     fn endpoint(
@@ -3416,9 +3663,9 @@ mod logical_select_all_tests {
         }
     }
 
-    fn keyed_window<'a>(
-        cx: &'a mut TestAppContext,
-    ) -> (Rc<RefCell<Vec<KeyedRegistration>>>, &'a mut gpui::VisualTestContext) {
+    fn keyed_window(
+        cx: &mut TestAppContext,
+    ) -> (Rc<RefCell<Vec<KeyedRegistration>>>, &mut gpui::VisualTestContext) {
         let registrations = Rc::new(RefCell::new(Vec::new()));
         let (_, window_cx) = cx.add_window_view({
             let registrations = Rc::clone(&registrations);
@@ -5431,5 +5678,754 @@ mod tests {
             selection.update_runs(&[text_run(0, text, layout)], cx);
             assert_eq!(TextSelection::selected_text(window, cx), "alpha beta");
         });
+    }
+}
+
+#[cfg(test)]
+mod word_drag_tests {
+    use super::*;
+    use gpui::{
+        div, size, HitboxBehavior, Modifiers, ParentElement, Render, Styled, StyledText,
+        TestAppContext,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    fn key(value: u64) -> TextSelectionContentKey {
+        TextSelectionContentKey::new(value)
+    }
+
+    /// One painted participant: a single laid-out text run.
+    #[derive(Clone)]
+    struct WordParticipant {
+        selection: TextSelectionHandle,
+        text: SharedString,
+        layout: TextLayout,
+        document_order: u64,
+        content_key: TextSelectionContentKey,
+    }
+
+    impl WordParticipant {
+        fn run(&self) -> TextSelectionRun {
+            TextSelectionRun::new(self.text.clone(), self.layout.clone(), self.layout.bounds())
+                .with_document_order(self.document_order)
+        }
+
+        /// The participant-relative point for a byte index.
+        fn content_point(&self, index: usize) -> Point<Pixels> {
+            self.layout.position_for_index(index).unwrap() - self.layout.bounds().origin
+        }
+
+        /// A window point inside the glyph at a byte index.
+        fn glyph_center(&self, index: usize) -> Point<Pixels> {
+            let start = self.layout.position_for_index(index).unwrap();
+            let end = self.layout.position_for_index(index + 1).unwrap();
+            point(px((f32::from(start.x) + f32::from(end.x)) / 2.), start.y)
+        }
+    }
+
+    struct RunsLayoutView {
+        runs: Vec<(SharedString, f32)>,
+        layouts: Rc<RefCell<Vec<TextLayout>>>,
+    }
+
+    impl Render for RunsLayoutView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.layouts.borrow_mut().clear();
+            let children = self
+                .runs
+                .iter()
+                .map(|(text, y)| {
+                    let styled = StyledText::new(text.clone());
+                    self.layouts.borrow_mut().push(styled.layout().clone());
+                    div().absolute().top(px(*y)).child(styled)
+                })
+                .collect::<Vec<_>>();
+            div().size_full().children(children)
+        }
+    }
+
+    fn laid_out_runs(
+        texts: &[(&'static str, f32)],
+        cx: &mut TestAppContext,
+    ) -> Vec<(SharedString, TextLayout)> {
+        let runs = texts
+            .iter()
+            .map(|(text, y)| (SharedString::from(*text), *y))
+            .collect::<Vec<_>>();
+        let layouts = Rc::new(RefCell::new(Vec::new()));
+        let view = cx.add_window({
+            let runs = runs.clone();
+            let layouts = layouts.clone();
+            move |_, _| RunsLayoutView { runs, layouts }
+        });
+        cx.update_window(*view, |_, window, cx| {
+            let _ = window.draw(cx);
+        })
+        .unwrap();
+        cx.update(|_| {
+            runs.into_iter()
+                .map(|(text, _)| text)
+                .zip(layouts.borrow_mut().drain(..))
+                .collect()
+        })
+    }
+
+    struct WordDragView {
+        participants: Rc<RefCell<Vec<WordParticipant>>>,
+    }
+
+    struct WordDragElement {
+        participants: Rc<RefCell<Vec<WordParticipant>>>,
+    }
+
+    impl IntoElement for WordDragElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for WordDragElement {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            (window.request_layout(Style::default(), [], cx), ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            for participant in self.participants.borrow().iter() {
+                let bounds = participant.layout.bounds();
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                let entity = WindowSelectionState::existing(window, cx).unwrap_or_else(|| {
+                    WindowSelectionState::acquire(window.window_handle().window_id(), cx)
+                });
+                entity.update(cx, |state, cx| {
+                    state.register_participant(
+                        participant.selection.clone(),
+                        TextSelectionRegistration::new(hitbox, bounds)
+                            .with_document_order(participant.document_order)
+                            .with_text_bounds(vec![bounds])
+                            .with_content_key(participant.content_key),
+                        cx,
+                    )
+                });
+            }
+        }
+
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            _: &mut Self::PrepaintState,
+            _: &mut Window,
+            cx: &mut App,
+        ) {
+            for participant in self.participants.borrow().iter() {
+                participant.selection.update_runs(&[participant.run()], cx);
+            }
+        }
+    }
+
+    impl Render for WordDragView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(TextSelectionLayer).child(WordDragElement {
+                participants: Rc::clone(&self.participants),
+            })
+        }
+    }
+
+    /// A word-drag event window over `(text, y, document_order, content_key)`
+    /// specs; the first `mounted_count` participants start registered.
+    #[allow(clippy::type_complexity)]
+    fn word_drag_window<'a>(
+        cx: &'a mut TestAppContext,
+        specs: &[(&'static str, f32, u64, u64)],
+        mounted_count: usize,
+    ) -> (
+        Rc<RefCell<Vec<WordParticipant>>>,
+        Vec<WordParticipant>,
+        &'a mut gpui::VisualTestContext,
+    ) {
+        word_drag_window_with_resolver(cx, specs, mounted_count, None)
+    }
+
+    /// [`word_drag_window`] with an optional shared content-key resolver
+    /// installed on every participant instead of the default always-resolved
+    /// per-participant key.
+    #[allow(clippy::type_complexity)]
+    fn word_drag_window_with_resolver<'a>(
+        cx: &'a mut TestAppContext,
+        specs: &[(&'static str, f32, u64, u64)],
+        mounted_count: usize,
+        shared_resolver: Option<ContentKeyResolver>,
+    ) -> (
+        Rc<RefCell<Vec<WordParticipant>>>,
+        Vec<WordParticipant>,
+        &'a mut gpui::VisualTestContext,
+    ) {
+        let layouts = laid_out_runs(
+            &specs
+                .iter()
+                .map(|(text, y, _, _)| (*text, *y))
+                .collect::<Vec<_>>(),
+            cx,
+        );
+        let participants = Rc::new(RefCell::new(Vec::new()));
+        let (_, window_cx) = cx.add_window_view({
+            let participants = participants.clone();
+            move |_, _| WordDragView { participants }
+        });
+        let spares = window_cx.update(|window, cx| {
+            let entries = layouts
+                .into_iter()
+                .zip(specs.iter())
+                .map(|((text, layout), (_, _, document_order, content_key))| WordParticipant {
+                    selection: TextSelectionHandle::new(text.to_string(), cx),
+                    text,
+                    layout,
+                    document_order: *document_order,
+                    content_key: key(*content_key),
+                })
+                .collect::<Vec<_>>();
+            for entry in &entries {
+                if let Some(resolver) = shared_resolver.clone() {
+                    entry.selection.resolve_content_key_with(
+                        move |point, cx| resolver(point, cx),
+                        cx,
+                    );
+                } else {
+                    let content_key = entry.content_key;
+                    entry
+                        .selection
+                        .resolve_content_key_with(move |_, _| Some(content_key), cx);
+                }
+            }
+            *participants.borrow_mut() = entries.iter().take(mounted_count).cloned().collect();
+            _ = window.draw(cx);
+            entries.into_iter().skip(mounted_count).collect::<Vec<_>>()
+        });
+        (participants, spares, window_cx)
+    }
+
+    fn double_click(window_cx: &mut gpui::VisualTestContext, position: Point<Pixels>) {
+        window_cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 2,
+            first_mouse: false,
+        });
+    }
+
+    fn drag_to(window_cx: &mut gpui::VisualTestContext, position: Point<Pixels>) {
+        window_cx.simulate_event(MouseMoveEvent {
+            position,
+            modifiers: Modifiers::default(),
+            pressed_button: Some(MouseButton::Left),
+        });
+    }
+
+    fn release_at(window_cx: &mut gpui::VisualTestContext, position: Point<Pixels>) {
+        window_cx.simulate_event(MouseUpEvent {
+            position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 2,
+        });
+    }
+
+    fn selected_text_after_repaint(window_cx: &mut gpui::VisualTestContext) -> String {
+        window_cx.update(|window, cx| {
+            _ = window.draw(cx);
+            TextSelection::selected_text(window, cx)
+        })
+    }
+
+    #[gpui::test]
+    fn held_double_click_extends_by_whole_words_within_a_run(cx: &mut TestAppContext) {
+        let text = "alpha words beta";
+        let (participants, _spares, window_cx) = word_drag_window(cx, &[(text, 0., 0, 1)], 1);
+        let first = participants.borrow()[0].clone();
+        let words = text.find("words").unwrap();
+        let beta = text.find("beta").unwrap();
+
+        double_click(window_cx, first.glyph_center(words + 1));
+        window_cx.update(|_, cx| {
+            let snapshot = first.selection.snapshot(cx).unwrap();
+            assert!(snapshot.is_selecting());
+            assert_eq!(snapshot.anchor().content_point(), first.content_point(words));
+            assert_eq!(
+                snapshot.cursor().content_point(),
+                first.content_point(words + 5)
+            );
+        });
+        assert_eq!(selected_text_after_repaint(window_cx), "words");
+
+        // Dragging forward extends to the target word's end.
+        drag_to(window_cx, first.glyph_center(beta + 1));
+        window_cx.update(|_, cx| {
+            let snapshot = first.selection.snapshot(cx).unwrap();
+            assert_eq!(snapshot.anchor().content_point(), first.content_point(words));
+            assert_eq!(
+                snapshot.cursor().content_point(),
+                first.content_point(beta + 4)
+            );
+        });
+        assert_eq!(selected_text_after_repaint(window_cx), "words beta");
+
+        // Dragging back inside the original word restores the whole word.
+        drag_to(window_cx, first.glyph_center(words + 1));
+        assert_eq!(selected_text_after_repaint(window_cx), "words");
+
+        // Dragging before the original word reverses by whole words and
+        // anchors on the original word's end.
+        drag_to(window_cx, first.glyph_center(1));
+        window_cx.update(|_, cx| {
+            let snapshot = first.selection.snapshot(cx).unwrap();
+            assert_eq!(snapshot.cursor().content_point(), first.content_point(0));
+            assert_eq!(
+                snapshot.anchor().content_point(),
+                first.content_point(words + 5)
+            );
+        });
+        assert_eq!(selected_text_after_repaint(window_cx), "alpha words");
+
+        // Releasing keeps the selection, and later moves do not extend it.
+        release_at(window_cx, first.glyph_center(1));
+        window_cx.update(|_, cx| {
+            assert!(!first.selection.snapshot(cx).unwrap().is_selecting());
+        });
+        assert_eq!(selected_text_after_repaint(window_cx), "alpha words");
+        window_cx.simulate_mouse_move(first.glyph_center(beta + 1), None, Modifiers::default());
+        assert_eq!(selected_text_after_repaint(window_cx), "alpha words");
+    }
+
+    #[gpui::test]
+    fn word_drag_spans_participants_in_both_directions(cx: &mut TestAppContext) {
+        let first_text = "first words tail";
+        let second_text = "second words tail";
+        let (participants, _spares, window_cx) = word_drag_window(
+            cx,
+            &[(first_text, 0., 0, 1), (second_text, 40., 1, 2)],
+            2,
+        );
+        let first = participants.borrow()[0].clone();
+        let second = participants.borrow()[1].clone();
+        let first_words = first_text.find("words").unwrap();
+        let second_words = second_text.find("words").unwrap();
+
+        double_click(window_cx, first.glyph_center(first_words + 1));
+        drag_to(window_cx, second.glyph_center(second_words + 1));
+        assert_eq!(
+            selected_text_after_repaint(window_cx),
+            "words tail\nsecond words"
+        );
+        window_cx.update(|window, cx| {
+            let snapshot = second.selection.snapshot(cx).unwrap();
+            assert_eq!(
+                snapshot.anchor().entity_id(),
+                Some(first.selection.entity_id())
+            );
+            assert_eq!(
+                snapshot.cursor().entity_id(),
+                Some(second.selection.entity_id())
+            );
+            assert_eq!(
+                snapshot.cursor().content_point(),
+                second.content_point(second_words + 5)
+            );
+            assert_eq!(TextSelection::content_keys(window, cx), Some([key(1), key(2)]));
+        });
+
+        // Dragging back into the first participant reverses by whole words.
+        drag_to(window_cx, first.glyph_center(1));
+        assert_eq!(selected_text_after_repaint(window_cx), "first words");
+        window_cx.update(|window, cx| {
+            let snapshot = first.selection.snapshot(cx).unwrap();
+            assert_eq!(snapshot.cursor().content_point(), first.content_point(0));
+            assert_eq!(
+                snapshot.anchor().content_point(),
+                first.content_point(first_words + 5)
+            );
+            assert_eq!(TextSelection::content_keys(window, cx), Some([key(1), key(1)]));
+        });
+    }
+
+    #[gpui::test]
+    fn word_drag_survives_virtualizing_the_original_participant(cx: &mut TestAppContext) {
+        let first_text = "first words tail";
+        let second_text = "second words tail";
+        let (participants, _spares, window_cx) = word_drag_window(
+            cx,
+            &[(first_text, 0., 0, 1), (second_text, 40., 1, 2)],
+            2,
+        );
+        let first = participants.borrow()[0].clone();
+        let second = participants.borrow()[1].clone();
+        let first_words = first_text.find("words").unwrap();
+        let second_words = second_text.find("words").unwrap();
+
+        double_click(window_cx, first.glyph_center(first_words + 1));
+        drag_to(window_cx, second.glyph_center(second_words + 1));
+        window_cx.update(|window, cx| {
+            participants.borrow_mut().remove(0);
+            _ = window.draw(cx);
+        });
+        window_cx.run_until_parked();
+
+        // Dragging back toward the original word keeps the original word
+        // endpoints even though the original participant is virtualized: the
+        // anchor still names it, and the cursor snaps to a whole word.
+        drag_to(window_cx, second.glyph_center(1));
+        window_cx.update(|window, cx| {
+            let snapshot = second.selection.snapshot(cx).unwrap();
+            assert!(snapshot.is_selecting());
+            assert_eq!(
+                snapshot.anchor().entity_id(),
+                Some(first.selection.entity_id())
+            );
+            assert_eq!(
+                snapshot.anchor().content_point(),
+                first.content_point(first_words)
+            );
+            assert_eq!(snapshot.cursor().content_point(), second.content_point(6));
+            assert_eq!(TextSelection::content_keys(window, cx), Some([key(1), key(2)]));
+        });
+
+        // The drag keeps resolving after the original participant remounts.
+        window_cx.update(|window, cx| {
+            participants.borrow_mut().insert(0, first.clone());
+            _ = window.draw(cx);
+        });
+        window_cx.run_until_parked();
+        drag_to(window_cx, second.glyph_center(second_words + 1));
+        assert_eq!(
+            selected_text_after_repaint(window_cx),
+            "words tail\nsecond words"
+        );
+    }
+
+    #[gpui::test]
+    fn reverse_drag_retains_resolved_originals_without_resolver_replay(
+        cx: &mut TestAppContext,
+    ) {
+        let text = "alpha words beta";
+        // Scripted resolver responses by phase: 0 -> None, 1 -> Some(key),
+        // 2 -> None. Every invocation records its phase.
+        let phase = Rc::new(RefCell::new(0usize));
+        let calls = Rc::new(RefCell::new(Vec::<usize>::new()));
+        let resolver_phase = phase.clone();
+        let resolver_calls = calls.clone();
+        let resolver: ContentKeyResolver = Rc::new(move |_, _| {
+            let current = *resolver_phase.borrow();
+            resolver_calls.borrow_mut().push(current);
+            (current == 1).then_some(key(7))
+        });
+        let (participants, _spares, window_cx) =
+            word_drag_window_with_resolver(cx, &[(text, 0., 0, 7)], 1, Some(resolver));
+        let first = participants.borrow()[0].clone();
+        let words = text.find("words").unwrap();
+        let beta = text.find("beta").unwrap();
+        let calls_in_phase =
+            |phase: usize| calls.borrow().iter().filter(|call| **call == phase).count();
+
+        // Phase 0: the resolver declines every lookup, so nothing resolves.
+        double_click(window_cx, first.glyph_center(words + 1));
+        drag_to(window_cx, first.glyph_center(1));
+        window_cx.update(|window, cx| {
+            assert_eq!(TextSelection::content_keys(window, cx), None);
+            assert_eq!(calls_in_phase(0), 4);
+        });
+
+        // Phase 1: a reverse update anchors on the original word's end and
+        // resolves it; the resolved key must reach the retained original.
+        *phase.borrow_mut() = 1;
+        drag_to(window_cx, first.glyph_center(1));
+        window_cx.update(|window, cx| {
+            assert_eq!(
+                TextSelection::content_keys(window, cx),
+                Some([key(7), key(7)])
+            );
+            assert_eq!(calls_in_phase(1), 2);
+        });
+        // A forward update anchors on the original word's start and resolves
+        // it too, so both retained originals now carry resolved keys.
+        drag_to(window_cx, first.glyph_center(beta + 1));
+        window_cx.update(|_, cx| {
+            assert_eq!(
+                first.selection.snapshot(cx).unwrap().anchor().content_key(),
+                Some(key(7))
+            );
+        });
+
+        // Phase 2: the resolver declines again. Another reverse update keeps
+        // the retained original end resolved: only the fresh cursor endpoint
+        // consults the resolver, and the anchor endpoint carries its key.
+        *phase.borrow_mut() = 2;
+        drag_to(window_cx, first.glyph_center(1));
+        window_cx.update(|_, cx| {
+            assert_eq!(
+                first.selection.snapshot(cx).unwrap().anchor().content_key(),
+                Some(key(7))
+            );
+            assert_eq!(
+                calls_in_phase(2),
+                1,
+                "only the fresh cursor endpoint consults the resolver"
+            );
+        });
+
+        // Dragging back inside the original word restores both retained
+        // originals, whose resolved keys need no resolver replay at all.
+        drag_to(window_cx, first.glyph_center(words + 1));
+        window_cx.update(|window, cx| {
+            assert_eq!(
+                TextSelection::content_keys(window, cx),
+                Some([key(7), key(7)])
+            );
+            assert_eq!(
+                calls_in_phase(2),
+                1,
+                "restoring both retained originals needs no resolver replay"
+            );
+        });
+        assert_eq!(selected_text_after_repaint(window_cx), "words");
+    }
+
+    #[gpui::test]
+    fn word_drag_segments_rebuild_when_run_text_changes(cx: &mut TestAppContext) {
+        let first_text = "alpha words beta";
+        let replacement = "say can't stop";
+        let (replacement_text, replacement_layout) =
+            laid_out_runs(&[(replacement, 0.)], cx).pop().unwrap();
+        let (participants, _spares, window_cx) = word_drag_window(cx, &[(first_text, 0., 0, 1)], 1);
+        let first = participants.borrow()[0].clone();
+        let words = first_text.find("words").unwrap();
+        let beta = first_text.find("beta").unwrap();
+
+        // The first gesture populates the cached word segments for the
+        // painted run text.
+        double_click(window_cx, first.glyph_center(words + 1));
+        drag_to(window_cx, first.glyph_center(beta + 1));
+        assert_eq!(selected_text_after_repaint(window_cx), "words beta");
+        release_at(window_cx, first.glyph_center(beta + 1));
+
+        // Repaint the same participant with different run text: the cached
+        // segments must rebuild, so a new gesture snaps to the new whole
+        // words (the apostrophe joins `can't` into one UAX #29 word).
+        window_cx.update(|window, cx| {
+            {
+                let mut participants = participants.borrow_mut();
+                participants[0].text = replacement_text;
+                participants[0].layout = replacement_layout;
+            }
+            _ = window.draw(cx);
+        });
+        window_cx.run_until_parked();
+        let renewed = participants.borrow()[0].clone();
+        let cant = replacement.find("can't").unwrap();
+        let stop = replacement.find("stop").unwrap();
+
+        double_click(window_cx, renewed.glyph_center(cant + 1));
+        assert_eq!(selected_text_after_repaint(window_cx), "can't");
+        drag_to(window_cx, renewed.glyph_center(stop + 1));
+        assert_eq!(selected_text_after_repaint(window_cx), "can't stop");
+        drag_to(window_cx, renewed.glyph_center(1));
+        assert_eq!(selected_text_after_repaint(window_cx), "say can't");
+    }
+
+    #[gpui::test]
+    fn stationary_word_drag_tick_snaps_the_target_word_and_stops_on_mouse_up(
+        cx: &mut TestAppContext,
+    ) {
+        let (participants, spares, window_cx) = word_drag_window(
+            cx,
+            &[("alpha words tail", 0., 0, 1), ("second words tail", 40., 1, 2)],
+            1,
+        );
+        window_cx.simulate_resize(size(px(100.), px(60.)));
+        let commands = Rc::new(RefCell::new(Vec::<Option<Pixels>>::new()));
+        let lease = Rc::new(RefCell::new(None));
+        let first = participants.borrow()[0].clone();
+        let second = spares.into_iter().next().unwrap();
+        window_cx.update(|window, cx| {
+            let observed = commands.clone();
+            *lease.borrow_mut() = Some(TextSelection::subscribe_auto_scroll(
+                window,
+                cx,
+                move |delta, _| observed.borrow_mut().push(delta),
+            ));
+        });
+
+        let first_words = "alpha words tail".find("words").unwrap();
+        let second_words = "second words tail".find("words").unwrap();
+        double_click(window_cx, first.glyph_center(first_words + 1));
+
+        // Hold the pointer in the bottom auto-scroll zone below the mounted
+        // text: the drag extends over the gap to the terminal run end.
+        let pointer = point(second.glyph_center(second_words + 1).x, px(50.));
+        drag_to(window_cx, pointer);
+        assert!(commands.borrow().last().is_some_and(Option::is_some));
+        assert_eq!(selected_text_after_repaint(window_cx), "words tail");
+
+        // The scroll host mounts a new row under the stationary pointer; the
+        // stationary tick snaps the cursor to the target word's outer edge
+        // without recomputing the auto-scroll command.
+        window_cx.update(|window, cx| {
+            participants.borrow_mut().push(second.clone());
+            _ = window.draw(cx);
+        });
+        window_cx.run_until_parked();
+        assert!(window_cx.update(TextSelection::update_drag_at_pointer));
+        assert_eq!(
+            commands.borrow().len(),
+            1,
+            "the stationary tick never recomputes auto-scroll"
+        );
+        window_cx.update(|_, cx| {
+            let snapshot = second.selection.snapshot(cx).unwrap();
+            assert_eq!(
+                snapshot.cursor().content_point(),
+                second.content_point(second_words + 5)
+            );
+        });
+        assert_eq!(
+            selected_text_after_repaint(window_cx),
+            "words tail\nsecond words"
+        );
+
+        release_at(window_cx, pointer);
+        assert_eq!(commands.borrow().last(), Some(&None));
+        assert_eq!(
+            selected_text_after_repaint(window_cx),
+            "words tail\nsecond words"
+        );
+    }
+
+    #[gpui::test]
+    fn triple_and_quadruple_clicks_stay_static_line_selections(cx: &mut TestAppContext) {
+        let text = "alpha words beta";
+        let (participants, _spares, window_cx) = word_drag_window(cx, &[(text, 0., 0, 1)], 1);
+        let first = participants.borrow()[0].clone();
+        let words = text.find("words").unwrap();
+        let beta = text.find("beta").unwrap();
+
+        for click_count in [3usize, 4usize] {
+            window_cx.simulate_event(MouseDownEvent {
+                position: first.glyph_center(words + 1),
+                modifiers: Modifiers::default(),
+                button: MouseButton::Left,
+                click_count,
+                first_mouse: false,
+            });
+            // Moving while the button is still held does not extend the
+            // line: triple and further clicks stay static selections.
+            drag_to(window_cx, first.glyph_center(beta + 1));
+            assert_eq!(selected_text_after_repaint(window_cx), text);
+            window_cx.simulate_event(MouseUpEvent {
+                position: first.glyph_center(beta + 1),
+                modifiers: Modifiers::default(),
+                button: MouseButton::Left,
+                click_count,
+            });
+            assert_eq!(selected_text_after_repaint(window_cx), text);
+            window_cx.update(|_, cx| {
+                assert!(!first.selection.snapshot(cx).unwrap().is_selecting());
+            });
+
+            // A move after release does not extend the line either.
+            drag_to(window_cx, first.glyph_center(words + 1));
+            assert_eq!(selected_text_after_repaint(window_cx), text);
+        }
+    }
+
+    #[gpui::test]
+    fn mapping_failure_keeps_the_last_valid_word_range(cx: &mut TestAppContext) {
+        let text = "alpha words beta";
+        let (participants, _spares, window_cx) = word_drag_window(cx, &[(text, 0., 0, 1)], 1);
+        let first = participants.borrow()[0].clone();
+        let words = text.find("words").unwrap();
+        let beta = text.find("beta").unwrap();
+
+        double_click(window_cx, first.glyph_center(words + 1));
+        drag_to(window_cx, first.glyph_center(beta + 1));
+        assert_eq!(selected_text_after_repaint(window_cx), "words beta");
+        let cursor = window_cx.update(|_, cx| {
+            first.selection.snapshot(cx).unwrap().cursor().content_point()
+        });
+
+        // Unmount every participant mid-drag: the next update cannot map the
+        // pointer to any word and must keep the last valid word range.
+        window_cx.update(|window, cx| {
+            participants.borrow_mut().clear();
+            _ = window.draw(cx);
+        });
+        window_cx.run_until_parked();
+        drag_to(window_cx, first.glyph_center(1));
+        window_cx.update(|window, cx| {
+            let snapshot = first.selection.snapshot(cx).unwrap();
+            assert_eq!(snapshot.cursor().content_point(), cursor);
+            assert!(snapshot.is_selecting());
+            assert_eq!(TextSelection::content_keys(window, cx), Some([key(1), key(1)]));
+        });
+        assert_eq!(selected_text_after_repaint(window_cx), "words beta");
+    }
+
+    #[gpui::test]
+    fn word_drag_outside_text_above_reverses_to_the_whole_run_start(cx: &mut TestAppContext) {
+        let text = "alpha words tail";
+        let (participants, _spares, window_cx) = word_drag_window(cx, &[(text, 40., 0, 1)], 1);
+        let first = participants.borrow()[0].clone();
+        let words = text.find("words").unwrap();
+        let tail = text.find("tail").unwrap();
+
+        double_click(window_cx, first.glyph_center(words + 1));
+        assert_eq!(selected_text_after_repaint(window_cx), "words");
+
+        // Dragging above the participant's text is outside-text and before
+        // the original word: the selection reverses to cover the whole
+        // terminal run start through the original word's end, never a
+        // partial character.
+        let above = point(first.glyph_center(tail + 1).x, px(10.));
+        drag_to(window_cx, above);
+        window_cx.update(|_, cx| {
+            let snapshot = first.selection.snapshot(cx).unwrap();
+            assert_eq!(snapshot.cursor().content_point(), first.content_point(0));
+            assert_eq!(
+                snapshot.anchor().content_point(),
+                first.content_point(words + 5)
+            );
+        });
+        assert_eq!(selected_text_after_repaint(window_cx), "alpha words");
+
+        // Dragging back inside the original word restores it whole.
+        drag_to(window_cx, first.glyph_center(words + 1));
+        assert_eq!(selected_text_after_repaint(window_cx), "words");
     }
 }
