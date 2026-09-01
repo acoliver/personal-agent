@@ -17,6 +17,9 @@
 //! - add Apache-2.0 section 4(b) modification notices to changed files.
 
 #![allow(dead_code)]
+#![allow(clippy::cloned_ref_to_slice_refs)]
+#![allow(clippy::filter_map_bool_then)]
+#![allow(clippy::type_complexity)]
 
 #[rustfmt::skip]
 mod auto_scroll;
@@ -32,8 +35,8 @@ pub use auto_scroll::AutoScroll;
 pub use global_state::{DeferredPopover, GlobalState};
 pub use selectable_text::SelectableText;
 pub use text_selection::{
-    TextSelection, TextSelectionContentKey, TextSelectionCoverage, TextSelectionEndpoint,
-    TextSelectionEvent, TextSelectionHandle, TextSelectionLayer, TextSelectionProjection,
-    TextSelectionRegistration, TextSelectionRun, TextSelectionScopeId, TextSelectionSnapshot,
-    TextSelectionWindowPoints,
+    AutoScrollLease, TextSelection, TextSelectionContentKey, TextSelectionCoverage,
+    TextSelectionEndpoint, TextSelectionEvent, TextSelectionHandle, TextSelectionLayer,
+    TextSelectionProjection, TextSelectionRegistration, TextSelectionRun, TextSelectionScopeId,
+    TextSelectionSnapshot, TextSelectionWindowPoints,
 };

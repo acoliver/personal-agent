@@ -7,3 +7,6 @@ license = "Apache-2.0"
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", rev = "c67328ab2e0d572718575e02ae07db37552e1cbe", package = "gpui" }
+
+[dev-dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "c67328ab2e0d572718575e02ae07db37552e1cbe", package = "gpui", features = ["test-support"] }

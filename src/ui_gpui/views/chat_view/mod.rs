@@ -22,11 +22,15 @@ mod render_bars;
 mod render_bars_tests;
 
 #[cfg(test)]
+mod selection_autoscroll_tests;
+
+#[cfg(test)]
 mod snapshot_tests;
 
 mod render_bars_export;
 
 mod render_sidebar;
+mod selection_autoscroll;
 mod snapshot;
 mod state;
 mod transcript;
@@ -73,11 +77,19 @@ use gpui::{
     prelude::*, px, Entity, FocusHandle, ListAlignment, ListOffset, ListScrollEvent, ListState,
     Pixels,
 };
+use gpui_selection_vendor::{AutoScroll, AutoScrollLease};
 use message_selection::TranscriptSelectionRevisions;
 #[cfg(test)]
 use std::cell::Cell;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Vertical padding applied to each side of the transcript list container.
+///
+/// Production rendering applies `.p(px(12.0))` around the list; this constant
+/// centralizes that value so auto-scroll offset calculations and rendering
+/// cannot diverge.
+pub(super) const TRANSCRIPT_LIST_PADDING_VERTICAL: f32 = 12.0;
 
 /// Chat view component with event handling
 ///
@@ -96,6 +108,18 @@ pub struct ChatView {
     /// @plan PLAN-20260420-ISSUE180.P03
     /// @requirement REQ-180-001
     pub(super) conversation_list: Entity<ConversationListView>,
+    /// Retained drag auto-scroll command subscription; exactly one per
+    /// `ChatView`, acquired from the render lifecycle so it exists before the
+    /// selection layer's first paint.
+    pub(super) selection_auto_scroll_subscription: Option<AutoScrollLease>,
+    /// Single 16 ms repeat loop and pacing state for transcript drag
+    /// auto-scroll. `Some` commands start or retarget it, `None` stops it,
+    /// and it never duplicates while running.
+    pub(super) selection_auto_scroll: AutoScroll,
+    #[cfg(test)]
+    pub(super) selection_auto_scroll_ticks: Cell<usize>,
+    #[cfg(test)]
+    pub(super) selection_auto_scroll_subscriptions: Cell<usize>,
     #[cfg(test)]
     pub(super) maybe_scroll_chat_to_bottom_invocations: Cell<usize>,
 }
@@ -137,6 +161,12 @@ impl ChatView {
             transcript_list_state,
             transcript_selection_revisions,
             conversation_list,
+            selection_auto_scroll_subscription: None,
+            selection_auto_scroll: AutoScroll::default(),
+            #[cfg(test)]
+            selection_auto_scroll_ticks: Cell::new(0),
+            #[cfg(test)]
+            selection_auto_scroll_subscriptions: Cell::new(0),
             #[cfg(test)]
             maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
         }

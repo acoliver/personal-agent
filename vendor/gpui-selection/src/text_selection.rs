@@ -8,6 +8,9 @@
 // test-support APIs. Virtualized selected participants are strongly retained with
 // their copy callbacks after paint registration ends; one virtual endpoint gets
 // synthetic projection geometry, and unresolved callbacks fail the whole copy.
+// Auto-scroll commands are also published through a window-scoped source that
+// outlives transient participants, drag updates are gated on an active gesture,
+// and a stationary-drag tick advances the endpoint at the window pointer.
 
 use std::{
     collections::HashMap,
@@ -944,6 +947,40 @@ impl SelectionEndpoint {
     }
 }
 
+/// Opaque lease on a window's drag auto-scroll command stream.
+///
+/// Created by [`TextSelection::subscribe_auto_scroll`], it retains both the
+/// window selection state entity and the GPUI subscription so neither is
+/// collected while the host holds the lease. The window state entity may not
+/// have been created by the `TextSelectionLayer`'s first prepaint yet; this
+/// lease ensures it stays alive from the moment the host subscribes.
+pub struct AutoScrollLease {
+    state: Entity<WindowSelectionState>,
+    _subscription: Subscription,
+}
+
+/// Window-scoped emitter of drag auto-scroll commands.
+///
+/// Participant events follow whichever leaf currently holds the drag anchor,
+/// which virtualization replaces while the drag continues. This source is
+/// retained by the window selection state, so one host subscription observes
+/// the whole gesture across participant churn.
+struct WindowAutoScrollSource {
+    last: Option<Pixels>,
+}
+
+impl EventEmitter<TextSelectionEvent> for WindowAutoScrollSource {}
+
+impl WindowAutoScrollSource {
+    fn update_delta(&mut self, delta: Option<Pixels>, cx: &mut Context<Self>) {
+        if self.last == delta {
+            return;
+        }
+        self.last = delta;
+        cx.emit(TextSelectionEvent::AutoScroll(delta));
+    }
+}
+
 /// Window-local generic text-selection state.
 #[derive(Default)]
 struct WindowSelectionState {
@@ -959,6 +996,7 @@ struct WindowSelectionState {
     finish_frame_scheduled: bool,
     mouse_down_prepared: bool,
     auto_scroll: AutoScroll,
+    auto_scroll_source: Option<Entity<WindowAutoScrollSource>>,
 }
 
 impl WindowSelectionState {
@@ -1653,18 +1691,64 @@ impl WindowSelectionState {
         _window: Option<&Window>,
         cx: &mut Context<Self>,
     ) {
-        let Some(anchor) = self.anchor.as_ref().filter(|anchor| anchor.inside) else {
+        if !self.is_selecting {
+            return;
+        }
+
+        // Resolve a viewport for the window-scoped command, trying in order:
+        // 1. The registered cursor participant (survives anchor virtualization).
+        // 2. The live anchor participant (original behavior).
+        // 3. The first active-scope participant (fallback for any registered leaf).
+        // The participant-local compatibility event is only published when the
+        // live anchor is resolvable, preserving the original contract.
+        let viewport = self
+            .cursor
+            .as_ref()
+            .and_then(|endpoint| self.participant_viewport(&endpoint.participant))
+            .or_else(|| {
+                self.anchor
+                    .as_ref()
+                    .filter(|anchor| anchor.inside)
+                    .and_then(|anchor| self.participant_viewport(&anchor.participant))
+            })
+            .or_else(|| {
+                self.participants
+                    .values()
+                    .find(|registration| {
+                        registration.registration.scope == self.active_scope
+                            && registration.participant.upgrade().is_some()
+                    })
+                    .map(|registration| registration.registration.hitbox.content_mask.bounds)
+            });
+
+        let Some(viewport) = viewport else {
             return;
         };
-        let Some(participant) = anchor.participant.as_ref().and_then(WeakEntity::upgrade) else {
-            return;
-        };
-        let Some(registration) = self.participants.get(&participant.entity_id()) else {
-            return;
-        };
-        let visible_bounds = registration.registration.hitbox.content_mask.bounds;
-        let delta = AutoScroll::compute_delta(position.y, visible_bounds);
-        participant.update(cx, |state, cx| state.set_auto_scroll(delta, cx));
+
+        let delta = AutoScroll::compute_delta(position.y, viewport);
+        self.publish_auto_scroll(delta, cx);
+
+        // Keep participant-local compatibility event conditional on the live
+        // anchor, matching the original contract for participant listeners.
+        if let Some(participant) = self
+            .anchor
+            .as_ref()
+            .filter(|anchor| anchor.inside)
+            .and_then(|anchor| anchor.participant.as_ref())
+            .and_then(WeakEntity::upgrade)
+        {
+            participant.update(cx, |state, cx| state.set_auto_scroll(delta, cx));
+        }
+    }
+
+    /// Resolves a participant's viewport bounds if its registration exists.
+    fn participant_viewport(
+        &self,
+        participant: &Option<WeakEntity<SelectableTextState>>,
+    ) -> Option<Bounds<Pixels>> {
+        let participant = participant.as_ref()?.upgrade()?;
+        let registration = self.participants.get(&participant.entity_id())?;
+        Some(registration.registration.hitbox.content_mask.bounds)
     }
 
     fn update_participant_auto_scroll(&self, position: Point<Pixels>, cx: &mut App) {
@@ -1683,6 +1767,7 @@ impl WindowSelectionState {
 
     fn stop_anchor_auto_scroll(&mut self, cx: &mut App) {
         self.auto_scroll.stop();
+        self.publish_auto_scroll(None, cx);
         let Some(participant) = self
             .anchor
             .as_ref()
@@ -1693,6 +1778,17 @@ impl WindowSelectionState {
             return;
         };
         participant.update(cx, |state, cx| state.set_auto_scroll(None, cx));
+    }
+
+    fn ensure_auto_scroll_source(&mut self, cx: &mut App) -> Entity<WindowAutoScrollSource> {
+        self.auto_scroll_source
+            .get_or_insert_with(|| cx.new(|_| WindowAutoScrollSource { last: None }))
+            .clone()
+    }
+
+    fn publish_auto_scroll(&mut self, delta: Option<Pixels>, cx: &mut App) {
+        let source = self.ensure_auto_scroll_source(cx);
+        source.update(cx, |source, cx| source.update_delta(delta, cx));
     }
 
     fn prune_dead_participants(&mut self) {
@@ -1839,6 +1935,65 @@ impl TextSelection {
         });
         WindowSelectionState::resolve_content_keys(&state, cx);
         window.refresh();
+    }
+
+    /// Advances an in-progress drag to the window's current pointer position.
+    ///
+    /// Owners of scrollable selection hosts call this from their auto-scroll
+    /// tick, after the frame that mounted newly scrolled-in participants: the
+    /// endpoint hit-test then resolves against that fresh geometry even while
+    /// the pointer is stationary. Unlike a pointer move, this never
+    /// recomputes auto-scroll; the caller owns the scroll viewport and drives
+    /// the scroll itself. Returns whether a gesture is still active.
+    pub fn update_drag_at_pointer(window: &mut Window, cx: &mut App) -> bool {
+        let Some(state) = live_text_selection_state(window, cx) else {
+            return false;
+        };
+        let position = window.mouse_position();
+        let is_selecting = state.update(cx, |state, cx| {
+            if state.is_selecting && !cx.has_active_drag() {
+                state.update_impl(position, Some(&*window), cx);
+            }
+            state.is_selecting
+        });
+        if is_selecting {
+            WindowSelectionState::resolve_content_keys(&state, cx);
+            window.refresh();
+        }
+        is_selecting
+    }
+
+    /// Subscribes to window-scoped drag auto-scroll commands.
+    ///
+    /// `Some(delta)` starts or retargets stationary-drag scrolling (positive
+    /// delta scrolls down) and `None` stops it. Commands are deduplicated and
+    /// survive participants being dropped and recreated by virtualization, so
+    /// a host needs exactly one subscription per window, not one per leaf.
+    /// Acquiring the command source here also makes it available before the
+    /// selection layer's first paint.
+    ///
+    /// The returned [`AutoScrollLease`] retains both the window selection
+    /// state entity and the GPUI subscription. The host must store it for the
+    /// lifetime of its participation; dropping it stops receiving commands.
+    #[must_use = "retain the AutoScrollLease or drag auto-scroll commands are dropped"]
+    pub fn subscribe_auto_scroll(
+        window: &mut Window,
+        cx: &mut App,
+        mut callback: impl FnMut(Option<Pixels>, &mut App) + 'static,
+    ) -> AutoScrollLease {
+        let window_id = window.window_handle().window_id();
+        let state = WindowSelectionState::acquire(window_id, cx);
+        let source = state.update(cx, |state, cx| state.ensure_auto_scroll_source(cx));
+        let subscription =
+            cx.subscribe(&source, move |_, event: &TextSelectionEvent, cx| {
+                if let TextSelectionEvent::AutoScroll(delta) = event {
+                    callback(*delta, cx);
+                }
+            });
+        AutoScrollLease {
+            state,
+            _subscription: subscription,
+        }
     }
 
     /// Activates the opaque selection scope for this window.
@@ -2371,6 +2526,574 @@ mod virtualization_copy_tests {
 
             assert_eq!(resolve_copy_items(items, cx), "");
         });
+    }
+}
+
+#[cfg(test)]
+mod window_auto_scroll_tests {
+    use super::*;
+    use gpui::{
+        HitboxBehavior, Modifiers, ParentElement, Render, Styled, TestAppContext, div, size,
+    };
+    use std::{cell::RefCell, rc::Rc, time::Duration};
+
+    #[derive(Clone)]
+    struct Registration {
+        selection: TextSelectionHandle,
+        y: f32,
+        document_order: u64,
+    }
+
+    struct AutoScrollView {
+        registrations: Rc<RefCell<Vec<Registration>>>,
+    }
+
+    struct AutoScrollElement {
+        registrations: Rc<RefCell<Vec<Registration>>>,
+    }
+
+    impl IntoElement for AutoScrollElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for AutoScrollElement {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            (window.request_layout(Style::default(), [], cx), ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            for registration in self.registrations.borrow().iter() {
+                let bounds = Bounds::new(
+                    point(px(0.), px(registration.y)),
+                    size(px(100.), px(10.)),
+                );
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                let entity = WindowSelectionState::existing(window, cx)
+                    .expect("subscribe_auto_scroll acquires the state before the first draw");
+                entity.update(cx, |state, cx| {
+                    state.register_participant(
+                        registration.selection.clone(),
+                        TextSelectionRegistration::new(hitbox, bounds)
+                            .with_document_order(registration.document_order)
+                            .with_text_bounds(vec![bounds]),
+                        cx,
+                    )
+                });
+            }
+        }
+
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            _: &mut Self::PrepaintState,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+        }
+    }
+
+    impl Render for AutoScrollView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            // The layer installs the window mouse handlers that drive
+            // gesture state; the element registers participants.
+            div().size_full().child(TextSelectionLayer).child(AutoScrollElement {
+                registrations: Rc::clone(&self.registrations),
+            })
+        }
+    }
+
+    fn registration(selection: &TextSelectionHandle, y: f32, document_order: u64) -> Registration {
+        Registration {
+            selection: selection.clone(),
+            y,
+            document_order,
+        }
+    }
+
+    fn auto_scroll_window<'a>(
+        cx: &'a mut TestAppContext,
+        registrations: &Rc<RefCell<Vec<Registration>>>,
+    ) -> (&'a mut gpui::VisualTestContext, Rc<RefCell<Option<AutoScrollLease>>>) {
+        let lease = Rc::new(RefCell::new(None));
+        let (_, window_cx) = cx.add_window_view({
+            let registrations = Rc::clone(registrations);
+            move |_, _| AutoScrollView { registrations }
+        });
+        // The whole window is the scroll viewport, so the bottom trigger sits
+        // 16px above its 40px bottom edge.
+        window_cx.simulate_resize(size(px(100.), px(40.)));
+        (window_cx, lease)
+    }
+
+    #[gpui::test]
+    fn pointer_move_after_mouse_up_or_clear_does_not_restart_auto_scroll(
+        cx: &mut TestAppContext,
+    ) {
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let commands = Rc::new(RefCell::new(Vec::<Option<Pixels>>::new()));
+        let (window_cx, lease) = auto_scroll_window(cx, &registrations);
+        window_cx.update(|window, cx| {
+            let observed = commands.clone();
+            *lease.borrow_mut() = Some(TextSelection::subscribe_auto_scroll(window, cx, move |delta, _| {
+                observed.borrow_mut().push(delta);
+            }));
+            let participant = TextSelectionHandle::new("line", cx);
+            registrations
+                .borrow_mut()
+                .push(registration(&participant, 0., 0));
+            _ = window.draw(cx);
+        });
+
+        // Gesture one ends through mouse-up.
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(30.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        window_cx.simulate_mouse_up(point(px(5.), px(30.)), MouseButton::Left, Modifiers::default());
+        assert!(commands.borrow().iter().any(Option::is_some));
+        assert_eq!(commands.borrow().last(), Some(&None));
+        let commands_after_mouse_up = commands.borrow().len();
+        window_cx.simulate_mouse_move(point(px(5.), px(32.)), None, Modifiers::default());
+        assert_eq!(commands.borrow().len(), commands_after_mouse_up);
+
+        // Gesture two ends through clear.
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(34.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        window_cx.update(TextSelection::clear);
+        let commands_after_clear = commands.borrow().len();
+        window_cx.simulate_mouse_move(point(px(5.), px(34.)), None, Modifiers::default());
+        assert_eq!(commands.borrow().len(), commands_after_clear);
+        assert_eq!(
+            commands.borrow().clone(),
+            vec![
+                AutoScroll::compute_delta(px(30.), Bounds::new(point(px(0.), px(0.)), size(px(100.), px(40.)))),
+                None,
+                AutoScroll::compute_delta(px(34.), Bounds::new(point(px(0.), px(0.)), size(px(100.), px(40.)))),
+                None,
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn window_command_stream_survives_participant_churn_and_dedupes(
+        cx: &mut TestAppContext,
+    ) {
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let commands = Rc::new(RefCell::new(Vec::<Option<Pixels>>::new()));
+        let (window_cx, lease) = auto_scroll_window(cx, &registrations);
+        let anchor = window_cx.update(|window, cx| {
+            let observed = commands.clone();
+            *lease.borrow_mut() = Some(TextSelection::subscribe_auto_scroll(window, cx, move |delta, _| {
+                observed.borrow_mut().push(delta);
+            }));
+            let anchor = TextSelectionHandle::new("anchor", cx);
+            registrations.borrow_mut().push(registration(&anchor, 0., 0));
+            _ = window.draw(cx);
+            anchor
+        });
+
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(25.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        // Repeating the same pointer position must not re-emit the command.
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(25.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert_eq!(commands.borrow().len(), 1);
+        assert!(commands.borrow()[0].is_some());
+
+        // Replace the anchor's leaf entirely: the stream must neither stop
+        // (no spurious None) nor restart while the drag continues.
+        window_cx.update(|window, cx| {
+            let replacement = TextSelectionHandle::new("replacement", cx);
+            *registrations.borrow_mut() = vec![registration(&replacement, 0., 0)];
+            _ = window.draw(cx);
+        });
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(25.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert_eq!(commands.borrow().len(), 1);
+
+        window_cx.simulate_mouse_up(point(px(5.), px(25.)), MouseButton::Left, Modifiers::default());
+        assert_eq!(commands.borrow().clone(), vec![commands.borrow()[0], None]);
+        let anchor_alive = window_cx.update(|_, cx| anchor.snapshot(cx).is_some());
+        assert!(anchor_alive);
+    }
+
+    #[gpui::test]
+    fn stationary_drag_tick_updates_the_endpoint_against_a_newly_mounted_participant(
+        cx: &mut TestAppContext,
+    ) {
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let commands = Rc::new(RefCell::new(Vec::<Option<Pixels>>::new()));
+        let (window_cx, lease) = auto_scroll_window(cx, &registrations);
+        let first = window_cx.update(|window, cx| {
+            let observed = commands.clone();
+            *lease.borrow_mut() = Some(TextSelection::subscribe_auto_scroll(window, cx, move |delta, _| {
+                observed.borrow_mut().push(delta);
+            }));
+            let first = TextSelectionHandle::new("first", cx);
+            registrations.borrow_mut().push(registration(&first, 0., 0));
+            _ = window.draw(cx);
+            first
+        });
+
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(25.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert_eq!(commands.borrow().len(), 1);
+
+        // The scroll host mounts a new row under the stationary pointer.
+        let second = window_cx.update(|window, cx| {
+            let second = TextSelectionHandle::new("second", cx);
+            registrations
+                .borrow_mut()
+                .push(registration(&second, 20., 1));
+            _ = window.draw(cx);
+            second
+        });
+        window_cx.run_until_parked();
+
+        let is_selecting = window_cx.update(TextSelection::update_drag_at_pointer);
+        assert!(is_selecting);
+        assert_eq!(commands.borrow().len(), 1);
+        let cursor = window_cx.update(|window, cx| {
+            second
+                .snapshot(cx)
+                .expect("newly mounted participant joins the selection")
+                .cursor()
+                .entity_id()
+                .map(|id| (id == second.entity_id(), TextSelection::has_selection(window, cx)))
+        });
+        assert_eq!(cursor, Some((true, true)));
+        let points = window_cx.update(|_, cx| {
+            first
+                .snapshot(cx)
+                .and_then(|snapshot| snapshot.window_points())
+        });
+        let points = points.expect("window points still project");
+        assert!(points.anchor().y < points.cursor().y);
+    }
+
+    #[gpui::test]
+    fn subscribe_before_first_prepaint_then_drag_receives_some_then_none(
+        cx: &mut TestAppContext,
+    ) {
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let commands = Rc::new(RefCell::new(Vec::<Option<Pixels>>::new()));
+        let (window_cx, lease) = auto_scroll_window(cx, &registrations);
+
+        // Subscribe BEFORE any draw/prepaint — the selection layer has not
+        // been mounted yet. The lease must retain the state entity so it
+        // survives until the first paint.
+        window_cx.update(|window, cx| {
+            let observed = commands.clone();
+            *lease.borrow_mut() = Some(TextSelection::subscribe_auto_scroll(window, cx, move |delta, _| {
+                observed.borrow_mut().push(delta);
+            }));
+        });
+        assert!(
+            lease.borrow().is_some(),
+            "the lease is held before the first draw"
+        );
+
+        // Now mount the layer and register a participant.
+        window_cx.update(|window, cx| {
+            let participant = TextSelectionHandle::new("line", cx);
+            registrations
+                .borrow_mut()
+                .push(registration(&participant, 0., 0));
+            _ = window.draw(cx);
+        });
+
+        // Drag into the bottom edge zone: should publish Some.
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(30.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert!(
+            commands.borrow().iter().any(Option::is_some),
+            "drag into the bottom edge publishes Some after subscribing before prepaint"
+        );
+
+        // Mouse up: should publish None.
+        window_cx.simulate_mouse_up(point(px(5.), px(30.)), MouseButton::Left, Modifiers::default());
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&None),
+            "mouse up publishes None"
+        );
+    }
+
+    #[gpui::test]
+    fn anchor_virtualized_dead_zone_publishes_none_then_edge_publishes_some_again(
+        cx: &mut TestAppContext,
+    ) {
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let commands = Rc::new(RefCell::new(Vec::<Option<Pixels>>::new()));
+        let (window_cx, lease) = auto_scroll_window(cx, &registrations);
+        window_cx.update(|window, cx| {
+            let observed = commands.clone();
+            *lease.borrow_mut() = Some(TextSelection::subscribe_auto_scroll(window, cx, move |delta, _| {
+                observed.borrow_mut().push(delta);
+            }));
+            let anchor = TextSelectionHandle::new("anchor", cx);
+            registrations.borrow_mut().push(registration(&anchor, 0., 0));
+            _ = window.draw(cx);
+        });
+
+        // Start a drag with the pointer in the bottom edge zone.
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(30.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert!(commands.borrow().last().is_some_and(Option::is_some));
+
+        // Virtualize the anchor: remove it and draw, simulating the scroll
+        // host dropping the anchor's leaf. The cursor endpoint may still
+        // be registered, but the anchor is gone.
+        window_cx.update(|window, cx| {
+            // Replace registrations with a cursor-only participant at a
+            // different position (outside the edge zone).
+            let cursor = TextSelectionHandle::new("cursor", cx);
+            *registrations.borrow_mut() = vec![registration(&cursor, 0., 0)];
+            _ = window.draw(cx);
+        });
+
+        // Move pointer to the dead zone (middle of the viewport, y=20).
+        // With the anchor virtualized, the viewport falls back to the cursor
+        // participant. y=20 is in the dead zone (top trigger is y<24, bottom
+        // trigger is y>24 for a 40px viewport), so it should publish None.
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(20.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&None),
+            "dead zone after virtualization publishes None"
+        );
+
+        // Move pointer back to the bottom edge zone: should publish Some again.
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(30.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert!(
+            commands.borrow().last().is_some_and(Option::is_some),
+            "pointer edge after virtualization publishes Some again"
+        );
+    }
+
+    #[gpui::test]
+    fn reverse_direction_after_bound_while_held(cx: &mut TestAppContext) {
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let commands = Rc::new(RefCell::new(Vec::<Option<Pixels>>::new()));
+        let (window_cx, lease) = auto_scroll_window(cx, &registrations);
+        window_cx.update(|window, cx| {
+            let observed = commands.clone();
+            *lease.borrow_mut() = Some(TextSelection::subscribe_auto_scroll(window, cx, move |delta, _| {
+                observed.borrow_mut().push(delta);
+            }));
+            let participant = TextSelectionHandle::new("line", cx);
+            registrations.borrow_mut().push(registration(&participant, 0., 0));
+            _ = window.draw(cx);
+        });
+
+        // Drag to the bottom edge: Some(positive).
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(30.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        let bottom_delta = *commands.borrow().last().unwrap();
+        assert!(bottom_delta.is_some_and(|d| d > Pixels::ZERO));
+
+        // Reverse to the top edge without releasing: Some(negative).
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(10.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        let top_delta = *commands.borrow().last().unwrap();
+        assert!(
+            top_delta.is_some_and(|d| d < Pixels::ZERO),
+            "reversing direction while held publishes a negative delta"
+        );
+
+        // Back to dead zone: None.
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(20.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&None),
+            "returning to the dead zone publishes None"
+        );
+    }
+
+    #[gpui::test]
+    fn sustained_drag_advances_offset_twice_then_stops_on_mouse_up(
+        cx: &mut TestAppContext,
+    ) {
+        // This test exercises the host-side repeat loop by simulating a
+        // drag with active auto-scroll, advancing the clock through two
+        // 16ms ticks (with draws/remounts between), verifying the offset
+        // changes twice and the selection endpoint advances under a
+        // stationary pointer, then confirming mouse-up/clear/None prevents
+        // further ticks.
+        //
+        // Because the host loop lives in ChatView (not the vendor crate),
+        // this test verifies the vendor-side primitives that the host loop
+        // relies on: update_drag_at_pointer advances the endpoint, and the
+        // command stream delivers Some/None correctly across ticks.
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let commands = Rc::new(RefCell::new(Vec::<Option<Pixels>>::new()));
+        let (window_cx, lease) = auto_scroll_window(cx, &registrations);
+        let first = window_cx.update(|window, cx| {
+            let observed = commands.clone();
+            *lease.borrow_mut() = Some(TextSelection::subscribe_auto_scroll(window, cx, move |delta, _| {
+                observed.borrow_mut().push(delta);
+            }));
+            let first = TextSelectionHandle::new("first", cx);
+            registrations.borrow_mut().push(registration(&first, 0., 0));
+            _ = window.draw(cx);
+            first
+        });
+
+        // Start drag at bottom edge.
+        window_cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::default());
+        window_cx.simulate_mouse_move(
+            point(px(5.), px(30.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert!(commands.borrow().last().is_some_and(Option::is_some));
+
+        // Tick 1: mount a new participant under the stationary pointer and
+        // advance the drag. The endpoint should move to the new participant.
+        let second = window_cx.update(|window, cx| {
+            let second = TextSelectionHandle::new("second", cx);
+            registrations.borrow_mut().push(registration(&second, 20., 1));
+            _ = window.draw(cx);
+            second
+        });
+        window_cx.run_until_parked();
+        let tick1_selecting = window_cx.update(TextSelection::update_drag_at_pointer);
+        assert!(tick1_selecting, "tick 1: drag still active");
+
+        let cursor_after_tick1 = window_cx.update(|_, cx| {
+            second
+                .snapshot(cx)
+                .and_then(|s| s.cursor().entity_id())
+        });
+        assert_eq!(
+            cursor_after_tick1,
+            Some(second.entity_id()),
+            "tick 1: cursor endpoint advanced to the newly mounted participant"
+        );
+
+        // Tick 2: the previous tick scrolled the host, so the row under the
+        // stationary pointer is replaced by a newly mounted one (the anchor
+        // row stays registered). The endpoint must advance to that new row
+        // on the second tick; an exact-overlap push could never win the
+        // hit-test's document-order tie-break.
+        let third = window_cx.update(|window, cx| {
+            let third = TextSelectionHandle::new("third", cx);
+            *registrations.borrow_mut() =
+                vec![registration(&first, 0., 0), registration(&third, 20., 1)];
+            _ = window.draw(cx);
+            third
+        });
+        window_cx.run_until_parked();
+        let tick2_selecting = window_cx.update(TextSelection::update_drag_at_pointer);
+        assert!(tick2_selecting, "tick 2: drag still active");
+
+        let cursor_after_tick2 = window_cx.update(|_, cx| {
+            third
+                .snapshot(cx)
+                .and_then(|s| s.cursor().entity_id())
+        });
+        assert_eq!(
+            cursor_after_tick2,
+            Some(third.entity_id()),
+            "tick 2: cursor endpoint advanced to the newly mounted participant"
+        );
+
+        // Mouse up: publishes None, and further ticks must not fire.
+        window_cx.simulate_mouse_up(point(px(5.), px(30.)), MouseButton::Left, Modifiers::default());
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&None),
+            "mouse up publishes None"
+        );
+        let commands_before = commands.borrow().len();
+
+        // Advance the clock; no further commands should arrive.
+        cx.executor().advance_clock(Duration::from_millis(48));
+        cx.run_until_parked();
+        assert_eq!(
+            commands.borrow().len(),
+            commands_before,
+            "no further commands after mouse up/clear/None"
+        );
     }
 }
 

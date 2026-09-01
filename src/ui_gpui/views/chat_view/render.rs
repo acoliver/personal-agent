@@ -310,7 +310,7 @@ impl ChatView {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .p(px(12.0)),
+                    .p(px(super::TRANSCRIPT_LIST_PADDING_VERTICAL)),
                 )
             })
     }
@@ -916,6 +916,7 @@ impl gpui::Render for ChatView {
     #[allow(clippy::too_many_lines)]
     #[rustfmt::skip]
     fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        self.ensure_selection_auto_scroll_subscription(window, cx);
         let app_mode = Self::current_app_mode(cx);
         let show_sidebar = app_mode == AppMode::Popout && self.state.sidebar_visible;
 
