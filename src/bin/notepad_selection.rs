@@ -295,6 +295,7 @@ impl MarkdownLeafFactory for SelectionLeafFactory {
             leaf.surface_background,
             leaf.surface_foreground,
         )
+        .links(leaf.links)
         .document_order(leaf.document_order)
         .scroll_offset(self.scroll_offset)
         .copy_separator_before(leaf.copy_separator_before)

@@ -4,23 +4,28 @@
 // metadata, recolor selected glyphs in the surface background color, and retain
 // one owning-window refresh subscription per selectable-text element. Selected
 // runs now suppress their own backgrounds, and low-contrast surface pairs use a
-// black-or-white selected glyph fallback.
+// black-or-white selected glyph fallback. Safe links now activate on clicks while
+// pointer movement beyond the drag threshold remains a text-selection gesture.
 
-use std::ops::Range;
+use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui::{
-    hsla, transparent_black, App, BorderStyle, Bounds, Corners, Edges, Element, ElementId,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    PaintQuad, Pixels, Point, SharedString, StyledText, Subscription, TextRun, Window,
+    hsla, transparent_black, App, BorderStyle, Bounds, Corners, CursorStyle, DispatchPhase, Edges,
+    Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
+    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    Pixels, Point, SharedString, StyledText, Subscription, TextLayout, TextRun, Window,
 };
 
-use crate::{TextSelectionHandle, TextSelectionRegistration, TextSelectionRun};
+use crate::{
+    GlobalState, TextSelection, TextSelectionHandle, TextSelectionRegistration, TextSelectionRun,
+};
 
 /// Styled text that participates in window-scoped text selection.
 pub struct SelectableText {
     id: ElementId,
     text: SharedString,
     styled_text: Option<StyledText>,
+    links: Vec<(Range<usize>, String)>,
     text_runs: Vec<TextRun>,
     document_order: u64,
     scroll_offset: Point<Pixels>,
@@ -34,6 +39,7 @@ pub struct SelectableText {
 pub struct SelectableTextLayoutState {
     handle: TextSelectionHandle,
     selected_ranges: Vec<Option<Range<usize>>>,
+    link_press: Rc<RefCell<Option<LinkPress>>>,
 }
 
 impl SelectableText {
@@ -51,6 +57,7 @@ impl SelectableText {
             id: id.into(),
             text: text.into(),
             styled_text: None,
+            links: Vec::new(),
             text_runs,
             document_order: 0,
             scroll_offset: Point::default(),
@@ -58,6 +65,12 @@ impl SelectableText {
             selection_color,
             selected_text_color,
         }
+    }
+
+    /// Adds safe URL targets keyed by byte ranges into the element's text.
+    pub fn links(mut self, links: Vec<(Range<usize>, String)>) -> Self {
+        self.links = links;
+        self
     }
 
     /// Places this leaf in reading order among all window participants.
@@ -102,6 +115,47 @@ impl SelectableText {
             });
         }
     }
+}
+
+const LINK_DRAG_THRESHOLD: f64 = 2.0;
+
+struct LinkPress {
+    position: Point<Pixels>,
+    link_index: usize,
+    dragged: bool,
+}
+
+impl LinkPress {
+    fn new(position: Point<Pixels>, link_index: usize) -> Self {
+        Self {
+            position,
+            link_index,
+            dragged: false,
+        }
+    }
+
+    fn update(&mut self, position: Point<Pixels>) -> bool {
+        let crossed_threshold =
+            !self.dragged && (position - self.position).magnitude() > LINK_DRAG_THRESHOLD;
+        self.dragged |= crossed_threshold;
+        crossed_threshold
+    }
+
+    fn finish(mut self, position: Point<Pixels>, link_index: Option<usize>) -> Option<usize> {
+        self.update(position);
+        (!self.dragged && link_index == Some(self.link_index)).then_some(self.link_index)
+    }
+}
+
+fn link_at_position(
+    layout: &TextLayout,
+    links: &[(Range<usize>, String)],
+    position: Point<Pixels>,
+) -> Option<usize> {
+    let byte_index = layout.index_for_position(position).ok()?;
+    links
+        .iter()
+        .position(|(range, _)| range.contains(&byte_index))
 }
 
 const MIN_SELECTION_CONTRAST: f32 = 4.5;
@@ -219,6 +273,69 @@ fn append_run_segment(
     result.push(run);
 }
 
+fn register_link_handlers(
+    links: Rc<Vec<(Range<usize>, String)>>,
+    layout: TextLayout,
+    hitbox: Hitbox,
+    link_press: Rc<RefCell<Option<LinkPress>>>,
+    window: &mut Window,
+) {
+    let mouse_down_links = links.clone();
+    let mouse_down_layout = layout.clone();
+    let mouse_down_hitbox = hitbox.clone();
+    let mouse_down_press = link_press.clone();
+    window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+        if phase != DispatchPhase::Bubble
+            || event.button != MouseButton::Left
+            || event.click_count != 1
+        {
+            return;
+        }
+        let link_index = if mouse_down_hitbox.is_hovered(window) {
+            link_at_position(&mouse_down_layout, &mouse_down_links, event.position)
+        } else {
+            None
+        };
+        *mouse_down_press.borrow_mut() =
+            link_index.map(|index| LinkPress::new(event.position, index));
+        if link_index.is_some() {
+            GlobalState::suppress_text_selection(cx);
+        }
+    });
+
+    let mouse_move_press = link_press.clone();
+    window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+        if phase != DispatchPhase::Bubble || !event.dragging() {
+            return;
+        }
+        let drag_anchor = mouse_move_press
+            .borrow_mut()
+            .as_mut()
+            .and_then(|press| press.update(event.position).then_some(press.position));
+        if let Some(anchor) = drag_anchor {
+            GlobalState::reset_text_selection_suppression(cx);
+            TextSelection::begin_drag(anchor, event.position, window, cx);
+        }
+    });
+
+    window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+        if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+            return;
+        }
+        let Some(press) = link_press.borrow_mut().take() else {
+            return;
+        };
+        let release_link = if hitbox.is_hovered(window) {
+            link_at_position(&layout, &links, event.position)
+        } else {
+            None
+        };
+        if let Some(index) = press.finish(event.position, release_link) {
+            cx.open_url(&links[index].1);
+        }
+    });
+}
+
 impl IntoElement for SelectableText {
     type Element = Self;
 
@@ -246,15 +363,20 @@ impl Element for SelectableText {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let handle = window.with_element_state(
+        let (handle, link_press) = window.with_element_state(
             global_id.expect("SelectableText must have a stable element id"),
-            |retained: Option<(TextSelectionHandle, Subscription)>, window| {
+            |retained: Option<(
+                TextSelectionHandle,
+                Subscription,
+                Rc<RefCell<Option<LinkPress>>>,
+            )>,
+             window| {
                 let state = retained.unwrap_or_else(|| {
                     let handle = TextSelectionHandle::new(self.text.clone(), cx);
                     let subscription = handle.refresh_window_on_change(window, cx);
-                    (handle, subscription)
+                    (handle, subscription, Rc::default())
                 });
-                (state.0.clone(), state)
+                ((state.0.clone(), state.2.clone()), state)
             },
         );
         let projection = handle.project_cached_runs(cx);
@@ -273,6 +395,7 @@ impl Element for SelectableText {
             SelectableTextLayoutState {
                 handle,
                 selected_ranges,
+                link_press,
             },
         )
     }
@@ -310,7 +433,7 @@ impl Element for SelectableText {
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
+        hitbox: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -319,6 +442,18 @@ impl Element for SelectableText {
             .as_mut()
             .expect("SelectableText must complete prepaint before paint");
         let layout = styled_text.layout().clone();
+        if !self.links.is_empty() {
+            if link_at_position(&layout, &self.links, window.mouse_position()).is_some() {
+                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            }
+            register_link_handlers(
+                Rc::new(self.links.clone()),
+                layout.clone(),
+                hitbox.clone(),
+                state.link_press.clone(),
+                window,
+            );
+        }
         let projection = state.handle.update_runs(
             &[
                 TextSelectionRun::new(self.text.clone(), layout.clone(), bounds)
@@ -435,5 +570,20 @@ mod tests {
         let glyph = hsla(0.0, 0.0, 0.0, 1.0);
 
         assert_eq!(super::legible_selection_colors(quad, glyph), (quad, glyph));
+    }
+
+    #[test]
+    fn link_press_activates_only_without_dragging() {
+        let mut click = super::LinkPress::new(point(px(10.), px(10.)), 2);
+
+        assert!(!click.update(point(px(12.), px(10.))));
+        assert_eq!(click.finish(point(px(12.), px(10.)), Some(2)), Some(2));
+
+        let mut drag = super::LinkPress::new(point(px(10.), px(10.)), 2);
+        assert!(drag.update(point(px(12.1), px(10.))));
+        assert_eq!(drag.finish(point(px(10.), px(10.)), Some(2)), None);
+
+        let other_link = super::LinkPress::new(point(px(10.), px(10.)), 2);
+        assert_eq!(other_link.finish(point(px(10.), px(10.)), Some(3)), None);
     }
 }

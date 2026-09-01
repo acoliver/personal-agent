@@ -3,7 +3,8 @@
 // project's Rust 2021 edition, routed window auto-scroll through participant
 // callbacks because pinned GPUI exposes a private return type from
 // Window::dispatch_event, added participant-defined copy separators, exposed
-// cached run projection, and gated tests requiring newer GPUI test-support APIs.
+// cached run projection, added delayed drag start for selectable links, and gated
+// tests requiring newer GPUI test-support APIs.
 
 use std::{
     collections::HashMap,
@@ -1653,6 +1654,23 @@ impl TextSelection {
         if let Some(state) = live_text_selection_state(window, cx) {
             state.update(cx, |state, cx| state.end(cx));
         }
+    }
+    /// Starts a drag after an interactive participant crosses its movement threshold.
+    pub(crate) fn begin_drag(
+        anchor: Point<Pixels>,
+        cursor: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(state) = live_text_selection_state(window, cx) else {
+            return;
+        };
+        state.update(cx, |state, cx| {
+            state.begin_in_window(anchor, false, window, cx);
+            state.update_in_window(cursor, window, cx);
+        });
+        WindowSelectionState::resolve_content_keys(&state, cx);
+        window.refresh();
     }
 
     /// Activates the opaque selection scope for this window.

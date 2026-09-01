@@ -304,6 +304,8 @@ fn extract_language(info: &str) -> Option<String> {
 pub struct MarkdownLeaf {
     /// Visible plain text, with markdown syntax removed.
     pub plain_text: gpui::SharedString,
+    /// Safe link targets keyed by byte ranges into `plain_text`.
+    pub links: Vec<(Range<usize>, String)>,
     /// Styling runs used by the shipping renderer.
     pub text_runs: Vec<gpui::TextRun>,
     /// Monotonic reading-order position assigned by the caller.
@@ -593,6 +595,7 @@ fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::Te
 fn next_leaf(
     text: String,
     runs: Vec<gpui::TextRun>,
+    links: Vec<(Range<usize>, String)>,
     surface: SurfaceColors,
     separator: &str,
     context: &mut MarkdownRenderContext<'_>,
@@ -602,6 +605,7 @@ fn next_leaf(
     *context.next_document_order = document_order.saturating_add(1);
     MarkdownLeaf {
         plain_text,
+        links,
         text_runs: runs,
         document_order,
         copy_separator_before: separator.to_string().into(),
@@ -626,7 +630,12 @@ fn spans_to_styled_text(
         text.push_str(&span.text);
         runs.push(inline_to_text_run(span, text_color));
     }
-    let leaf = next_leaf(text, runs, surface, separator, context);
+    let safe_links = links
+        .iter()
+        .filter(|(_, url)| is_safe_url(url))
+        .cloned()
+        .collect();
+    let leaf = next_leaf(text, runs, safe_links, surface, separator, context);
     if let Some(factory) = context.factory.as_deref_mut() {
         return div()
             .w_full()
@@ -720,7 +729,7 @@ fn raw_selectable_leaf(
     context: &mut MarkdownRenderContext<'_>,
 ) -> Option<gpui::AnyElement> {
     context.factory.as_ref()?;
-    let leaf = next_leaf(text, vec![run], surface, separator, context);
+    let leaf = next_leaf(text, vec![run], Vec::new(), surface, separator, context);
     context
         .factory
         .as_deref_mut()
