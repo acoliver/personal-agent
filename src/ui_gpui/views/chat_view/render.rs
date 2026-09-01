@@ -8,46 +8,21 @@
 
 use super::emoji::strip_emojis;
 use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
+use super::transcript::{derive_document_orders, transcript_row_leaf_count, TranscriptRow};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
-use crate::ui_gpui::components::markdown_content::{blocks_to_elements_with_color, MarkdownBlock};
+use crate::ui_gpui::components::markdown_content::blocks_to_elements_with_leaf_factory;
+use crate::ui_gpui::components::transcript_selection::{
+    TranscriptSelectionContext, TranscriptSelectionLeafFactory,
+};
 use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
-    canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels,
-    ScrollWheelEvent, SharedString,
+    canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels, SharedString,
 };
 use std::sync::Arc;
-
-/// Check if markdown blocks contain any links.
-///
-/// @plan:PLAN-20260402-ISSUE153.P02
-/// @requirement:REQ-MSG-LINK-002
-fn has_any_links(blocks: &[MarkdownBlock]) -> bool {
-    blocks.iter().any(|block| match block {
-        MarkdownBlock::Paragraph { links, .. } | MarkdownBlock::Heading { links, .. } => {
-            !links.is_empty()
-        }
-        MarkdownBlock::BlockQuote { blocks } => has_any_links(blocks),
-        MarkdownBlock::List { items, .. } => {
-            items.iter().any(|item_blocks| has_any_links(item_blocks))
-        }
-        MarkdownBlock::Table { header, rows, .. } => {
-            let header_has_links = header.iter().any(|cell| {
-                !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
-            });
-            let body_has_links = rows.iter().any(|row| {
-                row.iter().any(|cell| {
-                    !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
-                })
-            });
-            header_has_links || body_has_links
-        }
-        _ => false,
-    })
-}
 
 impl ChatView {
     /// Dispatch a `KeyDownEvent` from the root render node.
@@ -57,15 +32,14 @@ impl ChatView {
     pub(super) fn handle_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
+        window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let key = &event.keystroke.key;
-        let modifiers = &event.keystroke.modifiers;
-
-        if modifiers.platform {
-            self.handle_platform_key(key, cx);
+        if self.handle_platform_shortcut(event, window, cx) {
             return;
         }
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
 
         if self.sidebar_search_focused(cx) {
             match key.as_str() {
@@ -133,30 +107,36 @@ impl ChatView {
             "pagedown" => self.scroll_chat_page_down(cx),
             "backspace" => self.handle_backspace(cx),
             "enter" => self.handle_composer_enter(*modifiers, cx),
-            "escape" => {
-                if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
-                    // @plan PLAN-20260416-ISSUE173.P14-CR7
-                    // @requirement REQ-173-002.3
-                    // Emit the StopStreaming event only when we have a
-                    // conversation id to target, but always reset the local
-                    // composer state so the UI exits Stop mode even if we
-                    // have no active conversation id (the event and the
-                    // local composer state are independent concerns).
-                    if let Some(conversation_id) = self.state.active_conversation_id {
-                        self.emit(UserEvent::StopStreaming { conversation_id });
-                    }
-                    self.state.streaming = StreamingState::Idle;
-                    // Refocus so keyboard input works after stopping.
-                    self.focus_composer(cx);
-                    cx.notify();
-                }
-            }
+            "escape" => self.handle_escape_key(window, cx),
             _ => {}
         }
     }
 
+    fn handle_platform_shortcut(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let key = &event.keystroke.key;
+        let should_handle = Self::routes_platform_shortcut(
+            event.keystroke.modifiers,
+            key,
+            cfg!(not(target_os = "macos")),
+        );
+        if should_handle {
+            self.handle_platform_key(key, window, cx);
+        }
+        should_handle
+    }
+
     /// Handle Cmd+key shortcuts.
-    fn handle_platform_key(&mut self, key: &str, cx: &mut gpui::Context<Self>) {
+    fn handle_platform_key(
+        &mut self,
+        key: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
         match key {
             "h" => {
                 println!(">>> Cmd+H pressed - navigating to History <<<");
@@ -184,7 +164,8 @@ impl ChatView {
                 self.state.conversation_title_input.clear();
                 self.state.profile_dropdown_open = false;
                 self.state.chat_autoscroll_enabled = true;
-                self.chat_scroll_handle.scroll_to_bottom();
+                self.scroll_transcript_to_bottom();
+                self.refresh_transcript_selection_revisions();
                 cx.notify();
             }
             "t" => {
@@ -201,25 +182,8 @@ impl ChatView {
                     }
                 }
             }
-            "a" => {
-                if self.sidebar_search_focused(cx) {
-                    // select-all is a no-op for sidebar search (single-line)
-                } else {
-                    self.handle_select_all(cx);
-                }
-            }
-            "c" => {
-                let text = if self.sidebar_search_focused(cx) {
-                    self.state.sidebar_search_query.clone()
-                } else if self.state.conversation_title_editing {
-                    self.state.conversation_title_input.clone()
-                } else {
-                    self.state.input_text.clone()
-                };
-                if !text.is_empty() {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                }
-            }
+            "a" => self.select_all_for_focused_surface(window, cx),
+            "c" => self.copy_selection_or_input(window, cx),
             "x" => {
                 if self.sidebar_search_focused(cx) {
                     let text = self.state.sidebar_search_query.clone();
@@ -256,86 +220,126 @@ impl ChatView {
     /// Render the chat area with messages
     /// @plan PLAN-20250130-GPUIREDUX.P03
     pub(super) fn render_chat_area(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let messages = self.state.messages.clone();
-        let streaming = self.state.streaming.clone();
+        let rows: Arc<[TranscriptRow]> = self.transcript_rows().into();
+        let row_count = rows.len();
         let show_thinking = self.state.show_thinking;
         let filter_emoji = self.state.filter_emoji;
+        let row_leaf_counts: Vec<usize> = rows
+            .iter()
+            .map(|&row| {
+                transcript_row_leaf_count(
+                    row,
+                    &self.state.messages,
+                    &self.state.streaming,
+                    filter_emoji,
+                )
+            })
+            .collect();
+        let document_orders: Arc<[u64]> = derive_document_orders(&row_leaf_counts).into();
+        let copy_document = self.transcript_copy_document(&rows);
+        let scroll_offset = self.transcript_list_state.scroll_px_offset_for_scrollbar();
+        self.sync_transcript_list_item_count(row_count);
+
         div()
             .id("chat-area")
             .flex_1()
             .min_h_0()
             .w_full()
             .bg(Theme::bg_base())
-            .overflow_x_hidden()
-            .overflow_y_scroll()
-            .track_scroll(&self.chat_scroll_handle)
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
-                this.refresh_autoscroll_state_after_wheel(event);
-                cx.notify();
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _event, _window, cx| {
-                    this.refresh_autoscroll_state_from_handle();
-                    cx.notify();
-                }),
-            )
-            .p(px(12.0))
+            .overflow_hidden()
             .flex()
             .flex_col()
-            .items_stretch()
-            .justify_start()
-            .gap(px(8.0))
-            // Empty state
-            .when(
-                messages.is_empty() && !matches!(streaming, StreamingState::Streaming { .. }),
-                |d| {
-                    d.items_center().justify_center().child(
-                        div()
-                            .text_size(px(Theme::font_size_body()))
-                            .text_color(Theme::text_secondary())
-                            .child("No messages yet"),
-                    )
-                },
-            )
-            // Messages
-            .when(!messages.is_empty(), |d| {
-                d.children(messages.into_iter().enumerate().map(|(i, msg)| {
-                    let id = SharedString::from(format!("msg-{i}"));
+            .when(row_count == 0, |d| {
+                d.items_center().justify_center().child(
                     div()
-                        .id(id)
-                        .w_full()
-                        .flex()
-                        .justify_start()
-                        .child(Self::render_message(&msg, show_thinking, filter_emoji))
-                }))
+                        .text_size(px(Theme::font_size_body()))
+                        .text_color(Theme::text_secondary())
+                        .child("No messages yet"),
+                )
             })
-            // Approval bubbles (inline in message stream) - queue: only first pending
-            .children(
-                self.state
+            .when(row_count > 0, |d| {
+                d.child(
+                    gpui::list(
+                        self.transcript_list_state.clone(),
+                        cx.processor(move |this, index, _window, cx| {
+                            let row = rows[index];
+                            let document_order = document_orders[index];
+                            let selection = this.transcript_selection_context(
+                                row,
+                                scroll_offset,
+                                document_order,
+                                Arc::clone(&copy_document),
+                            );
+                            div()
+                                .w_full()
+                                .when(index + 1 < row_count, |d| d.pb(px(8.0)))
+                                .child(this.render_transcript_row(
+                                    row,
+                                    show_thinking,
+                                    filter_emoji,
+                                    selection,
+                                    cx,
+                                ))
+                                .into_any_element()
+                        }),
+                    )
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .p(px(super::TRANSCRIPT_LIST_PADDING_VERTICAL)),
+                )
+            })
+    }
+
+    fn render_transcript_row(
+        &self,
+        row: TranscriptRow,
+        show_thinking: bool,
+        filter_emoji: bool,
+        selection: Option<TranscriptSelectionContext>,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        match row {
+            TranscriptRow::Message(index) => {
+                let selection = selection.expect("message row requires selectable content");
+                let id = SharedString::from(format!("msg-{index}"));
+                div()
+                    .id(id)
+                    .w_full()
+                    .flex()
+                    .justify_start()
+                    .child(Self::render_message(
+                        &self.state.messages[index],
+                        show_thinking,
+                        filter_emoji,
+                        selection,
+                    ))
+                    .into_any_element()
+            }
+            TranscriptRow::Approval(index) => {
+                let conversation_id = self
+                    .state
                     .active_conversation_id
-                    .and_then(|conversation_id| self.state.approval_bubbles.get(&conversation_id))
-                    .into_iter()
-                    .flat_map(|bubbles| bubbles.iter())
-                    .enumerate()
-                    .filter(|(_, bubble)| {
-                        matches!(bubble.state, super::state::ApprovalBubbleState::Pending)
-                    })
-                    .take(1)
-                    .map(|(i, bubble)| {
-                        let id = SharedString::from(format!("approval-{i}"));
-                        div()
-                            .id(id)
-                            .w_full()
-                            .flex()
-                            .justify_start()
-                            .child(self.render_approval_bubble(bubble, cx))
-                    }),
-            )
-            // Streaming message
-            .when(matches!(streaming, StreamingState::Streaming { .. }), |d| {
-                d.child(self.render_streaming_message(&streaming, show_thinking, filter_emoji))
-            })
+                    .expect("approval row requires an active conversation");
+                let bubble = &self.state.approval_bubbles[&conversation_id][index];
+                let id = SharedString::from(format!("approval-{index}"));
+                div()
+                    .id(id)
+                    .w_full()
+                    .flex()
+                    .justify_start()
+                    .child(self.render_approval_bubble(bubble, cx))
+                    .into_any_element()
+            }
+            TranscriptRow::Streaming => self
+                .render_streaming_message(
+                    &self.state.streaming,
+                    show_thinking,
+                    filter_emoji,
+                    selection.expect("streaming row requires selectable content"),
+                )
+                .into_any_element(),
+        }
     }
 
     /// Render the streaming assistant message bubble.
@@ -344,6 +348,7 @@ impl ChatView {
         streaming: &StreamingState,
         show_thinking: bool,
         filter_emoji: bool,
+        selection: TranscriptSelectionContext,
     ) -> impl IntoElement {
         let (content, _done) = match streaming {
             StreamingState::Streaming { content, done } => {
@@ -360,7 +365,7 @@ impl ChatView {
         } else {
             Arc::new(content)
         };
-        let mut bubble = AssistantBubble::new(display_content)
+        let mut bubble = AssistantBubble::new(display_content, selection)
             .model_id("streaming")
             .show_thinking(show_thinking)
             .streaming(true);
@@ -379,11 +384,12 @@ impl ChatView {
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
+        selection: TranscriptSelectionContext,
     ) -> impl IntoElement {
         match msg.role {
-            MessageRole::User => Self::render_user_message(msg),
+            MessageRole::User => Self::render_user_message(msg, &selection),
             MessageRole::Assistant => {
-                Self::render_assistant_message(msg, show_thinking, filter_emoji)
+                Self::render_assistant_message(msg, show_thinking, filter_emoji, selection)
             }
         }
     }
@@ -392,31 +398,34 @@ impl ChatView {
     /// @plan:PLAN-20260402-ISSUE153.P02
     /// @plan:PLAN-20260407-ISSUE172.P04 (markdown caching)
     /// @requirement:REQ-MSG-LINK-001
-    pub(super) fn render_user_message(msg: &ChatMessage) -> gpui::AnyElement {
-        // Use cached markdown blocks for finalized messages
+    pub(super) fn render_user_message(
+        msg: &ChatMessage,
+        selection: &TranscriptSelectionContext,
+    ) -> gpui::AnyElement {
         let blocks = msg.get_or_parse_markdown();
-        // Use user_bubble_text() for proper contrast on green background
         let text_color = Theme::user_bubble_text();
-        let rendered = blocks_to_elements_with_color(&blocks, text_color);
-        let has_links = has_any_links(&blocks);
+        let mut factory = TranscriptSelectionLeafFactory::new(
+            selection.scroll_offset,
+            selection.content_key,
+            Arc::clone(&selection.copy_document),
+        );
+        let mut document_order = selection.document_order;
+        let rendered = blocks_to_elements_with_leaf_factory(
+            &blocks,
+            text_color,
+            Theme::user_bubble_bg(),
+            &mut factory,
+            &mut document_order,
+            selection.first_copy_separator,
+        );
 
-        let raw_content = Arc::clone(&msg.content);
-        let mut bubble = div()
+        let bubble = div()
             .max_w(px(300.0))
             .px(px(10.0))
             .py(px(10.0))
             .rounded(px(12.0))
             .text_size(px(Theme::font_size_mono()))
             .children(rendered);
-
-        // Only enable click-to-copy when no links are present
-        if !has_links {
-            bubble = bubble
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string((*raw_content).clone()));
-                });
-        }
 
         div()
             .w_full()
@@ -435,18 +444,17 @@ impl ChatView {
         msg: &ChatMessage,
         show_thinking: bool,
         filter_emoji: bool,
+        selection: TranscriptSelectionContext,
     ) -> gpui::AnyElement {
-        let bubble = if filter_emoji {
+        let mut bubble = if filter_emoji {
             // When filtering emojis, we need a new string - no cache can be used
-            AssistantBubble::new(strip_emojis(&msg.content))
+            AssistantBubble::new(strip_emojis(&msg.content), selection)
         } else {
             // Pass Arc clone directly - no heap allocation
             // Also pass cached markdown blocks for finalized messages
-            AssistantBubble::new(Arc::clone(&msg.content))
+            AssistantBubble::new(Arc::clone(&msg.content), selection)
                 .with_cached_blocks(msg.get_or_parse_markdown())
         };
-
-        let mut bubble = bubble;
 
         if let Some(ref model_label) = msg.model_label {
             bubble = bubble.model_id(model_label.clone());
@@ -756,7 +764,8 @@ impl ChatView {
                                 this.emit(UserEvent::StopStreaming { conversation_id });
                             }
                             this.state.streaming = StreamingState::Idle;
-                            this.maybe_scroll_chat_to_bottom(cx);
+                            this.refresh_transcript_selection_revisions();
+                            this.maybe_scroll_chat_to_bottom();
                             // Refocus the composer so keyboard input works
                             // immediately after stopping — without this,
                             // GPUI leaves focus on the now-vanished Stop
@@ -883,6 +892,7 @@ impl gpui::Render for ChatView {
     #[allow(clippy::too_many_lines)]
     #[rustfmt::skip]
     fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        self.ensure_selection_auto_scroll_subscription(window, cx);
         let app_mode = Self::current_app_mode(cx);
         let show_sidebar = app_mode == AppMode::Popout && self.state.sidebar_visible;
 
@@ -909,8 +919,8 @@ impl gpui::Render for ChatView {
             )
 
             .on_key_down(
-                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                    this.handle_key_down(event, cx);
+                cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                    this.handle_key_down(event, window, cx);
                 }),
             )
             .relative()

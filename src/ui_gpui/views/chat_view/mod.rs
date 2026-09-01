@@ -15,10 +15,14 @@ mod emoji;
 mod focus;
 
 mod ime;
+mod message_selection;
 mod render;
 mod render_bars;
 #[cfg(test)]
 mod render_bars_tests;
+
+#[cfg(test)]
+mod selection_autoscroll_tests;
 
 #[cfg(test)]
 mod snapshot_tests;
@@ -26,8 +30,10 @@ mod snapshot_tests;
 mod render_bars_export;
 
 mod render_sidebar;
+mod selection_autoscroll;
 mod snapshot;
 mod state;
+mod transcript;
 
 // ── Re-exports so downstream consumers (mod.rs, tests, main_panel.rs) ──
 // see the same type paths as before extraction.
@@ -41,6 +47,7 @@ use crate::ui_gpui::bridge::GpuiBridge;
 use crate::ui_gpui::selection_intent_channel;
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::conversation_list::{ConversationListMode, ConversationListView};
+use transcript::build_transcript_rows;
 
 /// Stashes unsent input text per conversation so it survives popup
 /// close/reopen cycles. The popup is destroyed and recreated on each toggle,
@@ -67,12 +74,22 @@ pub(crate) fn take_draft(conversation_id: Uuid) -> Option<String> {
         .and_then(|mut drafts| drafts.remove(&conversation_id))
 }
 use gpui::{
-    point, prelude::*, px, Entity, FocusHandle, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+    prelude::*, px, Entity, FocusHandle, ListAlignment, ListOffset, ListScrollEvent, ListState,
+    Pixels,
 };
+use gpui_selection_vendor::{AutoScroll, AutoScrollLease};
+use message_selection::TranscriptSelectionRevisions;
 #[cfg(test)]
 use std::cell::Cell;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Vertical padding applied to each side of the transcript list container.
+///
+/// Production rendering applies `.p(px(12.0))` around the list; this constant
+/// centralizes that value so auto-scroll offset calculations and rendering
+/// cannot diverge.
+pub(super) const TRANSCRIPT_LIST_PADDING_VERTICAL: f32 = 12.0;
 
 /// Chat view component with event handling
 ///
@@ -83,13 +100,26 @@ pub struct ChatView {
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) conversation_id: Option<Uuid>,
     pub(super) selection_generation: u64,
-    pub(super) chat_scroll_handle: ScrollHandle,
+    pub(super) transcript_list_state: ListState,
+    transcript_selection_revisions: TranscriptSelectionRevisions,
     /// Embedded shared conversation list rendered inside the popout sidebar
     /// (Inline mode). The same component type is used for the popin History
     /// panel via `HistoryPanelView`.
     /// @plan PLAN-20260420-ISSUE180.P03
     /// @requirement REQ-180-001
     pub(super) conversation_list: Entity<ConversationListView>,
+    /// Retained drag auto-scroll command subscription; exactly one per
+    /// `ChatView`, acquired from the render lifecycle so it exists before the
+    /// selection layer's first paint.
+    pub(super) selection_auto_scroll_subscription: Option<AutoScrollLease>,
+    /// Single 16 ms repeat loop and pacing state for transcript drag
+    /// auto-scroll. `Some` commands start or retarget it, `None` stops it,
+    /// and it never duplicates while running.
+    pub(super) selection_auto_scroll: AutoScroll,
+    #[cfg(test)]
+    pub(super) selection_auto_scroll_ticks: Cell<usize>,
+    #[cfg(test)]
+    pub(super) selection_auto_scroll_subscriptions: Cell<usize>,
     #[cfg(test)]
     pub(super) maybe_scroll_chat_to_bottom_invocations: Cell<usize>,
 }
@@ -106,16 +136,37 @@ impl ChatView {
     }
 
     pub fn new(state: ChatState, cx: &mut gpui::Context<Self>) -> Self {
+        let transcript_list_state = ListState::new(0, ListAlignment::Bottom, px(2048.0));
+        transcript_list_state.set_scroll_handler(cx.listener(
+            |this, event: &ListScrollEvent, _, _cx| {
+                this.state.chat_autoscroll_enabled = !event.is_scrolled;
+            },
+        ));
+
         let conversation_list =
             cx.new(|child_cx| ConversationListView::new(ConversationListMode::Inline, child_cx));
+        let mut transcript_selection_revisions = TranscriptSelectionRevisions::default();
+        transcript_selection_revisions.sync(
+            state.active_conversation_id,
+            &state.messages,
+            &state.streaming,
+            state.filter_emoji,
+        );
         Self {
             state,
             focus_handle: cx.focus_handle(),
             bridge: None,
             conversation_id: None,
             selection_generation: 0,
-            chat_scroll_handle: ScrollHandle::new(),
+            transcript_list_state,
+            transcript_selection_revisions,
             conversation_list,
+            selection_auto_scroll_subscription: None,
+            selection_auto_scroll: AutoScroll::default(),
+            #[cfg(test)]
+            selection_auto_scroll_ticks: Cell::new(0),
+            #[cfg(test)]
+            selection_auto_scroll_subscriptions: Cell::new(0),
             #[cfg(test)]
             maybe_scroll_chat_to_bottom_invocations: Cell::new(0),
         }
@@ -130,57 +181,56 @@ impl ChatView {
         }
     }
 
-    pub(super) fn refresh_autoscroll_state_from_handle(&mut self) {
-        let offset = self.chat_scroll_handle.offset();
-        let max_offset = self.chat_scroll_handle.max_offset();
-        let distance_from_bottom = (max_offset.height + offset.y).abs();
-        self.state.chat_autoscroll_enabled = distance_from_bottom <= px(8.0);
+    fn transcript_rows(&self) -> Vec<transcript::TranscriptRow> {
+        let approval_bubbles = self
+            .state
+            .active_conversation_id
+            .and_then(|conversation_id| self.state.approval_bubbles.get(&conversation_id))
+            .map_or(&[][..], Vec::as_slice);
+        build_transcript_rows(
+            self.state.messages.len(),
+            approval_bubbles,
+            &self.state.streaming,
+        )
     }
 
-    pub(super) fn refresh_autoscroll_state_after_wheel(&mut self, event: &ScrollWheelEvent) {
-        let delta = match event.delta {
-            ScrollDelta::Pixels(delta) => delta,
-            ScrollDelta::Lines(delta) => point(px(delta.x * 16.0), px(delta.y * 16.0)),
-        };
-
-        // Positive Y moves the viewport upward (away from bottom) in GPUI's scroll model.
-        // Negative Y moves toward bottom.
-        if delta.y > px(0.0) {
-            self.state.chat_autoscroll_enabled = false;
-            return;
+    pub(super) fn sync_transcript_list_item_count(&self, row_count: usize) {
+        let old_count = self.transcript_list_state.item_count();
+        if old_count < row_count {
+            self.transcript_list_state
+                .splice(old_count..old_count, row_count - old_count);
+        } else if old_count > row_count {
+            self.transcript_list_state.splice(row_count..old_count, 0);
         }
+    }
 
-        // Re-enable sticky-follow only once the viewport is actually near the bottom.
-        if delta.y < px(0.0) {
-            self.refresh_autoscroll_state_from_handle();
-            return;
-        }
+    pub(super) fn refresh_autoscroll_state_from_list(&mut self) {
+        let scroll_top = self.transcript_list_state.logical_scroll_top();
+        self.state.chat_autoscroll_enabled =
+            scroll_top.item_ix >= self.transcript_list_state.item_count();
+    }
 
-        self.refresh_autoscroll_state_from_handle();
+    pub(super) fn scroll_transcript_to_bottom(&self) {
+        self.transcript_list_state
+            .reset(self.transcript_rows().len());
     }
 
     /// Scroll to bottom if autoscroll is enabled.
     ///
-    /// Before issue #172 fix: This method triggered 4 re-renders via 3 nested
-    /// `cx.defer` chains, each calling `cx.notify()`.
-    ///
-    /// After fix: Single deferred scroll without extra notify. The caller's
-    /// `cx.notify()` is sufficient to trigger the needed re-render.
+    /// Bottom-aligned `ListState` remains pinned while its logical offset is
+    /// unset. Resetting restores that state after explicit navigation.
     ///
     /// @plan PLAN-20260407-ISSUE172.P06
-    pub(super) fn maybe_scroll_chat_to_bottom(&self, cx: &mut gpui::Context<Self>) {
+    pub(super) fn maybe_scroll_chat_to_bottom(&self) {
         if self.state.chat_autoscroll_enabled {
             #[cfg(test)]
             self.maybe_scroll_chat_to_bottom_invocations
                 .set(self.maybe_scroll_chat_to_bottom_invocations.get() + 1);
 
-            self.chat_scroll_handle.scroll_to_bottom();
-            // Single deferred scroll without extra notify.
-            // The caller's cx.notify() handles the re-render.
-            let scroll_handle = self.chat_scroll_handle.clone();
-            cx.defer(move |_| {
-                scroll_handle.scroll_to_bottom();
-            });
+            let scroll_top = self.transcript_list_state.logical_scroll_top();
+            if scroll_top.item_ix < self.transcript_list_state.item_count() {
+                self.scroll_transcript_to_bottom();
+            }
         }
     }
 
@@ -298,6 +348,7 @@ impl ChatView {
         self.state.active_conversation_id = Some(id);
         self.state.sync_conversation_dropdown_index();
         self.state.sync_conversation_title_from_active();
+        self.refresh_transcript_selection_revisions();
     }
 
     /// Emit a `UserEvent` through the bridge
@@ -350,7 +401,7 @@ impl ChatView {
         self.state.conversation_title_editing = false;
         if switching_conversation {
             self.state.chat_autoscroll_enabled = true;
-            self.chat_scroll_handle.scroll_to_bottom();
+            self.scroll_transcript_to_bottom();
         }
         selection_intent_channel().request_select(conversation_id);
         cx.notify();
@@ -676,43 +727,32 @@ impl ChatView {
     }
 
     pub fn scroll_chat_page_up(&mut self, cx: &mut gpui::Context<Self>) {
-        let current_offset = self.chat_scroll_handle.offset();
-        let viewport_height = self.chat_scroll_handle.bounds().size.height;
+        let viewport_height = self.transcript_list_state.viewport_bounds().size.height;
         let page_delta = viewport_height.max(px(80.0));
-        let target_offset = (current_offset.y + page_delta).min(Pixels::ZERO);
 
-        self.chat_scroll_handle
-            .set_offset(point(current_offset.x, target_offset));
+        self.transcript_list_state.scroll_by(-page_delta);
         self.state.chat_autoscroll_enabled = false;
         cx.notify();
     }
 
     pub fn scroll_chat_page_down(&mut self, cx: &mut gpui::Context<Self>) {
-        let current_offset = self.chat_scroll_handle.offset();
-        let viewport_height = self.chat_scroll_handle.bounds().size.height;
+        let viewport_height = self.transcript_list_state.viewport_bounds().size.height;
         let page_delta = viewport_height.max(px(80.0));
-        let max_offset = self.chat_scroll_handle.max_offset();
-        let target_offset = (current_offset.y - page_delta).max(-max_offset.height);
 
-        self.chat_scroll_handle
-            .set_offset(point(current_offset.x, target_offset));
-        self.state.chat_autoscroll_enabled =
-            max_offset.height <= Pixels::ZERO || target_offset <= -max_offset.height + px(8.0);
+        self.transcript_list_state.scroll_by(page_delta);
+        self.refresh_autoscroll_state_from_list();
         cx.notify();
     }
 
     pub fn scroll_chat_to_top(&mut self, cx: &mut gpui::Context<Self>) {
-        let current_offset = self.chat_scroll_handle.offset();
-        self.chat_scroll_handle
-            .set_offset(point(current_offset.x, Pixels::ZERO));
+        self.transcript_list_state.scroll_to(ListOffset::default());
         self.state.chat_autoscroll_enabled = false;
         cx.notify();
     }
 
     pub fn scroll_chat_to_end(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.chat_autoscroll_enabled = true;
-        self.chat_scroll_handle.scroll_to_bottom();
-        self.maybe_scroll_chat_to_bottom(cx);
+        self.maybe_scroll_chat_to_bottom();
         cx.notify();
     }
 
@@ -808,7 +848,8 @@ impl ChatView {
             content: String::new(),
             done: false,
         };
-        self.maybe_scroll_chat_to_bottom(cx);
+        self.refresh_transcript_selection_revisions();
+        self.maybe_scroll_chat_to_bottom();
         cx.notify();
     }
 }
@@ -816,6 +857,10 @@ impl ChatView {
 #[cfg(test)]
 #[path = "approval_tests.rs"]
 mod approval_tests;
+
+#[cfg(test)]
+#[path = "message_selection_tests.rs"]
+mod message_selection_tests;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

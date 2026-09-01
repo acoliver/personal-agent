@@ -10,6 +10,7 @@ use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewId;
 use crate::ui_gpui::theme::{active_font_size, set_active_font_size, Theme, DEFAULT_FONT_SIZE};
 use gpui::{div, prelude::*, Focusable, MouseButton};
+use gpui_selection_vendor::TextSelectionLayer;
 
 use super::routing::{
     NavigateBack, NavigateToHistory, NavigateToSettings, NewConversation, ToggleSidebar,
@@ -318,5 +319,6 @@ impl gpui::Render for MainPanel {
                 }),
             )
             .child(self.render_view_content(current_view))
+            .child(TextSelectionLayer)
     }
 }

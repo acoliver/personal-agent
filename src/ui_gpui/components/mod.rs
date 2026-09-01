@@ -27,8 +27,11 @@ pub mod emoji_filter_icon;
 // Issue 152: Message bubble copy action icons
 pub mod copy_icons;
 
+// Issue 151: Cross-message transcript selection
+pub(crate) mod transcript_selection;
+
 // Issue 62: Markdown Rendering (TDD Phase)
-pub(crate) mod markdown_content;
+pub mod markdown_content;
 
 // Phase 02: Component Library additions
 pub mod divider;

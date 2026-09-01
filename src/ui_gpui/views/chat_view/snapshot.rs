@@ -27,7 +27,6 @@ impl ChatView {
         was_streaming: bool,
         streaming: &StreamingStoreSnapshot,
         should_reset_autoscroll: bool,
-        cx: &mut gpui::Context<Self>,
     ) {
         let loaded_messages_scroll = previous_conversation_id == selected_conversation_id
             && previous_selection_generation == self.selection_generation
@@ -40,7 +39,7 @@ impl ChatView {
 
         if self.state.chat_autoscroll_enabled && (should_reset_autoscroll || loaded_messages_scroll)
         {
-            self.maybe_scroll_chat_to_bottom(cx);
+            self.maybe_scroll_chat_to_bottom();
         }
     }
 
@@ -165,7 +164,6 @@ impl ChatView {
             was_streaming,
             &streaming,
             should_reset_autoscroll,
-            cx,
         );
 
         let was_thinking = self
@@ -185,10 +183,11 @@ impl ChatView {
                 || has_thinking
                 || matches!(self.state.streaming, StreamingState::Streaming { .. }))
         {
-            self.maybe_scroll_chat_to_bottom(cx);
+            self.maybe_scroll_chat_to_bottom();
         }
 
         self.sync_conversation_list_state(cx);
+        self.refresh_transcript_selection_revisions();
 
         cx.notify();
     }

@@ -9,10 +9,7 @@ use crate::presentation::view_command::{
 use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, StreamingStoreSnapshot};
 use crate::ui_gpui::bridge::GpuiBridge;
 use chrono::Utc;
-use gpui::{
-    point, AppContext, KeyDownEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
-    TestAppContext, TouchPhase,
-};
+use gpui::{AppContext, KeyDownEvent, Keystroke, ListOffset, Modifiers, TestAppContext};
 use std::sync::Arc;
 
 // ── messages_from_payload tests ──────────────────────────────────────────
@@ -199,22 +196,22 @@ async fn home_pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(cx: &m
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();
 
-    visual_cx.update(|_window, app| {
+    visual_cx.update(|window, app| {
         view.update(app, |view: &mut ChatView, cx| {
             view.state.chat_autoscroll_enabled = true;
-            view.handle_key_down(&chat_key_event("home"), cx);
+            view.handle_key_down(&chat_key_event("home"), window, cx);
             assert!(!view.state.chat_autoscroll_enabled);
 
             view.state.chat_autoscroll_enabled = true;
-            view.handle_key_down(&chat_key_event("pageup"), cx);
+            view.handle_key_down(&chat_key_event("pageup"), window, cx);
             assert!(!view.state.chat_autoscroll_enabled);
 
             view.state.chat_autoscroll_enabled = true;
-            view.handle_key_down(&chat_key_event("pagedown"), cx);
+            view.handle_key_down(&chat_key_event("pagedown"), window, cx);
             assert!(view.state.chat_autoscroll_enabled);
 
             view.state.chat_autoscroll_enabled = false;
-            view.handle_key_down(&chat_key_event("end"), cx);
+            view.handle_key_down(&chat_key_event("end"), window, cx);
             assert!(view.state.chat_autoscroll_enabled);
 
             view.state.chat_autoscroll_enabled = false;
@@ -229,6 +226,7 @@ async fn home_pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(cx: &m
                     },
                     ..chat_key_event("right")
                 },
+                window,
                 cx,
             );
             assert!(view.state.chat_autoscroll_enabled);
@@ -787,27 +785,25 @@ async fn handle_enter_reenables_autoscroll_before_starting_stream(cx: &mut TestA
 }
 
 #[gpui::test]
-async fn wheel_scroll_down_reenables_autoscroll_only_when_near_bottom(cx: &mut TestAppContext) {
+async fn list_scroll_state_reenables_autoscroll_only_at_bottom(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();
 
     visual_cx.update(|_window, app| {
         view.update(app, |view: &mut ChatView, _cx| {
-            let downward_event = ScrollWheelEvent {
-                position: point(px(0.0), px(0.0)),
-                delta: ScrollDelta::Pixels(point(px(0.0), px(-16.0))),
-                modifiers: Modifiers::default(),
-                touch_phase: TouchPhase::Moved,
-            };
-
-            view.state.chat_autoscroll_enabled = false;
-            view.chat_scroll_handle
-                .set_offset(point(px(0.0), px(-120.0)));
-            view.refresh_autoscroll_state_after_wheel(&downward_event);
+            view.transcript_list_state.reset(3);
+            view.transcript_list_state.scroll_to(ListOffset {
+                item_ix: 1,
+                offset_in_item: px(12.0),
+            });
+            view.refresh_autoscroll_state_from_list();
             assert!(!view.state.chat_autoscroll_enabled);
 
-            view.chat_scroll_handle.set_offset(point(px(0.0), px(0.0)));
-            view.refresh_autoscroll_state_after_wheel(&downward_event);
+            view.transcript_list_state.scroll_to(ListOffset {
+                item_ix: 3,
+                offset_in_item: px(0.0),
+            });
+            view.refresh_autoscroll_state_from_list();
             assert!(view.state.chat_autoscroll_enabled);
         });
     });
@@ -819,7 +815,7 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
     let mut visual_cx = cx.add_empty_window().clone();
     let (bridge, user_rx) = make_chat_bridge();
 
-    visual_cx.update(|_window, app| {
+    visual_cx.update(|window, app| {
         view.update(app, |view: &mut ChatView, cx| {
             view.set_bridge(bridge.clone());
             view.state.input_text = "firstsecond".to_string();
@@ -833,6 +829,7 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
                         ..Modifiers::default()
                     },
                 ),
+                window,
                 cx,
             );
 
@@ -849,6 +846,7 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
                         ..Modifiers::default()
                     },
                 ),
+                window,
                 cx,
             );
 
@@ -865,6 +863,7 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
                         ..Modifiers::default()
                     },
                 ),
+                window,
                 cx,
             );
 
@@ -882,13 +881,13 @@ async fn plain_enter_still_submits_message(cx: &mut TestAppContext) {
     let mut visual_cx = cx.add_empty_window().clone();
     let (bridge, user_rx) = make_chat_bridge();
 
-    visual_cx.update(|_window, app| {
+    visual_cx.update(|window, app| {
         view.update(app, |view: &mut ChatView, cx| {
             view.set_bridge(bridge.clone());
             view.state.input_text = "send me".to_string();
             view.state.cursor_position = view.state.input_text.len();
 
-            view.handle_key_down(&chat_key_event("enter"), cx);
+            view.handle_key_down(&chat_key_event("enter"), window, cx);
 
             assert_eq!(
                 user_rx.try_recv().ok(),
@@ -917,14 +916,14 @@ async fn send_message_targets_selected_conversation(cx: &mut TestAppContext) {
     let (bridge, user_rx) = make_chat_bridge();
     let conversation_id = Uuid::new_v4();
 
-    visual_cx.update(|_window, app| {
+    visual_cx.update(|window, app| {
         view.update(app, |view: &mut ChatView, cx| {
             view.set_bridge(bridge.clone());
             view.conversation_id = Some(conversation_id);
             view.state.input_text = "continue here".to_string();
             view.state.cursor_position = view.state.input_text.len();
 
-            view.handle_key_down(&chat_key_event("enter"), cx);
+            view.handle_key_down(&chat_key_event("enter"), window, cx);
 
             assert_eq!(
                 user_rx.try_recv().ok(),
