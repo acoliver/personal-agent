@@ -260,6 +260,7 @@ impl ChatView {
             })
             .collect();
         let document_orders: Arc<[u64]> = derive_document_orders(&row_leaf_counts).into();
+        let copy_document = self.transcript_copy_document(&rows);
         let scroll_offset = self.transcript_list_state.scroll_px_offset_for_scrollbar();
         self.sync_transcript_list_item_count(row_count);
 
@@ -291,6 +292,7 @@ impl ChatView {
                                 row,
                                 scroll_offset,
                                 document_order,
+                                Arc::clone(&copy_document),
                             );
                             div()
                                 .w_full()
@@ -409,7 +411,7 @@ impl ChatView {
         selection: TranscriptSelectionContext,
     ) -> impl IntoElement {
         match msg.role {
-            MessageRole::User => Self::render_user_message(msg, selection),
+            MessageRole::User => Self::render_user_message(msg, &selection),
             MessageRole::Assistant => {
                 Self::render_assistant_message(msg, show_thinking, filter_emoji, selection)
             }
@@ -422,12 +424,15 @@ impl ChatView {
     /// @requirement:REQ-MSG-LINK-001
     pub(super) fn render_user_message(
         msg: &ChatMessage,
-        selection: TranscriptSelectionContext,
+        selection: &TranscriptSelectionContext,
     ) -> gpui::AnyElement {
         let blocks = msg.get_or_parse_markdown();
         let text_color = Theme::user_bubble_text();
-        let mut factory =
-            TranscriptSelectionLeafFactory::new(selection.scroll_offset, selection.content_key);
+        let mut factory = TranscriptSelectionLeafFactory::new(
+            selection.scroll_offset,
+            selection.content_key,
+            Arc::clone(&selection.copy_document),
+        );
         let mut document_order = selection.document_order;
         let rendered = blocks_to_elements_with_leaf_factory(
             &blocks,

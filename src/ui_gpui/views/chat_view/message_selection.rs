@@ -3,7 +3,10 @@
 use super::emoji::strip_emojis;
 use super::state::{ChatMessage, MessageRole, StreamingState};
 use super::transcript::TranscriptRow;
-use crate::ui_gpui::components::transcript_selection::TranscriptSelectionContext;
+use crate::ui_gpui::components::markdown_content::{markdown_copy_leaves, parse_markdown_blocks};
+use crate::ui_gpui::components::transcript_selection::{
+    TranscriptCopyDocument, TranscriptSelectionContext,
+};
 use gpui::{Pixels, Point};
 use gpui_selection_vendor::{TextSelection, TextSelectionContentKey};
 use std::sync::{
@@ -182,11 +185,51 @@ impl super::ChatView {
         self.transcript_selection_revisions.contains(key)
     }
 
+    pub(super) fn transcript_copy_document(
+        &self,
+        rows: &[TranscriptRow],
+    ) -> Arc<TranscriptCopyDocument> {
+        let messages = rows
+            .iter()
+            .filter_map(|row| match *row {
+                TranscriptRow::Message(index) => {
+                    let message = &self.state.messages[index];
+                    let leaves =
+                        if self.state.filter_emoji && message.role == MessageRole::Assistant {
+                            markdown_copy_leaves(&parse_markdown_blocks(&strip_emojis(
+                                &message.content,
+                            )))
+                        } else {
+                            markdown_copy_leaves(&message.get_or_parse_markdown())
+                        };
+                    Some((self.message_selection_content_key(index), leaves))
+                }
+                TranscriptRow::Streaming => {
+                    let StreamingState::Streaming { content, .. } = &self.state.streaming else {
+                        return None;
+                    };
+                    let content = if self.state.filter_emoji {
+                        strip_emojis(content)
+                    } else {
+                        content.clone()
+                    };
+                    Some((
+                        self.streaming_selection_content_key(),
+                        markdown_copy_leaves(&parse_markdown_blocks(&format!("{content}▋"))),
+                    ))
+                }
+                TranscriptRow::Approval(_) => None,
+            })
+            .collect();
+        Arc::new(TranscriptCopyDocument::new(messages))
+    }
+
     pub(super) fn transcript_selection_context(
         &self,
         row: TranscriptRow,
         scroll_offset: Point<Pixels>,
         document_order: u64,
+        copy_document: Arc<TranscriptCopyDocument>,
     ) -> Option<TranscriptSelectionContext> {
         let content_key = match row {
             TranscriptRow::Message(index) => self.message_selection_content_key(index),
@@ -198,6 +241,7 @@ impl super::ChatView {
             document_order,
             first_copy_separator: if document_order == 0 { "" } else { "\n\n" },
             content_key,
+            copy_document,
         })
     }
 
@@ -206,7 +250,7 @@ impl super::ChatView {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let selected_text = if let Some(keys) = TextSelection::content_keys(window, cx) {
+        if let Some(keys) = TextSelection::content_keys(window, cx) {
             if !keys
                 .into_iter()
                 .all(|key| self.selection_content_key_is_current(key))
@@ -214,16 +258,17 @@ impl super::ChatView {
                 TextSelection::clear(window, cx);
                 return;
             }
-            TextSelection::selected_text(window, cx)
-        } else if TextSelection::has_selection(window, cx) {
+            let selected_text = TextSelection::selected_text(window, cx);
+            if !selected_text.is_empty() {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected_text));
+            }
+            return;
+        }
+        if TextSelection::has_selection(window, cx) {
             TextSelection::clear(window, cx);
             return;
-        } else {
-            String::new()
-        };
-        let text = if !selected_text.is_empty() {
-            selected_text
-        } else if self.sidebar_search_focused(cx) {
+        }
+        let text = if self.sidebar_search_focused(cx) {
             self.state.sidebar_search_query.clone()
         } else if self.state.conversation_title_editing {
             self.state.conversation_title_input.clone()

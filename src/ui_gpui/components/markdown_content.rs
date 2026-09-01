@@ -970,9 +970,11 @@ fn render_image_fallback(
 }
 
 mod autolink;
+mod copy_text;
 mod markdown_parser;
 
 pub(crate) use autolink::apply_autolinks;
+pub use copy_text::{markdown_copy_leaves, MarkdownCopyLeaf};
 pub use markdown_parser::parse_markdown_blocks;
 
 #[cfg(test)]

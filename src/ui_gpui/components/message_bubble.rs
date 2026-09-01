@@ -185,6 +185,7 @@ impl IntoElement for AssistantBubble {
         let mut factory = TranscriptSelectionLeafFactory::new(
             self.selection.scroll_offset,
             self.selection.content_key,
+            Arc::clone(&self.selection.copy_document),
         );
         let mut document_order = self.selection.document_order;
         let rendered = blocks_to_elements_with_leaf_factory(

@@ -5,7 +5,9 @@
 // Window::dispatch_event, added participant-defined copy separators, exposed
 // cached run projection, added delayed drag start for selectable links, exposed
 // window-selection endpoint content keys, and gated tests requiring newer GPUI
-// test-support APIs.
+// test-support APIs. Virtualized selected participants are strongly retained with
+// their copy callbacks after paint registration ends; one virtual endpoint gets
+// synthetic projection geometry, and unresolved callbacks fail the whole copy.
 
 use std::{
     collections::HashMap,
@@ -15,10 +17,10 @@ use std::{
 };
 
 use gpui::{
-    App, AppContext as _, Bounds, Context, Element, ElementId, Entity, EntityId, EventEmitter,
-    Global, GlobalElementId, Half, Hitbox, InspectorElementId, IntoElement, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, SharedString,
-    Style, Subscription, TextLayout, WeakEntity, Window,
+    point, px, App, AppContext as _, Bounds, Context, Element, ElementId, Entity, EntityId,
+    EventEmitter, Global, GlobalElementId, Half, Hitbox, InspectorElementId, IntoElement, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
+    SharedString, Style, Subscription, TextLayout, WeakEntity, Window,
 };
 
 use super::text_boundary::{line_range_at, word_range_at};
@@ -499,10 +501,34 @@ fn point_in_selection_band(
         true
     }
 }
+fn projection_is_unchanged(
+    previous: TextSelectionSnapshot,
+    next: TextSelectionSnapshot,
+    participant: EntityId,
+) -> bool {
+    if previous.coverage() != next.coverage() {
+        return false;
+    }
+    match next.coverage() {
+        TextSelectionCoverage::Bounded => {
+            previous.anchor() == next.anchor() && previous.cursor() == next.cursor()
+        }
+        TextSelectionCoverage::FromStart | TextSelectionCoverage::ToEnd => {
+            let endpoint_for = |snapshot: TextSelectionSnapshot| {
+                [snapshot.anchor(), snapshot.cursor()]
+                    .into_iter()
+                    .find(|endpoint| endpoint.entity_id() == Some(participant))
+            };
+            endpoint_for(previous) == endpoint_for(next)
+        }
+        TextSelectionCoverage::Full => true,
+    }
+}
+
 
 type FocusCallback = Rc<dyn Fn(&mut Window, &mut App)>;
 type ClearHandler = Rc<dyn Fn(&mut App)>;
-type CopyCallback = Rc<dyn Fn(&mut App) -> String>;
+type CopyCallback = Rc<dyn Fn(&mut App) -> Option<String>>;
 type ContentKeyResolver = Rc<dyn Fn(Point<Pixels>, &App) -> Option<TextSelectionContentKey>>;
 
 /// Notifications emitted by a text-selection participant.
@@ -523,17 +549,26 @@ struct CopyItem {
     separator_before: String,
 }
 
+fn resolve_copy_item(item: CopyItem, cx: &mut App) -> Option<(String, String)> {
+    let text = if let Some(callback) = item.callback {
+        callback(cx)?
+    } else {
+        item.fallback
+    };
+    Some((item.separator_before, text))
+}
+
 fn resolve_copy_items(mut items: Vec<CopyItem>, cx: &mut App) -> String {
     items.sort_by_key(|item| item.document_order);
-    let resolved = items
+    let Some(resolved) = items
         .into_iter()
-        .map(|item| {
-            let text = item
-                .callback
-                .map(|callback| callback(cx))
-                .unwrap_or(item.fallback);
-            (item.separator_before, text)
-        })
+        .map(|item| resolve_copy_item(item, cx))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return String::new();
+    };
+    let resolved = resolved
+        .into_iter()
         .filter(|(_, text)| !text.trim().is_empty())
         .collect::<Vec<_>>();
     let mut output = String::new();
@@ -553,6 +588,7 @@ fn dispatch_clear_handlers(handlers: Vec<ClearHandler>, cx: &mut App) {
 }
 
 struct SelectableTextState {
+    entity_id: EntityId,
     fallback_copy_text: String,
     projected_copy_text: Option<String>,
     runs: Vec<TextSelectionRun>,
@@ -567,8 +603,9 @@ struct SelectableTextState {
 impl EventEmitter<TextSelectionEvent> for SelectableTextState {}
 
 impl SelectableTextState {
-    fn new(fallback_copy_text: impl Into<String>) -> Self {
+    fn new(entity_id: EntityId, fallback_copy_text: impl Into<String>) -> Self {
         Self {
+            entity_id,
             fallback_copy_text: fallback_copy_text.into(),
             projected_copy_text: None,
             runs: Vec::new(),
@@ -604,6 +641,9 @@ impl SelectableTextState {
     /// Clearing window selection invalidates the cache immediately, so copy
     /// never returns text from a previous projection while waiting to repaint.
     fn update_runs(&mut self, runs: &[TextSelectionRun]) -> TextSelectionProjection {
+        if self.snapshot.is_some_and(|snapshot| snapshot.window_points().is_none()) {
+            return project_ranges(self.snapshot, runs);
+        }
         self.runs = runs.to_vec();
         let states = project_ranges(self.snapshot, runs);
         let mut selected_runs = runs
@@ -638,7 +678,7 @@ impl SelectableTextState {
     }
 
     /// Installs a participant-specific copy projection.
-    fn copy_with(&mut self, callback: impl Fn(&mut App) -> String + 'static) {
+    fn copy_with(&mut self, callback: impl Fn(&mut App) -> Option<String> + 'static) {
         self.copy = Some(Rc::new(callback));
     }
 
@@ -654,8 +694,16 @@ impl SelectableTextState {
         if self.snapshot == snapshot {
             return;
         }
+        let preserves_projection = self
+            .snapshot
+            .zip(snapshot)
+            .is_some_and(|(previous, next)| {
+                projection_is_unchanged(previous, next, self.entity_id)
+            });
         self.snapshot = snapshot;
-        self.projected_copy_text = None;
+        if !preserves_projection {
+            self.projected_copy_text = None;
+        }
         cx.emit(TextSelectionEvent::SelectionChanged(snapshot));
     }
 
@@ -698,7 +746,9 @@ pub struct TextSelectionHandle(Entity<SelectableTextState>);
 impl TextSelectionHandle {
     /// Creates a selection participant handle with fallback text for copying.
     pub fn new(fallback_copy_text: impl Into<String>, cx: &mut App) -> Self {
-        Self(cx.new(|_| SelectableTextState::new(fallback_copy_text)))
+        Self(cx.new(|cx| {
+            SelectableTextState::new(cx.entity_id(), fallback_copy_text)
+        }))
     }
 
     /// Returns this participant's stable identity.
@@ -793,8 +843,40 @@ impl TextSelectionHandle {
     }
 
     /// Sets a participant-specific copy projection.
-    pub fn copy_with(&self, callback: impl Fn(&mut App) -> String + 'static, cx: &mut App) {
+    ///
+    /// Returning `None` marks the complete window copy as unresolved, so callers
+    /// can refuse clipboard writes instead of returning a partial selection.
+    pub fn copy_with(
+        &self,
+        callback: impl Fn(&mut App) -> Option<String> + 'static,
+        cx: &mut App,
+    ) {
         self.0.update(cx, |state, _| state.copy_with(callback));
+    }
+
+    /// Sets a source-copy projection without retaining this handle inside itself.
+    pub fn copy_projection_with(
+        &self,
+        callback: impl Fn(
+                Option<TextSelectionSnapshot>,
+                Option<String>,
+                &mut App,
+            ) -> Option<String>
+            + 'static,
+        cx: &mut App,
+    ) {
+        let weak = self.downgrade();
+        self.copy_with(
+            move |cx| {
+                let participant = weak.upgrade()?;
+                let (snapshot, projected) = {
+                    let state = participant.read(cx);
+                    (state.snapshot, state.projected_copy_text.clone())
+                };
+                callback(snapshot, projected, cx)
+            },
+            cx,
+        );
     }
 
     /// Sets a participant-specific lookup for stable virtualized content keys.
@@ -815,6 +897,7 @@ impl TextSelectionHandle {
 #[derive(Clone)]
 struct ParticipantRegistration {
     participant: WeakEntity<SelectableTextState>,
+    retained_selection: Option<TextSelectionHandle>,
     registration: Rc<TextSelectionRegistration>,
     generation: u64,
 }
@@ -823,6 +906,7 @@ struct ParticipantRegistration {
 struct SelectionEndpoint {
     participant: Option<WeakEntity<SelectableTextState>>,
     point: Point<Pixels>,
+    document_order: u64,
     inside: bool,
     inside_text: bool,
     content_key: Option<TextSelectionContentKey>,
@@ -864,6 +948,7 @@ impl SelectionEndpoint {
 #[derive(Default)]
 struct WindowSelectionState {
     participants: HashMap<EntityId, ParticipantRegistration>,
+    virtual_copy_participants: HashMap<EntityId, ParticipantRegistration>,
     active_scope: TextSelectionScopeId,
     anchor: Option<SelectionEndpoint>,
     cursor: Option<SelectionEndpoint>,
@@ -1008,11 +1093,18 @@ impl WindowSelectionState {
             .collect::<Vec<_>>();
         let mut handlers = Vec::new();
         for (id, participant) in stale {
-            self.participants.remove(&id);
-            if let Some(participant) = participant.upgrade() {
-                if let Some(handler) = participant.update(cx, |state, cx| state.clear_state(cx)) {
-                    handlers.push(handler);
-                }
+            let mut registration = self
+                .participants
+                .remove(&id)
+                .expect("stale participant disappeared during frame sweep");
+            let Some(participant) = participant.upgrade() else {
+                continue;
+            };
+            if participant.read(cx).snapshot.is_some() {
+                registration.retained_selection = Some(TextSelectionHandle(participant));
+                self.virtual_copy_participants.insert(id, registration);
+            } else if let Some(handler) = participant.update(cx, |state, cx| state.clear_state(cx)) {
+                handlers.push(handler);
             }
         }
         self.publish_snapshots(cx);
@@ -1036,10 +1128,12 @@ impl WindowSelectionState {
         cx: &mut App,
     ) {
         self.prune_dead_participants();
+        self.virtual_copy_participants.remove(&selection.entity_id());
         self.participants.insert(
             selection.entity_id(),
             ParticipantRegistration {
                 participant: selection.downgrade(),
+                retained_selection: None,
                 registration: Rc::new(registration),
                 generation: self.frame_generation,
             },
@@ -1088,16 +1182,21 @@ impl WindowSelectionState {
         self.is_selecting = false;
         self.did_hit_text = false;
         self.prune_dead_participants();
-        self.participants
+        let handlers = self
+            .participants
             .values()
+            .chain(self.virtual_copy_participants.values())
             .filter_map(|registration| registration.participant.upgrade())
             .filter_map(|participant| participant.update(cx, |state, cx| state.clear_state(cx)))
-            .collect()
+            .collect();
+        self.virtual_copy_participants.clear();
+        handlers
     }
 
     fn copy_items(&self, cx: &App) -> Vec<CopyItem> {
         self.participants
             .values()
+            .chain(self.virtual_copy_participants.values())
             .filter_map(|registration| {
                 let participant = registration.participant.upgrade()?;
                 participant.read(cx).copy_item(
@@ -1138,13 +1237,60 @@ impl WindowSelectionState {
         }
         let anchor_endpoint = self.anchor.as_ref()?;
         let cursor_endpoint = self.cursor.as_ref()?;
-        let anchor = anchor_endpoint.resolve(&self.participants)?;
-        let cursor = cursor_endpoint.resolve(&self.participants)?;
+        let anchor = anchor_endpoint.snapshot();
+        let cursor = cursor_endpoint.snapshot();
         (anchor != cursor).then(|| {
-            TextSelectionSnapshot::new(anchor_endpoint.snapshot(), cursor_endpoint.snapshot())
+            TextSelectionSnapshot::new(anchor, cursor)
                 .with_selecting(self.is_selecting)
-                .with_window_points(Some(TextSelectionWindowPoints { anchor, cursor }))
+                .with_window_points(self.window_points(anchor_endpoint, cursor_endpoint))
         })
+    }
+
+    fn window_points(
+        &self,
+        anchor_endpoint: &SelectionEndpoint,
+        cursor_endpoint: &SelectionEndpoint,
+    ) -> Option<TextSelectionWindowPoints> {
+        let anchor = anchor_endpoint.resolve(&self.participants);
+        let cursor = cursor_endpoint.resolve(&self.participants);
+        match (anchor, cursor) {
+            (Some(anchor), Some(cursor)) => Some(TextSelectionWindowPoints { anchor, cursor }),
+            (Some(anchor), None) => Some(TextSelectionWindowPoints {
+                anchor,
+                cursor: self.virtual_endpoint_point(
+                    cursor_endpoint.document_order < anchor_endpoint.document_order,
+                )?,
+            }),
+            (None, Some(cursor)) => Some(TextSelectionWindowPoints {
+                anchor: self.virtual_endpoint_point(
+                    anchor_endpoint.document_order < cursor_endpoint.document_order,
+                )?,
+                cursor,
+            }),
+            (None, None) => None,
+        }
+    }
+
+    fn virtual_endpoint_point(&self, before: bool) -> Option<Point<Pixels>> {
+        let mut registrations = self.participants.values();
+        let first = registrations.next()?.registration.bounds;
+        let mut edge = if before { first.top() } else { first.bottom() };
+        for registration in registrations {
+            let candidate = if before {
+                registration.registration.bounds.top()
+            } else {
+                registration.registration.bounds.bottom()
+            };
+            if (before && candidate < edge) || (!before && candidate > edge) {
+                edge = candidate;
+            }
+        }
+        let outside = if before {
+            edge - px(1.)
+        } else {
+            edge + px(1.)
+        };
+        Some(point(px(0.), outside))
     }
 
     /// Returns whether a drag is currently in progress.
@@ -1165,9 +1311,11 @@ impl WindowSelectionState {
         let handlers = self
             .participants
             .values()
+            .chain(self.virtual_copy_participants.values())
             .filter_map(|registration| registration.participant.upgrade())
             .filter_map(|participant| participant.update(cx, |state, cx| state.clear_state(cx)))
             .collect();
+        self.virtual_copy_participants.clear();
         self.pending_extension_anchor = pending_extension_anchor;
         handlers
     }
@@ -1230,6 +1378,7 @@ impl WindowSelectionState {
             SelectionEndpoint {
                 participant: Some(participant.downgrade()),
                 point: content_point,
+                document_order: registration.registration.document_order,
                 inside: true,
                 inside_text: true,
                 content_key: None,
@@ -1405,6 +1554,7 @@ impl WindowSelectionState {
                 SelectionEndpoint {
                     point,
                     participant: Some(participant),
+                    document_order: registration.document_order,
                     inside,
                     inside_text: inside
                         && registration
@@ -1418,6 +1568,7 @@ impl WindowSelectionState {
             None => SelectionEndpoint {
                 participant: None,
                 point: position,
+                document_order: 0,
                 inside: false,
                 inside_text: false,
                 content_key: None,
@@ -1430,41 +1581,49 @@ impl WindowSelectionState {
         self.prune_dead_participants();
         let snapshot = self.snapshot();
         let single_participant = self.single_participant();
-        for (id, registration) in &self.participants {
+        for (id, registration) in self
+            .participants
+            .iter()
+            .chain(self.virtual_copy_participants.iter())
+        {
             let Some(participant) = registration.participant.upgrade() else {
                 continue;
             };
+            let order = registration.registration.document_order;
             let participant_snapshot = (registration.registration.scope == self.active_scope
-                && self.participates(*id, registration)
+                && self.participates(*id, order)
                 && single_participant.is_none_or(|single| single == *id))
             .then_some(snapshot)
             .flatten()
             .map(|mut snapshot| {
-                snapshot.coverage = self.coverage_for(*id);
+                snapshot.coverage = self.coverage_for(*id, order);
                 snapshot
             });
             participant.update(cx, |state, cx| state.set_snapshot(participant_snapshot, cx));
         }
     }
 
-    fn coverage_for(&self, id: EntityId) -> TextSelectionCoverage {
-        let Some(anchor) = self.anchor.as_ref().and_then(SelectionEndpoint::entity_id) else {
+    fn coverage_for(&self, id: EntityId, order: u64) -> TextSelectionCoverage {
+        let Some(anchor) = self.anchor.as_ref() else {
             return TextSelectionCoverage::Bounded;
         };
-        let Some(cursor) = self.cursor.as_ref().and_then(SelectionEndpoint::entity_id) else {
+        let Some(cursor) = self.cursor.as_ref() else {
             return TextSelectionCoverage::Bounded;
         };
-        if anchor == cursor {
+        let (Some(anchor_id), Some(cursor_id)) = (anchor.entity_id(), cursor.entity_id()) else {
+            return TextSelectionCoverage::Bounded;
+        };
+        if anchor_id == cursor_id {
             return TextSelectionCoverage::Bounded;
         }
-        let anchor_order = self.participants[&anchor].registration.document_order;
-        let cursor_order = self.participants[&cursor].registration.document_order;
-        if id != anchor && id != cursor {
+        if id != anchor_id && id != cursor_id {
             TextSelectionCoverage::Full
-        } else if (id == anchor) == (anchor_order < cursor_order) {
+        } else if (id == anchor_id) == (anchor.document_order < cursor.document_order) {
             TextSelectionCoverage::ToEnd
-        } else {
+        } else if order == anchor.document_order || order == cursor.document_order {
             TextSelectionCoverage::FromStart
+        } else {
+            TextSelectionCoverage::Full
         }
     }
 
@@ -1474,30 +1633,18 @@ impl WindowSelectionState {
         (anchor == cursor).then_some(anchor)
     }
 
-    fn participates(&self, id: EntityId, registration: &ParticipantRegistration) -> bool {
-        let Some(anchor) = self.anchor.as_ref().and_then(SelectionEndpoint::entity_id) else {
+    fn participates(&self, id: EntityId, order: u64) -> bool {
+        let Some(anchor) = self.anchor.as_ref() else {
             return false;
         };
-        let Some(cursor) = self.cursor.as_ref().and_then(SelectionEndpoint::entity_id) else {
+        let Some(cursor) = self.cursor.as_ref() else {
             return false;
         };
-        let Some(anchor_registration) = self.participants.get(&anchor) else {
-            return false;
-        };
-        let Some(cursor_registration) = self.participants.get(&cursor) else {
-            return false;
-        };
-        let start = anchor_registration
-            .registration
-            .document_order
-            .min(cursor_registration.registration.document_order);
-        let end = anchor_registration
-            .registration
-            .document_order
-            .max(cursor_registration.registration.document_order);
-        (start..=end).contains(&registration.registration.document_order)
-            || id == anchor
-            || id == cursor
+        let start = anchor.document_order.min(cursor.document_order);
+        let end = anchor.document_order.max(cursor.document_order);
+        (start..=end).contains(&order)
+            || anchor.entity_id() == Some(id)
+            || cursor.entity_id() == Some(id)
     }
 
     fn update_auto_scroll(
@@ -1550,6 +1697,8 @@ impl WindowSelectionState {
 
     fn prune_dead_participants(&mut self) {
         self.participants
+            .retain(|_, registration| registration.participant.upgrade().is_some());
+        self.virtual_copy_participants
             .retain(|_, registration| registration.participant.upgrade().is_some());
     }
 }
@@ -2013,6 +2162,218 @@ pub(crate) fn clear_window_text_selection(window_id: gpui::WindowId, cx: &mut Ap
     dispatch_clear_handlers(handlers, cx);
 }
 
+#[cfg(test)]
+mod virtualization_copy_tests {
+    use super::*;
+    use gpui::{size, HitboxBehavior, Render, TestAppContext};
+    use std::{cell::RefCell, rc::Rc};
+
+    #[derive(Clone)]
+    struct Registration {
+        selection: TextSelectionHandle,
+        y: f32,
+        document_order: u64,
+    }
+
+    struct RegistrationView {
+        selection_state: Rc<RefCell<WindowSelectionState>>,
+        registrations: Rc<RefCell<Vec<Registration>>>,
+    }
+
+    struct RegistrationElement {
+        selection_state: Rc<RefCell<WindowSelectionState>>,
+        registrations: Rc<RefCell<Vec<Registration>>>,
+    }
+
+    impl IntoElement for RegistrationElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for RegistrationElement {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            (window.request_layout(Style::default(), [], cx), ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            for registration in self.registrations.borrow().iter() {
+                let bounds = Bounds::new(
+                    point(px(0.), px(registration.y)),
+                    size(px(100.), px(10.)),
+                );
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                self.selection_state.borrow_mut().register_participant(
+                    registration.selection.clone(),
+                    TextSelectionRegistration::new(hitbox, bounds)
+                        .with_document_order(registration.document_order)
+                        .with_text_bounds(vec![bounds]),
+                    cx,
+                );
+            }
+        }
+
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            _: &mut Self::PrepaintState,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+        }
+    }
+
+    impl Render for RegistrationView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            RegistrationElement {
+                selection_state: Rc::clone(&self.selection_state),
+                registrations: Rc::clone(&self.registrations),
+            }
+        }
+    }
+
+    fn registration(selection: &TextSelectionHandle, y: f32, document_order: u64) -> Registration {
+        Registration {
+            selection: selection.clone(),
+            y,
+            document_order,
+        }
+    }
+
+    #[gpui::test]
+    fn virtual_participant_retains_copy_callback_after_element_owner_drops(
+        cx: &mut TestAppContext,
+    ) {
+        let selection_state = Rc::new(RefCell::new(WindowSelectionState::default()));
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let (_, cx) = cx.add_window_view({
+            let selection_state = Rc::clone(&selection_state);
+            let registrations = Rc::clone(&registrations);
+            move |_, _| RegistrationView {
+                selection_state,
+                registrations,
+            }
+        });
+        cx.update(|window, cx| {
+            let participant = TextSelectionHandle::new("stale", cx);
+            registrations
+                .borrow_mut()
+                .push(registration(&participant, 0., 0));
+            _ = window.draw(cx);
+            let mut state = selection_state.borrow_mut();
+            state.begin(point(px(1.), px(1.)), false, cx);
+            state.update(point(px(8.), px(1.)), cx);
+            state.end(cx);
+            state.finish_frame(cx);
+            drop(state);
+
+            registrations.borrow_mut().clear();
+            _ = window.draw(cx);
+            selection_state.borrow_mut().finish_frame(cx);
+            let weak_participant = participant.downgrade();
+            drop(participant);
+
+            assert_eq!(selection_state.borrow().selected_text(cx), "stale");
+            assert!(weak_participant.upgrade().is_some());
+            selection_state.borrow_mut().clear(cx);
+            assert!(selection_state.borrow().virtual_copy_participants.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn visible_endpoint_projects_when_other_endpoint_is_virtual(cx: &mut TestAppContext) {
+        let selection_state = Rc::new(RefCell::new(WindowSelectionState::default()));
+        let registrations = Rc::new(RefCell::new(Vec::new()));
+        let (_, cx) = cx.add_window_view({
+            let selection_state = Rc::clone(&selection_state);
+            let registrations = Rc::clone(&registrations);
+            move |_, _| RegistrationView {
+                selection_state,
+                registrations,
+            }
+        });
+        cx.update(|window, cx| {
+            let first = TextSelectionHandle::new("first", cx);
+            let second = TextSelectionHandle::new("second", cx);
+            *registrations.borrow_mut() = vec![
+                registration(&first, 0., 0),
+                registration(&second, 20., 1),
+            ];
+            _ = window.draw(cx);
+            let mut state = selection_state.borrow_mut();
+            state.begin(point(px(1.), px(1.)), false, cx);
+            state.update(point(px(5.), px(25.)), cx);
+            state.finish_frame(cx);
+            drop(state);
+
+            *registrations.borrow_mut() = vec![registration(&second, 20., 1)];
+            _ = window.draw(cx);
+            selection_state.borrow_mut().finish_frame(cx);
+
+            let points = selection_state
+                .borrow()
+                .snapshot()
+                .and_then(|snapshot| snapshot.window_points())
+                .expect("one visible endpoint should keep a rendering projection");
+            assert!(points.anchor().y < points.cursor().y);
+            assert!(first.snapshot(cx).is_some());
+            assert!(second.snapshot(cx).is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn unresolved_copy_item_refuses_other_resolved_output(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let items = vec![
+                CopyItem {
+                    document_order: 0,
+                    callback: Some(Rc::new(|_| Some("first".to_string()))),
+                    fallback: "first fallback".to_string(),
+                    separator_before: String::new(),
+                },
+                CopyItem {
+                    document_order: 1,
+                    callback: Some(Rc::new(|_| None)),
+                    fallback: "second fallback".to_string(),
+                    separator_before: "\n\n".to_string(),
+                },
+            ];
+
+            assert_eq!(resolve_copy_items(items, cx), "");
+        });
+    }
+}
+
 #[cfg(all(test, any()))]
 mod tests {
     use super::*;
@@ -2432,7 +2793,7 @@ mod tests {
                 )
                 .detach();
             selection.focus_with(|_, _| {}, cx);
-            selection.copy_with(|_| "copied".to_string(), cx);
+            selection.copy_with(|_| Some("copied".to_string()), cx);
             selection.resolve_content_key_with(|_, _| Some(TextSelectionContentKey::new(3)), cx);
 
             assert_eq!(selection.entity_id(), entity_id);
@@ -2968,7 +3329,7 @@ mod tests {
                     });
                     assert!(selection_for_copy.snapshot(cx).is_some());
                     selection_for_copy.set_fallback_copy_text("reentered", cx);
-                    "reentrant copy".to_string()
+                    Some("reentrant copy".to_string())
                 },
                 cx,
             );
@@ -3081,7 +3442,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn stale_live_participants_are_removed_when_the_next_frame_begins(cx: &mut TestAppContext) {
+    fn stale_selected_participants_retain_copy_state_until_clear(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let mut selection_state = WindowSelectionState::default();
             let participant = FakeParticipant::new("stale", cx);
@@ -3098,8 +3459,84 @@ mod tests {
 
             selection_state.finish_frame(cx);
             selection_state.finish_frame(cx);
+            let participant = participant.selection.downgrade();
+            assert_eq!(selection_state.selected_text(cx), "stale");
+            assert!(participant.upgrade().is_some());
+
+            selection_state.clear(cx);
             assert_eq!(selection_state.selected_text(cx), "");
-            assert!(participant.selection.snapshot(cx).is_none());
+            assert!(participant.upgrade().is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn active_endpoint_keeps_projectable_window_points_when_other_endpoint_is_virtual(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let mut selection_state = WindowSelectionState::default();
+            let first = FakeParticipant::new("first", cx);
+            let second = FakeParticipant::new("second", cx);
+            first.register(
+                &mut selection_state,
+                0.,
+                TextSelectionScopeId::default(),
+                0,
+                cx,
+            );
+            second.register(
+                &mut selection_state,
+                20.,
+                TextSelectionScopeId::default(),
+                1,
+                cx,
+            );
+            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.update(point(px(5.), px(25.)), cx);
+            selection_state.finish_frame(cx);
+            second.register(
+                &mut selection_state,
+                20.,
+                TextSelectionScopeId::default(),
+                1,
+                cx,
+            );
+            selection_state.finish_frame(cx);
+
+            let snapshot = selection_state.snapshot().unwrap();
+            let points = snapshot.window_points().unwrap();
+            assert!(points.anchor().y < points.cursor().y);
+            assert!(first.selection.snapshot(cx).is_some());
+            assert!(second.selection.snapshot(cx).is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn unresolved_copy_callback_refuses_all_participant_output(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut selection_state = WindowSelectionState::default();
+            let first = FakeParticipant::new("first fallback", cx);
+            let second = FakeParticipant::new("second fallback", cx);
+            first.selection.copy_with(|_| Some("first".to_string()), cx);
+            second.selection.copy_with(|_| None, cx);
+            first.register(
+                &mut selection_state,
+                0.,
+                TextSelectionScopeId::default(),
+                0,
+                cx,
+            );
+            second.register(
+                &mut selection_state,
+                20.,
+                TextSelectionScopeId::default(),
+                1,
+                cx,
+            );
+            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.update(point(px(5.), px(25.)), cx);
+
+            assert_eq!(selection_state.selected_text(cx), "");
         });
     }
 

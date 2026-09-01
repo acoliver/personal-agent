@@ -6,7 +6,8 @@
 // runs now suppress their own backgrounds, and low-contrast surface pairs use a
 // black-or-white selected glyph fallback. Safe links now activate on clicks while
 // pointer movement beyond the drag threshold remains a text-selection gesture,
-// and participant-defined content keys are attached to selection endpoints.
+// participant-defined content keys are attached to selection endpoints, and
+// callers can install source-copy projections for virtualized text.
 
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
@@ -22,6 +23,9 @@ use crate::{
     TextSelectionRegistration, TextSelectionRun,
 };
 
+type SourceCopyCallback =
+    dyn Fn(Option<crate::TextSelectionSnapshot>, Option<String>, &mut App) -> Option<String>;
+
 /// Styled text that participates in window-scoped text selection.
 pub struct SelectableText {
     id: ElementId,
@@ -33,6 +37,7 @@ pub struct SelectableText {
     scroll_offset: Point<Pixels>,
     copy_separator_before: SharedString,
     content_key: Option<TextSelectionContentKey>,
+    copy: Option<Rc<SourceCopyCallback>>,
     selection_color: Hsla,
     selected_text_color: Hsla,
 }
@@ -66,6 +71,7 @@ impl SelectableText {
             scroll_offset: Point::default(),
             copy_separator_before: "\n".into(),
             content_key: None,
+            copy: None,
             selection_color,
             selected_text_color,
         }
@@ -99,6 +105,16 @@ impl SelectableText {
     /// Attaches participant-defined stable content identity to selection endpoints.
     pub fn content_key(mut self, content_key: TextSelectionContentKey) -> Self {
         self.content_key = Some(content_key);
+        self
+    }
+
+    /// Exports source text, including virtualized content that is not painted.
+    pub fn copy_with(
+        mut self,
+        callback: impl Fn(Option<crate::TextSelectionSnapshot>, Option<String>, &mut App) -> Option<String>
+            + 'static,
+    ) -> Self {
+        self.copy = Some(Rc::new(callback));
         self
     }
 
@@ -391,6 +407,12 @@ impl Element for SelectableText {
         );
         if let Some(content_key) = self.content_key {
             handle.resolve_content_key_with(move |_, _| Some(content_key), cx);
+        }
+        if let Some(copy) = self.copy.clone() {
+            handle.copy_projection_with(
+                move |snapshot, projected, cx| copy(snapshot, projected, cx),
+                cx,
+            );
         }
         let projection = handle.project_cached_runs(cx);
         let selected_ranges = projection.ranges().to_vec();
