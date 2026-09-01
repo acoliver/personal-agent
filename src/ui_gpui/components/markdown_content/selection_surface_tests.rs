@@ -32,6 +32,8 @@ mod tests {
             "",
         );
 
+        assert_eq!(markdown_leaf_count(&blocks), factory.leaves.len());
+
         let leaf = |text: &str| {
             factory
                 .leaves

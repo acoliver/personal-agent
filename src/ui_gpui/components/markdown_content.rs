@@ -412,6 +412,39 @@ pub fn blocks_to_elements_with_leaf_factory(
     )
 }
 
+/// Counts the selectable text leaves produced by the leaf-factory renderer.
+#[must_use]
+pub(crate) fn markdown_leaf_count(blocks: &[MarkdownBlock]) -> usize {
+    blocks.iter().fold(0, |count, block| {
+        let block_count = match block {
+            MarkdownBlock::Paragraph { .. }
+            | MarkdownBlock::Heading { .. }
+            | MarkdownBlock::CodeBlock { .. }
+            | MarkdownBlock::ImageFallback { .. } => 1,
+            MarkdownBlock::BlockQuote { blocks } => markdown_leaf_count(blocks),
+            MarkdownBlock::List { items, .. } => {
+                items.iter().fold(0_usize, |item_count, blocks| {
+                    item_count
+                        .checked_add(1)
+                        .and_then(|count| count.checked_add(markdown_leaf_count(blocks)))
+                        .expect("markdown leaf count overflowed usize")
+                })
+            }
+            MarkdownBlock::Table { header, rows, .. } => {
+                rows.iter().fold(header.len(), |count, row| {
+                    count
+                        .checked_add(row.len())
+                        .expect("markdown leaf count overflowed usize")
+                })
+            }
+            MarkdownBlock::ThematicBreak => 0,
+        };
+        count
+            .checked_add(block_count)
+            .expect("markdown leaf count overflowed usize")
+    })
+}
+
 fn render_blocks(
     blocks: &[MarkdownBlock],
     text_color: gpui::Hsla,

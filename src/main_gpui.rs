@@ -20,6 +20,7 @@ use std::time::Duration;
 use std::{fs, path::PathBuf};
 
 use gpui::*;
+use gpui_selection_vendor::GlobalState;
 use tokio::sync::watch;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -421,6 +422,7 @@ fn start_tray_and_apply_popup_flags(tray: &mut SystemTray, cx: &mut App) {
 
 #[allow(clippy::cognitive_complexity)]
 fn run_gpui_app(cx: &mut App) {
+    GlobalState::init(cx);
     cx.set_quit_mode(QuitMode::Explicit);
 
     #[cfg(target_os = "macos")]

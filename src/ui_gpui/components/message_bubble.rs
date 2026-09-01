@@ -4,9 +4,12 @@
 //! @requirement REQ-GPUI-003
 
 use crate::ui_gpui::components::markdown_content::{
-    blocks_to_elements, parse_markdown_blocks, MarkdownBlock,
+    blocks_to_elements_with_leaf_factory, parse_markdown_blocks, MarkdownBlock,
 };
-use gpui::{div, prelude::*, px, IntoElement, MouseButton};
+use crate::ui_gpui::components::transcript_selection::{
+    TranscriptSelectionContext, TranscriptSelectionLeafFactory,
+};
+use gpui::{div, prelude::*, px, IntoElement};
 use std::sync::Arc;
 
 pub struct UserBubble {
@@ -60,6 +63,7 @@ pub struct AssistantBubble {
     thinking: Option<String>,
     show_thinking: bool,
     is_streaming: bool,
+    selection: TranscriptSelectionContext,
 }
 
 impl AssistantBubble {
@@ -69,7 +73,10 @@ impl AssistantBubble {
     /// allowing callers to pass `Arc::clone()` without allocation.
     ///
     /// @plan PLAN-20260407-ISSUE172.P10
-    pub fn new(content: impl Into<Arc<String>>) -> Self {
+    pub(crate) fn new(
+        content: impl Into<Arc<String>>,
+        selection: TranscriptSelectionContext,
+    ) -> Self {
         Self {
             content: content.into(),
             cached_blocks: None,
@@ -77,6 +84,7 @@ impl AssistantBubble {
             thinking: None,
             show_thinking: false,
             is_streaming: false,
+            selection,
         }
     }
 
@@ -131,38 +139,6 @@ fn rendered_content_text(content: &str, is_streaming: bool) -> String {
     }
 }
 
-/// @plan:PLAN-20260402-MARKDOWN.P11
-/// @requirement:REQ-MD-INTEGRATE-024
-fn has_any_links(blocks: &[MarkdownBlock]) -> bool {
-    blocks.iter().any(|block| match block {
-        MarkdownBlock::Paragraph { links, .. } | MarkdownBlock::Heading { links, .. } => {
-            !links.is_empty()
-        }
-        MarkdownBlock::BlockQuote { blocks } => has_any_links(blocks),
-        MarkdownBlock::List { items, .. } => {
-            items.iter().any(|item_blocks| has_any_links(item_blocks))
-        }
-        MarkdownBlock::Table { header, rows, .. } => {
-            let header_has_links = header.iter().any(|cell| {
-                !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
-            });
-            let body_has_links = rows.iter().any(|row| {
-                row.iter().any(|cell| {
-                    !cell.links.is_empty() || cell.spans.iter().any(|span| span.link_url.is_some())
-                })
-            });
-            header_has_links || body_has_links
-        }
-        _ => false,
-    })
-}
-
-/// @plan:PLAN-20260402-MARKDOWN.P11
-/// @requirement:REQ-MD-INTEGRATE-020
-fn should_enable_bubble_copy(blocks: &[MarkdownBlock], is_streaming: bool) -> bool {
-    !is_streaming && !has_any_links(blocks)
-}
-
 impl IntoElement for AssistantBubble {
     type Element = gpui::Div;
 
@@ -206,31 +182,25 @@ impl IntoElement for AssistantBubble {
             // No cache available: parse fresh
             parse_markdown_blocks(&content_text)
         };
-        let rendered = blocks_to_elements(&blocks);
+        let mut factory = TranscriptSelectionLeafFactory::new(self.selection.scroll_offset);
+        let mut document_order = self.selection.document_order;
+        let rendered = blocks_to_elements_with_leaf_factory(
+            &blocks,
+            Theme::text_primary(),
+            Theme::assistant_bubble_bg(),
+            &mut factory,
+            &mut document_order,
+            self.selection.first_copy_separator,
+        );
 
-        let mut main_content = Theme::assistant_bubble(
+        bubble = bubble.child(Theme::assistant_bubble(
             div()
                 .w_full()
                 .px(px(Theme::SPACING_MD))
                 .py(px(Theme::SPACING_SM))
                 .rounded(px(Theme::RADIUS_LG))
                 .children(rendered),
-        );
-
-        if should_enable_bubble_copy(&blocks, self.is_streaming) {
-            // Clone the Arc, not the String - defer allocation to click time
-            let raw_markdown = Arc::clone(&self.content);
-            main_content =
-                main_content
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                            (*raw_markdown).clone(),
-                        ));
-                    });
-        }
-
-        bubble = bubble.child(main_content);
+        ));
 
         if let Some(model_id) = self.model_id {
             bubble = bubble.child(
@@ -250,24 +220,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_click_link_does_not_copy_to_clipboard() {
-        let blocks = parse_markdown_blocks("[click](https://example.com)");
-        assert!(has_any_links(&blocks));
-        assert!(!should_enable_bubble_copy(&blocks, false));
-    }
-
-    #[test]
     fn test_streaming_cursor_only_during_streaming() {
         assert_eq!(rendered_content_text("Hello", true), "Hello▋");
         assert_eq!(rendered_content_text("Hello", false), "Hello");
-    }
-
-    #[test]
-    fn test_table_cell_links_suppress_bubble_copy() {
-        let markdown = "| Col |\n|---|\n| [link](https://example.com) |";
-        let blocks = parse_markdown_blocks(markdown);
-
-        assert!(has_any_links(&blocks));
-        assert!(!should_enable_bubble_copy(&blocks, false));
     }
 }

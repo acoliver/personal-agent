@@ -196,22 +196,22 @@ async fn home_pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(cx: &m
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();
 
-    visual_cx.update(|_window, app| {
+    visual_cx.update(|window, app| {
         view.update(app, |view: &mut ChatView, cx| {
             view.state.chat_autoscroll_enabled = true;
-            view.handle_key_down(&chat_key_event("home"), cx);
+            view.handle_key_down(&chat_key_event("home"), window, cx);
             assert!(!view.state.chat_autoscroll_enabled);
 
             view.state.chat_autoscroll_enabled = true;
-            view.handle_key_down(&chat_key_event("pageup"), cx);
+            view.handle_key_down(&chat_key_event("pageup"), window, cx);
             assert!(!view.state.chat_autoscroll_enabled);
 
             view.state.chat_autoscroll_enabled = true;
-            view.handle_key_down(&chat_key_event("pagedown"), cx);
+            view.handle_key_down(&chat_key_event("pagedown"), window, cx);
             assert!(view.state.chat_autoscroll_enabled);
 
             view.state.chat_autoscroll_enabled = false;
-            view.handle_key_down(&chat_key_event("end"), cx);
+            view.handle_key_down(&chat_key_event("end"), window, cx);
             assert!(view.state.chat_autoscroll_enabled);
 
             view.state.chat_autoscroll_enabled = false;
@@ -226,6 +226,7 @@ async fn home_pageup_pagedown_and_end_keys_control_chat_scroll_autoscroll(cx: &m
                     },
                     ..chat_key_event("right")
                 },
+                window,
                 cx,
             );
             assert!(view.state.chat_autoscroll_enabled);
@@ -814,7 +815,7 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
     let mut visual_cx = cx.add_empty_window().clone();
     let (bridge, user_rx) = make_chat_bridge();
 
-    visual_cx.update(|_window, app| {
+    visual_cx.update(|window, app| {
         view.update(app, |view: &mut ChatView, cx| {
             view.set_bridge(bridge.clone());
             view.state.input_text = "firstsecond".to_string();
@@ -828,6 +829,7 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
                         ..Modifiers::default()
                     },
                 ),
+                window,
                 cx,
             );
 
@@ -844,6 +846,7 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
                         ..Modifiers::default()
                     },
                 ),
+                window,
                 cx,
             );
 
@@ -860,6 +863,7 @@ async fn modified_enter_inserts_newline_without_submitting(cx: &mut TestAppConte
                         ..Modifiers::default()
                     },
                 ),
+                window,
                 cx,
             );
 
@@ -877,13 +881,13 @@ async fn plain_enter_still_submits_message(cx: &mut TestAppContext) {
     let mut visual_cx = cx.add_empty_window().clone();
     let (bridge, user_rx) = make_chat_bridge();
 
-    visual_cx.update(|_window, app| {
+    visual_cx.update(|window, app| {
         view.update(app, |view: &mut ChatView, cx| {
             view.set_bridge(bridge.clone());
             view.state.input_text = "send me".to_string();
             view.state.cursor_position = view.state.input_text.len();
 
-            view.handle_key_down(&chat_key_event("enter"), cx);
+            view.handle_key_down(&chat_key_event("enter"), window, cx);
 
             assert_eq!(
                 user_rx.try_recv().ok(),
@@ -912,14 +916,14 @@ async fn send_message_targets_selected_conversation(cx: &mut TestAppContext) {
     let (bridge, user_rx) = make_chat_bridge();
     let conversation_id = Uuid::new_v4();
 
-    visual_cx.update(|_window, app| {
+    visual_cx.update(|window, app| {
         view.update(app, |view: &mut ChatView, cx| {
             view.set_bridge(bridge.clone());
             view.conversation_id = Some(conversation_id);
             view.state.input_text = "continue here".to_string();
             view.state.cursor_position = view.state.input_text.len();
 
-            view.handle_key_down(&chat_key_event("enter"), cx);
+            view.handle_key_down(&chat_key_event("enter"), window, cx);
 
             assert_eq!(
                 user_rx.try_recv().ok(),
