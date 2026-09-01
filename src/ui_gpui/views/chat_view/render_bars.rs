@@ -654,7 +654,7 @@ impl ChatView {
                     this.state.conversation_title_input.clear();
                     this.state.profile_dropdown_open = false;
                     this.state.chat_autoscroll_enabled = true;
-                    this.chat_scroll_handle.scroll_to_bottom();
+                    this.scroll_transcript_to_bottom();
                     cx.notify();
                 }),
             )

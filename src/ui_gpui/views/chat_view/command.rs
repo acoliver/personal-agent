@@ -64,7 +64,7 @@ impl ChatView {
         // Create new bubble
         bubbles.push(ToolApprovalBubble::new(request_id, context));
         if is_visible_conversation {
-            self.maybe_scroll_chat_to_bottom(cx);
+            self.maybe_scroll_chat_to_bottom();
             cx.notify();
         }
     }
@@ -117,7 +117,7 @@ impl ChatView {
             self.state.approval_bubbles.remove(&conversation_id);
         }
         self.state.chat_autoscroll_enabled = true;
-        self.chat_scroll_handle.scroll_to_bottom();
+        self.scroll_transcript_to_bottom();
         self.state.sync_conversation_title_from_active();
         cx.notify();
     }

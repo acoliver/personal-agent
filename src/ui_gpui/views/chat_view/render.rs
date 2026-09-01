@@ -8,6 +8,7 @@
 
 use super::emoji::strip_emojis;
 use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
+use super::transcript::TranscriptRow;
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
@@ -16,8 +17,7 @@ use crate::ui_gpui::components::{ApprovalBubble, AssistantBubble};
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
 use gpui::{
-    canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels,
-    ScrollWheelEvent, SharedString,
+    canvas, div, prelude::*, px, Bounds, ElementInputHandler, MouseButton, Pixels, SharedString,
 };
 use std::sync::Arc;
 
@@ -184,7 +184,7 @@ impl ChatView {
                 self.state.conversation_title_input.clear();
                 self.state.profile_dropdown_open = false;
                 self.state.chat_autoscroll_enabled = true;
-                self.chat_scroll_handle.scroll_to_bottom();
+                self.scroll_transcript_to_bottom();
                 cx.notify();
             }
             "t" => {
@@ -256,86 +256,96 @@ impl ChatView {
     /// Render the chat area with messages
     /// @plan PLAN-20250130-GPUIREDUX.P03
     pub(super) fn render_chat_area(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let messages = self.state.messages.clone();
-        let streaming = self.state.streaming.clone();
+        let rows: Arc<[TranscriptRow]> = self.transcript_rows().into();
+        let row_count = rows.len();
         let show_thinking = self.state.show_thinking;
         let filter_emoji = self.state.filter_emoji;
+        self.sync_transcript_list_item_count(row_count);
+
         div()
             .id("chat-area")
             .flex_1()
             .min_h_0()
             .w_full()
             .bg(Theme::bg_base())
-            .overflow_x_hidden()
-            .overflow_y_scroll()
-            .track_scroll(&self.chat_scroll_handle)
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
-                this.refresh_autoscroll_state_after_wheel(event);
-                cx.notify();
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _event, _window, cx| {
-                    this.refresh_autoscroll_state_from_handle();
-                    cx.notify();
-                }),
-            )
-            .p(px(12.0))
+            .overflow_hidden()
             .flex()
             .flex_col()
-            .items_stretch()
-            .justify_start()
-            .gap(px(8.0))
-            // Empty state
-            .when(
-                messages.is_empty() && !matches!(streaming, StreamingState::Streaming { .. }),
-                |d| {
-                    d.items_center().justify_center().child(
-                        div()
-                            .text_size(px(Theme::font_size_body()))
-                            .text_color(Theme::text_secondary())
-                            .child("No messages yet"),
-                    )
-                },
-            )
-            // Messages
-            .when(!messages.is_empty(), |d| {
-                d.children(messages.into_iter().enumerate().map(|(i, msg)| {
-                    let id = SharedString::from(format!("msg-{i}"));
+            .when(row_count == 0, |d| {
+                d.items_center().justify_center().child(
                     div()
-                        .id(id)
-                        .w_full()
-                        .flex()
-                        .justify_start()
-                        .child(Self::render_message(&msg, show_thinking, filter_emoji))
-                }))
+                        .text_size(px(Theme::font_size_body()))
+                        .text_color(Theme::text_secondary())
+                        .child("No messages yet"),
+                )
             })
-            // Approval bubbles (inline in message stream) - queue: only first pending
-            .children(
-                self.state
+            .when(row_count > 0, |d| {
+                d.child(
+                    gpui::list(
+                        self.transcript_list_state.clone(),
+                        cx.processor(move |this, index, _window, cx| {
+                            let row = rows[index];
+                            div()
+                                .w_full()
+                                .when(index + 1 < row_count, |d| d.pb(px(8.0)))
+                                .child(this.render_transcript_row(
+                                    row,
+                                    show_thinking,
+                                    filter_emoji,
+                                    cx,
+                                ))
+                                .into_any_element()
+                        }),
+                    )
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .p(px(12.0)),
+                )
+            })
+    }
+
+    fn render_transcript_row(
+        &self,
+        row: TranscriptRow,
+        show_thinking: bool,
+        filter_emoji: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        match row {
+            TranscriptRow::Message(index) => {
+                let id = SharedString::from(format!("msg-{index}"));
+                div()
+                    .id(id)
+                    .w_full()
+                    .flex()
+                    .justify_start()
+                    .child(Self::render_message(
+                        &self.state.messages[index],
+                        show_thinking,
+                        filter_emoji,
+                    ))
+                    .into_any_element()
+            }
+            TranscriptRow::Approval(index) => {
+                let conversation_id = self
+                    .state
                     .active_conversation_id
-                    .and_then(|conversation_id| self.state.approval_bubbles.get(&conversation_id))
-                    .into_iter()
-                    .flat_map(|bubbles| bubbles.iter())
-                    .enumerate()
-                    .filter(|(_, bubble)| {
-                        matches!(bubble.state, super::state::ApprovalBubbleState::Pending)
-                    })
-                    .take(1)
-                    .map(|(i, bubble)| {
-                        let id = SharedString::from(format!("approval-{i}"));
-                        div()
-                            .id(id)
-                            .w_full()
-                            .flex()
-                            .justify_start()
-                            .child(self.render_approval_bubble(bubble, cx))
-                    }),
-            )
-            // Streaming message
-            .when(matches!(streaming, StreamingState::Streaming { .. }), |d| {
-                d.child(self.render_streaming_message(&streaming, show_thinking, filter_emoji))
-            })
+                    .expect("approval row requires an active conversation");
+                let bubble = &self.state.approval_bubbles[&conversation_id][index];
+                let id = SharedString::from(format!("approval-{index}"));
+                div()
+                    .id(id)
+                    .w_full()
+                    .flex()
+                    .justify_start()
+                    .child(self.render_approval_bubble(bubble, cx))
+                    .into_any_element()
+            }
+            TranscriptRow::Streaming => self
+                .render_streaming_message(&self.state.streaming, show_thinking, filter_emoji)
+                .into_any_element(),
+        }
     }
 
     /// Render the streaming assistant message bubble.
@@ -756,7 +766,7 @@ impl ChatView {
                                 this.emit(UserEvent::StopStreaming { conversation_id });
                             }
                             this.state.streaming = StreamingState::Idle;
-                            this.maybe_scroll_chat_to_bottom(cx);
+                            this.maybe_scroll_chat_to_bottom();
                             // Refocus the composer so keyboard input works
                             // immediately after stopping — without this,
                             // GPUI leaves focus on the now-vanished Stop

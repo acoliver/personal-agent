@@ -9,10 +9,7 @@ use crate::presentation::view_command::{
 use crate::ui_gpui::app_store::{ChatStoreSnapshot, ConversationLoadState, StreamingStoreSnapshot};
 use crate::ui_gpui::bridge::GpuiBridge;
 use chrono::Utc;
-use gpui::{
-    point, AppContext, KeyDownEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
-    TestAppContext, TouchPhase,
-};
+use gpui::{AppContext, KeyDownEvent, Keystroke, ListOffset, Modifiers, TestAppContext};
 use std::sync::Arc;
 
 // ── messages_from_payload tests ──────────────────────────────────────────
@@ -787,27 +784,25 @@ async fn handle_enter_reenables_autoscroll_before_starting_stream(cx: &mut TestA
 }
 
 #[gpui::test]
-async fn wheel_scroll_down_reenables_autoscroll_only_when_near_bottom(cx: &mut TestAppContext) {
+async fn list_scroll_state_reenables_autoscroll_only_at_bottom(cx: &mut TestAppContext) {
     let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
     let mut visual_cx = cx.add_empty_window().clone();
 
     visual_cx.update(|_window, app| {
         view.update(app, |view: &mut ChatView, _cx| {
-            let downward_event = ScrollWheelEvent {
-                position: point(px(0.0), px(0.0)),
-                delta: ScrollDelta::Pixels(point(px(0.0), px(-16.0))),
-                modifiers: Modifiers::default(),
-                touch_phase: TouchPhase::Moved,
-            };
-
-            view.state.chat_autoscroll_enabled = false;
-            view.chat_scroll_handle
-                .set_offset(point(px(0.0), px(-120.0)));
-            view.refresh_autoscroll_state_after_wheel(&downward_event);
+            view.transcript_list_state.reset(3);
+            view.transcript_list_state.scroll_to(ListOffset {
+                item_ix: 1,
+                offset_in_item: px(12.0),
+            });
+            view.refresh_autoscroll_state_from_list();
             assert!(!view.state.chat_autoscroll_enabled);
 
-            view.chat_scroll_handle.set_offset(point(px(0.0), px(0.0)));
-            view.refresh_autoscroll_state_after_wheel(&downward_event);
+            view.transcript_list_state.scroll_to(ListOffset {
+                item_ix: 3,
+                offset_in_item: px(0.0),
+            });
+            view.refresh_autoscroll_state_from_list();
             assert!(view.state.chat_autoscroll_enabled);
         });
     });

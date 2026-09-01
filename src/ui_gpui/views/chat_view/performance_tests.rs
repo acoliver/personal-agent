@@ -23,13 +23,13 @@ async fn maybe_scroll_chat_to_bottom_triggers_single_notify_not_four(cx: &mut Te
     let mut visual_cx = cx.add_empty_window().clone();
 
     visual_cx.update(|_window, app| {
-        view.update(app, |view: &mut ChatView, cx| {
+        view.update(app, |view: &mut ChatView, _cx| {
             view.state.chat_autoscroll_enabled = true;
             view.maybe_scroll_chat_to_bottom_invocations.set(0);
 
             // The function itself should not call cx.notify() multiple times
             // via deferred chains - only the caller's cx.notify() should run
-            view.maybe_scroll_chat_to_bottom(cx);
+            view.maybe_scroll_chat_to_bottom();
 
             // Invocation count should be 1 (function was called once)
             assert_eq!(view.maybe_scroll_chat_to_bottom_invocations.get(), 1);
