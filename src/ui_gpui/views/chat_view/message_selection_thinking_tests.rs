@@ -214,6 +214,50 @@ fn thinking_blank_after_emoji_stripping_copies_nothing(cx: &mut TestAppContext) 
     });
 }
 
+#[gpui::test]
+fn user_message_thinking_never_copies_or_shifts_identity(cx: &mut TestAppContext) {
+    let view = chat_view_with(
+        cx,
+        vec![
+            ChatMessage::user("question").with_thinking("secret reasoning"),
+            ChatMessage::assistant("the answer", "model"),
+        ],
+        StreamingState::Idle,
+    );
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    // Copy output contains no thinking text for the user row, with and
+    // without the emoji filter.
+    for filter_emoji in [false, true] {
+        visual_cx.update(|window, app| {
+            view.update(app, |view, cx| {
+                view.state.show_thinking = true;
+                view.state.filter_emoji = filter_emoji;
+                view.refresh_transcript_selection_revisions();
+                seed_drag_selection(window, cx);
+                view.handle_key_down(&cmd_a(), window, cx);
+
+                assert_eq!(
+                    TextSelection::selected_text(window, cx),
+                    "question
+
+the answer"
+                );
+            });
+        });
+    }
+
+    // Mutating only the user message's thinking keeps its content key.
+    visual_cx.update(|_, app| {
+        view.update(app, |view, _| {
+            let key = view.message_selection_content_key(0);
+            view.state.messages[0] = ChatMessage::user("question").with_thinking("other");
+            view.refresh_transcript_selection_revisions();
+            assert_eq!(view.message_selection_content_key(0), key);
+        });
+    });
+}
+
 #[test]
 fn emoji_bearing_thinking_counts_one_leaf_with_and_without_the_filter() {
     use super::transcript::{transcript_row_leaf_count, TranscriptRow};

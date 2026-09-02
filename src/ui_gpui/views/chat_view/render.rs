@@ -9,7 +9,8 @@
 use super::emoji::strip_emojis;
 use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
 use super::transcript::{
-    derive_document_orders, displayed_thinking, transcript_row_leaf_count, TranscriptRow,
+    derive_document_orders, displayed_message_thinking, displayed_thinking,
+    transcript_row_leaf_count, TranscriptRow,
 };
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
@@ -469,11 +470,7 @@ impl ChatView {
         }
 
         bubble = bubble.show_thinking(show_thinking);
-        if let Some(thinking) = displayed_thinking(
-            msg.thinking.as_deref().map(String::as_str),
-            show_thinking,
-            filter_emoji,
-        ) {
+        if let Some(thinking) = displayed_message_thinking(msg, show_thinking, filter_emoji) {
             bubble = bubble.thinking(thinking);
         }
 

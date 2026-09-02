@@ -2,7 +2,7 @@
 
 use super::emoji::strip_emojis;
 use super::state::{ChatMessage, MessageRole, StreamingState};
-use super::transcript::{displayed_thinking, TranscriptRow};
+use super::transcript::{displayed_message_thinking, displayed_thinking, TranscriptRow};
 use crate::ui_gpui::components::markdown_content::{
     markdown_copy_leaves, parse_markdown_blocks, MarkdownCopyLeaf,
 };
@@ -91,11 +91,7 @@ impl TranscriptSelectionRevisions {
                 message_index,
                 role: message.role.clone(),
                 displayed_content: displayed_message_content(message, filter_emoji),
-                displayed_thinking: displayed_thinking_arc(
-                    message.thinking.as_ref(),
-                    show_thinking,
-                    filter_emoji,
-                ),
+                displayed_thinking: displayed_thinking_arc(message, show_thinking, filter_emoji),
                 filter_emoji,
             })
             .collect::<Vec<_>>();
@@ -168,21 +164,18 @@ fn displayed_message_content(message: &ChatMessage, filter_emoji: bool) -> Arc<S
 /// The displayed thinking a message's selection identity tracks, sharing
 /// the Arc when the text is displayed verbatim and reallocating only when
 /// the emoji filter changes it, so identity can never desynchronize from
-/// what `transcript::displayed_thinking` displays.
+/// what `transcript::displayed_message_thinking` displays.
 fn displayed_thinking_arc(
-    thinking: Option<&Arc<String>>,
+    message: &ChatMessage,
     show_thinking: bool,
     filter_emoji: bool,
 ) -> Option<Arc<String>> {
-    let text = displayed_thinking(
-        thinking.map(|text| text.as_str()),
-        show_thinking,
-        filter_emoji,
-    )?;
+    let text = displayed_message_thinking(message, show_thinking, filter_emoji)?;
     if filter_emoji {
         Some(Arc::new(text.into_owned()))
     } else {
-        thinking.map(Arc::clone)
+        // Verbatim display shares the message's Arc instead of copying.
+        message.thinking.clone()
     }
 }
 
@@ -285,12 +278,8 @@ impl super::ChatView {
                         };
                     let leaves = prepend_thinking_leaf(
                         leaves,
-                        displayed_thinking(
-                            message.thinking.as_deref().map(String::as_str),
-                            show_thinking,
-                            self.state.filter_emoji,
-                        )
-                        .as_deref(),
+                        displayed_message_thinking(message, show_thinking, self.state.filter_emoji)
+                            .as_deref(),
                     );
                     Some((self.message_selection_content_key(index), leaves))
                 }
@@ -774,6 +763,41 @@ mod tests {
         });
 
         assert!(!revisions.contains(selected));
+    }
+
+    #[test]
+    fn user_message_thinking_never_changes_identity() {
+        let mut revisions = TranscriptSelectionRevisions::default();
+        let conversation = Uuid::new_v4();
+        let messages = vec![ChatMessage::user("question").with_thinking("before")];
+
+        for filter_emoji in [false, true] {
+            revisions.sync(TranscriptSelectionSyncInputs {
+                conversation_id: Some(conversation),
+                messages: &messages,
+                streaming: &StreamingState::Idle,
+                filter_emoji,
+                show_thinking: true,
+                streaming_thinking: None,
+            });
+            let selected = revisions.message_key(0);
+
+            let edited = vec![ChatMessage::user("question").with_thinking("after")];
+            revisions.sync(TranscriptSelectionSyncInputs {
+                conversation_id: Some(conversation),
+                messages: &edited,
+                streaming: &StreamingState::Idle,
+                filter_emoji,
+                show_thinking: true,
+                streaming_thinking: None,
+            });
+
+            assert!(
+                revisions.contains(selected),
+                "user thinking must not affect identity with filter_emoji={filter_emoji}"
+            );
+            assert_eq!(revisions.message_key(0), selected);
+        }
     }
 
     #[test]

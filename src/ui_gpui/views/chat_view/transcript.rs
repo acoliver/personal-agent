@@ -61,6 +61,27 @@ pub(super) fn displayed_thinking(
     }
 }
 
+/// The thinking text a message row displays, if any.
+///
+/// Rendering attaches thinking only to assistant bubbles, so the role gate
+/// lives here beside the visibility gate, the emoji filter, and the
+/// non-blank rule. Row leaf counting, selection identity, copy documents,
+/// and rendering all agree through this one function.
+pub(super) fn displayed_message_thinking(
+    message: &ChatMessage,
+    show_thinking: bool,
+    filter_emoji: bool,
+) -> Option<Cow<'_, str>> {
+    if message.role != MessageRole::Assistant {
+        return None;
+    }
+    displayed_thinking(
+        message.thinking.as_deref().map(String::as_str),
+        show_thinking,
+        filter_emoji,
+    )
+}
+
 pub(super) fn transcript_row_leaf_count(
     row: TranscriptRow,
     messages: &[ChatMessage],
@@ -79,11 +100,7 @@ pub(super) fn transcript_row_leaf_count(
             };
             (
                 content_leaf_count,
-                displayed_thinking(
-                    message.thinking.as_deref().map(String::as_str),
-                    show_thinking,
-                    filter_emoji,
-                ),
+                displayed_message_thinking(message, show_thinking, filter_emoji),
             )
         }
         TranscriptRow::Approval(_) => return 0,
@@ -227,6 +244,35 @@ mod tests {
             None,
         );
         assert_eq!(count, baseline);
+    }
+
+    #[test]
+    fn user_message_with_thinking_text_gains_no_thinking_leaf() {
+        let thinking = vec![ChatMessage::user("hello").with_thinking("secret thoughts")];
+        let baseline = vec![ChatMessage::user("hello")];
+
+        for filter_emoji in [false, true] {
+            let count = transcript_row_leaf_count(
+                TranscriptRow::Message(0),
+                &thinking,
+                &StreamingState::Idle,
+                filter_emoji,
+                true,
+                None,
+            );
+            let without = transcript_row_leaf_count(
+                TranscriptRow::Message(0),
+                &baseline,
+                &StreamingState::Idle,
+                filter_emoji,
+                true,
+                None,
+            );
+            assert_eq!(
+                count, without,
+                "user thinking must not become a leaf with filter_emoji={filter_emoji}"
+            );
+        }
     }
 
     #[test]
