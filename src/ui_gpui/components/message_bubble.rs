@@ -8,7 +8,7 @@ use crate::ui_gpui::components::markdown_content::{
     MarkdownLeafFactory,
 };
 use crate::ui_gpui::components::transcript_selection::{
-    TranscriptSelectionContext, TranscriptSelectionLeafFactory,
+    TranscriptSelectionContext, TranscriptSelectionLeafFactory, THINKING_BODY_SEPARATOR,
 };
 use gpui::{div, prelude::*, px, IntoElement};
 use std::sync::Arc;
@@ -195,13 +195,7 @@ fn thinking_badge(
                     .child(factory.create_leaf(leaf)),
             ),
     );
-    (
-        badge,
-        document_order + 1,
-        "
-
-",
-    )
+    (badge, document_order + 1, THINKING_BODY_SEPARATOR)
 }
 
 impl IntoElement for AssistantBubble {

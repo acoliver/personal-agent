@@ -5,6 +5,11 @@ use gpui::{IntoElement, Pixels, Point, SharedString};
 use gpui_selection_vendor::{SelectableText, TextSelectionContentKey, TextSelectionCoverage};
 use std::sync::Arc;
 
+/// The single blank-line separator shared by the rendered copy path and the
+/// copy document: it separates a message's displayed thinking leaf from its
+/// first content leaf, so copied thinking and body text never concatenate.
+pub const THINKING_BODY_SEPARATOR: &str = "\n\n";
+
 #[derive(Clone)]
 pub struct TranscriptSelectionContext {
     pub scroll_offset: Point<Pixels>,

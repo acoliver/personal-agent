@@ -7,7 +7,7 @@ use crate::ui_gpui::components::markdown_content::{
     markdown_copy_leaves, parse_markdown_blocks, MarkdownCopyLeaf,
 };
 use crate::ui_gpui::components::transcript_selection::{
-    TranscriptCopyDocument, TranscriptSelectionContext,
+    TranscriptCopyDocument, TranscriptSelectionContext, THINKING_BODY_SEPARATOR,
 };
 use gpui::{Pixels, Point};
 use gpui_selection_vendor::{TextSelection, TextSelectionContentKey};
@@ -94,6 +94,7 @@ impl TranscriptSelectionRevisions {
                 displayed_thinking: displayed_thinking_arc(
                     message.thinking.as_ref(),
                     show_thinking,
+                    filter_emoji,
                 ),
                 filter_emoji,
             })
@@ -164,14 +165,24 @@ fn displayed_message_content(message: &ChatMessage, filter_emoji: bool) -> Arc<S
     }
 }
 
+/// The displayed thinking a message's selection identity tracks, sharing
+/// the Arc when the text is displayed verbatim and reallocating only when
+/// the emoji filter changes it, so identity can never desynchronize from
+/// what `transcript::displayed_thinking` displays.
 fn displayed_thinking_arc(
     thinking: Option<&Arc<String>>,
     show_thinking: bool,
+    filter_emoji: bool,
 ) -> Option<Arc<String>> {
-    if show_thinking {
-        thinking.filter(|text| !text.trim().is_empty()).cloned()
+    let text = displayed_thinking(
+        thinking.map(|text| text.as_str()),
+        show_thinking,
+        filter_emoji,
+    )?;
+    if filter_emoji {
+        Some(Arc::new(text.into_owned()))
     } else {
-        None
+        thinking.map(Arc::clone)
     }
 }
 
@@ -188,10 +199,7 @@ fn prepend_thinking_leaf(
         return leaves;
     };
     if let Some(first) = leaves.first_mut() {
-        first.separator_before = "
-
-"
-        .to_string();
+        first.separator_before = THINKING_BODY_SEPARATOR.to_string();
     }
     let mut all = Vec::with_capacity(leaves.len() + 1);
     all.push(MarkdownCopyLeaf {
@@ -225,11 +233,8 @@ fn streaming_identity(
                 content.clone()
             }
         )),
-        displayed_thinking: super::transcript::displayed_thinking(
-            streaming_thinking,
-            show_thinking,
-        )
-        .map(|text| Arc::new(text.to_string())),
+        displayed_thinking: displayed_thinking(streaming_thinking, show_thinking, filter_emoji)
+            .map(|text| Arc::new(text.into_owned())),
         filter_emoji,
     })
 }
@@ -283,7 +288,9 @@ impl super::ChatView {
                         displayed_thinking(
                             message.thinking.as_deref().map(String::as_str),
                             show_thinking,
-                        ),
+                            self.state.filter_emoji,
+                        )
+                        .as_deref(),
                     );
                     Some((self.message_selection_content_key(index), leaves))
                 }
@@ -298,7 +305,12 @@ impl super::ChatView {
                     };
                     let leaves = prepend_thinking_leaf(
                         markdown_copy_leaves(&parse_markdown_blocks(&format!("{content}▋"))),
-                        displayed_thinking(streaming_thinking, show_thinking),
+                        displayed_thinking(
+                            streaming_thinking,
+                            show_thinking,
+                            self.state.filter_emoji,
+                        )
+                        .as_deref(),
                     );
                     Some((self.streaming_selection_content_key(), leaves))
                 }
@@ -323,7 +335,11 @@ impl super::ChatView {
         Some(TranscriptSelectionContext {
             scroll_offset,
             document_order,
-            first_copy_separator: if document_order == 0 { "" } else { "\n\n" },
+            first_copy_separator: if document_order == 0 {
+                ""
+            } else {
+                THINKING_BODY_SEPARATOR
+            },
             content_key,
             copy_document,
         })

@@ -865,6 +865,10 @@ mod approval_tests;
 mod message_selection_tests;
 
 #[cfg(test)]
+#[path = "message_selection_thinking_tests.rs"]
+mod message_selection_thinking_tests;
+
+#[cfg(test)]
 #[path = "mod_tests.rs"]
 mod mod_tests;
 

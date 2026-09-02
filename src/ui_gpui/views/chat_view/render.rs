@@ -373,9 +373,11 @@ impl ChatView {
             .model_id("streaming")
             .show_thinking(show_thinking)
             .streaming(true);
-        if let Some(thinking) =
-            displayed_thinking(self.state.thinking_content.as_deref(), show_thinking)
-        {
+        if let Some(thinking) = displayed_thinking(
+            self.state.thinking_content.as_deref(),
+            show_thinking,
+            filter_emoji,
+        ) {
             bubble = bubble.thinking(thinking);
         }
         div().id("streaming-msg").child(bubble)
@@ -467,9 +469,11 @@ impl ChatView {
         }
 
         bubble = bubble.show_thinking(show_thinking);
-        if let Some(thinking) =
-            displayed_thinking(msg.thinking.as_deref().map(String::as_str), show_thinking)
-        {
+        if let Some(thinking) = displayed_thinking(
+            msg.thinking.as_deref().map(String::as_str),
+            show_thinking,
+            filter_emoji,
+        ) {
             bubble = bubble.thinking(thinking);
         }
 

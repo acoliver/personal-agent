@@ -5,6 +5,7 @@ use super::state::{
     ApprovalBubbleState, ChatMessage, MessageRole, StreamingState, ToolApprovalBubble,
 };
 use crate::ui_gpui::components::markdown_content::{markdown_leaf_count, parse_markdown_blocks};
+use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TranscriptRow {
@@ -39,14 +40,24 @@ pub(super) fn build_transcript_rows(
 /// The thinking text a transcript row displays, if any.
 ///
 /// Thinking is displayed only when visibility is on and the text has
-/// content; blank thinking never becomes a leaf. Row leaf counting,
-/// selection identity, and the copy document all agree through this one
-/// function.
-pub(super) fn displayed_thinking(thinking: Option<&str>, show_thinking: bool) -> Option<&str> {
-    if show_thinking {
-        thinking.filter(|text| !text.trim().is_empty())
+/// content. When the emoji filter is on, emoji are stripped first and the
+/// non-blank rule applies to the stripped text, so thinking that blanks out
+/// never becomes a leaf. Row leaf counting, selection identity, copy
+/// documents, and rendering all agree through this one function.
+pub(super) fn displayed_thinking(
+    thinking: Option<&str>,
+    show_thinking: bool,
+    filter_emoji: bool,
+) -> Option<Cow<'_, str>> {
+    if !show_thinking {
+        return None;
+    }
+    let text = thinking?;
+    if filter_emoji {
+        let stripped = strip_emojis(text);
+        (!stripped.trim().is_empty()).then_some(Cow::Owned(stripped))
     } else {
-        None
+        (!text.trim().is_empty()).then_some(Cow::Borrowed(text))
     }
 }
 
@@ -71,6 +82,7 @@ pub(super) fn transcript_row_leaf_count(
                 displayed_thinking(
                     message.thinking.as_deref().map(String::as_str),
                     show_thinking,
+                    filter_emoji,
                 ),
             )
         }
@@ -87,7 +99,7 @@ pub(super) fn transcript_row_leaf_count(
             };
             (
                 markdown_leaf_count(&parse_markdown_blocks(&format!("{content}▋"))),
-                displayed_thinking(streaming_thinking, show_thinking),
+                displayed_thinking(streaming_thinking, show_thinking, filter_emoji),
             )
         }
     };
@@ -118,13 +130,29 @@ mod tests {
     #[test]
     fn displayed_thinking_requires_visibility_and_non_empty_text() {
         assert_eq!(
-            displayed_thinking(Some("reasoning"), true),
-            Some("reasoning")
+            displayed_thinking(Some("reasoning"), true, false),
+            Some(Cow::Borrowed("reasoning"))
         );
-        assert_eq!(displayed_thinking(Some("reasoning"), false), None);
-        assert_eq!(displayed_thinking(Some(""), true), None);
-        assert_eq!(displayed_thinking(Some("   "), true), None);
-        assert_eq!(displayed_thinking(None, true), None);
+        assert_eq!(displayed_thinking(Some("reasoning"), false, false), None);
+        assert_eq!(displayed_thinking(Some(""), true, false), None);
+        assert_eq!(displayed_thinking(Some("   "), true, false), None);
+        assert_eq!(displayed_thinking(None, true, false), None);
+    }
+
+    #[test]
+    fn displayed_thinking_strips_emoji_and_drops_blank_results() {
+        assert_eq!(
+            displayed_thinking(Some("thought \u{1F600} here"), true, true),
+            Some(Cow::Owned("thought  here".to_string()))
+        );
+        // Blank-after-stripping thinking is not displayed.
+        assert_eq!(displayed_thinking(Some("\u{1F600}"), true, true), None);
+        assert_eq!(displayed_thinking(Some(" \u{1F600} "), true, true), None);
+        // With the filter off, emoji-bearing thinking displays verbatim.
+        assert_eq!(
+            displayed_thinking(Some("\u{1F600}"), true, false),
+            Some(Cow::Borrowed("\u{1F600}"))
+        );
     }
 
     #[test]
