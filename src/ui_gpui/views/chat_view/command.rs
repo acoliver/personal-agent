@@ -148,6 +148,7 @@ impl ChatView {
             }
             ViewCommand::ToggleThinkingVisibility => {
                 self.state.show_thinking = !self.state.show_thinking;
+                self.refresh_transcript_selection_revisions();
                 cx.notify();
             }
             cmd @ (ViewCommand::CodexReauthRequired { .. }

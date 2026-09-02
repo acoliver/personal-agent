@@ -695,7 +695,10 @@ fn copy_refuses_and_clears_when_any_selected_key_went_stale(cx: &mut TestAppCont
 fn copy_refuses_when_the_streaming_row_or_emoji_filter_mutates(cx: &mut TestAppContext) {
     let view = chat_view_with(
         cx,
-        vec![ChatMessage::assistant("hello 😀", "model")],
+        vec![ChatMessage::assistant(
+            concat!("hello ", "\u{1F600}"),
+            "model",
+        )],
         StreamingState::Streaming {
             content: "partial".to_string(),
             done: false,
@@ -733,6 +736,187 @@ fn copy_refuses_when_the_streaming_row_or_emoji_filter_mutates(cx: &mut TestAppC
             seed_drag_selection(window, cx);
             view.handle_key_down(&cmd_a(), window, cx);
             view.state.filter_emoji = true;
+            view.refresh_transcript_selection_revisions();
+
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("sentinel".to_string()));
+            view.handle_key_down(&chat_key_event("cmd-c"), window, cx);
+
+            assert!(!TextSelection::has_selection(window, cx));
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some("sentinel".to_string())
+            );
+        });
+    });
+}
+
+#[gpui::test]
+fn cmd_a_includes_displayed_thinking_exactly_once(cx: &mut TestAppContext) {
+    let view = chat_view_with(
+        cx,
+        vec![
+            ChatMessage::user("question"),
+            ChatMessage::assistant("the **answer**", "model").with_thinking("pondering deeply"),
+            ChatMessage::user("thanks"),
+        ],
+        StreamingState::Idle,
+    );
+    let mut visual_cx = cx.add_empty_window().clone();
+    visual_cx.update(|window, app| {
+        view.update(app, |view, cx| {
+            view.state.show_thinking = true;
+            view.refresh_transcript_selection_revisions();
+            seed_drag_selection(window, cx);
+            view.handle_key_down(&cmd_a(), window, cx);
+
+            let text = TextSelection::selected_text(window, cx);
+            assert_eq!(
+                text,
+                "question
+
+pondering deeply
+
+the answer
+
+thanks"
+            );
+            assert_eq!(text.matches("pondering deeply").count(), 1);
+        });
+    });
+}
+
+#[gpui::test]
+fn cmd_a_includes_streaming_thinking_in_visible_order(cx: &mut TestAppContext) {
+    let view = chat_view_with(
+        cx,
+        vec![ChatMessage::user("go")],
+        StreamingState::Streaming {
+            content: "partial".to_string(),
+            done: false,
+        },
+    );
+    let mut visual_cx = cx.add_empty_window().clone();
+    visual_cx.update(|window, app| {
+        view.update(app, |view, cx| {
+            view.state.show_thinking = true;
+            view.state.thinking_content = Some("hmm".to_string());
+            view.refresh_transcript_selection_revisions();
+            seed_drag_selection(window, cx);
+            view.handle_key_down(&cmd_a(), window, cx);
+
+            assert_eq!(
+                TextSelection::selected_text(window, cx),
+                "go
+
+hmm
+
+partial▋"
+            );
+        });
+    });
+}
+
+#[gpui::test]
+fn cmd_a_excludes_hidden_thinking_and_keeps_ordinary_copy_output(cx: &mut TestAppContext) {
+    let view = chat_view_with(
+        cx,
+        vec![
+            ChatMessage::user("question"),
+            ChatMessage::assistant("the **answer**", "model").with_thinking("pondering deeply"),
+            ChatMessage::user("thanks"),
+        ],
+        StreamingState::Idle,
+    );
+    let mut visual_cx = cx.add_empty_window().clone();
+    visual_cx.update(|window, app| {
+        view.update(app, |view, cx| {
+            seed_drag_selection(window, cx);
+            view.handle_key_down(&cmd_a(), window, cx);
+
+            // Hidden thinking stays outside the copy, and the ordinary
+            // transcript copy output is byte-for-byte the pre-thinking text.
+            assert_eq!(
+                TextSelection::selected_text(window, cx),
+                "question
+
+the answer
+
+thanks"
+            );
+        });
+    });
+}
+
+#[gpui::test]
+fn thinking_visibility_toggle_invalidates_keys_and_refuses_stale_copy(cx: &mut TestAppContext) {
+    let view = chat_view_with(
+        cx,
+        vec![ChatMessage::assistant("answer", "model").with_thinking("secret reasoning")],
+        StreamingState::Idle,
+    );
+    let mut visual_cx = cx.add_empty_window().clone();
+    visual_cx.update(|window, app| {
+        view.update(app, |view, cx| {
+            view.state.show_thinking = true;
+            view.refresh_transcript_selection_revisions();
+            seed_drag_selection(window, cx);
+            view.handle_key_down(&cmd_a(), window, cx);
+            assert_eq!(
+                TextSelection::selected_text(window, cx),
+                "secret reasoning
+
+answer"
+            );
+
+            // The real command path must refresh selection revisions so the
+            // installed keys go stale and copy refuses instead of leaking
+            // the now-hidden thinking text.
+            view.handle_command(
+                crate::presentation::view_command::ViewCommand::ToggleThinkingVisibility,
+                cx,
+            );
+            assert!(!view.state.show_thinking);
+
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("sentinel".to_string()));
+            view.handle_key_down(&chat_key_event("cmd-c"), window, cx);
+
+            assert!(!TextSelection::has_selection(window, cx));
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some("sentinel".to_string())
+            );
+        });
+    });
+}
+
+#[gpui::test]
+fn streaming_thinking_change_invalidates_keys_and_refuses_stale_copy(cx: &mut TestAppContext) {
+    let view = chat_view_with(
+        cx,
+        vec![ChatMessage::user("go")],
+        StreamingState::Streaming {
+            content: "partial".to_string(),
+            done: false,
+        },
+    );
+    let mut visual_cx = cx.add_empty_window().clone();
+    visual_cx.update(|window, app| {
+        view.update(app, |view, cx| {
+            view.state.show_thinking = true;
+            view.state.thinking_content = Some("first thought".to_string());
+            view.refresh_transcript_selection_revisions();
+            seed_drag_selection(window, cx);
+            view.handle_key_down(&cmd_a(), window, cx);
+            assert_eq!(
+                TextSelection::selected_text(window, cx),
+                "go
+
+first thought
+
+partial▋"
+            );
+
+            view.state.thinking_content = Some("first thought extended".to_string());
             view.refresh_transcript_selection_revisions();
 
             cx.write_to_clipboard(gpui::ClipboardItem::new_string("sentinel".to_string()));

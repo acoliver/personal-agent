@@ -4,10 +4,11 @@
 //! @requirement REQ-GPUI-003
 
 use crate::ui_gpui::components::markdown_content::{
-    blocks_to_elements_with_leaf_factory, parse_markdown_blocks, MarkdownBlock,
+    blocks_to_elements_with_leaf_factory, parse_markdown_blocks, MarkdownBlock, MarkdownLeaf,
+    MarkdownLeafFactory,
 };
 use crate::ui_gpui::components::transcript_selection::{
-    TranscriptSelectionContext, TranscriptSelectionLeafFactory,
+    TranscriptSelectionContext, TranscriptSelectionLeafFactory, THINKING_BODY_SEPARATOR,
 };
 use gpui::{div, prelude::*, px, IntoElement};
 use std::sync::Arc;
@@ -139,11 +140,75 @@ fn rendered_content_text(content: &str, is_streaming: bool) -> String {
     }
 }
 
+/// Builds the selectable leaf carrying a bubble's thinking text.
+///
+/// Only the reasoning text participates in selection; the "Thinking:"
+/// label is chrome, matching the exclusion of role labels and
+/// "via <model>".
+fn thinking_leaf(text: &str, document_order: u64, copy_separator_before: &str) -> MarkdownLeaf {
+    MarkdownLeaf {
+        plain_text: gpui::SharedString::from(text.to_string()),
+        links: Vec::new(),
+        text_runs: vec![gpui::TextRun {
+            len: text.len(),
+            color: crate::ui_gpui::theme::Theme::text_muted(),
+            ..gpui::TextRun::default()
+        }],
+        document_order,
+        copy_separator_before: copy_separator_before.to_string().into(),
+        surface_background: crate::ui_gpui::theme::Theme::bg_dark(),
+        surface_foreground: crate::ui_gpui::theme::Theme::text_muted(),
+    }
+}
+
+/// Builds the thinking badge with its selectable leaf.
+///
+/// The leaf takes the row's entry document order, ahead of every content
+/// leaf, so logical reading order is stable regardless of paint order.
+/// Returns the badge, the next content document order, and the separator
+/// the first content leaf must use so copied thinking and body text never
+/// concatenate.
+fn thinking_badge(
+    thinking_text: &str,
+    document_order: u64,
+    first_copy_separator: &'static str,
+    factory: &mut TranscriptSelectionLeafFactory,
+) -> (gpui::Div, u64, &'static str) {
+    use crate::ui_gpui::theme::Theme;
+
+    let leaf = thinking_leaf(thinking_text, document_order, first_copy_separator);
+    let badge = Theme::badge(
+        div()
+            .w_full()
+            .px(px(Theme::SPACING_MD))
+            .py(px(Theme::SPACING_SM))
+            .rounded(px(Theme::RADIUS_MD))
+            .text_sm()
+            .flex()
+            .items_start()
+            .gap(px(Theme::SPACING_XS))
+            .child(div().flex_shrink_0().child("Thinking:"))
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .flex_1()
+                    .child(factory.create_leaf(leaf)),
+            ),
+    );
+    (badge, document_order + 1, THINKING_BODY_SEPARATOR)
+}
+
 impl IntoElement for AssistantBubble {
     type Element = gpui::Div;
 
     fn into_element(self) -> Self::Element {
         use crate::ui_gpui::theme::Theme;
+
+        let thinking = self
+            .show_thinking
+            .then_some(self.thinking.as_deref())
+            .flatten()
+            .filter(|text| !text.trim().is_empty());
 
         let mut bubble = div()
             .flex()
@@ -152,18 +217,27 @@ impl IntoElement for AssistantBubble {
             .w_full()
             .gap(px(Theme::SPACING_SM));
 
-        if self.show_thinking {
-            if let Some(thinking_content) = self.thinking {
-                bubble = bubble.child(Theme::badge(
-                    div()
-                        .w_full()
-                        .px(px(Theme::SPACING_MD))
-                        .py(px(Theme::SPACING_SM))
-                        .rounded(px(Theme::RADIUS_MD))
-                        .text_sm()
-                        .child(format!("Thinking: {thinking_content}")),
-                ));
-            }
+        let mut factory = TranscriptSelectionLeafFactory::new(
+            self.selection.scroll_offset,
+            self.selection.content_key,
+            Arc::clone(&self.selection.copy_document),
+        );
+        let mut document_order = self.selection.document_order;
+        let mut first_content_separator = self.selection.first_copy_separator;
+
+        // The thinking leaf takes the row's entry document order, ahead of
+        // every content leaf, so logical reading order is stable regardless
+        // of paint order.
+        if let Some(thinking_text) = thinking {
+            let (badge, next_order, separator_after_thinking) = thinking_badge(
+                thinking_text,
+                document_order,
+                self.selection.first_copy_separator,
+                &mut factory,
+            );
+            document_order = next_order;
+            first_content_separator = separator_after_thinking;
+            bubble = bubble.child(badge);
         }
 
         let content_text = rendered_content_text(&self.content, self.is_streaming);
@@ -182,19 +256,13 @@ impl IntoElement for AssistantBubble {
             // No cache available: parse fresh
             parse_markdown_blocks(&content_text)
         };
-        let mut factory = TranscriptSelectionLeafFactory::new(
-            self.selection.scroll_offset,
-            self.selection.content_key,
-            Arc::clone(&self.selection.copy_document),
-        );
-        let mut document_order = self.selection.document_order;
         let rendered = blocks_to_elements_with_leaf_factory(
             &blocks,
             Theme::text_primary(),
             Theme::assistant_bubble_bg(),
             &mut factory,
             &mut document_order,
-            self.selection.first_copy_separator,
+            first_content_separator,
         );
 
         bubble = bubble.child(Theme::assistant_bubble(
@@ -227,5 +295,32 @@ mod tests {
     fn test_streaming_cursor_only_during_streaming() {
         assert_eq!(rendered_content_text("Hello", true), "Hello▋");
         assert_eq!(rendered_content_text("Hello", false), "Hello");
+    }
+
+    #[test]
+    fn thinking_leaf_excludes_label_chrome_and_uses_entry_document_order() {
+        let leaf = thinking_leaf(
+            "chain of thought",
+            7,
+            "
+
+",
+        );
+
+        assert_eq!(leaf.plain_text.as_ref(), "chain of thought");
+        assert_eq!(leaf.document_order, 7);
+        assert_eq!(
+            leaf.copy_separator_before.as_ref(),
+            "
+
+"
+        );
+        assert!(leaf.links.is_empty());
+        assert_eq!(
+            leaf.text_runs.iter().map(|run| run.len).sum::<usize>(),
+            "chain of thought".len(),
+            "run lengths must cover the exact leaf text"
+        );
+        assert!(!leaf.plain_text.contains("Thinking"));
     }
 }

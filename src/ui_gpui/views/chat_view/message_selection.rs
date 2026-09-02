@@ -2,10 +2,12 @@
 
 use super::emoji::strip_emojis;
 use super::state::{ChatMessage, MessageRole, StreamingState};
-use super::transcript::TranscriptRow;
-use crate::ui_gpui::components::markdown_content::{markdown_copy_leaves, parse_markdown_blocks};
+use super::transcript::{displayed_message_thinking, displayed_thinking, TranscriptRow};
+use crate::ui_gpui::components::markdown_content::{
+    markdown_copy_leaves, parse_markdown_blocks, MarkdownCopyLeaf,
+};
 use crate::ui_gpui::components::transcript_selection::{
-    TranscriptCopyDocument, TranscriptSelectionContext,
+    TranscriptCopyDocument, TranscriptSelectionContext, THINKING_BODY_SEPARATOR,
 };
 use gpui::{Pixels, Point};
 use gpui_selection_vendor::{TextSelection, TextSelectionContentKey};
@@ -21,6 +23,7 @@ struct MessageContentIdentity {
     message_index: usize,
     role: MessageRole,
     displayed_content: Arc<String>,
+    displayed_thinking: Option<Arc<String>>,
     filter_emoji: bool,
 }
 
@@ -49,6 +52,21 @@ fn next_content_key() -> TextSelectionContentKey {
     TextSelectionContentKey::new(value)
 }
 
+/// Chat-state inputs that selection revisions sync against.
+///
+/// Bundles the transcript snapshot (conversation, messages, streaming)
+/// with the display toggles that shape displayed content, so `sync`
+/// takes one purposeful value instead of a growing argument list.
+#[derive(Clone, Copy)]
+pub(super) struct TranscriptSelectionSyncInputs<'a> {
+    pub conversation_id: Option<Uuid>,
+    pub messages: &'a [ChatMessage],
+    pub streaming: &'a StreamingState,
+    pub filter_emoji: bool,
+    pub show_thinking: bool,
+    pub streaming_thinking: Option<&'a str>,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct TranscriptSelectionRevisions {
     messages: Vec<MessageRevision>,
@@ -56,13 +74,15 @@ pub(super) struct TranscriptSelectionRevisions {
 }
 
 impl TranscriptSelectionRevisions {
-    pub(super) fn sync(
-        &mut self,
-        conversation_id: Option<Uuid>,
-        messages: &[ChatMessage],
-        streaming: &StreamingState,
-        filter_emoji: bool,
-    ) {
+    pub(super) fn sync(&mut self, inputs: TranscriptSelectionSyncInputs<'_>) {
+        let TranscriptSelectionSyncInputs {
+            conversation_id,
+            messages,
+            streaming,
+            filter_emoji,
+            show_thinking,
+            streaming_thinking,
+        } = inputs;
         let identities = messages
             .iter()
             .enumerate()
@@ -71,6 +91,7 @@ impl TranscriptSelectionRevisions {
                 message_index,
                 role: message.role.clone(),
                 displayed_content: displayed_message_content(message, filter_emoji),
+                displayed_thinking: displayed_thinking_arc(message, show_thinking, filter_emoji),
                 filter_emoji,
             })
             .collect::<Vec<_>>();
@@ -100,6 +121,8 @@ impl TranscriptSelectionRevisions {
             self.messages.len(),
             streaming,
             filter_emoji,
+            show_thinking,
+            streaming_thinking,
         );
         self.streaming = match (self.streaming.take(), streaming_identity) {
             (Some(revision), Some(identity)) if revision.identity == identity => Some(revision),
@@ -138,11 +161,55 @@ fn displayed_message_content(message: &ChatMessage, filter_emoji: bool) -> Arc<S
     }
 }
 
+/// The displayed thinking a message's selection identity tracks, sharing
+/// the Arc when the text is displayed verbatim and reallocating only when
+/// the emoji filter changes it, so identity can never desynchronize from
+/// what `transcript::displayed_message_thinking` displays.
+fn displayed_thinking_arc(
+    message: &ChatMessage,
+    show_thinking: bool,
+    filter_emoji: bool,
+) -> Option<Arc<String>> {
+    let text = displayed_message_thinking(message, show_thinking, filter_emoji)?;
+    if filter_emoji {
+        Some(Arc::new(text.into_owned()))
+    } else {
+        // Verbatim display shares the message's Arc instead of copying.
+        message.thinking.clone()
+    }
+}
+
+/// Prepends displayed thinking text as a message's first copy leaf.
+///
+/// The first content leaf's separator becomes a blank line so copied
+/// thinking and body text never concatenate; copy assembly keeps using
+/// the per-message blank-line separation everywhere else.
+fn prepend_thinking_leaf(
+    mut leaves: Vec<MarkdownCopyLeaf>,
+    thinking: Option<&str>,
+) -> Vec<MarkdownCopyLeaf> {
+    let Some(thinking) = thinking else {
+        return leaves;
+    };
+    if let Some(first) = leaves.first_mut() {
+        first.separator_before = THINKING_BODY_SEPARATOR.to_string();
+    }
+    let mut all = Vec::with_capacity(leaves.len() + 1);
+    all.push(MarkdownCopyLeaf {
+        text: thinking.to_string(),
+        separator_before: String::new(),
+    });
+    all.append(&mut leaves);
+    all
+}
+
 fn streaming_identity(
     conversation_id: Option<Uuid>,
     message_index: usize,
     streaming: &StreamingState,
     filter_emoji: bool,
+    show_thinking: bool,
+    streaming_thinking: Option<&str>,
 ) -> Option<MessageContentIdentity> {
     let StreamingState::Streaming { content, .. } = streaming else {
         return None;
@@ -159,18 +226,23 @@ fn streaming_identity(
                 content.clone()
             }
         )),
+        displayed_thinking: displayed_thinking(streaming_thinking, show_thinking, filter_emoji)
+            .map(|text| Arc::new(text.into_owned())),
         filter_emoji,
     })
 }
 
 impl super::ChatView {
     pub(super) fn refresh_transcript_selection_revisions(&mut self) {
-        self.transcript_selection_revisions.sync(
-            self.state.active_conversation_id,
-            &self.state.messages,
-            &self.state.streaming,
-            self.state.filter_emoji,
-        );
+        self.transcript_selection_revisions
+            .sync(TranscriptSelectionSyncInputs {
+                conversation_id: self.state.active_conversation_id,
+                messages: &self.state.messages,
+                streaming: &self.state.streaming,
+                filter_emoji: self.state.filter_emoji,
+                show_thinking: self.state.show_thinking,
+                streaming_thinking: self.state.thinking_content.as_deref(),
+            });
     }
 
     pub(super) fn message_selection_content_key(&self, index: usize) -> TextSelectionContentKey {
@@ -189,6 +261,8 @@ impl super::ChatView {
         &self,
         rows: &[TranscriptRow],
     ) -> Arc<TranscriptCopyDocument> {
+        let show_thinking = self.state.show_thinking;
+        let streaming_thinking = self.state.thinking_content.as_deref();
         let messages = rows
             .iter()
             .filter_map(|row| match *row {
@@ -202,6 +276,11 @@ impl super::ChatView {
                         } else {
                             markdown_copy_leaves(&message.get_or_parse_markdown())
                         };
+                    let leaves = prepend_thinking_leaf(
+                        leaves,
+                        displayed_message_thinking(message, show_thinking, self.state.filter_emoji)
+                            .as_deref(),
+                    );
                     Some((self.message_selection_content_key(index), leaves))
                 }
                 TranscriptRow::Streaming => {
@@ -213,10 +292,16 @@ impl super::ChatView {
                     } else {
                         content.clone()
                     };
-                    Some((
-                        self.streaming_selection_content_key(),
+                    let leaves = prepend_thinking_leaf(
                         markdown_copy_leaves(&parse_markdown_blocks(&format!("{content}▋"))),
-                    ))
+                        displayed_thinking(
+                            streaming_thinking,
+                            show_thinking,
+                            self.state.filter_emoji,
+                        )
+                        .as_deref(),
+                    );
+                    Some((self.streaming_selection_content_key(), leaves))
                 }
                 TranscriptRow::Approval(_) => None,
             })
@@ -239,7 +324,11 @@ impl super::ChatView {
         Some(TranscriptSelectionContext {
             scroll_offset,
             document_order,
-            first_copy_separator: if document_order == 0 { "" } else { "\n\n" },
+            first_copy_separator: if document_order == 0 {
+                ""
+            } else {
+                THINKING_BODY_SEPARATOR
+            },
             content_key,
             copy_document,
         })
@@ -425,15 +514,24 @@ mod tests {
     fn selection_does_not_survive_conversation_switch() {
         let mut revisions = TranscriptSelectionRevisions::default();
         let first = Uuid::new_v4();
-        revisions.sync(Some(first), &transcript(), &StreamingState::Idle, false);
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(first),
+            messages: &transcript(),
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
         let selected = revisions.message_key(1);
 
-        revisions.sync(
-            Some(Uuid::new_v4()),
-            &transcript(),
-            &StreamingState::Idle,
-            false,
-        );
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(Uuid::new_v4()),
+            messages: &transcript(),
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
 
         assert!(!revisions.contains(selected));
     }
@@ -442,20 +540,27 @@ mod tests {
     fn selection_does_not_survive_emoji_filter_toggle() {
         let mut revisions = TranscriptSelectionRevisions::default();
         let conversation = Uuid::new_v4();
-        revisions.sync(
-            Some(conversation),
-            &[ChatMessage::assistant("hello 😀", "model")],
-            &StreamingState::Idle,
-            false,
-        );
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &[ChatMessage::assistant("hello 😀", "model")],
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
         let selected = revisions.message_key(0);
 
-        revisions.sync(
-            Some(conversation),
-            &[ChatMessage::assistant("hello 😀", "model")],
-            &StreamingState::Idle,
-            true,
-        );
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &[ChatMessage::assistant(
+                concat!("hello ", "\u{1F600}"),
+                "model",
+            )],
+            streaming: &StreamingState::Idle,
+            filter_emoji: true,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
 
         assert!(!revisions.contains(selected));
     }
@@ -465,11 +570,25 @@ mod tests {
         let mut revisions = TranscriptSelectionRevisions::default();
         let conversation = Uuid::new_v4();
         let mut messages = transcript();
-        revisions.sync(Some(conversation), &messages, &StreamingState::Idle, false);
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
         let selected = revisions.message_key(2);
 
         messages.remove(0);
-        revisions.sync(Some(conversation), &messages, &StreamingState::Idle, false);
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
 
         assert!(!revisions.contains(selected));
     }
@@ -477,20 +596,24 @@ mod tests {
     #[test]
     fn different_conversations_never_share_a_content_key() {
         let mut revisions = TranscriptSelectionRevisions::default();
-        revisions.sync(
-            Some(Uuid::new_v4()),
-            &transcript(),
-            &StreamingState::Idle,
-            false,
-        );
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(Uuid::new_v4()),
+            messages: &transcript(),
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
         let first = revisions.message_key(0);
 
-        revisions.sync(
-            Some(Uuid::new_v4()),
-            &transcript(),
-            &StreamingState::Idle,
-            false,
-        );
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(Uuid::new_v4()),
+            messages: &transcript(),
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
 
         assert_ne!(first, revisions.message_key(0));
     }
@@ -500,27 +623,31 @@ mod tests {
         let mut revisions = TranscriptSelectionRevisions::default();
         let conversation = Uuid::new_v4();
         let messages = transcript();
-        revisions.sync(
-            Some(conversation),
-            &messages,
-            &StreamingState::Streaming {
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Streaming {
                 content: "partial".to_string(),
                 done: false,
             },
-            false,
-        );
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
         let selected = revisions.message_key(0);
         let streaming = revisions.streaming_key();
 
-        revisions.sync(
-            Some(conversation),
-            &messages,
-            &StreamingState::Streaming {
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Streaming {
                 content: "partial response".to_string(),
                 done: false,
             },
-            false,
-        );
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
 
         assert!(revisions.contains(selected));
         assert!(!revisions.contains(streaming));
@@ -531,14 +658,238 @@ mod tests {
         let mut revisions = TranscriptSelectionRevisions::default();
         let conversation = Uuid::new_v4();
         let mut messages = transcript();
-        revisions.sync(Some(conversation), &messages, &StreamingState::Idle, false);
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
         let anchor = revisions.message_key(0);
         let cursor = revisions.message_key(2);
 
         messages.push(ChatMessage::assistant("new arrival", "model"));
-        revisions.sync(Some(conversation), &messages, &StreamingState::Idle, false);
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
 
         assert!(revisions.contains(anchor));
         assert!(revisions.contains(cursor));
+    }
+
+    #[test]
+    fn selection_does_not_survive_thinking_visibility_toggle() {
+        let mut revisions = TranscriptSelectionRevisions::default();
+        let conversation = Uuid::new_v4();
+        let messages = vec![ChatMessage::assistant("answer", "model").with_thinking("reasoning")];
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: true,
+            streaming_thinking: None,
+        });
+        let selected = revisions.message_key(0);
+
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
+
+        assert!(!revisions.contains(selected));
+    }
+
+    #[test]
+    fn selection_survives_toggle_when_no_thinking_is_displayed() {
+        let mut revisions = TranscriptSelectionRevisions::default();
+        let conversation = Uuid::new_v4();
+        let messages = vec![ChatMessage::user("question")];
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: true,
+            streaming_thinking: None,
+        });
+        let selected = revisions.message_key(0);
+
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
+
+        assert!(revisions.contains(selected));
+    }
+
+    #[test]
+    fn selection_does_not_survive_displayed_thinking_text_change() {
+        let mut revisions = TranscriptSelectionRevisions::default();
+        let conversation = Uuid::new_v4();
+        let messages = vec![ChatMessage::assistant("answer", "model").with_thinking("before")];
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: true,
+            streaming_thinking: None,
+        });
+        let selected = revisions.message_key(0);
+
+        let edited = vec![ChatMessage::assistant("answer", "model").with_thinking("after")];
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &edited,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: true,
+            streaming_thinking: None,
+        });
+
+        assert!(!revisions.contains(selected));
+    }
+
+    #[test]
+    fn user_message_thinking_never_changes_identity() {
+        let mut revisions = TranscriptSelectionRevisions::default();
+        let conversation = Uuid::new_v4();
+        let messages = vec![ChatMessage::user("question").with_thinking("before")];
+
+        for filter_emoji in [false, true] {
+            revisions.sync(TranscriptSelectionSyncInputs {
+                conversation_id: Some(conversation),
+                messages: &messages,
+                streaming: &StreamingState::Idle,
+                filter_emoji,
+                show_thinking: true,
+                streaming_thinking: None,
+            });
+            let selected = revisions.message_key(0);
+
+            let edited = vec![ChatMessage::user("question").with_thinking("after")];
+            revisions.sync(TranscriptSelectionSyncInputs {
+                conversation_id: Some(conversation),
+                messages: &edited,
+                streaming: &StreamingState::Idle,
+                filter_emoji,
+                show_thinking: true,
+                streaming_thinking: None,
+            });
+
+            assert!(
+                revisions.contains(selected),
+                "user thinking must not affect identity with filter_emoji={filter_emoji}"
+            );
+            assert_eq!(revisions.message_key(0), selected);
+        }
+    }
+
+    #[test]
+    fn empty_thinking_text_is_not_displayed_identity() {
+        let mut revisions = TranscriptSelectionRevisions::default();
+        let conversation = Uuid::new_v4();
+        let messages = vec![ChatMessage::assistant("answer", "model").with_thinking("   ")];
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: None,
+        });
+        let selected = revisions.message_key(0);
+
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Idle,
+            filter_emoji: false,
+            show_thinking: true,
+            streaming_thinking: None,
+        });
+
+        assert!(revisions.contains(selected));
+    }
+
+    #[test]
+    fn streaming_thinking_change_invalidates_the_streaming_key_only() {
+        let mut revisions = TranscriptSelectionRevisions::default();
+        let conversation = Uuid::new_v4();
+        let messages = transcript();
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Streaming {
+                content: "partial".to_string(),
+                done: false,
+            },
+            filter_emoji: false,
+            show_thinking: true,
+            streaming_thinking: Some("initial thought"),
+        });
+        let earlier_message = revisions.message_key(0);
+        let streaming = revisions.streaming_key();
+
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &StreamingState::Streaming {
+                content: "partial".to_string(),
+                done: false,
+            },
+            filter_emoji: false,
+            show_thinking: true,
+            streaming_thinking: Some("extended thinking"),
+        });
+
+        assert!(revisions.contains(earlier_message));
+        assert!(!revisions.contains(streaming));
+    }
+
+    #[test]
+    fn streaming_thinking_visibility_toggle_invalidates_the_streaming_key() {
+        let mut revisions = TranscriptSelectionRevisions::default();
+        let conversation = Uuid::new_v4();
+        let messages = transcript();
+        let streaming = StreamingState::Streaming {
+            content: "partial".to_string(),
+            done: false,
+        };
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &streaming,
+            filter_emoji: false,
+            show_thinking: true,
+            streaming_thinking: Some("visible thought"),
+        });
+        let shown = revisions.streaming_key();
+
+        revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: Some(conversation),
+            messages: &messages,
+            streaming: &streaming,
+            filter_emoji: false,
+            show_thinking: false,
+            streaming_thinking: Some("visible thought"),
+        });
+
+        assert!(!revisions.contains(shown));
     }
 }

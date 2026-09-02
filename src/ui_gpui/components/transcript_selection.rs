@@ -5,6 +5,11 @@ use gpui::{IntoElement, Pixels, Point, SharedString};
 use gpui_selection_vendor::{SelectableText, TextSelectionContentKey, TextSelectionCoverage};
 use std::sync::Arc;
 
+/// The single blank-line separator shared by the rendered copy path and the
+/// copy document: it separates a message's displayed thinking leaf from its
+/// first content leaf, so copied thinking and body text never concatenate.
+pub const THINKING_BODY_SEPARATOR: &str = "\n\n";
+
 #[derive(Clone)]
 pub struct TranscriptSelectionContext {
     pub scroll_offset: Point<Pixels>,
@@ -541,5 +546,180 @@ mod tests {
             vec![leaf(" \n ", "")],
         )]);
         assert_eq!(blank.select_all_payload(), None);
+    }
+
+    /// A message whose displayed thinking text is the first copy leaf.
+    fn thinking_document() -> (TranscriptCopyDocument, [TextSelectionContentKey; 3]) {
+        let keys = [
+            TextSelectionContentKey::new(51),
+            TextSelectionContentKey::new(52),
+            TextSelectionContentKey::new(53),
+        ];
+        let document = TranscriptCopyDocument::new(vec![
+            (keys[0], vec![leaf("question", "")]),
+            (
+                keys[1],
+                vec![
+                    leaf("pondering deeply", ""),
+                    leaf("the answer", "\n\n"),
+                    leaf("tail", "\n"),
+                ],
+            ),
+            (keys[2], vec![leaf("thanks", "")]),
+        ]);
+        (document, keys)
+    }
+
+    #[test]
+    fn selection_within_one_message_spans_thinking_and_content_leaves() {
+        let (document, keys) = thinking_document();
+        let endpoints = [keys[1], keys[1]];
+
+        // Anchor inside the thinking leaf, cursor inside the first content leaf.
+        let from_thinking = copy(
+            &document,
+            TextSelectionCoverage::ToEnd,
+            Some("deeply"),
+            1,
+            endpoints,
+        );
+        let into_content = copy(&document, TextSelectionCoverage::Full, None, 2, endpoints);
+        let to_cursor = copy(
+            &document,
+            TextSelectionCoverage::FromStart,
+            Some("the ans"),
+            2,
+            endpoints,
+        );
+
+        assert_eq!(
+            format!("{from_thinking}{into_content}{to_cursor}"),
+            "deeply\n\nthe answer\n\nthe ans"
+        );
+    }
+
+    #[test]
+    fn selection_ending_inside_thinking_copies_only_leading_thinking_text() {
+        let (document, keys) = thinking_document();
+        let endpoints = [keys[0], keys[1]];
+
+        let lower = copy(
+            &document,
+            TextSelectionCoverage::ToEnd,
+            Some("stion"),
+            0,
+            endpoints,
+        );
+        let upper = copy(
+            &document,
+            TextSelectionCoverage::FromStart,
+            Some("ponder"),
+            1,
+            endpoints,
+        );
+
+        assert_eq!(format!("{lower}{upper}"), "stion\n\nponder");
+    }
+
+    #[test]
+    fn cross_message_selection_spans_thinking_in_both_directions() {
+        let (document, keys) = thinking_document();
+
+        for endpoint_keys in [[keys[0], keys[2]], [keys[2], keys[0]]] {
+            let lower = copy(
+                &document,
+                TextSelectionCoverage::ToEnd,
+                Some("stion"),
+                0,
+                endpoint_keys,
+            );
+            let upper = copy(
+                &document,
+                TextSelectionCoverage::FromStart,
+                Some("tha"),
+                4,
+                endpoint_keys,
+            );
+
+            assert_eq!(
+                format!("{lower}{upper}"),
+                "stion\n\npondering deeply\n\nthe answer\ntail\n\ntha"
+            );
+        }
+    }
+
+    #[test]
+    fn select_all_payload_includes_thinking_exactly_once() {
+        let (document, keys) = thinking_document();
+
+        let (payload_keys, text) = document
+            .select_all_payload()
+            .expect("thinking document yields a select-all payload");
+
+        assert_eq!(payload_keys, keys);
+        assert_eq!(
+            text,
+            "question\n\npondering deeply\n\nthe answer\ntail\n\nthanks"
+        );
+        assert_eq!(text.matches("pondering deeply").count(), 1);
+    }
+
+    #[test]
+    fn unmounted_thinking_message_between_mounted_endpoints_copies_completely() {
+        // Endpoints live in messages 0 and 2; the thinking-bearing message 1
+        // is fully virtualized between them and must reconstruct without
+        // truncation or duplication, in both drag directions.
+        let (document, keys) = thinking_document();
+
+        for endpoint_keys in [[keys[0], keys[2]], [keys[2], keys[0]]] {
+            let lower = copy(
+                &document,
+                TextSelectionCoverage::ToEnd,
+                Some("question"),
+                0,
+                endpoint_keys,
+            );
+            let upper = copy(
+                &document,
+                TextSelectionCoverage::FromStart,
+                Some("thanks"),
+                4,
+                endpoint_keys,
+            );
+
+            assert_eq!(
+                format!("{lower}{upper}"),
+                "question\n\npondering deeply\n\nthe answer\ntail\n\nthanks"
+            );
+        }
+    }
+
+    #[test]
+    fn endpoint_inside_thinking_reconstructs_the_rest_of_its_message() {
+        let (document, keys) = thinking_document();
+        let endpoint_keys = [keys[1], keys[2]];
+
+        // Anchor inside the thinking leaf; cursor in the last message. The
+        // virtualized remainder of the anchor's own message (content leaves)
+        // must follow the selected thinking suffix.
+        let lower = copy(
+            &document,
+            TextSelectionCoverage::ToEnd,
+            Some("ing deeply"),
+            1,
+            endpoint_keys,
+        );
+        let upper = copy(
+            &document,
+            TextSelectionCoverage::FromStart,
+            Some("thank"),
+            4,
+            endpoint_keys,
+        );
+
+        assert_eq!(
+            format!("{lower}{upper}"),
+            "ing deeply\n\nthe answer\ntail\n\nthank"
+        );
     }
 }
