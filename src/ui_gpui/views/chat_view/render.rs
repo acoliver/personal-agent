@@ -8,7 +8,9 @@
 
 use super::emoji::strip_emojis;
 use super::state::{ApprovalBubbleState, ChatMessage, MessageRole, StreamingState};
-use super::transcript::{derive_document_orders, transcript_row_leaf_count, TranscriptRow};
+use super::transcript::{
+    derive_document_orders, displayed_thinking, transcript_row_leaf_count, TranscriptRow,
+};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::AppMode;
@@ -232,6 +234,8 @@ impl ChatView {
                     &self.state.messages,
                     &self.state.streaming,
                     filter_emoji,
+                    show_thinking,
+                    self.state.thinking_content.as_deref(),
                 )
             })
             .collect();
@@ -369,10 +373,10 @@ impl ChatView {
             .model_id("streaming")
             .show_thinking(show_thinking)
             .streaming(true);
-        if let Some(ref thinking) = self.state.thinking_content {
-            if !thinking.is_empty() {
-                bubble = bubble.thinking(thinking.clone());
-            }
+        if let Some(thinking) =
+            displayed_thinking(self.state.thinking_content.as_deref(), show_thinking)
+        {
+            bubble = bubble.thinking(thinking);
         }
         div().id("streaming-msg").child(bubble)
     }
@@ -462,10 +466,11 @@ impl ChatView {
             bubble = bubble.model_id("Assistant");
         }
 
-        if show_thinking {
-            if let Some(ref thinking) = msg.thinking {
-                bubble = bubble.thinking((**thinking).clone()).show_thinking(true);
-            }
+        bubble = bubble.show_thinking(show_thinking);
+        if let Some(thinking) =
+            displayed_thinking(msg.thinking.as_deref().map(String::as_str), show_thinking)
+        {
+            bubble = bubble.thinking(thinking);
         }
 
         bubble.into_any_element()

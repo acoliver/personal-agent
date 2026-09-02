@@ -36,22 +36,45 @@ pub(super) fn build_transcript_rows(
     rows
 }
 
+/// The thinking text a transcript row displays, if any.
+///
+/// Thinking is displayed only when visibility is on and the text has
+/// content; blank thinking never becomes a leaf. Row leaf counting,
+/// selection identity, and the copy document all agree through this one
+/// function.
+pub(super) fn displayed_thinking(thinking: Option<&str>, show_thinking: bool) -> Option<&str> {
+    if show_thinking {
+        thinking.filter(|text| !text.trim().is_empty())
+    } else {
+        None
+    }
+}
+
 pub(super) fn transcript_row_leaf_count(
     row: TranscriptRow,
     messages: &[ChatMessage],
     streaming: &StreamingState,
     filter_emoji: bool,
+    show_thinking: bool,
+    streaming_thinking: Option<&str>,
 ) -> usize {
-    match row {
+    let (content_leaf_count, displayed_thinking) = match row {
         TranscriptRow::Message(index) => {
             let message = &messages[index];
-            if filter_emoji && message.role == MessageRole::Assistant {
+            let content_leaf_count = if filter_emoji && message.role == MessageRole::Assistant {
                 markdown_leaf_count(&parse_markdown_blocks(&strip_emojis(&message.content)))
             } else {
                 markdown_leaf_count(&message.get_or_parse_markdown())
-            }
+            };
+            (
+                content_leaf_count,
+                displayed_thinking(
+                    message.thinking.as_deref().map(String::as_str),
+                    show_thinking,
+                ),
+            )
         }
-        TranscriptRow::Approval(_) => 0,
+        TranscriptRow::Approval(_) => return 0,
         TranscriptRow::Streaming => {
             let content = match streaming {
                 StreamingState::Streaming { content, .. } => content.as_str(),
@@ -62,9 +85,13 @@ pub(super) fn transcript_row_leaf_count(
             } else {
                 content.to_string()
             };
-            markdown_leaf_count(&parse_markdown_blocks(&format!("{content}▋")))
+            (
+                markdown_leaf_count(&parse_markdown_blocks(&format!("{content}▋"))),
+                displayed_thinking(streaming_thinking, show_thinking),
+            )
         }
-    }
+    };
+    content_leaf_count + usize::from(displayed_thinking.is_some())
 }
 
 pub(super) fn derive_document_orders(row_leaf_counts: &[usize]) -> Vec<u64> {
@@ -87,6 +114,159 @@ mod tests {
 
     use super::*;
     use crate::presentation::view_command::{ToolApprovalContext, ToolCategory};
+
+    #[test]
+    fn displayed_thinking_requires_visibility_and_non_empty_text() {
+        assert_eq!(
+            displayed_thinking(Some("reasoning"), true),
+            Some("reasoning")
+        );
+        assert_eq!(displayed_thinking(Some("reasoning"), false), None);
+        assert_eq!(displayed_thinking(Some(""), true), None);
+        assert_eq!(displayed_thinking(Some("   "), true), None);
+        assert_eq!(displayed_thinking(None, true), None);
+    }
+
+    #[test]
+    fn message_row_leaf_count_includes_one_displayed_thinking_leaf() {
+        let thinking = ChatMessage::assistant("answer", "model").with_thinking("pondering");
+        let plain = ChatMessage::assistant("answer", "model");
+        let messages = vec![thinking, plain];
+
+        let shown = transcript_row_leaf_count(
+            TranscriptRow::Message(0),
+            &messages,
+            &StreamingState::Idle,
+            false,
+            true,
+            None,
+        );
+        let hidden = transcript_row_leaf_count(
+            TranscriptRow::Message(0),
+            &messages,
+            &StreamingState::Idle,
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(shown, hidden + 1);
+    }
+
+    #[test]
+    fn message_row_leaf_count_excludes_empty_thinking_text() {
+        let messages = vec![ChatMessage::assistant("answer", "model").with_thinking("   ")];
+
+        let count = transcript_row_leaf_count(
+            TranscriptRow::Message(0),
+            &messages,
+            &StreamingState::Idle,
+            false,
+            true,
+            None,
+        );
+
+        let without_thinking = transcript_row_leaf_count(
+            TranscriptRow::Message(0),
+            &messages,
+            &StreamingState::Idle,
+            false,
+            false,
+            None,
+        );
+        assert_eq!(count, without_thinking);
+    }
+
+    #[test]
+    fn user_message_rows_never_gain_a_thinking_leaf() {
+        let messages = vec![ChatMessage::user("hello")];
+
+        let count = transcript_row_leaf_count(
+            TranscriptRow::Message(0),
+            &messages,
+            &StreamingState::Idle,
+            false,
+            true,
+            Some("streaming thoughts"),
+        );
+
+        let baseline = transcript_row_leaf_count(
+            TranscriptRow::Message(0),
+            &messages,
+            &StreamingState::Idle,
+            false,
+            false,
+            None,
+        );
+        assert_eq!(count, baseline);
+    }
+
+    #[test]
+    fn streaming_row_leaf_count_includes_displayed_thinking_leaf() {
+        let streaming = StreamingState::Streaming {
+            content: "partial".to_string(),
+            done: false,
+        };
+        let messages = [ChatMessage::user("go")];
+
+        let shown = transcript_row_leaf_count(
+            TranscriptRow::Streaming,
+            &messages,
+            &streaming,
+            false,
+            true,
+            Some("hmm"),
+        );
+        let hidden = transcript_row_leaf_count(
+            TranscriptRow::Streaming,
+            &messages,
+            &streaming,
+            false,
+            false,
+            Some("hmm"),
+        );
+
+        assert_eq!(shown, hidden + 1);
+    }
+
+    #[test]
+    fn thinking_leaf_count_keeps_document_orders_stable_per_visibility() {
+        // One content leaf per message; the thinking leaf shifts the orders
+        // of every later row exactly like any other leaf would.
+        let messages = vec![
+            ChatMessage::assistant("one", "model").with_thinking("first thoughts"),
+            ChatMessage::user("two"),
+        ];
+        let streaming = StreamingState::Idle;
+
+        let shown_counts: Vec<usize> = (0..messages.len())
+            .map(|index| {
+                transcript_row_leaf_count(
+                    TranscriptRow::Message(index),
+                    &messages,
+                    &streaming,
+                    false,
+                    true,
+                    None,
+                )
+            })
+            .collect();
+        let hidden_counts: Vec<usize> = (0..messages.len())
+            .map(|index| {
+                transcript_row_leaf_count(
+                    TranscriptRow::Message(index),
+                    &messages,
+                    &streaming,
+                    false,
+                    false,
+                    None,
+                )
+            })
+            .collect();
+
+        assert_eq!(derive_document_orders(&shown_counts), vec![0, 2]);
+        assert_eq!(derive_document_orders(&hidden_counts), vec![0, 1]);
+    }
 
     fn approval(state: ApprovalBubbleState) -> ToolApprovalBubble {
         let mut bubble = ToolApprovalBubble::new(

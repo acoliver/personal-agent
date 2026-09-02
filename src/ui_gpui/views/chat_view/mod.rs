@@ -78,7 +78,7 @@ use gpui::{
     Pixels,
 };
 use gpui_selection_vendor::{AutoScroll, AutoScrollLease};
-use message_selection::TranscriptSelectionRevisions;
+use message_selection::{TranscriptSelectionRevisions, TranscriptSelectionSyncInputs};
 #[cfg(test)]
 use std::cell::Cell;
 use std::sync::Arc;
@@ -146,12 +146,14 @@ impl ChatView {
         let conversation_list =
             cx.new(|child_cx| ConversationListView::new(ConversationListMode::Inline, child_cx));
         let mut transcript_selection_revisions = TranscriptSelectionRevisions::default();
-        transcript_selection_revisions.sync(
-            state.active_conversation_id,
-            &state.messages,
-            &state.streaming,
-            state.filter_emoji,
-        );
+        transcript_selection_revisions.sync(TranscriptSelectionSyncInputs {
+            conversation_id: state.active_conversation_id,
+            messages: &state.messages,
+            streaming: &state.streaming,
+            filter_emoji: state.filter_emoji,
+            show_thinking: state.show_thinking,
+            streaming_thinking: state.thinking_content.as_deref(),
+        });
         Self {
             state,
             focus_handle: cx.focus_handle(),
