@@ -1,6 +1,6 @@
 [package]
 name = "personal_agent"
-version = "0.3.8"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 description = "Personal agent with system tray UI (macOS menu bar / Linux KDE / Windows)"
