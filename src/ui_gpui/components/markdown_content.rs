@@ -554,13 +554,11 @@ pub(crate) fn is_safe_url(raw: &str) -> bool {
 fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::TextRun {
     use gpui::{font, FontStyle, FontWeight, StrikethroughStyle, TextRun, UnderlineStyle};
 
+    // Link color derives from the surface text color; the underline alone
+    // carries the link affordance (issue #223).
     let mut run = TextRun {
         len: span.text.len(),
-        color: if span.link_url.is_some() {
-            crate::ui_gpui::theme::Theme::accent()
-        } else {
-            text_color
-        },
+        color: text_color,
         ..Default::default()
     };
 
@@ -584,7 +582,7 @@ fn inline_to_text_run(span: &MarkdownInline, text_color: gpui::Hsla) -> gpui::Te
     if span.link_url.is_some() {
         run.underline = Some(UnderlineStyle {
             thickness: px(1.0),
-            color: Some(crate::ui_gpui::theme::Theme::accent()),
+            color: Some(text_color),
             wavy: false,
         });
     }
@@ -977,6 +975,8 @@ pub(crate) use autolink::apply_autolinks;
 pub use copy_text::{markdown_copy_leaves, MarkdownCopyLeaf};
 pub use markdown_parser::parse_markdown_blocks;
 
+#[cfg(test)]
+mod link_surface_tests;
 #[cfg(test)]
 mod markdown_content_tests;
 #[cfg(test)]
