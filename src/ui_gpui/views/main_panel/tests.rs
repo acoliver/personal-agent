@@ -844,4 +844,5 @@ async fn handle_command_forwards_skills_loaded_to_settings_view(cx: &mut TestApp
         });
     });
 }
+mod render_preserves_child_state;
 mod tool_approval;
