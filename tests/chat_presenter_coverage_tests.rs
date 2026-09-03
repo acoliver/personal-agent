@@ -1126,6 +1126,7 @@ async fn select_conversation_replays_messages_and_filters_system_messages() {
                 model_id: None,
                 tool_calls: None,
                 tool_results: None,
+                interrupted: false,
             },
             Message {
                 role: DomainMessageRole::Assistant,
@@ -1135,6 +1136,7 @@ async fn select_conversation_replays_messages_and_filters_system_messages() {
                 model_id: None,
                 tool_calls: None,
                 tool_results: None,
+                interrupted: false,
             },
         ],
     );

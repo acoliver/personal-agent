@@ -14,6 +14,7 @@
 //!   8. `sqlite_conversation_set_active_get_active`
 //!   9. `sqlite_conversation_fts_trigger_consistency`
 //!  10. `sqlite_conversation_concurrent_seq_allocation`
+//!  11. `sqlite_conversation_message_interrupted_round_trip`
 
 use std::sync::Arc;
 
@@ -808,4 +809,47 @@ async fn sqlite_conversation_zero_message_metadata() {
 
     assert_eq!(meta.message_count, 0);
     assert!(meta.last_message_preview.is_none());
+}
+
+/// `interrupted_marker_round_trip`: interrupted assistant messages persist and
+/// reload with the marker intact (issue #193).
+#[tokio::test]
+async fn sqlite_conversation_message_interrupted_round_trip() {
+    let dir = TempDir::new().unwrap();
+    let svc = make_service(&dir).await;
+    let profile = default_profile();
+
+    let conv = svc
+        .create(Some("Interrupted".to_string()), profile)
+        .await
+        .unwrap();
+
+    let mut interrupted_message = Message::assistant("partial answer".to_string());
+    interrupted_message.interrupted = true;
+    svc.add_message(conv.id, interrupted_message)
+        .await
+        .expect("interrupted add_message failed");
+    svc.add_message(conv.id, Message::assistant("complete answer".to_string()))
+        .await
+        .expect("plain add_message failed");
+
+    let messages = svc
+        .get_messages(conv.id)
+        .await
+        .expect("get_messages failed");
+    assert_eq!(messages.len(), 2);
+    assert!(
+        messages[0].interrupted,
+        "interrupted marker should round-trip through SQLite storage"
+    );
+    assert!(
+        !messages[1].interrupted,
+        "messages written without the marker must read back false"
+    );
+
+    let loaded = svc.load(conv.id).await.expect("load failed");
+    assert!(
+        loaded.messages[0].interrupted,
+        "load() must map the interrupted column"
+    );
 }

@@ -38,6 +38,10 @@ pub struct Message {
     pub tool_calls: Option<String>,
     #[serde(default)]
     pub tool_results: Option<String>,
+    /// True when this partial assistant output was persisted after the stream
+    /// failed partway (issue #193). Absent in legacy JSON, defaulting to false.
+    #[serde(default)]
+    pub interrupted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +101,7 @@ impl Message {
             model_id: None,
             tool_calls: None,
             tool_results: None,
+            interrupted: false,
         }
     }
 
@@ -111,6 +116,7 @@ impl Message {
             model_id: None,
             tool_calls: None,
             tool_results: None,
+            interrupted: false,
         }
     }
 
@@ -125,6 +131,7 @@ impl Message {
             model_id: None,
             tool_calls: None,
             tool_results: None,
+            interrupted: false,
         }
     }
 
@@ -139,6 +146,42 @@ impl Message {
             model_id: None,
             tool_calls: None,
             tool_results: None,
+            interrupted: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_deserialization_without_interrupted_field_defaults_to_false() {
+        let legacy_json = serde_json::json!({
+            "role": "assistant",
+            "content": "partial answer",
+            "thinking_content": null,
+            "timestamp": "2026-01-01T00:00:00Z"
+        });
+
+        let message: Message = serde_json::from_value(legacy_json)
+            .expect("legacy message JSON without interrupted should deserialize");
+
+        assert_eq!(message.content, "partial answer");
+        assert!(
+            !message.interrupted,
+            "missing interrupted field must deserialize as false"
+        );
+    }
+
+    #[test]
+    fn message_constructors_default_interrupted_to_false() {
+        assert!(!Message::user("question".to_string()).interrupted);
+        assert!(!Message::assistant("answer".to_string()).interrupted);
+        assert!(
+            !Message::assistant_with_thinking("answer".to_string(), "thinking".to_string(),)
+                .interrupted
+        );
+        assert!(!Message::system("system".to_string()).interrupted);
     }
 }

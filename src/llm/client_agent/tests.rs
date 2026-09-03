@@ -361,6 +361,131 @@ fn collect_tool_transcript_uses_built_history_request_count_not_message_count() 
     assert_eq!(tool_results[0].tool_use_id, "current-tool-call");
 }
 
+#[test]
+fn tool_executed_emits_completion_without_interim_tool_transcript() {
+    let mut events = Vec::new();
+    crate::llm::LlmClient::handle_agent_stream_event(
+        AgentStreamEvent::ToolExecuted {
+            tool_name: "web_search".to_string(),
+            tool_call_id: Some("call-1".to_string()),
+            success: true,
+            error: None,
+        },
+        0,
+        &mut |event| events.push(event),
+    );
+    crate::llm::LlmClient::handle_agent_stream_event(
+        AgentStreamEvent::ToolExecuted {
+            tool_name: "shell_exec".to_string(),
+            tool_call_id: Some("call-2".to_string()),
+            success: false,
+            error: Some("command failed".to_string()),
+        },
+        0,
+        &mut |event| events.push(event),
+    );
+
+    assert_eq!(
+        events.len(),
+        2,
+        "ToolExecuted must emit exactly one completion event per execution, got {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::ToolTranscript { .. })),
+        "ToolExecuted must not emit an interim ToolTranscript placeholder: {events:?}"
+    );
+    match &events[0] {
+        StreamEvent::ToolCallCompleted {
+            tool_name,
+            call_id,
+            success,
+            result,
+            error,
+        } => {
+            assert_eq!(tool_name, "web_search");
+            assert_eq!(call_id, "call-1");
+            assert!(*success);
+            assert_eq!(result, &None);
+            assert_eq!(error, &None);
+        }
+        other => panic!("expected ToolCallCompleted for successful tool, got {other:?}"),
+    }
+    match &events[1] {
+        StreamEvent::ToolCallCompleted {
+            tool_name,
+            call_id,
+            success,
+            result,
+            error,
+        } => {
+            assert_eq!(tool_name, "shell_exec");
+            assert_eq!(call_id, "call-2");
+            assert!(!*success);
+            assert_eq!(result, &None);
+            assert_eq!(error.as_deref(), Some("command failed"));
+        }
+        other => panic!("expected ToolCallCompleted for failed tool, got {other:?}"),
+    }
+}
+
+#[test]
+fn run_complete_emits_authoritative_tool_transcript_then_complete() {
+    let mut response = ModelResponse::new();
+    response.add_part(ModelResponsePart::ToolCall(
+        ToolCallPart::new(
+            "web_search",
+            ToolCallArgs::json(serde_json::json!({"query":"rust"})),
+        )
+        .with_tool_call_id("call-1"),
+    ));
+    let mut request_with_tool_call = ModelRequest::new();
+    request_with_tool_call.add_part(ModelRequestPart::ModelResponse(Box::new(response)));
+
+    let mut request_with_tool_return = ModelRequest::new();
+    request_with_tool_return.add_part(ModelRequestPart::ToolReturn(
+        ToolReturnPart::success("web_search", "result body").with_tool_call_id("call-1"),
+    ));
+
+    let mut events = Vec::new();
+    crate::llm::LlmClient::handle_agent_stream_event(
+        AgentStreamEvent::RunComplete {
+            run_id: "run-1".to_string(),
+            messages: vec![request_with_tool_call, request_with_tool_return],
+            usage: RunUsage::default(),
+        },
+        0,
+        &mut |event| events.push(event),
+    );
+
+    assert_eq!(
+        events.len(),
+        2,
+        "RunComplete must emit the transcript then completion, got {events:?}"
+    );
+    match &events[0] {
+        StreamEvent::ToolTranscript {
+            tool_calls,
+            tool_results,
+        } => {
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0].id, "call-1");
+            assert_eq!(tool_results.len(), 1);
+            assert_eq!(tool_results[0].tool_use_id, "call-1");
+            assert_eq!(tool_results[0].content, "result body");
+        }
+        other => panic!("expected authoritative ToolTranscript, got {other:?}"),
+    }
+    assert!(matches!(
+        &events[1],
+        StreamEvent::Complete {
+            input_tokens: None,
+            output_tokens: None,
+        }
+    ));
+}
+
 /// @plan PLAN-20260416-ISSUE173.P06
 /// @requirement REQ-173-003.2
 #[tokio::test]

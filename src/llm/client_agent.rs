@@ -472,25 +472,6 @@ impl crate::llm::LlmClient {
         (tool_calls, tool_results)
     }
 
-    fn emit_tool_executed_transcript<F>(on_event: &mut F, call_id: String, success: bool)
-    where
-        F: FnMut(StreamEvent) + Send,
-    {
-        if call_id.is_empty() {
-            return;
-        }
-        let content = if success { "" } else { "tool execution failed" };
-        let result = if success {
-            crate::llm::tools::ToolResult::success(call_id, content)
-        } else {
-            crate::llm::tools::ToolResult::error(call_id, content)
-        };
-        on_event(StreamEvent::ToolTranscript {
-            tool_calls: Vec::new(),
-            tool_results: vec![result],
-        });
-    }
-
     fn handle_agent_stream_event<F>(
         event: AgentStreamEvent,
         history_request_count: usize,
@@ -521,15 +502,15 @@ impl crate::llm::LlmClient {
                 error,
                 ..
             } => {
-                let call_id = tool_call_id.unwrap_or_default();
+                // The authoritative ToolTranscript arrives with RunComplete;
+                // no interim placeholder is emitted here (issue #193).
                 on_event(StreamEvent::ToolCallCompleted {
                     tool_name,
-                    call_id: call_id.clone(),
+                    call_id: tool_call_id.unwrap_or_default(),
                     success,
                     result: None,
                     error,
                 });
-                Self::emit_tool_executed_transcript(on_event, call_id, success);
             }
             AgentStreamEvent::RunComplete { messages, .. } => {
                 tracing::info!("run_agent_stream: RunComplete");

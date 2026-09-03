@@ -132,6 +132,7 @@ mod tests {
                 serde_json::to_string(&vec![ToolResult::success("tool-1", "result body")])
                     .expect("tool results should serialize"),
             ),
+            interrupted: false,
         };
 
         assert!(estimator.estimate_message_tokens(&message) > MESSAGE_OVERHEAD_TOKENS);

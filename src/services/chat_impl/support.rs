@@ -18,6 +18,9 @@ pub(super) struct MockConversationService {
     pub(super) rename_calls: Arc<RwLock<Vec<String>>>,
     /// When set, `load` reports the conversation as deleted.
     pub(super) load_missing: Arc<RwLock<bool>>,
+    /// When set, `add_message` returns a storage error instead of recording
+    /// the message, exercising persistence-failure logging paths.
+    pub(super) add_message_fails: Arc<RwLock<bool>>,
 }
 
 pub(super) struct InMemoryAppSettingsService {
@@ -222,11 +225,16 @@ impl MockConversationService {
             title: Arc::new(RwLock::new(Some("New Conversation".to_string()))),
             rename_calls: Arc::new(RwLock::new(Vec::new())),
             load_missing: Arc::new(RwLock::new(false)),
+            add_message_fails: Arc::new(RwLock::new(false)),
         }
     }
 
     pub(super) async fn set_load_missing(&self, missing: bool) {
         *self.load_missing.write().await = missing;
+    }
+
+    pub(super) async fn set_add_message_failure(&self, fails: bool) {
+        *self.add_message_fails.write().await = fails;
     }
 
     pub(super) async fn set_title(&self, title: Option<&str>) {
@@ -280,6 +288,11 @@ impl super::super::ConversationService for MockConversationService {
         _conversation_id: Uuid,
         message: Message,
     ) -> Result<Message, crate::services::ServiceError> {
+        if *self.add_message_fails.read().await {
+            return Err(crate::services::ServiceError::Storage(
+                "simulated add_message persistence failure".to_string(),
+            ));
+        }
         self.messages.write().await.push(message.clone());
         Ok(message)
     }

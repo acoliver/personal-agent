@@ -209,39 +209,21 @@ fn stream_diagnostic_context_uses_profile_metadata_host_only() {
 fn handle_llm_stream_event_records_transcript_and_emits_events() {
     let conversation_id = Uuid::new_v4();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut response_text = String::new();
-    let mut thinking_text = String::new();
-    let mut tool_calls = Vec::new();
-    let mut tool_results = Vec::new();
-    let mut input_tokens = None;
-    let mut output_tokens = None;
-    let mut completed = false;
+    let mut transcript = streaming::StreamTranscript::default();
 
     streaming::handle_llm_stream_event(
         &streaming::StreamDiagnosticContext::default(),
         crate::llm::StreamEvent::TextDelta("hello".to_string()),
         conversation_id,
         &tx,
-        &mut response_text,
-        &mut thinking_text,
-        &mut tool_calls,
-        &mut tool_results,
-        &mut input_tokens,
-        &mut output_tokens,
-        &mut completed,
+        &mut transcript,
     );
     streaming::handle_llm_stream_event(
         &streaming::StreamDiagnosticContext::default(),
         crate::llm::StreamEvent::ThinkingDelta("think".to_string()),
         conversation_id,
         &tx,
-        &mut response_text,
-        &mut thinking_text,
-        &mut tool_calls,
-        &mut tool_results,
-        &mut input_tokens,
-        &mut output_tokens,
-        &mut completed,
+        &mut transcript,
     );
     streaming::handle_llm_stream_event(
         &streaming::StreamDiagnosticContext::default(),
@@ -255,13 +237,7 @@ fn handle_llm_stream_event_records_transcript_and_emits_events() {
         },
         conversation_id,
         &tx,
-        &mut response_text,
-        &mut thinking_text,
-        &mut tool_calls,
-        &mut tool_results,
-        &mut input_tokens,
-        &mut output_tokens,
-        &mut completed,
+        &mut transcript,
     );
     streaming::handle_llm_stream_event(
         &streaming::StreamDiagnosticContext::default(),
@@ -271,22 +247,16 @@ fn handle_llm_stream_event_records_transcript_and_emits_events() {
         },
         conversation_id,
         &tx,
-        &mut response_text,
-        &mut thinking_text,
-        &mut tool_calls,
-        &mut tool_results,
-        &mut input_tokens,
-        &mut output_tokens,
-        &mut completed,
+        &mut transcript,
     );
 
-    assert_eq!(response_text, "hello");
-    assert_eq!(thinking_text, "think");
-    assert_eq!(tool_calls.len(), 1);
-    assert_eq!(tool_results.len(), 1);
-    assert_eq!(input_tokens, Some(7));
-    assert_eq!(output_tokens, Some(11));
-    assert!(completed);
+    assert_eq!(transcript.response_text, "hello");
+    assert_eq!(transcript.thinking_text, "think");
+    assert_eq!(transcript.tool_calls.len(), 1);
+    assert_eq!(transcript.tool_results.len(), 1);
+    assert_eq!(transcript.input_tokens, Some(7));
+    assert_eq!(transcript.output_tokens, Some(11));
+    assert!(transcript.completed);
     match rx.try_recv().expect("text token should be sent") {
         ChatStreamEvent::Token(token) => assert_eq!(token, "hello"),
         other => panic!("expected token event, got {other:?}"),
@@ -328,6 +298,7 @@ fn build_stream_error_diagnostics_sanitizes_and_summarizes_context() {
         input_tokens: Some(13),
         output_tokens: Some(17),
         completed: false,
+        error: None,
     };
 
     let diagnostics = streaming::build_stream_error_diagnostics(
@@ -381,14 +352,20 @@ async fn persist_assistant_response_stores_content_thinking_and_tool_json() {
     )];
     let tool_results = vec![crate::llm::ToolResult::success("call-1", "result")];
 
+    let transcript = streaming::StreamTranscript {
+        response_text: "assistant text".to_string(),
+        thinking_text: "thinking text".to_string(),
+        tool_calls,
+        tool_results,
+        ..streaming::StreamTranscript::default()
+    };
+
     streaming::persist_assistant_response(
         &conversation_service,
         conversation_id,
-        "assistant text",
-        "thinking text",
-        &tool_calls,
-        &tool_results,
+        &transcript,
         "Coverage Model",
+        false,
     )
     .await;
 
