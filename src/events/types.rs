@@ -481,6 +481,22 @@ pub enum ChatEvent {
         conversation_id: Uuid,
         steer_id: Uuid,
     },
+
+    /// A queued steering message will never be handed to the model: the turn
+    /// it was waiting on ended first.
+    ///
+    /// This is the terminal state of a queued entry that is not delivered.
+    /// A steer is accepted, announced with `SteeringQueued`, and then either
+    /// reaches the model (`SteeringDelivered`) or does not (this). Without
+    /// the second terminal state the view has no way to learn that the entry
+    /// it is rendering as waiting is never going to resolve.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P06
+    /// @requirement REQ-222-003
+    SteeringDiscarded {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    },
 }
 
 /// MCP server lifecycle events

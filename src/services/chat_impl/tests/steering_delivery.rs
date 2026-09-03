@@ -25,7 +25,10 @@ use crate::services::chat_impl::streaming::steering_delivery::{
 };
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::Notify;
 use tokio::time::Duration;
+
+mod discard;
 
 /// The future a scripted turn runner hands back.
 ///
@@ -91,6 +94,9 @@ fn event_conversation_id(event: &ChatEvent) -> Option<Uuid> {
         | ChatEvent::SteeringDelivered {
             conversation_id, ..
         }
+        | ChatEvent::SteeringDiscarded {
+            conversation_id, ..
+        }
         | ChatEvent::StreamCompleted {
             conversation_id, ..
         }
@@ -115,6 +121,31 @@ fn delivered_ids(events: &[ChatEvent]) -> Vec<Uuid> {
         .collect()
 }
 
+/// The `steer_id`s carried by the `SteeringQueued` events, in order.
+fn queued_ids(events: &[ChatEvent]) -> Vec<Uuid> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            ChatEvent::SteeringQueued { steer_id, .. } => Some(*steer_id),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The `steer_id`s carried by the `SteeringDiscarded` events, in order.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
+fn discarded_ids(events: &[ChatEvent]) -> Vec<Uuid> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            ChatEvent::SteeringDiscarded { steer_id, .. } => Some(*steer_id),
+            _ => None,
+        })
+        .collect()
+}
+
 /// How many `StreamCompleted` events were seen.
 fn completion_count(events: &[ChatEvent]) -> usize {
     events
@@ -129,15 +160,28 @@ fn completion_count(events: &[ChatEvent]) -> usize {
 /// The bus is a shared 16-slot ring, so a receiver that only drains after the
 /// fact can be lagged past the events under test by other tests running in
 /// parallel. Draining concurrently keeps the exact-count assertions honest.
+///
+/// The collector signals `ready` the moment it holds a subscription, and
+/// `body` does not start until that signal arrives. A broadcast receiver
+/// buffers from the instant it is created, so a subscription in hand is
+/// exactly the guarantee the exact-count assertions need. It is also a fact
+/// the collector reports, rather than an interval this test hopes is long
+/// enough under load.
 async fn events_during<T, F>(conversation_id: Uuid, body: F) -> (T, Vec<ChatEvent>)
 where
     F: std::future::Future<Output = T>,
 {
-    let mut rx = subscribe();
     let stop = CancellationToken::new();
     let stop_for_collector = stop.clone();
+    let ready = Arc::new(Notify::new());
+    let ready_for_collector = ready.clone();
 
     let collector = tokio::spawn(async move {
+        let mut rx = subscribe();
+        // Subscribed. `Notify` holds the permit even if nobody is waiting
+        // yet, so this cannot be signalled into the void.
+        ready_for_collector.notify_one();
+
         let mut matched = Vec::new();
         loop {
             tokio::select! {
@@ -158,8 +202,7 @@ where
         matched
     });
 
-    // Let the collector reach its first `recv` before anything is emitted.
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    ready.notified().await;
 
     let outcome = body.await;
 
@@ -190,6 +233,22 @@ impl DeliveryFixture {
         let conversations = Arc::new(MockConversationService::new(Uuid::new_v4()));
         let conversation_service =
             conversations.clone() as Arc<dyn crate::services::ConversationService>;
+        Self::with_conversation_service(conversations, conversation_service)
+    }
+
+    /// A fixture whose turns persist through `conversation_service`, with
+    /// `conversations` the mock underneath it that records what landed.
+    ///
+    /// The two are the same object for `new`. The discard tests interpose a
+    /// double so a write can fail, or can steer the turn that is tearing
+    /// down around it.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P06
+    /// @requirement REQ-222-003
+    fn with_conversation_service(
+        conversations: Arc<MockConversationService>,
+        conversation_service: Arc<dyn crate::services::ConversationService>,
+    ) -> Self {
         let profile_service =
             Arc::new(MockProfileService::new()) as Arc<dyn crate::services::ProfileService>;
         let service = Arc::new(ChatServiceImpl::new_for_tests(

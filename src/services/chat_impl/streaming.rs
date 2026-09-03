@@ -1,9 +1,9 @@
 //! Streaming helper functions for `ChatServiceImpl`.
 
 use super::{
-    ActiveStream, AgentClientExt, ApprovalGate, AsyncMutex, ChatEvent, ChatStreamEvent,
-    CompressionResult, LlmMessage, PreparedMessageContext, ServiceError, StdMutex, SteeringQueues,
-    ToolApprovalPolicy, ViewCommand,
+    drain_steering_queue, emit_steering_discarded, ActiveStream, AgentClientExt, ApprovalGate,
+    AsyncMutex, ChatEvent, ChatStreamEvent, CompressionResult, LlmMessage, PreparedMessageContext,
+    ServiceError, StdMutex, SteeringQueues, ToolApprovalPolicy, ViewCommand,
 };
 use crate::events::{emit, AppEvent};
 use crate::llm::error::{debug_error_message, LlmError};
@@ -184,6 +184,25 @@ pub(super) async fn finalize_stream_task(
     )
     .await;
 
+    finalize_completed_turn(ctx, compression_result, &transcript).await;
+}
+
+/// Everything finalizing a cleanly finished turn does apart from writing its
+/// assistant output: record context state, announce the completion, and
+/// release the conversation's stream slot.
+///
+/// Split out for the steering chain, which persists each intermediate turn's
+/// output itself so the steering message that follows is ordered after it. A
+/// chain that stops right after one of those writes still has to finalize,
+/// but writing that output again would record it twice.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-007
+pub(super) async fn finalize_completed_turn(
+    ctx: &StreamFinalizeContext<'_>,
+    compression_result: CompressionResult,
+    transcript: &StreamTranscript,
+) {
     persist_context_state(
         ctx.conversation_service,
         ctx.conversation_id,
@@ -714,14 +733,22 @@ pub(super) async fn persist_assistant_response(
 /// that turn is definitively over, so anything still queued for it would only
 /// leak into the next turn.
 ///
+/// A steer accepted between the delivery loop's last drain and this removal
+/// passes `is_streaming_for` — the entry still reads `Running` — and is
+/// announced to the view as queued. This is where that entry's turn ends, so
+/// this is where it is announced as discarded. Taking the queue rather than
+/// dropping it is what makes that possible.
+///
 /// Lock discipline: the `active_streams` guard is released before
-/// `steering_queues` is locked, so the two are never held at once.
-/// See [`SteeringQueues`].
+/// `steering_queues` is locked, so the two are never held at once, and both
+/// are released before anything is emitted. See [`SteeringQueues`].
 ///
 /// @plan PLAN-20260416-ISSUE173.P03
 /// @plan PLAN-20260416-ISSUE173.P14-CR4
 /// @plan PLAN-20260903-ISSUE222.P01
+/// @plan PLAN-20260903-ISSUE222.P06
 /// @requirement REQ-173-001.3
+/// @requirement REQ-222-003
 /// @requirement REQ-222-004
 pub(super) fn clear_streaming_state(
     active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
@@ -741,10 +768,8 @@ pub(super) fn clear_streaming_state(
     };
 
     if cleared {
-        steering_queues
-            .lock()
-            .expect("steering_queues poisoned")
-            .remove(&conversation_id);
+        let discarded = drain_steering_queue(steering_queues, conversation_id);
+        emit_steering_discarded(conversation_id, &discarded);
     }
 }
 

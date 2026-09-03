@@ -4,24 +4,31 @@
 //! and the conversation has steering messages waiting, this module runs
 //! another turn seeded with the conversation so far plus the steering text —
 //! no new user-initiated send, and nothing cancelled. The chain ends when the
-//! queue is empty, the turn did not finish cleanly, or the turn cap is hit;
-//! finalization then runs once, on the last turn.
+//! queue is empty, the turn did not finish cleanly, the turn cap is hit, or a
+//! steering message cannot be recorded; finalization then runs once, on the
+//! last turn.
+//!
+//! Every ending that leaves messages queued announces them as discarded. A
+//! queued entry is on screen until something says what became of it, and
+//! delivery is only one of the two answers.
 //!
 //! @plan PLAN-20260903-ISSUE222.P02
+//! @plan PLAN-20260903-ISSUE222.P06
+//! @requirement REQ-222-003
 //! @requirement REQ-222-005
 //! @requirement REQ-222-006
 //! @requirement REQ-222-007
 
 use super::{
-    finalize_by_outcome, has_assistant_output, persist_assistant_response, StreamFinalizeContext,
-    StreamTranscript,
+    finalize_by_outcome, finalize_completed_turn, has_assistant_output, persist_assistant_response,
+    StreamFinalizeContext, StreamTranscript,
 };
 use crate::compression::pipeline::CompressionResult;
 use crate::events::types::ChatEvent;
 use crate::events::{emit, AppEvent};
 use crate::llm::Message as LlmMessage;
 use crate::models::Message;
-use crate::services::chat_impl::{drain_steering_queue, QueuedSteering};
+use crate::services::chat_impl::{drain_steering_queue, emit_steering_discarded, QueuedSteering};
 use std::future::Future;
 use tokio_util::sync::CancellationToken;
 
@@ -53,9 +60,13 @@ pub(in crate::services::chat_impl) struct SteeringDeliveryContext<'a> {
 /// `run_turn` is handed the history for a turn and yields that turn's
 /// transcript. Intermediate turns persist their own assistant output here so
 /// it is ordered before the steering message that follows it; the last turn's
-/// output is persisted by `finalize_by_outcome`, so nothing is written twice.
+/// output is normally persisted by `finalize_by_outcome`, so nothing is
+/// written twice. The one chain that ends between those two writes reports
+/// itself with [`ChainOutcome::OutputPersisted`] and finalizes without the
+/// second, which is what keeps that guarantee true.
 ///
 /// @plan PLAN-20260903-ISSUE222.P02
+/// @plan PLAN-20260903-ISSUE222.P06
 /// @requirement REQ-222-005
 /// @requirement REQ-222-007
 pub(in crate::services::chat_impl) async fn run_steered_turns_and_finalize<R, Fut>(
@@ -67,18 +78,42 @@ pub(in crate::services::chat_impl) async fn run_steered_turns_and_finalize<R, Fu
     R: FnMut(Vec<LlmMessage>) -> Fut,
     Fut: Future<Output = StreamTranscript>,
 {
-    let transcript = run_steered_turns(ctx, messages, run_turn).await;
-    finalize_by_outcome(
-        &ctx.finalize,
-        compression_result,
-        transcript,
-        ctx.model_label,
-    )
-    .await;
+    let (transcript, outcome) = run_steered_turns(ctx, messages, run_turn).await;
+    match outcome {
+        ChainOutcome::Unfinalized => {
+            finalize_by_outcome(
+                &ctx.finalize,
+                compression_result,
+                transcript,
+                ctx.model_label,
+            )
+            .await;
+        }
+        ChainOutcome::OutputPersisted => {
+            finalize_completed_turn(&ctx.finalize, compression_result, &transcript).await;
+        }
+    }
+}
+
+/// What the chain has left for finalization to do with the last turn.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-007
+enum ChainOutcome {
+    /// Nothing about the last turn has been recorded, so finalization decides
+    /// what to persist from the transcript itself. This is every ordinary
+    /// ending: the queue ran dry, the turn did not finish cleanly, or the
+    /// chain hit its turn cap.
+    Unfinalized,
+    /// The last turn's assistant output is already recorded, because the
+    /// chain stopped after writing it and before the follow-up turn it was
+    /// written for could start. The rest of finalization still applies;
+    /// writing that output again would record it twice.
+    OutputPersisted,
 }
 
 /// Run turns until the conversation stops steering, returning the last
-/// turn's transcript for finalization.
+/// turn's transcript and what finalization still owes it.
 ///
 /// @plan PLAN-20260903-ISSUE222.P02
 /// @requirement REQ-222-005
@@ -87,7 +122,7 @@ async fn run_steered_turns<R, Fut>(
     ctx: &SteeringDeliveryContext<'_>,
     mut messages: Vec<LlmMessage>,
     mut run_turn: R,
-) -> StreamTranscript
+) -> (StreamTranscript, ChainOutcome)
 where
     R: FnMut(Vec<LlmMessage>) -> Fut,
     Fut: Future<Output = StreamTranscript>,
@@ -102,12 +137,12 @@ where
         turns += 1;
 
         if !reaches_delivery_boundary(&transcript, ctx.cancel) {
-            return transcript;
+            return (transcript, ChainOutcome::Unfinalized);
         }
 
         let queued = drain_steering_queue(ctx.finalize.steering_queues, conversation_id);
         if queued.is_empty() {
-            return transcript;
+            return (transcript, ChainOutcome::Unfinalized);
         }
 
         if turns >= MAX_STEERING_TURNS {
@@ -117,7 +152,8 @@ where
                 dropped = queued.len(),
                 "Steering chain reached its turn cap; dropping the messages still queued"
             );
-            return transcript;
+            emit_steering_discarded(conversation_id, &queued);
+            return (transcript, ChainOutcome::Unfinalized);
         }
 
         persist_assistant_response(
@@ -132,7 +168,9 @@ where
             messages.push(assistant_message(&transcript));
         }
 
-        deliver_steering(ctx, queued, &mut messages).await;
+        if !deliver_steering(ctx, &queued, &mut messages).await {
+            return (transcript, ChainOutcome::OutputPersisted);
+        }
     }
 }
 
@@ -151,16 +189,26 @@ fn reaches_delivery_boundary(transcript: &StreamTranscript, cancel: &Cancellatio
 
 /// Persist, announce, and seed each drained steering message in FIFO order.
 ///
+/// Returns `false` when a steering message could not be persisted, which
+/// stops the chain. Recording the steer is what keeps the history a chained
+/// turn is seeded with equal to the history a reload rebuilds; a turn run
+/// over text the store rejected would break that for the rest of the
+/// conversation. So the failed message is not seeded, is not announced as
+/// delivered, and neither is anything behind it: they are announced as
+/// discarded instead, because no later turn is going to pick them up.
+///
 /// @plan PLAN-20260903-ISSUE222.P02
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
 /// @requirement REQ-222-005
 /// @requirement REQ-222-007
 async fn deliver_steering(
     ctx: &SteeringDeliveryContext<'_>,
-    queued: Vec<QueuedSteering>,
+    queued: &[QueuedSteering],
     messages: &mut Vec<LlmMessage>,
-) {
+) -> bool {
     let conversation_id = ctx.finalize.conversation_id;
-    for entry in queued {
+    for (index, entry) in queued.iter().enumerate() {
         if let Err(error) = ctx
             .finalize
             .conversation_service
@@ -175,6 +223,8 @@ async fn deliver_steering(
                 error = %error,
                 "Failed to persist a delivered steering message"
             );
+            emit_steering_discarded(conversation_id, &queued[index..]);
+            return false;
         }
 
         let _ = emit(AppEvent::Chat(ChatEvent::SteeringDelivered {
@@ -182,8 +232,9 @@ async fn deliver_steering(
             steer_id: entry.id,
         }));
 
-        messages.push(LlmMessage::user(entry.text));
+        messages.push(LlmMessage::user(entry.text.clone()));
     }
+    true
 }
 
 /// The finished turn's assistant output, shaped the way

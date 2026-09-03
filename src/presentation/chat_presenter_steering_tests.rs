@@ -270,3 +270,35 @@ async fn steering_delivered_event_becomes_a_delivered_view_command() {
         "SteeringDelivered must carry the queued entry's own id"
     );
 }
+
+/// A steer whose turn ended before it could be delivered is reported with the
+/// same id the queued entry carried, which is what lets the view stop
+/// rendering an entry nobody will ever deliver.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
+#[tokio::test]
+async fn steering_discarded_event_becomes_a_discarded_view_command() {
+    let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let conversation_id = Uuid::new_v4();
+    let steer_id = Uuid::new_v4();
+
+    ChatPresenter::handle_chat_event(
+        &mut view_tx.clone(),
+        ChatEvent::SteeringDiscarded {
+            conversation_id,
+            steer_id,
+        },
+    )
+    .await;
+
+    let commands = drain_view_commands(&mut view_rx);
+    assert_eq!(
+        commands,
+        vec![ViewCommand::SteeringDiscarded {
+            conversation_id,
+            steer_id,
+        }],
+        "SteeringDiscarded must forward every field to the view unchanged"
+    );
+}

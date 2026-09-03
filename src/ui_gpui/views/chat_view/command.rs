@@ -203,6 +203,31 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Stop showing a steering message as waiting: the turn it was waiting on
+    /// ended, so it is never reaching the model.
+    ///
+    /// The removal is the one delivery performs, because the entry's job is
+    /// the same either way: it says an instruction is still pending. Once
+    /// that stops being true the entry has to go, or it waits on screen for
+    /// the rest of the session.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P06
+    /// @requirement REQ-222-003
+    fn handle_steering_discarded(
+        &mut self,
+        conversation_id: uuid::Uuid,
+        steer_id: uuid::Uuid,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.state.active_conversation_id != Some(conversation_id) {
+            return;
+        }
+        self.state
+            .queued_steering
+            .retain(|entry| entry.id != steer_id);
+        cx.notify();
+    }
+
     /// A steer the service refused.
     ///
     /// This withdraws nothing and touches no state. A refusal means the
@@ -311,6 +336,12 @@ impl ChatView {
                 steer_id,
             } => {
                 self.handle_steering_delivered(conversation_id, steer_id, cx);
+            }
+            ViewCommand::SteeringDiscarded {
+                conversation_id,
+                steer_id,
+            } => {
+                self.handle_steering_discarded(conversation_id, steer_id, cx);
             }
             ViewCommand::SteeringRejected {
                 conversation_id,

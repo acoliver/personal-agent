@@ -14,7 +14,7 @@ use crate::services::chat_impl::{ChatServiceImpl, MAX_QUEUED_STEERING_MESSAGES};
 use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
 use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 use uuid::Uuid;
 
 // Import test support utilities from parent tests module (support.rs)
@@ -71,6 +71,55 @@ async fn collect_chat_events(
     matched
 }
 
+/// Collect chat events for `conversation_ids` up to and including the
+/// `StreamCancelled` that reports `cancelled` as stopped.
+///
+/// `cancel_active_stream` discards the conversation's queued steering before
+/// it announces the cancellation, and the bus preserves the order events were
+/// emitted in, so this observes every consequence of a cancel with nothing to
+/// wait out. The timeout only bounds a hang.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
+async fn collect_chat_events_until_cancelled(
+    rx: &mut Receiver<AppEvent>,
+    conversation_ids: &[Uuid],
+    cancelled: Uuid,
+) -> Vec<ChatEvent> {
+    const GIVE_UP_AFTER: Duration = Duration::from_secs(10);
+
+    let mut matched = Vec::new();
+    let deadline = tokio::time::Instant::now() + GIVE_UP_AFTER;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Ok(AppEvent::Chat(event))) => {
+                if event_conversation_id(&event).is_none_or(|id| !conversation_ids.contains(&id)) {
+                    continue;
+                }
+                let done = matches!(&event, ChatEvent::StreamCancelled { conversation_id, .. }
+                    if *conversation_id == cancelled);
+                matched.push(event);
+                if done {
+                    return matched;
+                }
+            }
+            // Other subsystems' events and lagged receivers (which just missed
+            // other tests' events) are skipped; keep draining.
+            Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                panic!("the event bus closed before {cancelled} was reported cancelled")
+            }
+            Err(elapsed) => {
+                panic!(
+                    "waiting {GIVE_UP_AFTER:?} for {cancelled} to be reported cancelled: \
+                     {elapsed}, saw {matched:?}"
+                )
+            }
+        }
+    }
+}
+
 /// Conversation id carried by the chat events these tests care about.
 fn event_conversation_id(event: &ChatEvent) -> Option<Uuid> {
     match event {
@@ -80,11 +129,29 @@ fn event_conversation_id(event: &ChatEvent) -> Option<Uuid> {
         | ChatEvent::SteeringDelivered {
             conversation_id, ..
         }
+        | ChatEvent::SteeringDiscarded {
+            conversation_id, ..
+        }
         | ChatEvent::StreamCancelled {
             conversation_id, ..
         } => Some(*conversation_id),
         _ => None,
     }
+}
+
+/// The `steer_id`s carried by the `SteeringDiscarded` events collected, in
+/// the order they were announced.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
+fn discarded_ids(events: &[ChatEvent]) -> Vec<Uuid> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            ChatEvent::SteeringDiscarded { steer_id, .. } => Some(*steer_id),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The `(steer_id, text)` payloads of the `SteeringQueued` events collected.
@@ -359,6 +426,7 @@ async fn cancelling_a_stream_discards_only_that_conversations_queue() {
     let service = make_test_chat_service();
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();
+    let mut event_rx = subscribe();
 
     service
         .begin_stream_for_test(conversation_a)
@@ -375,7 +443,20 @@ async fn cancelling_a_stream_discards_only_that_conversations_queue() {
         .expect("steering B must be accepted");
 
     ChatService::cancel(&service, conversation_a);
-    sleep(Duration::from_millis(20)).await;
+    // The cancel discards A's queue before it announces itself, so seeing the
+    // announcement is the guarantee that the discard already happened.
+    let events = collect_chat_events_until_cancelled(
+        &mut event_rx,
+        &[conversation_a, conversation_b],
+        conversation_a,
+    )
+    .await;
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ChatEvent::StreamCancelled { .. })),
+        "the cancel must announce itself before its side effects are asserted, got {events:?}"
+    );
 
     assert!(
         drained_pairs(&service, conversation_a).is_empty(),
@@ -385,6 +466,67 @@ async fn cancelling_a_stream_discards_only_that_conversations_queue() {
         drained_pairs(&service, conversation_b),
         vec![(b_steer_id, "steer B".to_string())],
         "cancelling A must leave B's queue untouched"
+    );
+
+    service.clear_all_streams_for_test();
+}
+
+/// Stopping a turn announces every steer it was holding as discarded.
+///
+/// The view is rendering each queued entry as waiting, and a cancel is the
+/// moment it stops being true. Without the announcement the bubble the user
+/// typed stays on screen for the rest of the session.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
+#[tokio::test]
+async fn cancelling_a_stream_announces_every_discarded_steer() {
+    let service = make_test_chat_service();
+    let conversation_a = Uuid::new_v4();
+    let conversation_b = Uuid::new_v4();
+    let mut event_rx = subscribe();
+
+    service
+        .begin_stream_for_test(conversation_a)
+        .expect("begin_stream(A) should succeed");
+    service
+        .begin_stream_for_test(conversation_b)
+        .expect("begin_stream(B) should succeed");
+
+    let first = ChatService::steer(&service, conversation_a, "first steer".to_string())
+        .await
+        .expect("steering A must be accepted");
+    let second = ChatService::steer(&service, conversation_a, "second steer".to_string())
+        .await
+        .expect("steering A must be accepted");
+    let b_steer_id = ChatService::steer(&service, conversation_b, "steer B".to_string())
+        .await
+        .expect("steering B must be accepted");
+
+    ChatService::cancel(&service, conversation_a);
+    let events = collect_chat_events_until_cancelled(
+        &mut event_rx,
+        &[conversation_a, conversation_b],
+        conversation_a,
+    )
+    .await;
+
+    assert_eq!(
+        discarded_ids(&events),
+        vec![first, second],
+        "every steer the cancelled turn held must be announced as discarded, in queue order, \
+         got {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, ChatEvent::SteeringDelivered { .. })),
+        "a cancelled turn hands nothing to the model, got {events:?}"
+    );
+    assert_eq!(
+        drained_pairs(&service, conversation_b),
+        vec![(b_steer_id, "steer B".to_string())],
+        "cancelling A must neither discard nor announce B's queued steering"
     );
 
     service.clear_all_streams_for_test();

@@ -134,6 +134,18 @@ pub enum ViewCommand {
         steer_id: Uuid,
     },
 
+    /// A queued steering message will never be handed to the model, because
+    /// the turn it was waiting on ended first. The view stops showing
+    /// `steer_id` as waiting, the same withdrawal `SteeringDelivered`
+    /// performs: an entry nobody will ever deliver must not wait forever.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P06
+    /// @requirement REQ-222-003
+    SteeringDiscarded {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    },
+
     /// A steering message was refused: no turn was running, the queue was
     /// full, or the text was blank. The service queued nothing, so no
     /// `SteeringQueued` follows for it, and `error` says why it did not take.

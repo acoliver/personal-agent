@@ -68,6 +68,27 @@ pub(super) fn drain_steering_queue(
         .unwrap_or_default()
 }
 
+/// Announce that queued steering messages are never going to be delivered.
+///
+/// A queued entry is rendered as waiting until something reports what became
+/// of it, and delivery is only one of the two answers. Every path that ends a
+/// turn while entries are still queued owes the other one, or the user is
+/// left watching an instruction that will never be acted on.
+///
+/// Callers pass entries they have already taken out of the queue, so this
+/// holds no lock and can be called with none held.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
+pub(super) fn emit_steering_discarded(conversation_id: Uuid, discarded: &[QueuedSteering]) {
+    for entry in discarded {
+        let _ = emit(AppEvent::Chat(ChatEvent::SteeringDiscarded {
+            conversation_id,
+            steer_id: entry.id,
+        }));
+    }
+}
+
 impl ChatServiceImpl {
     /// Queue a steering message for a conversation whose turn is running.
     ///

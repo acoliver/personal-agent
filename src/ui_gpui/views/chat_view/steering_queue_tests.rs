@@ -195,6 +195,88 @@ fn delivery_of_an_unknown_id_withdraws_nothing(cx: &mut TestAppContext) {
     });
 }
 
+/// A discarded steer is never going to reach the model, so the entry
+/// standing for it has to go. Left alone it waits on screen forever, which
+/// is exactly the bug the discard event exists to close.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
+#[gpui::test]
+fn a_discarded_steer_is_withdrawn_from_the_transcript(cx: &mut TestAppContext) {
+    let conversation_id = Uuid::new_v4();
+    let discarded = Uuid::new_v4();
+    let kept = Uuid::new_v4();
+    let view = cx.new(|cx| ChatView::new(mid_turn_state(conversation_id), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.handle_command(queued(conversation_id, discarded, "never delivered"), cx);
+            view.handle_command(queued(conversation_id, kept, "still waiting"), cx);
+            assert_eq!(
+                queued_rows(view),
+                vec![
+                    TranscriptRow::QueuedSteering(0),
+                    TranscriptRow::QueuedSteering(1)
+                ],
+                "both steers must be waiting before one of them is discarded"
+            );
+
+            view.handle_command(
+                ViewCommand::SteeringDiscarded {
+                    conversation_id,
+                    steer_id: discarded,
+                },
+                cx,
+            );
+
+            assert_eq!(
+                queued_texts(view),
+                vec!["still waiting".to_string()],
+                "a discard withdraws the entry it names and only that one"
+            );
+            assert_eq!(
+                queued_rows(view),
+                vec![TranscriptRow::QueuedSteering(0)],
+                "the discarded entry must stop occupying a transcript row"
+            );
+        });
+    });
+}
+
+/// A discard id the view never queued belongs to something else. Removing on
+/// a miss would take away a steer that is still on its way to the model.
+///
+/// @plan PLAN-20260903-ISSUE222.P06
+/// @requirement REQ-222-003
+#[gpui::test]
+fn a_discard_of_an_unknown_id_withdraws_nothing(cx: &mut TestAppContext) {
+    let conversation_id = Uuid::new_v4();
+    let steer_id = Uuid::new_v4();
+    let view = cx.new(|cx| ChatView::new(mid_turn_state(conversation_id), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.handle_command(queued(conversation_id, steer_id, "still waiting"), cx);
+
+            view.handle_command(
+                ViewCommand::SteeringDiscarded {
+                    conversation_id,
+                    steer_id: Uuid::new_v4(),
+                },
+                cx,
+            );
+
+            assert_eq!(
+                queued_texts(view),
+                vec!["still waiting".to_string()],
+                "an unmatched discard must leave the queue alone"
+            );
+        });
+    });
+}
+
 /// A refused steer was never queued, so there is no entry under it to
 /// withdraw. Removing anything here would take away a different steer that
 /// the service is still holding.

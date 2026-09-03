@@ -32,7 +32,7 @@ mod streaming;
 mod titling;
 
 use prompt::{build_system_prompt, filter_emoji_setting};
-use steering::{drain_steering_queue, QueuedSteering, SteeringQueues};
+use steering::{drain_steering_queue, emit_steering_discarded, QueuedSteering, SteeringQueues};
 use streaming::{
     build_stream_error_diagnostics, clear_streaming_state, emit_stream_error, run_stream_task,
     StreamDiagnosticContext, StreamTranscript, STREAM_ERROR_MESSAGE,
@@ -332,8 +332,14 @@ impl ChatServiceImpl {
 
         // A cancelled turn never reaches a delivery boundary, so anything it
         // had queued is dropped rather than left to leak into the next turn.
-        // The `active_streams` guard above is already released here.
+        // The view is rendering each of those entries as waiting, so each one
+        // is announced: a stopped turn is the terminal state of everything it
+        // was holding.
+        // The `active_streams` guard above is already released here, and
+        // `drain_steering` releases `steering_queues` before this returns.
         // @plan PLAN-20260903-ISSUE222.P01
+        // @plan PLAN-20260903-ISSUE222.P06
+        // @requirement REQ-222-003
         // @requirement REQ-222-004
         let discarded = self.drain_steering(conversation_id);
         if !discarded.is_empty() {
@@ -343,6 +349,7 @@ impl ChatServiceImpl {
                 "Discarded queued steering messages for a cancelled turn"
             );
         }
+        emit_steering_discarded(conversation_id, &discarded);
 
         // @plan PLAN-20260416-ISSUE173.P07
         // @requirement REQ-173-003.3
