@@ -223,6 +223,7 @@ impl crate::services::ConversationService for InterferingConversationService {
 /// @requirement REQ-222-003
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_steer_accepted_during_teardown_is_announced_as_discarded() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let conversations = Arc::new(MockConversationService::new(Uuid::new_v4()));
     let late = LateSteer::new("too late to be delivered");
     let fixture = DeliveryFixture::with_conversation_service(
@@ -286,6 +287,7 @@ async fn a_steer_accepted_during_teardown_is_announced_as_discarded() {
 /// @requirement REQ-222-007
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_steer_that_cannot_be_persisted_is_discarded_and_chains_nothing() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let conversations = Arc::new(MockConversationService::new(Uuid::new_v4()));
     let fixture = DeliveryFixture::with_conversation_service(
         conversations.clone(),

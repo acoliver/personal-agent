@@ -358,6 +358,7 @@ fn recorded(log: &TurnLog) -> Vec<Vec<LlmMessage>> {
 /// @requirement REQ-222-005
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn empty_steering_queue_runs_a_single_turn_and_finalizes_once() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     let log = new_turn_log();
 
@@ -417,6 +418,7 @@ async fn empty_steering_queue_runs_a_single_turn_and_finalizes_once() {
 /// @requirement REQ-222-005
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn queued_steer_chains_a_second_turn_carrying_the_steer_text() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     fixture.steer("focus on the parser").await;
     let log = new_turn_log();
@@ -445,6 +447,7 @@ async fn queued_steer_chains_a_second_turn_carrying_the_steer_text() {
 /// @requirement REQ-222-005
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_queued_steers_are_delivered_in_fifo_order() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     fixture.steer("first steer").await;
     fixture.steer("second steer").await;
@@ -490,6 +493,7 @@ async fn two_queued_steers_are_delivered_in_fifo_order() {
 /// @requirement REQ-222-005
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn steering_delivered_is_emitted_once_per_steer_with_the_queued_id() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     let log = new_turn_log();
 
@@ -517,6 +521,7 @@ async fn steering_delivered_is_emitted_once_per_steer_with_the_queued_id() {
 /// @requirement REQ-222-006
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelled_turn_drains_nothing_and_chains_no_follow_up() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     fixture.steer("too late").await;
     let log = new_turn_log();
@@ -564,6 +569,7 @@ async fn cancelled_turn_drains_nothing_and_chains_no_follow_up() {
 /// @requirement REQ-222-006
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_turn_drains_nothing_and_chains_no_follow_up() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     fixture.steer("never delivered").await;
     let log = new_turn_log();
@@ -620,6 +626,7 @@ async fn failed_turn_drains_nothing_and_chains_no_follow_up() {
 /// @requirement REQ-222-007
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn steering_message_persists_between_the_assistant_outputs() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     fixture.steer("adjust course").await;
     let log = new_turn_log();
@@ -694,6 +701,7 @@ async fn steering_message_persists_between_the_assistant_outputs() {
 /// @requirement REQ-222-005
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stream_completed_is_emitted_once_across_a_chained_send() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     let log = new_turn_log();
 
@@ -733,6 +741,7 @@ async fn stream_completed_is_emitted_once_across_a_chained_send() {
 /// @requirement REQ-222-005
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_stops_at_the_turn_cap_when_steering_keeps_refilling() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     fixture.steer("steer 0").await;
     let log = new_turn_log();
@@ -841,6 +850,7 @@ impl ApprovalProbe {
 /// @requirement REQ-222-008
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn steer_during_a_pending_approval_waits_for_the_decision() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let fixture = DeliveryFixture::new();
     let log = new_turn_log();
     let request_id = Uuid::new_v4().to_string();

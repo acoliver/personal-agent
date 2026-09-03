@@ -8,6 +8,7 @@
 //! @requirement REQ-222-004
 //! @requirement REQ-222-006
 
+use super::lock_steering_bus;
 use crate::events::types::ChatEvent;
 use crate::events::{subscribe, AppEvent};
 use crate::services::chat_impl::{ChatServiceImpl, MAX_QUEUED_STEERING_MESSAGES};
@@ -209,6 +210,7 @@ fn queued_payloads(events: &[ChatEvent]) -> Vec<(Uuid, String)> {
 /// @requirement REQ-222-004
 #[tokio::test]
 async fn steer_without_active_stream_is_rejected_and_queues_nothing() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
     let mut event_rx = subscribe();
@@ -241,6 +243,7 @@ async fn steer_without_active_stream_is_rejected_and_queues_nothing() {
 /// @requirement REQ-222-004
 #[tokio::test]
 async fn steer_with_running_stream_queues_the_entry_and_emits_queued_event() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
     let mut event_rx = subscribe();
@@ -281,6 +284,7 @@ async fn steer_with_running_stream_queues_the_entry_and_emits_queued_event() {
 /// @requirement REQ-222-004
 #[tokio::test]
 async fn steer_for_one_conversation_does_not_land_on_another() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();
@@ -316,6 +320,7 @@ async fn steer_for_one_conversation_does_not_land_on_another() {
 /// @requirement REQ-222-004
 #[tokio::test]
 async fn steer_past_the_cap_is_rejected_and_preserves_the_full_queue() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
@@ -356,6 +361,7 @@ async fn steer_past_the_cap_is_rejected_and_preserves_the_full_queue() {
 /// @requirement REQ-222-004
 #[tokio::test]
 async fn whitespace_only_steering_text_is_rejected() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
@@ -386,6 +392,7 @@ async fn whitespace_only_steering_text_is_rejected() {
 /// @requirement REQ-222-005
 #[tokio::test]
 async fn drain_steering_returns_fifo_order_and_empties_the_queue() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
@@ -420,6 +427,7 @@ async fn drain_steering_returns_fifo_order_and_empties_the_queue() {
 /// @requirement REQ-222-006
 #[tokio::test]
 async fn steering_does_not_cancel_the_active_turn() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
     let mut event_rx = subscribe();
@@ -460,6 +468,7 @@ async fn steering_does_not_cancel_the_active_turn() {
 /// @requirement REQ-222-004
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelling_a_stream_discards_only_that_conversations_queue() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();
@@ -523,6 +532,7 @@ async fn cancelling_a_stream_discards_only_that_conversations_queue() {
 /// @requirement REQ-222-003
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelling_a_stream_announces_every_discarded_steer() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();

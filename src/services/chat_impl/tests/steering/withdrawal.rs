@@ -174,6 +174,7 @@ async fn accept_steer(service: &ChatServiceImpl, conversation_id: Uuid, text: &s
 /// @requirement REQ-222-004
 #[tokio::test]
 async fn steer_whose_turn_ended_during_the_insert_is_withdrawn_and_announced() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
@@ -220,6 +221,7 @@ async fn steer_whose_turn_ended_during_the_insert_is_withdrawn_and_announced() {
 /// @requirement REQ-222-003
 #[tokio::test]
 async fn withdrawing_one_steer_leaves_the_rest_of_the_queue_alone() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
@@ -269,6 +271,7 @@ async fn withdrawing_one_steer_leaves_the_rest_of_the_queue_alone() {
 /// @requirement REQ-222-003
 #[tokio::test]
 async fn withdrawing_an_entry_a_teardown_already_drained_still_announces_a_discard() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
@@ -321,6 +324,7 @@ async fn withdrawing_an_entry_a_teardown_already_drained_still_announces_a_disca
 /// @requirement REQ-222-003
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_steer_drained_before_it_was_announced_still_reaches_a_terminal_event() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
@@ -401,6 +405,7 @@ async fn a_steer_drained_before_it_was_announced_still_reaches_a_terminal_event(
 /// @requirement REQ-222-004
 #[tokio::test]
 async fn steer_against_a_running_turn_is_confirmed_and_never_discarded() {
+    let _steering_bus_guard = lock_steering_bus().await;
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
