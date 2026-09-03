@@ -12,7 +12,7 @@
 //!
 //! @plan PLAN-20250130-GPUIREDUX.P04
 
-use super::state::{ApprovalBubbleState, ToolApprovalBubble};
+use super::state::{ApprovalBubbleState, QueuedSteeringEntry, ToolApprovalBubble};
 use super::ChatView;
 use crate::events::types::{ToolApprovalResponseAction, UserEvent};
 use crate::presentation::view_command::{ToolApprovalContext, ViewCommand};
@@ -69,6 +69,38 @@ impl ChatView {
         }
     }
 
+    /// Record the user's decision on a tool approval and retire the bubble.
+    ///
+    /// Extracted from `handle_command` unchanged; the dispatch had grown past
+    /// the length the complexity gate allows.
+    fn handle_tool_approval_resolved(
+        &mut self,
+        conversation_id: uuid::Uuid,
+        request_id: &str,
+        approved: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        // Find the bubble containing this request_id in the owning conversation bucket.
+        if let Some(bubbles) = self.state.approval_bubbles.get_mut(&conversation_id) {
+            if let Some(bubble) = bubbles
+                .iter_mut()
+                .find(|b| b.request_ids.iter().any(|id| id == request_id))
+            {
+                bubble.state = if approved {
+                    ApprovalBubbleState::Approved
+                } else {
+                    ApprovalBubbleState::Denied
+                };
+            }
+            // Remove resolved bubbles so they don't accumulate.
+            bubbles.retain(|b| b.state == ApprovalBubbleState::Pending);
+            if bubbles.is_empty() {
+                self.state.approval_bubbles.remove(&conversation_id);
+            }
+        }
+        cx.notify();
+    }
+
     /// Handle YOLO mode activation - auto-approve any pending tool approval bubbles.
     fn handle_yolo_mode_changed(&mut self, active: bool, cx: &mut gpui::Context<Self>) {
         self.state.yolo_mode = active;
@@ -116,11 +148,73 @@ impl ChatView {
         if let Some(conversation_id) = cleared_conversation_id {
             self.state.approval_bubbles.remove(&conversation_id);
         }
+        // Queued steers belong to the turn that was just cleared away.
+        // @plan PLAN-20260903-ISSUE222.P04
+        // @requirement REQ-222-003
+        self.state.queued_steering.clear();
         self.state.chat_autoscroll_enabled = true;
         self.scroll_transcript_to_bottom();
         self.state.sync_conversation_title_from_active();
         self.refresh_transcript_selection_revisions();
         cx.notify();
+    }
+
+    /// Show a steering message as waiting for the running turn's boundary.
+    ///
+    /// Scoped to the conversation on screen the way the approval commands
+    /// are: `queued_steering` describes the transcript being rendered, and a
+    /// steer accepted for another conversation is not part of it.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-003
+    fn handle_steering_queued(
+        &mut self,
+        conversation_id: uuid::Uuid,
+        steer_id: uuid::Uuid,
+        text: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.state.active_conversation_id != Some(conversation_id) {
+            return;
+        }
+        self.state
+            .queued_steering
+            .push(QueuedSteeringEntry::new(steer_id, text));
+        self.maybe_scroll_chat_to_bottom();
+        cx.notify();
+    }
+
+    /// Stop showing a steering message as waiting: it reached the model.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-003
+    fn handle_steering_delivered(
+        &mut self,
+        conversation_id: uuid::Uuid,
+        steer_id: uuid::Uuid,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.state.active_conversation_id != Some(conversation_id) {
+            return;
+        }
+        self.state
+            .queued_steering
+            .retain(|entry| entry.id != steer_id);
+        cx.notify();
+    }
+
+    /// A steer the service refused.
+    ///
+    /// This withdraws nothing and touches no state. A refusal means the
+    /// service queued nothing, so there is no entry under it to remove, and
+    /// removing one anyway would take away a steer that is still waiting.
+    /// The accompanying `ShowError` is what the user sees; there is no
+    /// conversation gate here because there is nothing to scope.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-004
+    fn handle_steering_rejected(conversation_id: uuid::Uuid, error: &str) {
+        tracing::warn!(%conversation_id, "Steering message refused: {error}");
     }
 
     fn handle_conversation_search_results(
@@ -203,25 +297,26 @@ impl ChatView {
                 request_id,
                 approved,
             } => {
-                // Find the bubble containing this request_id in the owning conversation bucket.
-                if let Some(bubbles) = self.state.approval_bubbles.get_mut(&conversation_id) {
-                    if let Some(bubble) = bubbles
-                        .iter_mut()
-                        .find(|b| b.request_ids.contains(&request_id))
-                    {
-                        bubble.state = if approved {
-                            ApprovalBubbleState::Approved
-                        } else {
-                            ApprovalBubbleState::Denied
-                        };
-                    }
-                    // Remove resolved bubbles so they don't accumulate.
-                    bubbles.retain(|b| b.state == ApprovalBubbleState::Pending);
-                    if bubbles.is_empty() {
-                        self.state.approval_bubbles.remove(&conversation_id);
-                    }
-                }
-                cx.notify();
+                self.handle_tool_approval_resolved(conversation_id, &request_id, approved, cx);
+            }
+            ViewCommand::SteeringQueued {
+                conversation_id,
+                steer_id,
+                text,
+            } => {
+                self.handle_steering_queued(conversation_id, steer_id, text, cx);
+            }
+            ViewCommand::SteeringDelivered {
+                conversation_id,
+                steer_id,
+            } => {
+                self.handle_steering_delivered(conversation_id, steer_id, cx);
+            }
+            ViewCommand::SteeringRejected {
+                conversation_id,
+                error,
+            } => {
+                Self::handle_steering_rejected(conversation_id, &error);
             }
             ViewCommand::YoloModeChanged { active } => {
                 self.handle_yolo_mode_changed(active, cx);

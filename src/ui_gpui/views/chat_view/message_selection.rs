@@ -303,7 +303,13 @@ impl super::ChatView {
                     );
                     Some((self.streaming_selection_content_key(), leaves))
                 }
-                TranscriptRow::Approval(_) => None,
+                // Chrome, not transcript content: an approval prompt and a
+                // steering message that has not reached the model yet are
+                // both absent from a copied transcript.
+                //
+                // @plan PLAN-20260903-ISSUE222.P04
+                // @requirement REQ-222-003
+                TranscriptRow::Approval(_) | TranscriptRow::QueuedSteering(_) => None,
             })
             .collect();
         Arc::new(TranscriptCopyDocument::new(messages))
@@ -319,7 +325,12 @@ impl super::ChatView {
         let content_key = match row {
             TranscriptRow::Message(index) => self.message_selection_content_key(index),
             TranscriptRow::Streaming => self.streaming_selection_content_key(),
-            TranscriptRow::Approval(_) => return None,
+            // No content key, so no selection: dragging across an approval
+            // prompt or a queued steering entry selects neither.
+            //
+            // @plan PLAN-20260903-ISSUE222.P04
+            // @requirement REQ-222-003
+            TranscriptRow::Approval(_) | TranscriptRow::QueuedSteering(_) => return None,
         };
         Some(TranscriptSelectionContext {
             scroll_offset,
