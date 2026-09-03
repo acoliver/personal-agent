@@ -14,12 +14,22 @@
 //! leaves behind: an announced entry on the queue, and no turn left to
 //! deliver it.
 //!
+//! The window has a second half. The insert releases the queue lock before
+//! the `SteeringQueued` is emitted, so a teardown can land there too, drain
+//! the entry and announce the discard ahead of the announcement that the
+//! entry exists. The re-check then has nothing left to remove, and says so
+//! anyway: what the view needs is a terminal event after every
+//! `SteeringQueued`, not a unique one.
+//!
 //! @plan PLAN-20260903-ISSUE222.P07
+//! @plan PLAN-20260903-ISSUE222.P08
 //! @requirement REQ-222-003
 //! @requirement REQ-222-004
 
 use super::*;
 use crate::events::emit;
+use crate::services::chat_impl::steering::QueuedSteering;
+use crate::services::chat_impl::streaming::clear_streaming_state;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -245,18 +255,20 @@ async fn withdrawing_one_steer_leaves_the_rest_of_the_queue_alone() {
     );
 }
 
-/// An entry a teardown already drained is not announced a second time.
+/// An entry a teardown already drained is still announced as discarded.
 ///
-/// Both orderings of the window end with the entry gone and announced once.
-/// A teardown announces what it drained, so a withdrawal that finds the
-/// entry already taken has nothing left to say: announcing anyway would tell
-/// the view to withdraw the same entry twice and would report an entry this
-/// call never held.
+/// Finding the entry gone says nothing about whether the view has been told
+/// what became of it: the teardown that took it may have announced its
+/// discard before this steer's `SteeringQueued` was even emitted, in which
+/// case the view withdrew an entry it had not rendered yet and then rendered
+/// it. So the announcement is unconditional. Announcing twice costs nothing,
+/// because the view removes by id and the second one finds nothing to take.
 ///
 /// @plan PLAN-20260903-ISSUE222.P07
+/// @plan PLAN-20260903-ISSUE222.P08
 /// @requirement REQ-222-003
 #[tokio::test]
-async fn withdrawing_an_entry_a_teardown_already_drained_announces_nothing_more() {
+async fn withdrawing_an_entry_a_teardown_already_drained_still_announces_a_discard() {
     let service = make_test_chat_service();
     let conversation_id = Uuid::new_v4();
 
@@ -284,8 +296,96 @@ async fn withdrawing_an_entry_a_teardown_already_drained_announces_nothing_more(
 
     assert_eq!(
         announcements(&events, steer_id),
-        vec![Announcement::Queued],
-        "an entry this call never took must not be announced as discarded by it, got {events:?}"
+        vec![Announcement::Queued, Announcement::Discarded],
+        "an announced entry must reach a terminal event even when this call did not take it, \
+         got {events:?}"
+    );
+}
+
+/// A steer whose entry a teardown drains before its `SteeringQueued` is even
+/// emitted still reaches a terminal event.
+///
+/// `queue_steering` inserts, releases the queue lock, and only then
+/// announces the entry. A teardown that lands in that gap drains the queue
+/// and announces the discard first, so the view processes a withdrawal for
+/// an entry it has not rendered yet and then renders it. The re-check that
+/// follows finds nothing left to remove, and if that silenced it the entry
+/// would wait on screen for the rest of the session.
+///
+/// The window is driven by call order — the production insert, the
+/// production teardown, the announcement `queue_steering` emits next, then
+/// the re-check — so this is a fact about the sequence rather than a race
+/// two threads have to be caught in.
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-003
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_steer_drained_before_it_was_announced_still_reaches_a_terminal_event() {
+    let service = make_test_chat_service();
+    let conversation_id = Uuid::new_v4();
+
+    service
+        .begin_stream_for_test(conversation_id)
+        .expect("begin_stream should succeed");
+    let stream_id = service
+        .stream_id_for_test(conversation_id)
+        .expect("the running turn must have a stream id");
+    let (active_streams, steering_queues) = service.stream_registries_for_test();
+    let steer_id = Uuid::new_v4();
+
+    let ((), events) = events_during(conversation_id, async {
+        // queue_steering has decided the turn is running and put the entry on
+        // the queue. Nothing has been announced yet.
+        assert!(
+            service.push_steering(
+                conversation_id,
+                QueuedSteering {
+                    id: steer_id,
+                    text: "take the other branch".to_string(),
+                },
+            ),
+            "the queue has room, so the insert must take"
+        );
+
+        // The turn's teardown lands in the gap, takes the entry and reports
+        // it gone before anyone has been told it exists.
+        clear_streaming_state(
+            &active_streams,
+            &steering_queues,
+            conversation_id,
+            stream_id,
+        );
+
+        // queue_steering resumes and announces the entry it queued, knowing
+        // nothing of the teardown.
+        let _ = emit(AppEvent::Chat(ChatEvent::SteeringQueued {
+            conversation_id,
+            steer_id,
+            text: "take the other branch".to_string(),
+        }));
+
+        service
+            .confirm_or_withdraw_steering(conversation_id, steer_id)
+            .expect_err("a steer with no turn left to deliver it must be refused");
+    })
+    .await;
+
+    let announced = announcements(&events, steer_id);
+    assert_eq!(
+        announced,
+        vec![
+            Announcement::Discarded,
+            Announcement::Queued,
+            Announcement::Discarded,
+        ],
+        "the teardown's discard arrives before the entry is announced, so the re-check owes \
+         the view another one, got {events:?}"
+    );
+    assert_eq!(
+        announced.last(),
+        Some(&Announcement::Discarded),
+        "the last thing said about a steer nobody will deliver must be that it is gone, \
+         got {events:?}"
     );
 }
 

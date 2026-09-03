@@ -84,7 +84,14 @@ impl ChatView {
     /// and the service reports back through `SteeringQueued` (or refuses with
     /// `SteeringRejected`). Nothing here cancels anything.
     ///
+    /// The composer clears now rather than when the service answers, so
+    /// typing ahead never waits on a round trip. A refusal carries the text
+    /// back on `SteeringRejected` and the view puts it into the composer
+    /// again if the user has not started something else, so the optimism
+    /// costs them nothing.
+    ///
     /// @plan PLAN-20260903-ISSUE222.P04
+    /// @plan PLAN-20260903-ISSUE222.P08
     /// @requirement REQ-222-002
     /// @requirement REQ-222-006
     fn steer_streaming(

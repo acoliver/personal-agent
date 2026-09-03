@@ -127,6 +127,7 @@ async fn steer_streaming_rejection_surfaces_the_service_error() {
     let ViewCommand::SteeringRejected {
         conversation_id: rejected_conversation_id,
         error,
+        text: _,
     } = &commands[rejected_at]
     else {
         unreachable!("position matched SteeringRejected");
@@ -167,6 +168,52 @@ async fn steer_streaming_rejection_surfaces_the_service_error() {
     assert!(
         rejected_at < error_at,
         "the queued entry is withdrawn before the error explains why, got {commands:?}"
+    );
+}
+
+/// A refusal hands the submitted text back to the view.
+///
+/// The composer clears on submit rather than on acceptance, so by the time
+/// the service refuses, this handler holds the only copy of what the user
+/// typed. Reporting the refusal without it would destroy the message the
+/// refusal is about.
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-002
+#[tokio::test]
+async fn steer_streaming_rejection_carries_the_submitted_text() {
+    let chat_service = Arc::new(RecordingChatService::rejecting(
+        "Steering queue is full (5 messages already waiting)",
+    ));
+    let (view_tx, mut view_rx) = mpsc::channel::<ViewCommand>(100);
+    let conversation_id = Uuid::new_v4();
+
+    dispatch_user_event(
+        &(chat_service.clone() as Arc<dyn ChatService>),
+        &view_tx,
+        UserEvent::SteerStreaming {
+            conversation_id,
+            text: "and check the migration too".to_string(),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        chat_service.steer_calls(),
+        vec![(conversation_id, "and check the migration too".to_string())],
+        "the text on the rejection must be the text the service was offered"
+    );
+
+    let commands = drain_view_commands(&mut view_rx);
+    let rejected_text = commands.iter().find_map(|command| match command {
+        ViewCommand::SteeringRejected { text, .. } => Some(text.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        rejected_text,
+        Some("and check the migration too".to_string()),
+        "a refused steer must come back with its text, or the composer cannot restore it, \
+         got {commands:?}"
     );
 }
 

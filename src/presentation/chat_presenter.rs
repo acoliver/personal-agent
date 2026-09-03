@@ -580,7 +580,13 @@ impl ChatPresenter {
     /// Steering is additive: this never cancels the turn it steers, which
     /// leaves `StopStreaming` as the only path to `ChatService::cancel`.
     ///
+    /// A refusal carries the submitted text back. The composer cleared when
+    /// the user hit Send, so this handler holds the only copy left of what
+    /// they typed, and a refusal that dropped it would destroy the message
+    /// it is reporting on.
+    ///
     /// @plan PLAN-20260903-ISSUE222.P03
+    /// @plan PLAN-20260903-ISSUE222.P08
     /// @requirement REQ-222-002
     /// @requirement REQ-222-004
     /// @requirement REQ-222-006
@@ -590,13 +596,14 @@ impl ChatPresenter {
         conversation_id: Uuid,
         text: String,
     ) {
-        if let Err(e) = chat_service.steer(conversation_id, text).await {
+        if let Err(e) = chat_service.steer(conversation_id, text.clone()).await {
             let error_msg = e.to_string();
             tracing::warn!(%conversation_id, "Steering message rejected: {}", error_msg);
             let _ = view_tx
                 .send(ViewCommand::SteeringRejected {
                     conversation_id,
                     error: error_msg.clone(),
+                    text,
                 })
                 .await;
             let _ = view_tx

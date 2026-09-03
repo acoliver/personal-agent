@@ -230,16 +230,36 @@ impl ChatView {
 
     /// A steer the service refused.
     ///
-    /// This withdraws nothing and touches no state. A refusal means the
-    /// service queued nothing, so there is no entry under it to remove, and
-    /// removing one anyway would take away a steer that is still waiting.
-    /// The accompanying `ShowError` is what the user sees; there is no
-    /// conversation gate here because there is nothing to scope.
+    /// This withdraws no queued entry. A refusal means the service queued
+    /// nothing, so there is none under it to remove, and removing one anyway
+    /// would take away a steer that is still waiting. The accompanying
+    /// `ShowError` is what the user sees.
+    ///
+    /// What it does do is give the words back. Submitting clears the
+    /// composer without waiting for an answer, so a refused steer would
+    /// otherwise be typed, taken away and never seen again. The text goes
+    /// back only into a composer that is still empty: the round trip leaves
+    /// room for the user to have started something new, and their newer
+    /// draft outranks the one the service turned down.
     ///
     /// @plan PLAN-20260903-ISSUE222.P04
+    /// @plan PLAN-20260903-ISSUE222.P08
+    /// @requirement REQ-222-002
     /// @requirement REQ-222-004
-    fn handle_steering_rejected(conversation_id: uuid::Uuid, error: &str) {
+    fn handle_steering_rejected(
+        &mut self,
+        conversation_id: uuid::Uuid,
+        error: &str,
+        text: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
         tracing::warn!(%conversation_id, "Steering message refused: {error}");
+        if !self.state.input_text.is_empty() {
+            return;
+        }
+        self.state.input_text = text;
+        self.state.cursor_position = self.state.input_text.len();
+        cx.notify();
     }
 
     fn handle_conversation_search_results(
@@ -346,8 +366,9 @@ impl ChatView {
             ViewCommand::SteeringRejected {
                 conversation_id,
                 error,
+                text,
             } => {
-                Self::handle_steering_rejected(conversation_id, &error);
+                self.handle_steering_rejected(conversation_id, &error, text, cx);
             }
             ViewCommand::YoloModeChanged { active } => {
                 self.handle_yolo_mode_changed(active, cx);

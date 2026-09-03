@@ -42,6 +42,18 @@ fn queued(conversation_id: Uuid, steer_id: Uuid, text: &str) -> ViewCommand {
     }
 }
 
+/// The refusal the presenter sends, carrying the text the user submitted.
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-002
+fn rejected(conversation_id: Uuid, error: &str, text: &str) -> ViewCommand {
+    ViewCommand::SteeringRejected {
+        conversation_id,
+        error: error.to_string(),
+        text: text.to_string(),
+    }
+}
+
 fn queued_texts(view: &ChatView) -> Vec<String> {
     view.state
         .queued_steering
@@ -295,10 +307,7 @@ fn a_rejection_withdraws_no_queued_entry(cx: &mut TestAppContext) {
             view.handle_command(queued(conversation_id, steer_id, "accepted earlier"), cx);
 
             view.handle_command(
-                ViewCommand::SteeringRejected {
-                    conversation_id,
-                    error: "Steering queue is full".to_string(),
-                },
+                rejected(conversation_id, "Steering queue is full", "one too many"),
                 cx,
             );
 
@@ -306,6 +315,85 @@ fn a_rejection_withdraws_no_queued_entry(cx: &mut TestAppContext) {
                 queued_texts(view),
                 vec!["accepted earlier".to_string()],
                 "a refusal concerns a steer that was never queued"
+            );
+        });
+    });
+}
+
+/// A refused steer gives the user their words back.
+///
+/// Submitting clears the composer before the service has accepted anything,
+/// so the rejection carries the only remaining copy of the text. Dropping it
+/// would mean a full queue or a turn that ended mid-send silently destroys
+/// what the user typed.
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-002
+#[gpui::test]
+fn a_rejection_restores_the_text_into_an_empty_composer(cx: &mut TestAppContext) {
+    let conversation_id = Uuid::new_v4();
+    let view = cx.new(|cx| ChatView::new(mid_turn_state(conversation_id), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // The composer cleared optimistically when Send was pressed.
+            assert!(view.state.input_text.is_empty());
+
+            view.handle_command(
+                rejected(
+                    conversation_id,
+                    "No active turn to steer",
+                    "check the parser first",
+                ),
+                cx,
+            );
+
+            assert_eq!(
+                view.state.input_text, "check the parser first",
+                "a refused steer must come back to the composer it was typed in"
+            );
+            assert_eq!(
+                view.state.cursor_position,
+                "check the parser first".len(),
+                "the caret must sit at the end of the restored text, ready to keep typing"
+            );
+        });
+    });
+}
+
+/// Restoring must never overwrite something newer.
+///
+/// The refusal takes a round trip through the service, and the user is free
+/// to type during it. What they are typing now is what they mean; the
+/// refused text is older and loses.
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-002
+#[gpui::test]
+fn a_rejection_leaves_newer_composer_text_alone(cx: &mut TestAppContext) {
+    let conversation_id = Uuid::new_v4();
+    let view = cx.new(|cx| ChatView::new(mid_turn_state(conversation_id), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.state.input_text = "a newer thought".to_string();
+            view.state.cursor_position = "a newer".len();
+
+            view.handle_command(
+                rejected(conversation_id, "Steering queue is full", "the older steer"),
+                cx,
+            );
+
+            assert_eq!(
+                view.state.input_text, "a newer thought",
+                "a refusal must not clobber what the user is typing now"
+            );
+            assert_eq!(
+                view.state.cursor_position,
+                "a newer".len(),
+                "leaving the text alone means leaving the caret where it was"
             );
         });
     });

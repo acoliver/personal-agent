@@ -14,6 +14,7 @@ use crate::services::chat_impl::{ChatServiceImpl, MAX_QUEUED_STEERING_MESSAGES};
 use crate::services::{ChatService, ConversationService, ProfileService, ServiceError};
 use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
+use tokio::sync::Notify;
 use tokio::time::Duration;
 use uuid::Uuid;
 
@@ -73,53 +74,87 @@ async fn collect_chat_events(
     matched
 }
 
-/// Collect chat events for `conversation_ids` up to and including the
-/// `StreamCancelled` that reports `cancelled` as stopped.
+/// Run `body` while a task drains the bus into the chat events for
+/// `conversation_ids`, stopping at the `StreamCancelled` that reports
+/// `cancelled` as stopped.
 ///
 /// `cancel_active_stream` discards the conversation's queued steering before
 /// it announces the cancellation, and the bus preserves the order events were
-/// emitted in, so this observes every consequence of a cancel with nothing to
-/// wait out. The timeout only bounds a hang.
+/// emitted in, so that announcement is the point at which every consequence
+/// of the cancel has been seen, with nothing to wait out. The timeout only
+/// bounds a hang.
+///
+/// The collector is spawned before `body` runs, because the bus is a shared
+/// 16-slot ring: a receiver that only starts draining once the action is over
+/// can be lagged past the events under test by whatever else is running in
+/// parallel, and the loop's tolerance of `Lagged` would then quietly return a
+/// short list. It signals `ready` the moment it holds a subscription and
+/// `body` does not start until that arrives — a broadcast receiver buffers
+/// from the instant it exists, so a subscription in hand is exactly the
+/// guarantee these assertions need, and it is a fact the collector reports
+/// rather than an interval this test hopes is long enough.
 ///
 /// @plan PLAN-20260903-ISSUE222.P06
+/// @plan PLAN-20260903-ISSUE222.P08
 /// @requirement REQ-222-003
-async fn collect_chat_events_until_cancelled(
-    rx: &mut Receiver<AppEvent>,
-    conversation_ids: &[Uuid],
+async fn events_until_cancelled<T, F>(
+    conversation_ids: Vec<Uuid>,
     cancelled: Uuid,
-) -> Vec<ChatEvent> {
+    body: F,
+) -> (T, Vec<ChatEvent>)
+where
+    F: std::future::Future<Output = T>,
+{
     const GIVE_UP_AFTER: Duration = Duration::from_secs(10);
 
-    let mut matched = Vec::new();
-    let deadline = tokio::time::Instant::now() + GIVE_UP_AFTER;
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        match tokio::time::timeout(remaining, rx.recv()).await {
-            Ok(Ok(AppEvent::Chat(event))) => {
-                if event_conversation_id(&event).is_none_or(|id| !conversation_ids.contains(&id)) {
-                    continue;
+    let ready = Arc::new(Notify::new());
+    let ready_for_collector = ready.clone();
+
+    let collector = tokio::spawn(async move {
+        let mut rx = subscribe();
+        // Subscribed. `Notify` keeps the permit even with nobody waiting yet,
+        // so this cannot be signalled into the void.
+        ready_for_collector.notify_one();
+
+        let mut matched = Vec::new();
+        let deadline = tokio::time::Instant::now() + GIVE_UP_AFTER;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Ok(AppEvent::Chat(event))) => {
+                    if event_conversation_id(&event)
+                        .is_none_or(|id| !conversation_ids.contains(&id))
+                    {
+                        continue;
+                    }
+                    let done = matches!(&event, ChatEvent::StreamCancelled { conversation_id, .. }
+                        if *conversation_id == cancelled);
+                    matched.push(event);
+                    if done {
+                        return matched;
+                    }
                 }
-                let done = matches!(&event, ChatEvent::StreamCancelled { conversation_id, .. }
-                    if *conversation_id == cancelled);
-                matched.push(event);
-                if done {
-                    return matched;
+                // Other subsystems' events and lagged receivers (which just
+                // missed other tests' events) are skipped; keep draining.
+                Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                    panic!("the event bus closed before {cancelled} was reported cancelled")
                 }
-            }
-            // Other subsystems' events and lagged receivers (which just missed
-            // other tests' events) are skipped; keep draining.
-            Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
-                panic!("the event bus closed before {cancelled} was reported cancelled")
-            }
-            Err(elapsed) => {
-                panic!(
-                    "waiting {GIVE_UP_AFTER:?} for {cancelled} to be reported cancelled: \
-                     {elapsed}, saw {matched:?}"
-                )
+                Err(elapsed) => {
+                    panic!(
+                        "waiting {GIVE_UP_AFTER:?} for {cancelled} to be reported cancelled: \
+                         {elapsed}, saw {matched:?}"
+                    )
+                }
             }
         }
-    }
+    });
+
+    ready.notified().await;
+
+    let outcome = body.await;
+    let events = collector.await.expect("event collector must not panic");
+    (outcome, events)
 }
 
 /// Conversation id carried by the chat events these tests care about.
@@ -423,12 +458,11 @@ async fn steering_does_not_cancel_the_active_turn() {
 ///
 /// @plan PLAN-20260903-ISSUE222.P01
 /// @requirement REQ-222-004
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelling_a_stream_discards_only_that_conversations_queue() {
     let service = make_test_chat_service();
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();
-    let mut event_rx = subscribe();
 
     service
         .begin_stream_for_test(conversation_a)
@@ -437,27 +471,33 @@ async fn cancelling_a_stream_discards_only_that_conversations_queue() {
         .begin_stream_for_test(conversation_b)
         .expect("begin_stream(B) should succeed");
 
-    ChatService::steer(&service, conversation_a, "steer A".to_string())
-        .await
-        .expect("steering A must be accepted");
-    let b_steer_id = ChatService::steer(&service, conversation_b, "steer B".to_string())
-        .await
-        .expect("steering B must be accepted");
-
-    ChatService::cancel(&service, conversation_a);
-    // The cancel discards A's queue before it announces itself, so seeing the
-    // announcement is the guarantee that the discard already happened.
-    let events = collect_chat_events_until_cancelled(
-        &mut event_rx,
-        &[conversation_a, conversation_b],
+    // The cancel discards A's queue before it announces itself, so the
+    // collector returning on that announcement is the guarantee that the
+    // discard already happened.
+    let ((a_steer_id, b_steer_id), events) = events_until_cancelled(
+        vec![conversation_a, conversation_b],
         conversation_a,
+        async {
+            let a_steer_id = ChatService::steer(&service, conversation_a, "steer A".to_string())
+                .await
+                .expect("steering A must be accepted");
+            let b_steer_id = ChatService::steer(&service, conversation_b, "steer B".to_string())
+                .await
+                .expect("steering B must be accepted");
+
+            ChatService::cancel(&service, conversation_a);
+            (a_steer_id, b_steer_id)
+        },
     )
     .await;
+
+    // The collector stops at the announcement, so A's discard is in this
+    // list only if it was emitted first. That order is what makes the reads
+    // below safe: after a cancel that announced itself first, the queue they
+    // inspect could still be mid-teardown.
     assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, ChatEvent::StreamCancelled { .. })),
-        "the cancel must announce itself before its side effects are asserted, got {events:?}"
+        discarded_ids(&events).contains(&a_steer_id),
+        "the cancel must discard A's queue before it announces itself, got {events:?}"
     );
 
     assert!(
@@ -481,12 +521,11 @@ async fn cancelling_a_stream_discards_only_that_conversations_queue() {
 ///
 /// @plan PLAN-20260903-ISSUE222.P06
 /// @requirement REQ-222-003
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelling_a_stream_announces_every_discarded_steer() {
     let service = make_test_chat_service();
     let conversation_a = Uuid::new_v4();
     let conversation_b = Uuid::new_v4();
-    let mut event_rx = subscribe();
 
     service
         .begin_stream_for_test(conversation_a)
@@ -495,21 +534,23 @@ async fn cancelling_a_stream_announces_every_discarded_steer() {
         .begin_stream_for_test(conversation_b)
         .expect("begin_stream(B) should succeed");
 
-    let first = ChatService::steer(&service, conversation_a, "first steer".to_string())
-        .await
-        .expect("steering A must be accepted");
-    let second = ChatService::steer(&service, conversation_a, "second steer".to_string())
-        .await
-        .expect("steering A must be accepted");
-    let b_steer_id = ChatService::steer(&service, conversation_b, "steer B".to_string())
-        .await
-        .expect("steering B must be accepted");
-
-    ChatService::cancel(&service, conversation_a);
-    let events = collect_chat_events_until_cancelled(
-        &mut event_rx,
-        &[conversation_a, conversation_b],
+    let ((first, second, b_steer_id), events) = events_until_cancelled(
+        vec![conversation_a, conversation_b],
         conversation_a,
+        async {
+            let first = ChatService::steer(&service, conversation_a, "first steer".to_string())
+                .await
+                .expect("steering A must be accepted");
+            let second = ChatService::steer(&service, conversation_a, "second steer".to_string())
+                .await
+                .expect("steering A must be accepted");
+            let b_steer_id = ChatService::steer(&service, conversation_b, "steer B".to_string())
+                .await
+                .expect("steering B must be accepted");
+
+            ChatService::cancel(&service, conversation_a);
+            (first, second, b_steer_id)
+        },
     )
     .await;
 

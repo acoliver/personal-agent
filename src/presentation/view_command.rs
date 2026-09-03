@@ -150,11 +150,19 @@ pub enum ViewCommand {
     /// full, or the text was blank. The service queued nothing, so no
     /// `SteeringQueued` follows for it, and `error` says why it did not take.
     ///
+    /// `text` is what the user submitted. The composer clears on submit
+    /// rather than waiting for an answer, so a refusal is the only thing
+    /// that can give those words back, and nothing else on this path still
+    /// holds them.
+    ///
     /// @plan PLAN-20260903-ISSUE222.P03
+    /// @plan PLAN-20260903-ISSUE222.P08
+    /// @requirement REQ-222-002
     /// @requirement REQ-222-004
     SteeringRejected {
         conversation_id: Uuid,
         error: String,
+        text: String,
     },
 
     /// Toggle thinking visibility

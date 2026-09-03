@@ -103,11 +103,24 @@ pub(super) fn drain_steering_queue(
 /// @requirement REQ-222-003
 pub(super) fn emit_steering_discarded(conversation_id: Uuid, discarded: &[QueuedSteering]) {
     for entry in discarded {
-        let _ = emit(AppEvent::Chat(ChatEvent::SteeringDiscarded {
-            conversation_id,
-            steer_id: entry.id,
-        }));
+        emit_steering_discarded_id(conversation_id, entry.id);
     }
+}
+
+/// Announce that one steer, named by the id its `SteeringQueued` carried, is
+/// never going to be delivered.
+///
+/// Takes an id rather than an entry because the entry may already be gone:
+/// the caller that has to say so is not always the one that took it off the
+/// queue. See [`ChatServiceImpl::confirm_or_withdraw_steering`].
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-003
+pub(super) fn emit_steering_discarded_id(conversation_id: Uuid, steer_id: Uuid) {
+    let _ = emit(AppEvent::Chat(ChatEvent::SteeringDiscarded {
+        conversation_id,
+        steer_id,
+    }));
 }
 
 impl ChatServiceImpl {
@@ -163,9 +176,17 @@ impl ChatServiceImpl {
         }
 
         // Announced before it is confirmed, so the view renders the entry
-        // before it can be told to withdraw it. Either ordering then leaves
-        // the view in the right final state; the other one would leave a
-        // withdrawal landing on an entry that does not exist yet.
+        // before it can be told to withdraw it. The other order would leave a
+        // withdrawal landing on an entry that does not exist yet, and nothing
+        // would come back for it afterwards.
+        //
+        // A teardown draining this queue can still announce its discard
+        // ahead of this, because the insert above released the lock. What
+        // follows this emit is therefore a terminal event for `steer_id`
+        // whether or not that entry is still on the queue: at least one
+        // discard always lands after this, never none.
+        // @plan PLAN-20260903-ISSUE222.P08
+        // @requirement REQ-222-003
         let _ = emit(AppEvent::Chat(ChatEvent::SteeringQueued {
             conversation_id,
             steer_id,
@@ -187,9 +208,18 @@ impl ChatServiceImpl {
     ///
     /// The withdrawal is announced because the caller has already emitted
     /// `SteeringQueued` for this entry, and `SteeringDiscarded` is the only
-    /// other way the view stops rendering it. An entry a concurrent teardown
-    /// drained first is announced by that teardown instead, so this reports
-    /// only what it actually took off the queue.
+    /// other way the view stops rendering it. It is announced whether or not
+    /// this call is the one that took the entry off the queue: a teardown
+    /// that drained it first may have announced its own discard *before* the
+    /// `SteeringQueued` was emitted, in which case the view processed a
+    /// withdrawal for an entry it had not rendered yet and then rendered it.
+    /// Staying quiet here on the strength of the teardown's announcement
+    /// would strand that entry on screen for the rest of the session.
+    ///
+    /// The guarantee is therefore at least one terminal event after every
+    /// `SteeringQueued`, not at most one. A repeated discard costs nothing:
+    /// the view removes by id, so the second one finds no entry and takes
+    /// nothing, which `a_discard_of_an_unknown_id_withdraws_nothing` pins.
     ///
     /// Lock discipline: `is_streaming_for` releases `active_streams` before
     /// `remove_steering` locks `steering_queues`, and both are released
@@ -201,6 +231,7 @@ impl ChatServiceImpl {
     /// returns, so a caller cannot tell the two orderings apart.
     ///
     /// @plan PLAN-20260903-ISSUE222.P07
+    /// @plan PLAN-20260903-ISSUE222.P08
     /// @requirement REQ-222-003
     /// @requirement REQ-222-004
     pub(super) fn confirm_or_withdraw_steering(
@@ -212,8 +243,8 @@ impl ChatServiceImpl {
             return Ok(steer_id);
         }
 
-        let withdrawn = self.remove_steering(conversation_id, steer_id);
-        emit_steering_discarded(conversation_id, withdrawn.as_slice());
+        let _ = self.remove_steering(conversation_id, steer_id);
+        emit_steering_discarded_id(conversation_id, steer_id);
         Err(no_active_turn())
     }
 
@@ -222,9 +253,14 @@ impl ChatServiceImpl {
     /// Returns `false` without queuing when the conversation already holds
     /// `MAX_QUEUED_STEERING_MESSAGES` entries.
     ///
+    /// Reachable from the steering tests so they can put an entry on a queue
+    /// without announcing it, which is the state `queue_steering` leaves
+    /// behind between the insert and the emit.
+    ///
     /// @plan PLAN-20260903-ISSUE222.P01
+    /// @plan PLAN-20260903-ISSUE222.P08
     /// @requirement REQ-222-004
-    fn push_steering(&self, conversation_id: Uuid, entry: QueuedSteering) -> bool {
+    pub(super) fn push_steering(&self, conversation_id: Uuid, entry: QueuedSteering) -> bool {
         let mut queues = self
             .steering_queues
             .lock()
@@ -247,9 +283,12 @@ impl ChatServiceImpl {
     /// Returns `None` when the entry is no longer queued, which is what a
     /// teardown racing the withdrawal leaves behind — `clear_streaming_state`
     /// drains the whole queue, so it may already have taken and announced
-    /// this entry.
+    /// this entry. The caller announces the discard either way; see
+    /// [`ChatServiceImpl::confirm_or_withdraw_steering`] for why a `None`
+    /// here is not permission to stay quiet.
     ///
     /// @plan PLAN-20260903-ISSUE222.P07
+    /// @plan PLAN-20260903-ISSUE222.P08
     /// @requirement REQ-222-003
     fn remove_steering(&self, conversation_id: Uuid, steer_id: Uuid) -> Option<QueuedSteering> {
         let mut queues = self
