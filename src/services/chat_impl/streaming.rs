@@ -22,6 +22,10 @@ use uuid::Uuid;
 
 use super::{build_stream_context, create_stream_agent};
 
+pub(super) mod steering_delivery;
+
+use steering_delivery::{run_steered_turns_and_finalize, SteeringDeliveryContext};
+
 pub(super) const STREAM_ERROR_MESSAGE: &str = "An error interrupted the chat stream.";
 
 #[derive(Default)]
@@ -279,9 +283,17 @@ impl StreamFinalizeContext<'_> {
 }
 
 /// Run a stream task for a conversation.
+///
+/// One user send runs one turn, plus any further turns queued steering
+/// messages chain onto it (issue #222). The agent is built once and reused;
+/// each turn gets a freshly built tool context. Finalization happens once,
+/// on the last turn.
+///
 /// @plan PLAN-20260416-ISSUE173.P03
 /// @plan PLAN-20260416-ISSUE173.P14-CR4
+/// @plan PLAN-20260903-ISSUE222.P02
 /// @requirement REQ-173-001.1, REQ-173-001.3
+/// @requirement REQ-222-005
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_stream_task(
     prepared: PreparedMessageContext,
@@ -326,34 +338,53 @@ pub(super) async fn run_stream_task(
         return;
     };
 
-    let context = build_stream_context(
-        conversation_id,
-        view_tx.clone(),
-        approval_gate.clone(),
-        policy.clone(),
-        skills_service,
-        filter_emoji,
-    );
+    let delivery_ctx = SteeringDeliveryContext {
+        finalize: StreamFinalizeContext {
+            conversation_service: &conversation_service,
+            conversation_id,
+            stream_id,
+            active_streams: &active_streams,
+            steering_queues: &steering_queues,
+        },
+        cancel: &cancel,
+        model_label: &profile.name,
+    };
 
-    let transcript = stream_agent_response(
-        &client,
-        &agent,
-        &messages,
-        context,
-        &diagnostics_context,
-        conversation_id,
-        &tx,
+    // Bound outside the turn runner so the future it returns has one type for
+    // every turn, independent of the call that produced it.
+    let client = &client;
+    let agent = &agent;
+    let diagnostics_context = &diagnostics_context;
+    let tx = &tx;
+
+    run_steered_turns_and_finalize(
+        &delivery_ctx,
+        compression_result,
+        messages,
+        move |turn_messages: Vec<LlmMessage>| {
+            let context = build_stream_context(
+                conversation_id,
+                view_tx.clone(),
+                approval_gate.clone(),
+                policy.clone(),
+                skills_service.clone(),
+                filter_emoji,
+            );
+            async move {
+                stream_agent_response(
+                    client,
+                    agent,
+                    &turn_messages,
+                    context,
+                    diagnostics_context,
+                    conversation_id,
+                    tx,
+                )
+                .await
+            }
+        },
     )
     .await;
-
-    let finalize_ctx = StreamFinalizeContext {
-        conversation_service: &conversation_service,
-        conversation_id,
-        stream_id,
-        active_streams: &active_streams,
-        steering_queues: &steering_queues,
-    };
-    finalize_by_outcome(&finalize_ctx, compression_result, transcript, &profile.name).await;
 }
 
 pub(super) fn handle_llm_stream_event(
@@ -590,6 +621,18 @@ fn summarize_tool_output(content: &str) -> String {
     }
 }
 
+/// Whether a finished turn produced assistant-visible output.
+///
+/// A transcript with neither text nor thinking is not persisted (#187), so
+/// the steering delivery loop leaves it out of the history it chains onward
+/// and that history keeps matching what a reload rebuilds.
+///
+/// @plan PLAN-20260903-ISSUE222.P02
+/// @requirement REQ-222-007
+pub(super) const fn has_assistant_output(transcript: &StreamTranscript) -> bool {
+    !transcript.response_text.is_empty() || !transcript.thinking_text.is_empty()
+}
+
 /// Persist the assistant output for a finished turn.
 ///
 /// `interrupted` marks output persisted after a stream failure (issue #193);
@@ -602,7 +645,7 @@ pub(super) async fn persist_assistant_response(
     model_label: &str,
     interrupted: bool,
 ) {
-    if transcript.response_text.is_empty() && transcript.thinking_text.is_empty() {
+    if !has_assistant_output(transcript) {
         if !transcript.tool_calls.is_empty() || !transcript.tool_results.is_empty() {
             tracing::warn!(
                 conversation_id = %conversation_id,
