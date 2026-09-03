@@ -10,20 +10,33 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-/// Mock `ChatService` that records cancel calls for verification
+/// Mock `ChatService` that records cancel and steer calls for verification
 struct RecordingChatService {
     cancelled_conversations: Arc<Mutex<Vec<Uuid>>>,
+    /// `(conversation_id, text)` for every `steer` call, in order.
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-006
+    steered: Arc<Mutex<Vec<(Uuid, String)>>>,
 }
 
 impl RecordingChatService {
     fn new() -> Self {
         Self {
             cancelled_conversations: Arc::new(Mutex::new(Vec::new())),
+            steered: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     fn cancelled_ids(&self) -> Vec<Uuid> {
         self.cancelled_conversations.lock().unwrap().clone()
+    }
+
+    /// Every `steer` call this double received, in order.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-006
+    fn steer_calls(&self) -> Vec<(Uuid, String)> {
+        self.steered.lock().unwrap().clone()
     }
 }
 
@@ -54,6 +67,17 @@ impl ChatService for RecordingChatService {
 
     fn is_streaming_for(&self, _conversation_id: Uuid) -> bool {
         false
+    }
+
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-006
+    async fn steer(
+        &self,
+        conversation_id: Uuid,
+        text: String,
+    ) -> Result<Uuid, crate::services::ServiceError> {
+        self.steered.lock().unwrap().push((conversation_id, text));
+        Ok(Uuid::new_v4())
     }
 
     async fn resolve_tool_approval(
@@ -109,6 +133,15 @@ async fn handle_stop_streaming_forwards_conversation_id() {
     assert_eq!(
         cancelled[0], conversation_id_a,
         "Expected cancel to be called with conversation_id A"
+    );
+
+    // Stop and steer are separate controls: stopping a turn must not queue a
+    // steering message.
+    // @plan PLAN-20260903-ISSUE222.P01
+    // @requirement REQ-222-006
+    assert!(
+        chat_service.steer_calls().is_empty(),
+        "StopStreaming must not reach ChatService::steer"
     );
 }
 

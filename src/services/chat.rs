@@ -39,6 +39,21 @@ pub trait ChatService: Send + Sync {
     /// Is this conversation streaming? @plan PLAN-20260416-ISSUE173.P03 @requirement REQ-173-001.1
     fn is_streaming_for(&self, conversation_id: Uuid) -> bool;
 
+    /// Queue a steering message for a conversation's active turn.
+    ///
+    /// Returns the id of the queued steering message. The in-flight
+    /// generation is never cancelled on the caller's behalf.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-004
+    /// @requirement REQ-222-006
+    ///
+    /// # Errors
+    /// Returns `ServiceError::Validation` when the conversation has no turn in
+    /// `StreamLifecycle::Running`, or when the conversation's steering queue is
+    /// full.
+    async fn steer(&self, conversation_id: Uuid, text: String) -> ServiceResult<Uuid>;
+
     /// Resolve a pending tool approval request from user interaction.
     async fn resolve_tool_approval(
         &self,

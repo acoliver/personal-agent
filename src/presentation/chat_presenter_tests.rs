@@ -147,6 +147,19 @@ impl ChatService for MockChatService {
         false
     }
 
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-004
+    async fn steer(
+        &self,
+        _conversation_id: Uuid,
+        _text: String,
+    ) -> Result<Uuid, crate::services::ServiceError> {
+        // Mock has no active turn to steer.
+        Err(crate::services::ServiceError::Validation(
+            "No active turn to steer".to_string(),
+        ))
+    }
+
     async fn resolve_tool_approval(
         &self,
         _request_id: String,

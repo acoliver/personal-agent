@@ -2,7 +2,7 @@
 
 use super::{
     ActiveStream, AgentClientExt, ApprovalGate, AsyncMutex, ChatEvent, ChatStreamEvent,
-    CompressionResult, LlmMessage, PreparedMessageContext, ServiceError, StdMutex,
+    CompressionResult, LlmMessage, PreparedMessageContext, ServiceError, StdMutex, SteeringQueues,
     ToolApprovalPolicy, ViewCommand,
 };
 use crate::events::{emit, AppEvent};
@@ -165,19 +165,15 @@ pub(super) fn handle_stream_run_failure(
 /// @plan PLAN-20260416-ISSUE173.P03
 /// @plan PLAN-20260416-ISSUE173.P14-CR4
 /// @requirement REQ-173-001.3
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn finalize_stream_task(
-    conversation_service: &Arc<dyn ConversationService>,
-    conversation_id: Uuid,
-    stream_id: Uuid,
+    ctx: &StreamFinalizeContext<'_>,
     compression_result: CompressionResult,
     transcript: StreamTranscript,
-    active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
     model_label: &str,
 ) {
     persist_assistant_response(
-        conversation_service,
-        conversation_id,
+        ctx.conversation_service,
+        ctx.conversation_id,
         &transcript,
         model_label,
         false,
@@ -185,8 +181,8 @@ pub(super) async fn finalize_stream_task(
     .await;
 
     persist_context_state(
-        conversation_service,
-        conversation_id,
+        ctx.conversation_service,
+        ctx.conversation_id,
         compression_result,
         transcript.input_tokens,
         transcript.output_tokens,
@@ -194,45 +190,42 @@ pub(super) async fn finalize_stream_task(
     .await;
 
     let _ = emit(AppEvent::Chat(ChatEvent::StreamCompleted {
-        conversation_id,
+        conversation_id: ctx.conversation_id,
         message_id: Uuid::new_v4(),
         total_tokens: transcript
             .input_tokens
             .and_then(|input| transcript.output_tokens.map(|output| input + output)),
     }));
-    clear_streaming_state(active_streams, conversation_id, stream_id);
+    ctx.clear_streaming_state();
 }
 
 /// Finalize a stream that failed partway: persist whatever partial text and/or
 /// thinking was produced, marked as interrupted, without touching context
 /// state or emitting a completion (issue #193).
 pub(super) async fn finalize_interrupted_stream(
-    conversation_service: &Arc<dyn ConversationService>,
-    conversation_id: Uuid,
-    stream_id: Uuid,
+    ctx: &StreamFinalizeContext<'_>,
     transcript: &StreamTranscript,
-    active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
     model_label: &str,
 ) {
     // Raw provider errors can embed credentials; only the sanitized form is
     // safe to log.
     let sanitized_error = sanitize_text(transcript.error.as_deref().unwrap_or("unknown"));
     tracing::warn!(
-        conversation_id = %conversation_id,
+        conversation_id = %ctx.conversation_id,
         error = %sanitized_error,
         response_chars = transcript.response_text.len(),
         thinking_chars = transcript.thinking_text.len(),
         "Finalizing interrupted chat stream with partial output"
     );
     persist_assistant_response(
-        conversation_service,
-        conversation_id,
+        ctx.conversation_service,
+        ctx.conversation_id,
         transcript,
         model_label,
         true,
     )
     .await;
-    clear_streaming_state(active_streams, conversation_id, stream_id);
+    ctx.clear_streaming_state();
 }
 
 /// Finalize a stream according to its recorded outcome (issue #193):
@@ -251,40 +244,38 @@ pub(super) async fn finalize_by_outcome(
     model_label: &str,
 ) {
     if transcript.completed {
-        finalize_stream_task(
-            ctx.conversation_service,
-            ctx.conversation_id,
-            ctx.stream_id,
-            compression_result,
-            transcript,
-            ctx.active_streams,
-            model_label,
-        )
-        .await;
+        finalize_stream_task(ctx, compression_result, transcript, model_label).await;
     } else if transcript.error.is_some() {
-        finalize_interrupted_stream(
-            ctx.conversation_service,
-            ctx.conversation_id,
-            ctx.stream_id,
-            &transcript,
-            ctx.active_streams,
-            model_label,
-        )
-        .await;
+        finalize_interrupted_stream(ctx, &transcript, model_label).await;
     } else {
         // Neither completed nor errored (e.g. cancelled): nothing to persist.
-        clear_streaming_state(ctx.active_streams, ctx.conversation_id, ctx.stream_id);
+        ctx.clear_streaming_state();
     }
 }
 
 /// The stream-scoped state every outcome of `finalize_by_outcome` operates
 /// on: the conversation service, the (conversation, stream) coordinates, and
-/// the shared active-stream registry.
+/// the shared per-conversation registries.
 pub(super) struct StreamFinalizeContext<'a> {
     pub(super) conversation_service: &'a Arc<dyn ConversationService>,
     pub(super) conversation_id: Uuid,
     pub(super) stream_id: Uuid,
     pub(super) active_streams: &'a Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-004
+    pub(super) steering_queues: &'a SteeringQueues,
+}
+
+impl StreamFinalizeContext<'_> {
+    /// Release this stream's slot and its conversation's steering queue.
+    fn clear_streaming_state(&self) {
+        clear_streaming_state(
+            self.active_streams,
+            self.steering_queues,
+            self.conversation_id,
+            self.stream_id,
+        );
+    }
 }
 
 /// Run a stream task for a conversation.
@@ -297,6 +288,7 @@ pub(super) async fn run_stream_task(
     mcp_tools: Vec<crate::llm::tools::Tool>,
     tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     active_streams: Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    steering_queues: SteeringQueues,
     cancel: CancellationToken,
     conversation_service: Arc<dyn ConversationService>,
     conversation_id: Uuid,
@@ -325,6 +317,7 @@ pub(super) async fn run_stream_task(
         stream_id,
         &tx,
         &active_streams,
+        &steering_queues,
         &cancel,
         &diagnostics_context,
     )
@@ -358,6 +351,7 @@ pub(super) async fn run_stream_task(
         conversation_id,
         stream_id,
         active_streams: &active_streams,
+        steering_queues: &steering_queues,
     };
     finalize_by_outcome(&finalize_ctx, compression_result, transcript, &profile.name).await;
 }
@@ -673,19 +667,41 @@ pub(super) async fn persist_assistant_response(
 /// same conversation id. Without this epoch check the old task would evict
 /// the new reservation as soon as it finished its own cleanup.
 ///
+/// When the entry is removed the conversation's steering queue goes with it:
+/// that turn is definitively over, so anything still queued for it would only
+/// leak into the next turn.
+///
+/// Lock discipline: the `active_streams` guard is released before
+/// `steering_queues` is locked, so the two are never held at once.
+/// See [`SteeringQueues`].
+///
 /// @plan PLAN-20260416-ISSUE173.P03
 /// @plan PLAN-20260416-ISSUE173.P14-CR4
+/// @plan PLAN-20260903-ISSUE222.P01
 /// @requirement REQ-173-001.3
+/// @requirement REQ-222-004
 pub(super) fn clear_streaming_state(
     active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    steering_queues: &SteeringQueues,
     conversation_id: Uuid,
     stream_id: Uuid,
 ) {
-    let mut map = active_streams.lock().expect("active_streams poisoned");
-    if let Some(entry) = map.get(&conversation_id) {
-        if entry.stream_id == stream_id {
-            map.remove(&conversation_id);
+    let cleared = {
+        let mut map = active_streams.lock().expect("active_streams poisoned");
+        match map.get(&conversation_id) {
+            Some(entry) if entry.stream_id == stream_id => {
+                map.remove(&conversation_id);
+                true
+            }
+            _ => false,
         }
+    };
+
+    if cleared {
+        steering_queues
+            .lock()
+            .expect("steering_queues poisoned")
+            .remove(&conversation_id);
     }
 }
 

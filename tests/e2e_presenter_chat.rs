@@ -374,6 +374,18 @@ async fn test_chat_presenter_error_handling() {
             false
         }
 
+        /// @plan PLAN-20260903-ISSUE222.P01
+        /// @requirement REQ-222-004
+        async fn steer(
+            &self,
+            _conversation_id: Uuid,
+            _text: String,
+        ) -> Result<Uuid, personal_agent::services::ServiceError> {
+            Err(personal_agent::services::ServiceError::Validation(
+                "No active turn to steer".to_string(),
+            ))
+        }
+
         async fn resolve_tool_approval(
             &self,
             _request_id: String,

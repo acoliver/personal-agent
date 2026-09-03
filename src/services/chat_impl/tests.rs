@@ -12,6 +12,7 @@ mod approval_persistence;
 mod chat_test_support;
 mod compression_persistence;
 mod concurrent_streams;
+mod steering;
 mod stream_failure;
 mod three_stream_concurrency;
 mod title_generation;

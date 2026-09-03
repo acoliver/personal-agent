@@ -46,6 +46,12 @@ fn chat_event_conversation_id(event: &ChatEvent) -> Uuid {
         }
         | ChatEvent::MessageSaved {
             conversation_id, ..
+        }
+        | ChatEvent::SteeringQueued {
+            conversation_id, ..
+        }
+        | ChatEvent::SteeringDelivered {
+            conversation_id, ..
         } => *conversation_id,
     }
 }

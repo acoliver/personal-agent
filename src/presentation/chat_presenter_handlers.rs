@@ -85,6 +85,10 @@ impl ChatPresenter {
             } => {
                 Self::handle_message_saved(view_tx, conversation_id).await;
             }
+            // Steering lifecycle events are routed to view commands in
+            // PLAN-20260903-ISSUE222.P03; the service already owns the queue,
+            // so nothing here has to change for the queue to be correct.
+            ChatEvent::SteeringQueued { .. } | ChatEvent::SteeringDelivered { .. } => {}
         }
     }
 
