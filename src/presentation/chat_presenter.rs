@@ -570,6 +570,45 @@ impl ChatPresenter {
         // StreamCancelled event will be emitted by the service
     }
 
+    /// Handle `SteerStreaming` user event
+    ///
+    /// Offers the composer text to the service and reports only a refusal. An
+    /// accepted steer is announced by `ChatEvent::SteeringQueued`, which
+    /// reaches the view through `handle_chat_event`, so queueing it here too
+    /// would show the same entry twice.
+    ///
+    /// Steering is additive: this never cancels the turn it steers, which
+    /// leaves `StopStreaming` as the only path to `ChatService::cancel`.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-002
+    /// @requirement REQ-222-004
+    /// @requirement REQ-222-006
+    pub(super) async fn handle_steer_streaming(
+        chat_service: &Arc<dyn ChatService>,
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        text: String,
+    ) {
+        if let Err(e) = chat_service.steer(conversation_id, text).await {
+            let error_msg = e.to_string();
+            tracing::warn!(%conversation_id, "Steering message rejected: {}", error_msg);
+            let _ = view_tx
+                .send(ViewCommand::SteeringRejected {
+                    conversation_id,
+                    error: error_msg.clone(),
+                })
+                .await;
+            let _ = view_tx
+                .send(ViewCommand::ShowError {
+                    title: "Steering Error".to_string(),
+                    message: error_msg,
+                    severity: ErrorSeverity::Warning,
+                })
+                .await;
+        }
+    }
+
     /// Handle `SelectChatProfile` user event.
     ///
     /// When the user picks a different profile in the chat title-bar dropdown,

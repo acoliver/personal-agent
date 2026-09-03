@@ -903,3 +903,9 @@ fn test_conversation_search_result_fields() {
 
 #[path = "chat_presenter_cancel_tests.rs"]
 mod cancel_tests;
+
+/// Presenter wiring for mid-turn steering.
+///
+/// @plan PLAN-20260903-ISSUE222.P03
+#[path = "chat_presenter_steering_tests.rs"]
+mod steering_tests;

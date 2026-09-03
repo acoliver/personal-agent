@@ -85,11 +85,56 @@ impl ChatPresenter {
             } => {
                 Self::handle_message_saved(view_tx, conversation_id).await;
             }
-            // Steering lifecycle events are routed to view commands in
-            // PLAN-20260903-ISSUE222.P03; the service already owns the queue,
-            // so nothing here has to change for the queue to be correct.
-            ChatEvent::SteeringQueued { .. } | ChatEvent::SteeringDelivered { .. } => {}
+            ChatEvent::SteeringQueued {
+                conversation_id,
+                steer_id,
+                text,
+            } => {
+                Self::handle_steering_queued(view_tx, conversation_id, steer_id, text).await;
+            }
+            ChatEvent::SteeringDelivered {
+                conversation_id,
+                steer_id,
+            } => {
+                Self::handle_steering_delivered(view_tx, conversation_id, steer_id).await;
+            }
         }
+    }
+
+    /// A steering message is waiting for the running turn's boundary.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-003
+    async fn handle_steering_queued(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        steer_id: Uuid,
+        text: String,
+    ) {
+        let _ = view_tx
+            .send(ViewCommand::SteeringQueued {
+                conversation_id,
+                steer_id,
+                text,
+            })
+            .await;
+    }
+
+    /// A queued steering message reached the model, so it is no longer waiting.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-003
+    async fn handle_steering_delivered(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    ) {
+        let _ = view_tx
+            .send(ViewCommand::SteeringDelivered {
+                conversation_id,
+                steer_id,
+            })
+            .await;
     }
 
     async fn handle_stream_started(

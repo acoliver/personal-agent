@@ -112,6 +112,39 @@ pub enum ViewCommand {
     /// Message was saved
     MessageSaved { conversation_id: Uuid },
 
+    /// A steering message was accepted and is waiting for the running turn to
+    /// reach its boundary. The view shows `text` as queued until the matching
+    /// `SteeringDelivered` or `SteeringRejected` arrives for `steer_id`.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-003
+    SteeringQueued {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+        text: String,
+    },
+
+    /// A queued steering message was handed to the model, so the view stops
+    /// showing `steer_id` as waiting.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-003
+    SteeringDelivered {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    },
+
+    /// A steering message was refused: no turn was running, the queue was
+    /// full, or the text was blank. The service queued nothing, so no
+    /// `SteeringQueued` follows for it, and `error` says why it did not take.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-004
+    SteeringRejected {
+        conversation_id: Uuid,
+        error: String,
+    },
+
     /// Toggle thinking visibility
     ToggleThinkingVisibility,
 

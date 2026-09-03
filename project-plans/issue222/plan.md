@@ -200,8 +200,10 @@ Tests:
 Files: `src/presentation/chat_presenter.rs`, `src/presentation/chat_presenter_event.rs`
 
 - `handle_steer_streaming` calls `chat_service.steer`; on `Err` it sends
-  `ViewCommand::SteeringRejected { conversation_id, steer_id, error }` and a
-  `ShowError`, on `Ok` nothing further (the service emits `SteeringQueued`).
+  `ViewCommand::SteeringRejected { conversation_id, error }` and a `ShowError`,
+  on `Ok` nothing further (the service emits `SteeringQueued`). `SteeringRejected`
+  carries no `steer_id`: `steer` returns `ServiceResult<Uuid>`, so a refusal
+  yields an error and no id, and a refused steer was never queued under one.
 - Route `ChatEvent::SteeringQueued` / `SteeringDelivered` to
   `ViewCommand::SteeringQueued` / `SteeringDelivered`.
 
