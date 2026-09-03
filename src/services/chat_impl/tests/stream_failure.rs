@@ -311,6 +311,118 @@ async fn stream_run_failure_emits_sanitized_diagnostics_with_partial_lengths() {
     );
 }
 
+/// `do_run_agent_stream` reports common mid-stream failures twice: an
+/// `Error` event callback first, then a returned `Err` carrying the same
+/// message. The first report must win — the transcript keeps the original
+/// error and no second channel or bus error may be emitted (issue #193).
+#[tokio::test]
+async fn returned_error_after_error_event_does_not_duplicate_failure_report() {
+    let conversation_id = Uuid::new_v4();
+    let mut bus_rx = subscribe();
+    let (tx, mut stream_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = TranscriptState::new();
+
+    // Mid-stream failure as delivered by `do_run_agent_stream`: the Error
+    // event fires first...
+    state.apply(
+        crate::llm::StreamEvent::Error("provider reset mid-stream".to_string()),
+        conversation_id,
+        &tx,
+    );
+    // ...then the run returns Err carrying the same message.
+    streaming::record_stream_run_failure(
+        &mut state.transcript,
+        &crate::llm::error::LlmError::Stream("provider reset mid-stream".to_string()),
+        conversation_id,
+        &streaming::StreamDiagnosticContext::default(),
+        &tx,
+    );
+
+    assert_eq!(
+        state.transcript.error.as_deref(),
+        Some("provider reset mid-stream"),
+        "the error-event report must be preserved, not overwritten by the returned Err"
+    );
+
+    let mut channel_errors = 0;
+    while let Ok(event) = stream_rx.try_recv() {
+        match event {
+            ChatStreamEvent::Error(_) => channel_errors += 1,
+            other => panic!("unexpected channel event: {other:?}"),
+        }
+    }
+    assert_eq!(
+        channel_errors, 1,
+        "a mid-stream failure must surface exactly one channel error"
+    );
+
+    let events = collect_chat_events(
+        &mut bus_rx,
+        conversation_id,
+        std::time::Duration::from_millis(250),
+    )
+    .await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ChatEvent::StreamError { .. }))
+            .count(),
+        1,
+        "a mid-stream failure must emit exactly one StreamError on the event bus, got {events:?}"
+    );
+}
+
+/// A returned `Err` that never fired an `Error` event (e.g. `AgentStream`
+/// construction failure) must still be reported exactly once (issue #193).
+#[tokio::test]
+async fn eventless_returned_failure_is_still_reported() {
+    let conversation_id = Uuid::new_v4();
+    let mut bus_rx = subscribe();
+    let (tx, mut stream_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut transcript = streaming::StreamTranscript::default();
+
+    streaming::record_stream_run_failure(
+        &mut transcript,
+        &crate::llm::error::LlmError::Stream("AgentStream creation failed".to_string()),
+        conversation_id,
+        &streaming::StreamDiagnosticContext::default(),
+        &tx,
+    );
+
+    let recorded = transcript
+        .error
+        .as_deref()
+        .expect("an event-less returned failure must still be recorded");
+    assert!(
+        recorded.contains("AgentStream creation failed"),
+        "recorded error should carry the failure: {recorded}"
+    );
+
+    match stream_rx.try_recv().expect("run failure should be sent") {
+        ChatStreamEvent::Error(_) => {}
+        other => panic!("expected stream error event, got {other:?}"),
+    }
+    assert!(
+        stream_rx.try_recv().is_err(),
+        "exactly one channel error must be emitted for an event-less failure"
+    );
+
+    let events = collect_chat_events(
+        &mut bus_rx,
+        conversation_id,
+        std::time::Duration::from_millis(250),
+    )
+    .await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ChatEvent::StreamError { .. }))
+            .count(),
+        1,
+        "an event-less returned failure must emit exactly one StreamError, got {events:?}"
+    );
+}
+
 #[tokio::test]
 async fn interrupted_finalize_persists_partial_output_as_interrupted() {
     let conversation_service_impl = Arc::new(MockConversationService::new(Uuid::new_v4()));
@@ -883,7 +995,9 @@ fn ensure_global_capture_default() {
             .with_ansi(false)
             .with_max_level(tracing::Level::TRACE)
             .finish();
-        let _ = tracing::subscriber::set_global_default(subscriber);
+        tracing::subscriber::set_global_default(subscriber).expect(
+            "stream_failure tests must install the process-global capture subscriber before any other default",
+        );
     });
 }
 

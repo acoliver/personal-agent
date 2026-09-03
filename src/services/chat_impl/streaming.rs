@@ -6,7 +6,7 @@ use super::{
     ToolApprovalPolicy, ViewCommand,
 };
 use crate::events::{emit, AppEvent};
-use crate::llm::error::debug_error_message;
+use crate::llm::error::{debug_error_message, LlmError};
 use crate::llm::{LlmClient, StreamEvent as LlmStreamEvent};
 use crate::models::{ContextState, Message};
 use crate::services::ConversationService;
@@ -83,18 +83,46 @@ pub(super) async fn stream_agent_response(
         })
         .await
     {
-        let err_msg = debug_error_message(&error);
-        transcript.error = Some(err_msg.clone());
-        handle_stream_run_failure(
+        record_stream_run_failure(
+            &mut transcript,
+            &error,
             conversation_id,
             diagnostics_context,
-            &transcript,
-            &err_msg,
             tx,
         );
     }
 
     transcript
+}
+
+/// Record a returned `Err` from `run_agent_stream` on the transcript and
+/// report it, unless the failure already reported itself (issue #193).
+///
+/// `do_run_agent_stream` reports common mid-stream failures twice: an
+/// `Error` event callback first, then a returned `Err` carrying the same
+/// message. The event path has already logged the failure and emitted
+/// diagnostics on the bus and stream channel, so the first report wins.
+/// Failures that return `Err` without an `Error` event — e.g. `AgentStream`
+/// construction failure — are still reported here.
+pub(super) fn record_stream_run_failure(
+    transcript: &mut StreamTranscript,
+    error: &LlmError,
+    conversation_id: Uuid,
+    diagnostics_context: &StreamDiagnosticContext,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+) {
+    if transcript.error.is_some() {
+        return;
+    }
+    let err_msg = debug_error_message(error);
+    transcript.error = Some(err_msg.clone());
+    handle_stream_run_failure(
+        conversation_id,
+        diagnostics_context,
+        transcript,
+        &err_msg,
+        tx,
+    );
 }
 
 /// Report a failed agent run: log it, emit sanitized diagnostics on the event
