@@ -141,6 +141,7 @@ fn row_to_message(
     tool_calls: Option<String>,
     tool_results: Option<String>,
     created_at: &str,
+    interrupted: bool,
 ) -> Result<Message, ServiceError> {
     Ok(Message {
         role: str_to_role(role)?,
@@ -150,6 +151,7 @@ fn row_to_message(
         model_id,
         tool_calls,
         tool_results,
+        interrupted,
     })
 }
 
@@ -218,7 +220,7 @@ fn select_messages(
     conversation_id: &str,
 ) -> Result<Vec<Message>, rusqlite::Error> {
     let mut stmt = conn.prepare_cached(
-        "SELECT role, content, thinking_content, model_id, tool_calls, tool_results, created_at
+        "SELECT role, content, thinking_content, model_id, tool_calls, tool_results, created_at, interrupted
          FROM messages
          WHERE conversation_id = ?1
          ORDER BY seq ASC",
@@ -233,13 +235,22 @@ fn select_messages(
             row.get::<_, Option<String>>(4)?,
             row.get::<_, Option<String>>(5)?,
             row.get::<_, String>(6)?,
+            row.get::<_, bool>(7)?,
         ))
     })?;
 
     let mut messages = Vec::new();
     for row in rows {
-        let (role, content, thinking_content, model_id, tool_calls, tool_results, created_at) =
-            row?;
+        let (
+            role,
+            content,
+            thinking_content,
+            model_id,
+            tool_calls,
+            tool_results,
+            created_at,
+            interrupted,
+        ) = row?;
         let msg = row_to_message(
             &role,
             content,
@@ -248,6 +259,7 @@ fn select_messages(
             tool_calls,
             tool_results,
             &created_at,
+            interrupted,
         )
         .map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
@@ -518,6 +530,7 @@ impl ConversationService for SqliteConversationService {
         let model_id = message.model_id.clone();
         let tool_calls = message.tool_calls.clone();
         let tool_results = message.tool_results.clone();
+        let interrupted = i64::from(message.interrupted);
         let created_at = message
             .timestamp
             .to_rfc3339_opts(SecondsFormat::Millis, true);
@@ -530,12 +543,13 @@ impl ConversationService for SqliteConversationService {
                 tx.execute(
                     "INSERT INTO messages
                          (conversation_id, role, content, thinking_content,
-                          model_id, tool_calls, tool_results, created_at, seq)
+                          model_id, tool_calls, tool_results, created_at, seq, interrupted)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                              COALESCE(
                                  (SELECT MAX(seq) + 1 FROM messages WHERE conversation_id = ?1),
                                  0
-                             ))",
+                             ),
+                             ?9)",
                     rusqlite::params![
                         conv_id_str,
                         role_str,
@@ -545,6 +559,7 @@ impl ConversationService for SqliteConversationService {
                         tool_calls,
                         tool_results,
                         created_at,
+                        interrupted,
                     ],
                 )?;
 

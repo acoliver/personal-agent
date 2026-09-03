@@ -12,6 +12,7 @@ mod approval_persistence;
 mod chat_test_support;
 mod compression_persistence;
 mod concurrent_streams;
+mod stream_failure;
 mod three_stream_concurrency;
 mod title_generation;
 
@@ -525,14 +526,18 @@ async fn persist_assistant_response_skips_empty_turn_with_only_tool_transcript()
         "old result",
     )];
 
+    let transcript = streaming::StreamTranscript {
+        tool_calls,
+        tool_results,
+        ..streaming::StreamTranscript::default()
+    };
+
     streaming::persist_assistant_response(
         &conversation_service,
         conversation_id,
-        "",
-        "",
-        &tool_calls,
-        &tool_results,
+        &transcript,
         "Test Profile",
+        false,
     )
     .await;
 

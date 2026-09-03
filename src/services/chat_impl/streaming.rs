@@ -6,7 +6,7 @@ use super::{
     ToolApprovalPolicy, ViewCommand,
 };
 use crate::events::{emit, AppEvent};
-use crate::llm::error::debug_error_message;
+use crate::llm::error::{debug_error_message, LlmError};
 use crate::llm::{LlmClient, StreamEvent as LlmStreamEvent};
 use crate::models::{ContextState, Message};
 use crate::services::ConversationService;
@@ -33,6 +33,9 @@ pub(super) struct StreamTranscript {
     pub(super) input_tokens: Option<u32>,
     pub(super) output_tokens: Option<u32>,
     pub(super) completed: bool,
+    /// Set when the stream failed (returned `Err` or an `Error` event).
+    /// A later `Complete` event clears it so normal finalization can run.
+    pub(super) error: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -75,41 +78,87 @@ pub(super) async fn stream_agent_response(
                 event,
                 conversation_id,
                 tx,
-                &mut transcript.response_text,
-                &mut transcript.thinking_text,
-                &mut transcript.tool_calls,
-                &mut transcript.tool_results,
-                &mut transcript.input_tokens,
-                &mut transcript.output_tokens,
-                &mut transcript.completed,
+                &mut transcript,
             );
         })
         .await
     {
-        let err_msg = debug_error_message(&error);
-        tracing::error!(
-            conversation_id = %conversation_id,
-            error = %err_msg,
-            response_chars = transcript.response_text.len(),
-            thinking_chars = transcript.thinking_text.len(),
-            "LLM stream task failed"
-        );
-        let diagnostics = build_stream_error_diagnostics(
-            Some(&err_msg),
-            diagnostics_context,
-            &transcript,
-            ErrorLogStreamLifecycle::Failed,
-        );
-        emit_stream_error(
+        record_stream_run_failure(
+            &mut transcript,
+            &error,
             conversation_id,
-            STREAM_ERROR_MESSAGE.to_string(),
-            false,
-            Some(Box::new(diagnostics)),
+            diagnostics_context,
             tx,
         );
     }
 
     transcript
+}
+
+/// Record a returned `Err` from `run_agent_stream` on the transcript and
+/// report it, unless the failure already reported itself (issue #193).
+///
+/// `do_run_agent_stream` reports common mid-stream failures twice: an
+/// `Error` event callback first, then a returned `Err` carrying the same
+/// message. The event path has already logged the failure and emitted
+/// diagnostics on the bus and stream channel, so the first report wins.
+/// Failures that return `Err` without an `Error` event — e.g. `AgentStream`
+/// construction failure — are still reported here.
+pub(super) fn record_stream_run_failure(
+    transcript: &mut StreamTranscript,
+    error: &LlmError,
+    conversation_id: Uuid,
+    diagnostics_context: &StreamDiagnosticContext,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+) {
+    if transcript.error.is_some() {
+        return;
+    }
+    let err_msg = debug_error_message(error);
+    transcript.error = Some(err_msg.clone());
+    handle_stream_run_failure(
+        conversation_id,
+        diagnostics_context,
+        transcript,
+        &err_msg,
+        tx,
+    );
+}
+
+/// Report a failed agent run: log it, emit sanitized diagnostics on the event
+/// bus, and surface the generic error to the stream channel. Shared by the
+/// returned-`Err` path of `run_agent_stream` (issue #193 keeps its
+/// diagnostics actionable instead of discarding partial output).
+pub(super) fn handle_stream_run_failure(
+    conversation_id: Uuid,
+    diagnostics_context: &StreamDiagnosticContext,
+    transcript: &StreamTranscript,
+    err_msg: &str,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+) {
+    // Raw provider errors can embed credentials; only the sanitized form is
+    // safe to log. The diagnostics builder applies the same redaction.
+    let sanitized_error = sanitize_text(err_msg);
+    tracing::error!(
+        conversation_id = %conversation_id,
+        error = %sanitized_error,
+        response_chars = transcript.response_text.len(),
+        thinking_chars = transcript.thinking_text.len(),
+        "LLM stream task failed"
+    );
+    let diagnostics = build_stream_error_diagnostics(
+        Some(err_msg),
+        diagnostics_context,
+        transcript,
+        ErrorLogStreamLifecycle::Failed,
+    );
+    emit_stream_error(
+        conversation_id,
+        STREAM_ERROR_MESSAGE.to_string(),
+        false,
+        Some(Box::new(diagnostics)),
+        tx,
+    );
 }
 
 /// Finalize a stream task and clean up state for the conversation.
@@ -129,11 +178,9 @@ pub(super) async fn finalize_stream_task(
     persist_assistant_response(
         conversation_service,
         conversation_id,
-        &transcript.response_text,
-        &transcript.thinking_text,
-        &transcript.tool_calls,
-        &transcript.tool_results,
+        &transcript,
         model_label,
+        false,
     )
     .await;
 
@@ -154,6 +201,90 @@ pub(super) async fn finalize_stream_task(
             .and_then(|input| transcript.output_tokens.map(|output| input + output)),
     }));
     clear_streaming_state(active_streams, conversation_id, stream_id);
+}
+
+/// Finalize a stream that failed partway: persist whatever partial text and/or
+/// thinking was produced, marked as interrupted, without touching context
+/// state or emitting a completion (issue #193).
+pub(super) async fn finalize_interrupted_stream(
+    conversation_service: &Arc<dyn ConversationService>,
+    conversation_id: Uuid,
+    stream_id: Uuid,
+    transcript: &StreamTranscript,
+    active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    model_label: &str,
+) {
+    // Raw provider errors can embed credentials; only the sanitized form is
+    // safe to log.
+    let sanitized_error = sanitize_text(transcript.error.as_deref().unwrap_or("unknown"));
+    tracing::warn!(
+        conversation_id = %conversation_id,
+        error = %sanitized_error,
+        response_chars = transcript.response_text.len(),
+        thinking_chars = transcript.thinking_text.len(),
+        "Finalizing interrupted chat stream with partial output"
+    );
+    persist_assistant_response(
+        conversation_service,
+        conversation_id,
+        transcript,
+        model_label,
+        true,
+    )
+    .await;
+    clear_streaming_state(active_streams, conversation_id, stream_id);
+}
+
+/// Finalize a stream according to its recorded outcome (issue #193):
+/// - completed: normal finalization — persist the message, update context
+///   state, and emit `StreamCompleted`. A stream that errored and then
+///   completed lands here because `Complete` clears the error.
+/// - failed without completing: persist partial output marked interrupted,
+///   leave context state untouched, emit no completion.
+/// - neither (e.g. cancelled): persist nothing.
+///
+/// Every branch clears the conversation's active-stream entry.
+pub(super) async fn finalize_by_outcome(
+    ctx: &StreamFinalizeContext<'_>,
+    compression_result: CompressionResult,
+    transcript: StreamTranscript,
+    model_label: &str,
+) {
+    if transcript.completed {
+        finalize_stream_task(
+            ctx.conversation_service,
+            ctx.conversation_id,
+            ctx.stream_id,
+            compression_result,
+            transcript,
+            ctx.active_streams,
+            model_label,
+        )
+        .await;
+    } else if transcript.error.is_some() {
+        finalize_interrupted_stream(
+            ctx.conversation_service,
+            ctx.conversation_id,
+            ctx.stream_id,
+            &transcript,
+            ctx.active_streams,
+            model_label,
+        )
+        .await;
+    } else {
+        // Neither completed nor errored (e.g. cancelled): nothing to persist.
+        clear_streaming_state(ctx.active_streams, ctx.conversation_id, ctx.stream_id);
+    }
+}
+
+/// The stream-scoped state every outcome of `finalize_by_outcome` operates
+/// on: the conversation service, the (conversation, stream) coordinates, and
+/// the shared active-stream registry.
+pub(super) struct StreamFinalizeContext<'a> {
+    pub(super) conversation_service: &'a Arc<dyn ConversationService>,
+    pub(super) conversation_id: Uuid,
+    pub(super) stream_id: Uuid,
+    pub(super) active_streams: &'a Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
 }
 
 /// Run a stream task for a conversation.
@@ -222,44 +353,28 @@ pub(super) async fn run_stream_task(
     )
     .await;
 
-    if !transcript.completed {
-        clear_streaming_state(&active_streams, conversation_id, stream_id);
-        return;
-    }
-
-    finalize_stream_task(
-        &conversation_service,
+    let finalize_ctx = StreamFinalizeContext {
+        conversation_service: &conversation_service,
         conversation_id,
         stream_id,
-        compression_result,
-        transcript,
-        &active_streams,
-        &profile.name,
-    )
-    .await;
+        active_streams: &active_streams,
+    };
+    finalize_by_outcome(&finalize_ctx, compression_result, transcript, &profile.name).await;
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_llm_stream_event(
     diagnostics_context: &StreamDiagnosticContext,
     event: LlmStreamEvent,
     conversation_id: Uuid,
-
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
-    response_text: &mut String,
-    thinking_text: &mut String,
-    tool_calls: &mut Vec<crate::llm::tools::ToolUse>,
-    tool_results: &mut Vec<crate::llm::tools::ToolResult>,
-    input_tokens: &mut Option<u32>,
-    output_tokens: &mut Option<u32>,
-    completed: &mut bool,
+    transcript: &mut StreamTranscript,
 ) {
     match event {
         LlmStreamEvent::TextDelta(text) => {
-            handle_text_delta(conversation_id, tx, response_text, &text);
+            handle_text_delta(conversation_id, tx, &mut transcript.response_text, &text);
         }
         LlmStreamEvent::ThinkingDelta(text) => {
-            handle_thinking_delta(conversation_id, thinking_text, &text);
+            handle_thinking_delta(conversation_id, &mut transcript.thinking_text, &text);
         }
         LlmStreamEvent::ToolCallStarted { tool_name, call_id } => {
             handle_tool_call_started(conversation_id, tool_name, call_id);
@@ -277,8 +392,8 @@ pub(super) fn handle_llm_stream_event(
             tool_calls: completed_tool_calls,
             tool_results: completed_tool_results,
         } => {
-            *tool_calls = completed_tool_calls;
-            *tool_results = completed_tool_results;
+            transcript.tool_calls = completed_tool_calls;
+            transcript.tool_results = completed_tool_results;
         }
         LlmStreamEvent::Complete {
             input_tokens: completed_input_tokens,
@@ -286,23 +401,14 @@ pub(super) fn handle_llm_stream_event(
         } => {
             handle_stream_complete(
                 tx,
-                input_tokens,
-                output_tokens,
-                completed,
+                transcript,
                 completed_input_tokens,
                 completed_output_tokens,
             );
         }
         LlmStreamEvent::Error(err) => {
-            let snapshot = ErrorSnapshot {
-                response_text,
-                thinking_text,
-                tool_calls,
-                tool_results,
-                input_tokens: *input_tokens,
-                output_tokens: *output_tokens,
-            };
-            handle_stream_error_event(conversation_id, tx, diagnostics_context, &snapshot, &err);
+            transcript.error = Some(err.clone());
+            handle_stream_error_event(conversation_id, tx, diagnostics_context, transcript, &err);
         }
 
         LlmStreamEvent::ToolUse(_tool_use) => {}
@@ -361,58 +467,44 @@ fn handle_tool_call_completed(
 
 fn handle_stream_complete(
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
-    input_tokens: &mut Option<u32>,
-    output_tokens: &mut Option<u32>,
-    completed: &mut bool,
+    transcript: &mut StreamTranscript,
     completed_input_tokens: Option<u32>,
     completed_output_tokens: Option<u32>,
 ) {
-    *input_tokens = completed_input_tokens;
-    *output_tokens = completed_output_tokens;
-    *completed = true;
+    transcript.input_tokens = completed_input_tokens;
+    transcript.output_tokens = completed_output_tokens;
+    transcript.completed = true;
+    // A stream that errored and then completed uses normal finalization.
+    transcript.error = None;
     let _ = tx.send(ChatStreamEvent::Complete {
         input_tokens: completed_input_tokens,
         output_tokens: completed_output_tokens,
     });
 }
 
-struct ErrorSnapshot<'a> {
-    response_text: &'a str,
-    thinking_text: &'a str,
-    tool_calls: &'a [crate::llm::tools::ToolUse],
-    tool_results: &'a [crate::llm::tools::ToolResult],
-    input_tokens: Option<u32>,
-    output_tokens: Option<u32>,
-}
-
 fn handle_stream_error_event(
     conversation_id: Uuid,
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     diagnostics_context: &StreamDiagnosticContext,
-    snapshot: &ErrorSnapshot<'_>,
+    transcript: &StreamTranscript,
     err: &str,
 ) {
+    // Raw provider errors can embed credentials; only the sanitized form is
+    // safe to log. The diagnostics builder applies the same redaction for
+    // storage/export, so it still receives the raw value.
+    let sanitized_error = sanitize_text(err);
     tracing::error!(
         conversation_id = %conversation_id,
-        error = %err,
-        response_chars = snapshot.response_text.len(),
-        thinking_chars = snapshot.thinking_text.len(),
+        error = %sanitized_error,
+        response_chars = transcript.response_text.len(),
+        thinking_chars = transcript.thinking_text.len(),
         "LLM stream event error"
     );
 
-    let transcript = StreamTranscript {
-        response_text: snapshot.response_text.to_string(),
-        thinking_text: snapshot.thinking_text.to_string(),
-        tool_calls: snapshot.tool_calls.to_vec(),
-        tool_results: snapshot.tool_results.to_vec(),
-        input_tokens: snapshot.input_tokens,
-        output_tokens: snapshot.output_tokens,
-        completed: false,
-    };
     let mut diagnostics = build_stream_error_diagnostics(
         Some(err),
         diagnostics_context,
-        &transcript,
+        transcript,
         ErrorLogStreamLifecycle::Failed,
     );
     diagnostics.code_path =
@@ -504,52 +596,72 @@ fn summarize_tool_output(content: &str) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Persist the assistant output for a finished turn.
+///
+/// `interrupted` marks output persisted after a stream failure (issue #193);
+/// normal completion passes `false`. Turns with neither text nor thinking are
+/// skipped, preserving the #187 behavior for tool-only transcripts.
 pub(super) async fn persist_assistant_response(
     conversation_service: &Arc<dyn ConversationService>,
     conversation_id: Uuid,
-    response_text: &str,
-    thinking_text: &str,
-    tool_calls: &[crate::llm::tools::ToolUse],
-    tool_results: &[crate::llm::tools::ToolResult],
+    transcript: &StreamTranscript,
     model_label: &str,
+    interrupted: bool,
 ) {
-    if response_text.is_empty() && thinking_text.is_empty() {
-        if !tool_calls.is_empty() || !tool_results.is_empty() {
+    if transcript.response_text.is_empty() && transcript.thinking_text.is_empty() {
+        if !transcript.tool_calls.is_empty() || !transcript.tool_results.is_empty() {
             tracing::warn!(
                 conversation_id = %conversation_id,
-                tool_calls = tool_calls.len(),
-                tool_results = tool_results.len(),
+                tool_calls = transcript.tool_calls.len(),
+                tool_results = transcript.tool_results.len(),
+                interrupted,
                 "Skipping assistant response with tool transcript but no assistant-visible output"
             );
         }
         return;
     }
 
-    let mut msg = if thinking_text.is_empty() {
-        Message::assistant(response_text.to_string())
+    let mut msg = if transcript.thinking_text.is_empty() {
+        Message::assistant(transcript.response_text.clone())
     } else {
-        Message::assistant_with_thinking(response_text.to_string(), thinking_text.to_string())
+        Message::assistant_with_thinking(
+            transcript.response_text.clone(),
+            transcript.thinking_text.clone(),
+        )
     };
 
     // Set the model_id to preserve which profile generated this response
     msg.model_id = Some(model_label.to_string());
+    msg.interrupted = interrupted;
 
-    if !tool_calls.is_empty() {
-        msg.tool_calls = Some(serde_json::to_string(tool_calls).unwrap_or_else(|error| {
-            tracing::warn!("Failed to serialize tool calls: {error}");
-            "[]".to_string()
-        }));
+    if !transcript.tool_calls.is_empty() {
+        msg.tool_calls = Some(
+            serde_json::to_string(&transcript.tool_calls).unwrap_or_else(|error| {
+                tracing::warn!("Failed to serialize tool calls: {error}");
+                "[]".to_string()
+            }),
+        );
     }
 
-    if !tool_results.is_empty() {
-        msg.tool_results = Some(serde_json::to_string(tool_results).unwrap_or_else(|error| {
-            tracing::warn!("Failed to serialize tool results: {error}");
-            "[]".to_string()
-        }));
+    if !transcript.tool_results.is_empty() {
+        msg.tool_results = Some(
+            serde_json::to_string(&transcript.tool_results).unwrap_or_else(|error| {
+                tracing::warn!("Failed to serialize tool results: {error}");
+                "[]".to_string()
+            }),
+        );
     }
 
-    let _ = conversation_service.add_message(conversation_id, msg).await;
+    if let Err(error) = conversation_service.add_message(conversation_id, msg).await {
+        // ServiceError's Display never carries user or provider content;
+        // the message body itself is intentionally not logged.
+        tracing::warn!(
+            conversation_id = %conversation_id,
+            error = %error,
+            interrupted,
+            "Failed to persist assistant response"
+        );
+    }
 }
 
 /// Clear streaming state for a specific conversation, but only if the

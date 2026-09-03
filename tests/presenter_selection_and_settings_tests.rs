@@ -408,6 +408,7 @@ async fn select_conversation_emits_activation_and_replays_messages() {
                 model_id: None,
                 tool_calls: None,
                 tool_results: None,
+                interrupted: false,
             },
             Message {
                 role: DomainMessageRole::Assistant,
@@ -417,6 +418,7 @@ async fn select_conversation_emits_activation_and_replays_messages() {
                 model_id: None,
                 tool_calls: None,
                 tool_results: None,
+                interrupted: false,
             },
         ],
     }) as Arc<dyn ConversationService>;
@@ -630,6 +632,7 @@ async fn selection_generation_protocol_is_present() {
             model_id: None,
             tool_calls: None,
             tool_results: None,
+            interrupted: false,
         }],
     }) as Arc<dyn ConversationService>;
 
