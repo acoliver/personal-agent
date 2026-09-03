@@ -40,11 +40,32 @@ pub(super) struct QueuedSteering {
 /// Lock discipline: `active_streams` and `steering_queues` are never held at
 /// the same time. Every path that needs both takes one, releases it, then
 /// takes the other, so there is no acquisition order to invert and no
-/// deadlock to construct.
+/// deadlock to construct. Nothing is emitted while either is held.
+///
+/// What that discipline costs is atomicity, and it is worth naming: a path
+/// that reads one registry and then writes the other never sees a single
+/// consistent state, so a turn can end in the gap. The path where that
+/// matters is accepting a steer, and
+/// [`ChatServiceImpl::confirm_or_withdraw_steering`] is what it does about
+/// it — it reads the stream state again once the entry is queued, so
+/// whichever of the two ran first, the second one observes it.
 ///
 /// @plan PLAN-20260903-ISSUE222.P01
+/// @plan PLAN-20260903-ISSUE222.P07
 /// @requirement REQ-222-004
 pub(super) type SteeringQueues = Arc<StdMutex<HashMap<Uuid, VecDeque<QueuedSteering>>>>;
+
+/// The refusal a steer gets when its conversation has no turn to steer.
+///
+/// Shared by the two places that reach that conclusion — the check before
+/// the insert and the re-check after it — so a caller cannot tell which of
+/// them refused and the two cannot drift apart.
+///
+/// @plan PLAN-20260903-ISSUE222.P07
+/// @requirement REQ-222-004
+fn no_active_turn() -> ServiceError {
+    ServiceError::Validation("No active turn to steer".to_string())
+}
 
 /// Take every steering message queued for a conversation, in FIFO order,
 /// leaving its queue empty.
@@ -99,15 +120,21 @@ impl ChatServiceImpl {
     ///
     /// Lock discipline: the `active_streams` guard taken by
     /// `is_streaming_for` is released before `steering_queues` is locked, so
-    /// the two locks are never held at once. See [`SteeringQueues`].
+    /// the two locks are never held at once. See [`SteeringQueues`]. That
+    /// also means the check and the insert are not one atomic step, which is
+    /// why the entry is confirmed against the stream state again once it is
+    /// queued.
     ///
     /// # Errors
     ///
     /// Returns `ServiceError::Validation` when the text is blank, when the
-    /// conversation has no turn in `StreamLifecycle::Running`, or when the
-    /// conversation already holds `MAX_QUEUED_STEERING_MESSAGES` entries.
+    /// conversation has no turn in `StreamLifecycle::Running` either before
+    /// or after the entry is queued, or when the conversation already holds
+    /// `MAX_QUEUED_STEERING_MESSAGES` entries.
     ///
     /// @plan PLAN-20260903-ISSUE222.P01
+    /// @plan PLAN-20260903-ISSUE222.P07
+    /// @requirement REQ-222-003
     /// @requirement REQ-222-004
     /// @requirement REQ-222-006
     pub(super) fn queue_steering(&self, conversation_id: Uuid, text: &str) -> ServiceResult<Uuid> {
@@ -119,9 +146,7 @@ impl ChatServiceImpl {
         }
 
         if !ChatService::is_streaming_for(self, conversation_id) {
-            return Err(ServiceError::Validation(
-                "No active turn to steer".to_string(),
-            ));
+            return Err(no_active_turn());
         }
 
         let entry = QueuedSteering {
@@ -137,13 +162,59 @@ impl ChatServiceImpl {
             )));
         }
 
+        // Announced before it is confirmed, so the view renders the entry
+        // before it can be told to withdraw it. Either ordering then leaves
+        // the view in the right final state; the other one would leave a
+        // withdrawal landing on an entry that does not exist yet.
         let _ = emit(AppEvent::Chat(ChatEvent::SteeringQueued {
             conversation_id,
             steer_id,
             text: queued_text,
         }));
 
-        Ok(steer_id)
+        self.confirm_or_withdraw_steering(conversation_id, steer_id)
+    }
+
+    /// Confirm a steer that is now on the queue, or take it back.
+    ///
+    /// The precondition check and the insert are two separate lock
+    /// acquisitions, so a turn can end between them. The entry then lands on
+    /// a queue that turn's teardown has already drained, and nothing will
+    /// ever come back for it: the view renders an instruction that never
+    /// reaches a terminal state. Reading the stream state once more, with
+    /// the entry already queued, is what makes that case observable —
+    /// whichever of the two ran first, the second one sees it.
+    ///
+    /// The withdrawal is announced because the caller has already emitted
+    /// `SteeringQueued` for this entry, and `SteeringDiscarded` is the only
+    /// other way the view stops rendering it. An entry a concurrent teardown
+    /// drained first is announced by that teardown instead, so this reports
+    /// only what it actually took off the queue.
+    ///
+    /// Lock discipline: `is_streaming_for` releases `active_streams` before
+    /// `remove_steering` locks `steering_queues`, and both are released
+    /// before anything is emitted. See [`SteeringQueues`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same `ServiceError::Validation` the precondition check
+    /// returns, so a caller cannot tell the two orderings apart.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P07
+    /// @requirement REQ-222-003
+    /// @requirement REQ-222-004
+    pub(super) fn confirm_or_withdraw_steering(
+        &self,
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    ) -> ServiceResult<Uuid> {
+        if ChatService::is_streaming_for(self, conversation_id) {
+            return Ok(steer_id);
+        }
+
+        let withdrawn = self.remove_steering(conversation_id, steer_id);
+        emit_steering_discarded(conversation_id, withdrawn.as_slice());
+        Err(no_active_turn())
     }
 
     /// Append `entry` to a conversation's steering queue.
@@ -164,6 +235,33 @@ impl ChatServiceImpl {
         }
         queues.entry(conversation_id).or_default().push_back(entry);
         true
+    }
+
+    /// Take one steering message off a conversation's queue by id, leaving
+    /// everything else queued in order.
+    ///
+    /// `drain_steering` is the wrong tool for withdrawing a single entry: the
+    /// rest of the queue may belong to a turn that is about to deliver it,
+    /// and taking it would cancel instructions the user is still owed.
+    ///
+    /// Returns `None` when the entry is no longer queued, which is what a
+    /// teardown racing the withdrawal leaves behind — `clear_streaming_state`
+    /// drains the whole queue, so it may already have taken and announced
+    /// this entry.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P07
+    /// @requirement REQ-222-003
+    fn remove_steering(&self, conversation_id: Uuid, steer_id: Uuid) -> Option<QueuedSteering> {
+        let mut queues = self
+            .steering_queues
+            .lock()
+            .expect("steering_queues poisoned");
+        let removed = queues.get_mut(&conversation_id).and_then(|queue| {
+            let position = queue.iter().position(|entry| entry.id == steer_id)?;
+            queue.remove(position)
+        });
+        drop(queues);
+        removed
     }
 
     /// Take every steering message queued for a conversation, in FIFO order,

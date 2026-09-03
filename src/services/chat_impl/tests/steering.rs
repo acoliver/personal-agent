@@ -20,6 +20,8 @@ use uuid::Uuid;
 // Import test support utilities from parent tests module (support.rs)
 use super::chat_test_support::{MockConversationService, MockProfileService};
 
+mod withdrawal;
+
 fn make_test_chat_service() -> ChatServiceImpl {
     let conversation_service: Arc<dyn ConversationService> =
         Arc::new(MockConversationService::new(Uuid::new_v4()));
