@@ -238,9 +238,11 @@ impl ChatView {
     /// What it does do is give the words back. Submitting clears the
     /// composer without waiting for an answer, so a refused steer would
     /// otherwise be typed, taken away and never seen again. The text goes
-    /// back only into a composer that is still empty: the round trip leaves
-    /// room for the user to have started something new, and their newer
-    /// draft outranks the one the service turned down.
+    /// back only into the conversation it was typed in, and only into a
+    /// composer that is still empty: the round trip leaves room for the
+    /// user to have moved to another conversation or started something
+    /// new, and whatever is on their screen now outranks the draft the
+    /// service turned down.
     ///
     /// @plan PLAN-20260903-ISSUE222.P04
     /// @plan PLAN-20260903-ISSUE222.P08
@@ -254,7 +256,9 @@ impl ChatView {
         cx: &mut gpui::Context<Self>,
     ) {
         tracing::warn!(%conversation_id, "Steering message refused: {error}");
-        if !self.state.input_text.is_empty() {
+        if self.state.active_conversation_id != Some(conversation_id)
+            || !self.state.input_text.is_empty()
+        {
             return;
         }
         self.state.input_text = text;

@@ -399,6 +399,42 @@ fn a_rejection_leaves_newer_composer_text_alone(cx: &mut TestAppContext) {
     });
 }
 
+/// A refusal answers a steer for one conversation, and the user may have
+/// gone elsewhere while it travelled. The words belonged where they were
+/// typed; restoring them into the conversation the user is reading now
+/// would inject a draft they never wrote there.
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-002
+#[gpui::test]
+fn a_rejection_for_a_conversation_the_user_left_restores_nothing(cx: &mut TestAppContext) {
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            view.apply_store_snapshot(ready_snapshot_for(first, "First"), cx);
+            view.apply_store_snapshot(ready_snapshot_for(second, "Second"), cx);
+            assert!(
+                view.state.input_text.is_empty(),
+                "the composer must start clean in the conversation switched to"
+            );
+
+            view.handle_command(
+                rejected(first, "No active turn to steer", "meant for the first"),
+                cx,
+            );
+
+            assert!(
+                view.state.input_text.is_empty(),
+                "a refusal for a conversation the user left must not land in the one being read"
+            );
+        });
+    });
+}
+
 /// Queued entries describe the transcript on screen. A steer accepted for
 /// another conversation is not part of it.
 ///
