@@ -568,6 +568,11 @@ impl ChatView {
         if self.state.profile_dropdown_open {
             self.state.conversation_dropdown_open = false;
             self.state.sync_profile_dropdown_index();
+            // One mutex snapshot per open keeps the local row's status dot
+            // honest at the moment the user is choosing, without an
+            // always-on poll loop; it may go stale while held open, which is
+            // acceptable for a cosmetic indicator.
+            self.state.profile_dropdown_engine_status = Some(crate::llm::local::status());
         }
         tracing::info!(
             open = self.state.profile_dropdown_open,

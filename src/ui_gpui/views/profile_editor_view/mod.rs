@@ -262,6 +262,11 @@ impl ProfileEditorData {
 
         if let Some(managed) = self.api_type.managed_endpoint() {
             self.base_url = managed.to_string();
+        } else if self.api_type == ApiType::Local {
+            // REQ-LM-007: a local profile has no HTTP endpoint. Persisting
+            // the OpenAI default here would let an edit silently re-route a
+            // local profile at a remote API.
+            self.base_url = String::new();
         } else if self.base_url.trim().is_empty() || self.base_url_is_managed_elsewhere() {
             // A managed endpoint belongs to the type that manages it. Carrying
             // ChatGPT's websocket URL onto a plain HTTP provider would save an
@@ -290,7 +295,9 @@ impl ProfileEditorData {
         if self.model_id.trim().is_empty() {
             return false;
         }
-        if self.base_url.trim().is_empty() {
+        // REQ-LM-007: a local profile persists no endpoint at all, so an
+        // empty base_url is its correct state rather than a blocker.
+        if self.base_url.trim().is_empty() && self.api_type != ApiType::Local {
             return false;
         }
         // Only require key_label for API types that need authentication

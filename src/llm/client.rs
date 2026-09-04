@@ -429,6 +429,13 @@ impl LlmClient {
         provider: &str,
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        // The local engine is in-process: no endpoint, no key, and no SSE to
+        // normalize, so it must be first and must not be wrapped (same reason
+        // the open-responses transport below is wrapped in nothing).
+        if provider == super::local::LOCAL_PROVIDER_ID {
+            return Ok(super::local::local_model_for(&self.profile));
+        }
+
         if provider == super::open_responses::TRANSPORT {
             return self.build_open_responses_model(base_url).await;
         }

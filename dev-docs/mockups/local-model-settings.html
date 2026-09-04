@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PersonalAgent - Local Model Settings Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #1a3318; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: #6a9955; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #7ab966; }
+
+  body {
+    background: #2a2a2a;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: #e5e5e5;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+  }
+  h1 { font-size: 22px; color: #aaa; font-weight: 400; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #888; font-weight: 400; margin-bottom: 16px; }
+  .section-label {
+    font-size: 13px;
+    color: #6a9955;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .annotation {
+    font-size: 11px;
+    color: #6a9955;
+    font-style: italic;
+    margin-top: 8px;
+    max-width: 640px;
+    line-height: 1.6;
+  }
+  .mockup-wrapper { display: flex; flex-direction: column; align-items: center; }
+  .divider { width: 80%; height: 1px; background: #444; margin: 10px 0; }
+
+  .popup-frame {
+    width: 400px;
+    height: 520px;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  .top-bar {
+    height: 44px;
+    background: #000;
+    border-bottom: 1px solid #6a9955;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    flex-shrink: 0;
+  }
+  .top-btn {
+    min-width: 60px;
+    height: 28px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    border: none;
+    background: transparent;
+    color: #6a9955;
+    cursor: default;
+  }
+  .top-btn.primary {
+    background: #6a9955;
+    color: #000;
+    font-weight: 600;
+  }
+  .top-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #6a9955;
+  }
+
+  .settings-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+  .settings-nav {
+    width: 110px;
+    border-right: 1px solid #333;
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .nav-item {
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #999;
+    border-radius: 4px;
+  }
+  .nav-item.active {
+    background: #1a3318;
+    color: #6a9955;
+    font-weight: 600;
+  }
+  .settings-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .field-label {
+    font-size: 10px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+  }
+  .field-value {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 7px 10px;
+    font-size: 12px;
+    color: #e5e5e5;
+    font-family: "SF Mono", Menlo, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .field-value.editable { border-color: #6a9955; }
+  .field-row {
+    display: flex;
+    gap: 8px;
+  }
+  .field-row .field-value { flex: 1; }
+  .field-suffix {
+    display: flex;
+    align-items: center;
+    font-size: 10px;
+    color: #666;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  .status-card {
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #0a0a0a;
+  }
+  .status-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.loaded { background: #6a9955; box-shadow: 0 0 6px #6a9955; }
+  .status-dot.unloaded { background: #555; }
+  .status-dot.error { background: #c66; box-shadow: 0 0 6px #c66; }
+  .status-title { font-size: 12px; font-weight: 600; color: #ccc; }
+  .status-detail {
+    font-size: 10px;
+    color: #777;
+    font-family: "SF Mono", Menlo, monospace;
+    line-height: 1.5;
+  }
+
+  .btn {
+    height: 28px;
+    padding: 0 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #6a9955;
+    color: #6a9955;
+    background: transparent;
+    cursor: default;
+  }
+  .btn.danger { border-color: #a55; color: #a55; }
+  .btn.disabled { border-color: #333; color: #444; }
+  .btn-row { display: flex; gap: 8px; }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
+  }
+  .toggle-label { font-size: 12px; color: #ccc; }
+  .toggle-sublabel { font-size: 10px; color: #666; margin-top: 2px; }
+  .toggle {
+    width: 34px;
+    height: 20px;
+    border-radius: 10px;
+    background: #222;
+    border: 1px solid #333;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .toggle.on { background: #1a3318; border-color: #6a9955; }
+  .toggle .knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #666;
+  }
+  .toggle.on .knob { left: 16px; background: #6a9955; }
+
+  .dropdown-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .dropdown-entry.selected { border-color: #6a9955; background: #14250f; }
+  .dropdown-entry .meta { font-size: 10px; color: #777; }
+</style>
+</head>
+<body>
+
+<h1>Local Model — Settings &amp; Selection</h1>
+<h2>UI prototype for PLAN-20260903-LOCALMODEL</h2>
+
+<div class="mockup-wrapper">
+  <div class="section-label">1 · Settings → Local Model panel</div>
+  <div class="popup-frame">
+    <div class="top-bar">
+      <div class="top-btn">Back</div>
+      <div class="top-title">Settings</div>
+      <div class="top-btn primary">Save</div>
+    </div>
+    <div class="settings-body">
+      <div class="settings-nav">
+        <div class="nav-item">General</div>
+        <div class="nav-item">Appearance</div>
+        <div class="nav-item">Models</div>
+        <div class="nav-item active">Local Model</div>
+        <div class="nav-item">Skills</div>
+        <div class="nav-item">Security</div>
+        <div class="nav-item">MCP Tools</div>
+        <div class="nav-item">Backup</div>
+      </div>
+      <div class="settings-content">
+        <div class="status-card">
+          <div class="status-header">
+            <div class="status-dot loaded"></div>
+            <div class="status-title">Loaded — granite-4.2-3b</div>
+          </div>
+          <div class="status-detail">
+            Metal: 41/41 layers · ctx 8192 · KV 640 MiB<br>
+            last gen 68.4 tok/s · idle 0:42
+          </div>
+          <div class="btn-row">
+            <div class="btn danger">Unload now</div>
+            <div class="btn disabled">Load</div>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <div class="field-label">Model file (GGUF)</div>
+          <div class="field-value editable">…/PersonalAgent/models/granite-4.2-3b-Q8_0.gguf</div>
+          <div class="field-row">
+            <div class="btn">Choose…</div>
+            <div class="field-suffix">3.6 GB · Q8_0 · sha256 verified</div>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field-group" style="flex:1">
+            <div class="field-label">Context size</div>
+            <div class="field-value editable">8192</div>
+            <div class="field-suffix">tokens (KV ≈ 80 KiB/token)</div>
+          </div>
+          <div class="field-group" style="width:110px">
+            <div class="field-label">GPU layers</div>
+            <div class="field-value editable">999 = all</div>
+            <div class="field-suffix">Metal</div>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Unload when idle</div>
+            <div class="toggle-sublabel">frees ~4.4 GB after 5 min without a request</div>
+          </div>
+          <div class="toggle on"><div class="knob"></div></div>
+        </div>
+        <div class="field-group">
+          <div class="field-label">Idle timeout (minutes)</div>
+          <div class="field-value editable">5</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">
+    New SettingsCategory::LocalModel between Models and Skills. The status card polls the
+    engine registry while the panel is visible (Backup-panel pattern). "Unload now" is a
+    service call; the dot is red on load error with the message in the detail line.
+    Model path, context, GPU layers and idle settings persist to
+    app_settings.json extra_settings["local_model"] — not to any profile.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper">
+  <div class="section-label">2 · Chat profile dropdown (conversation selector)</div>
+  <div class="popup-frame" style="height: 320px">
+    <div class="top-bar">
+      <div class="top-btn">History</div>
+      <div class="top-title">Granite (local) ▾</div>
+      <div class="top-btn">Settings</div>
+    </div>
+    <div style="padding: 12px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1;">
+      <div class="dropdown-entry selected">
+        <div class="status-dot loaded"></div>
+        <div style="flex:1">
+          <div>Granite (local)</div>
+          <div class="meta">in-process · no API key · tools supported</div>
+        </div>
+      </div>
+      <div class="dropdown-entry">
+        <div class="status-dot unloaded"></div>
+        <div style="flex:1">
+          <div>Claude Sonnet</div>
+          <div class="meta">anthropic · api key</div>
+        </div>
+      </div>
+      <div class="dropdown-entry">
+        <div class="status-dot unloaded"></div>
+        <div style="flex:1">
+          <div>GPT-5.6</div>
+          <div class="meta">openai · api key</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">
+    Existing SelectChatProfile dropdown, unchanged plumbing — the seeded local profile
+    shows up like any other. The status dot reflects the engine registry (grey = not
+    resident, green = loaded). Selecting the local profile does NOT load the model;
+    the first send does. Switching away stops new requests; the idle timer unloads it.
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="mockup-wrapper">
+  <div class="section-label">3 · Profile editor, Local provider</div>
+  <div class="popup-frame" style="height: 460px">
+    <div class="top-bar">
+      <div class="top-btn">Cancel</div>
+      <div class="top-title">Edit Profile</div>
+      <div class="top-btn primary">Save</div>
+    </div>
+    <div class="settings-content" style="padding: 12px">
+      <div class="field-group">
+        <div class="field-label">API type</div>
+        <div class="field-value">Local (in-process)</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Name</div>
+        <div class="field-value editable">Granite (local)</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Model</div>
+        <div class="field-value editable">granite-4.2-3b</div>
+        <div class="field-suffix">label only — engine settings live in Settings → Local Model</div>
+      </div>
+      <div class="field-row">
+        <div class="field-group" style="flex:1">
+          <div class="field-label">Temperature</div>
+          <div class="field-value editable">0.1</div>
+        </div>
+        <div class="field-group" style="flex:1">
+          <div class="field-label">Max tokens</div>
+          <div class="field-value editable">1024</div>
+        </div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">System prompt</div>
+        <div class="field-value editable" style="height: 56px; white-space: pre-wrap;">You are a personal assistant…</div>
+      </div>
+      <div class="status-detail">No API key, no base URL for local profiles.</div>
+    </div>
+  </div>
+  <div class="annotation">
+    ApiType::Local already exists; this fixes what it persists: no api.openai.com
+    base_url is baked in (risk #1 from the analysis), temperature/max tokens map to
+    the sampler, and engine-level knobs are deliberately NOT here — one engine,
+    many profiles pointing at it.
+  </div>
+</div>
+
+</body>
+</html>

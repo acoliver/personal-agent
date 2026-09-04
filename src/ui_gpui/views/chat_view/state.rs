@@ -5,6 +5,7 @@
 //!
 //! @plan PLAN-20260325-ISSUE11B.P02
 
+use crate::llm::local::engine::EngineStatus;
 use crate::models::ConversationExportFormat;
 use crate::presentation::view_command::{
     ConversationSearchResult, ConversationSummary, ProfileSummary, ToolApprovalContext,
@@ -235,6 +236,10 @@ pub struct ChatState {
     pub selected_profile_id: Option<Uuid>,
     pub profile_dropdown_open: bool,
     pub profile_dropdown_index: usize,
+    /// Engine snapshot captured when the profile dropdown last opened, so the
+    /// local row's status dot renders from one mutex read per open instead of
+    /// a per-frame poll. `None` until the first open.
+    pub profile_dropdown_engine_status: Option<EngineStatus>,
     pub conversation_export_format: ConversationExportFormat,
     pub export_feedback_message: Option<String>,
     pub export_feedback_is_error: bool,
@@ -308,6 +313,7 @@ impl Default for ChatState {
             selected_profile_id: None,
             profile_dropdown_open: false,
             profile_dropdown_index: 0,
+            profile_dropdown_engine_status: None,
             conversation_export_format: ConversationExportFormat::Md,
             export_feedback_message: None,
             export_feedback_is_error: false,

@@ -337,6 +337,29 @@ pub enum UserEvent {
     /// User requested to restore a database from a backup file (recovery flow)
     RestoreDatabaseBackup { backup_path: std::path::PathBuf },
 
+    // ===== Local Model Actions =====
+    /// User opened the Local Model settings panel; the presenter loads the
+    /// persisted settings and starts polling engine status while it is visible.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P04
+    /// @requirement:REQ-LM-006
+    LoadLocalModelSettings,
+
+    /// User saved the Local Model panel; the settings persist at the app level
+    /// via the P01 settings service.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P04
+    /// @requirement:REQ-LM-006
+    SaveLocalModelSettings {
+        settings: crate::services::local_model_settings::LocalModelSettings,
+    },
+
+    /// User clicked "Unload now" on the Local Model panel.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P04
+    /// @requirement:REQ-LM-006
+    UnloadLocalModel,
+
     /// User toggled "Launch at login" (macOS only).
     ///
     /// @plan PLAN-20260409-ISSUE177

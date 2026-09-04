@@ -18,6 +18,13 @@ pub struct ProfileServiceImpl {
     profiles: Arc<RwLock<Vec<ModelProfile>>>,
 }
 
+/// Name of the profile seeded on first install (REQ-LM-002).
+pub const SEED_PROFILE_NAME: &str = "Granite (local)";
+/// Provider id of the seeded profile; routes to the in-process engine.
+pub const SEED_PROVIDER_ID: &str = "local";
+/// Model label of the seeded profile; display-only for the local engine.
+pub const SEED_MODEL_ID: &str = "granite-4.2-3b";
+
 impl ProfileServiceImpl {
     fn legacy_profile_id_for_path(path: &Path) -> Uuid {
         let identifier = path.file_name().and_then(|name| name.to_str()).map_or_else(
@@ -29,6 +36,12 @@ impl ProfileServiceImpl {
     }
 
     fn normalize_api_base_url(provider: &str, base_url: Option<String>) -> String {
+        // A local profile has no HTTP endpoint. Persisting one would let the
+        // profile silently route to OpenAI (REQ-LM-007), so the field stays
+        // empty regardless of what the caller supplied.
+        if provider.trim() == crate::llm::local::LOCAL_PROVIDER_ID {
+            return String::new();
+        }
         match base_url {
             Some(candidate) if !candidate.trim().is_empty() => candidate.trim().to_string(),
             _ => default_api_base_url_for_provider(provider),
@@ -79,6 +92,38 @@ impl ProfileServiceImpl {
             tracing::info!("  Profile: {} ({}) id={}", p.name, p.model_id, p.id);
         }
         *self.profiles.write().await = profiles;
+
+        // REQ-LM-002: first install seeds a working local profile. Both boot
+        // service stacks run initialize(), so the guard must be idempotent:
+        // any existing profile or a persisted default suppresses seeding.
+        if self.load_profiles_from_disk()?.is_empty() && self.load_default_id()?.is_none() {
+            self.seed_default_local_profile().await?;
+        }
+        Ok(())
+    }
+
+    /// Create the first-install "Granite (local)" profile via the normal
+    /// `create()` path, so the first-profile auto-default logic applies.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P01
+    /// @requirement:REQ-LM-002
+    async fn seed_default_local_profile(&self) -> Result<(), super::ServiceError> {
+        let profile = self
+            .create(
+                SEED_PROFILE_NAME.to_string(),
+                SEED_PROVIDER_ID.to_string(),
+                SEED_MODEL_ID.to_string(),
+                None,
+                AuthConfig::None,
+                ModelParameters::default(),
+                None,
+            )
+            .await?;
+        tracing::info!(
+            "ProfileService: seeded first-install local profile '{}' ({})",
+            profile.name,
+            profile.id
+        );
         Ok(())
     }
 
@@ -274,6 +319,12 @@ impl ProfileServiceImpl {
             }
             if profile.base_url.trim().is_empty() {
                 profile.base_url = Self::normalize_api_base_url(&profile.provider_id, None);
+            }
+            // Migrate local profiles that predate REQ-LM-007 and carry a baked
+            // OpenAI endpoint; the engine never reads base_url, and leaving
+            // one behind would keep routing lies in the persisted JSON.
+            if profile.provider_id.trim() == crate::llm::local::LOCAL_PROVIDER_ID {
+                profile.base_url = String::new();
             }
 
             // Avoid duplicate IDs if legacy conversion generated conflicting entries.
@@ -524,7 +575,10 @@ impl ProfileService for ProfileServiceImpl {
             }
         }
 
-        if base_url.is_some() {
+        // REQ-LM-007: a local profile never persists an endpoint, so a rename
+        // or other non-URL edit still cleans a legacy baked base_url.
+        if base_url.is_some() || profile.provider_id.trim() == crate::llm::local::LOCAL_PROVIDER_ID
+        {
             profile.base_url = Self::normalize_api_base_url(&profile.provider_id, base_url);
         }
 
@@ -549,6 +603,9 @@ impl ProfileService for ProfileServiceImpl {
         // Session-stateful transports bake the endpoint, model, and bearer in
         // at construction, so an edited profile has to start a new session.
         crate::llm::open_responses::invalidate_profile(id);
+        // A local profile edit can change the model label the engine reports;
+        // drop any resident model so the next request rebuilds cleanly.
+        crate::llm::local::invalidate_local();
 
         Ok(updated_profile)
     }
@@ -572,6 +629,8 @@ impl ProfileService for ProfileServiceImpl {
         self.profiles.write().await.retain(|p| p.id != id);
 
         crate::llm::open_responses::invalidate_profile(id);
+        // The deleted profile may be the one holding the model in memory.
+        crate::llm::local::invalidate_local();
 
         Ok(())
     }
@@ -672,11 +731,23 @@ mod tests {
     use super::*;
     use crate::models::{AuthConfig, ModelParameters};
 
+    /// A persisted default id marks the install as already configured, so
+    /// `initialize()` skips first-install seeding (REQ-LM-002) and these tests
+    /// exercise create/list/delete semantics in isolation.
+    fn write_default_id(service: &ProfileServiceImpl) {
+        std::fs::write(
+            service.default_profile_path(),
+            serde_json::to_string(&Uuid::new_v4()).unwrap(),
+        )
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn test_create_and_list_profiles() {
         let temp_dir = tempfile::TempDir::new().unwrap();
 
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        write_default_id(&service);
         service.initialize().await.unwrap();
 
         // Create profile
@@ -781,6 +852,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
 
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        write_default_id(&service);
         service.initialize().await.unwrap();
 
         let auth = AuthConfig::Keychain {

@@ -291,6 +291,11 @@ impl ProfileEditorView {
     /// Render base URL field
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_base_url_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // REQ-LM-007: a local profile has no endpoint, so offering an empty
+        // field would invite a value the engine ignores and Save would store.
+        if super::ApiType::Local == self.state.data.api_type {
+            return div().flex().flex_col();
+        }
         let active = self.state.active_field == Some(ActiveField::BaseUrl);
 
         div()

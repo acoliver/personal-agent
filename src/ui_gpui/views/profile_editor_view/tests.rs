@@ -989,3 +989,93 @@ async fn a_codex_profile_loads_with_its_account(cx: &mut TestAppContext) {
         assert!(view.state.data.can_save());
     });
 }
+
+/// @plan:PLAN-20260903-LOCALMODEL.P03
+/// @requirement:REQ-LM-007
+#[gpui::test]
+async fn local_profiles_save_with_no_endpoint_and_survive_provider_sync(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, _cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        view.state.data.name = "Granite (local)".to_string();
+        view.state.data.model_id = "granite-4.2-3b".to_string();
+        view.state.data.api_type = ApiType::Local;
+        // A stale endpoint carried over from a previous API type is wiped,
+        // not defaulted to OpenAI.
+        view.state.data.base_url = "https://api.openai.com/v1".to_string();
+
+        view.state.data.apply_api_type_change();
+
+        assert_eq!(
+            view.state.data.base_url, "",
+            "local profiles must persist no base_url"
+        );
+        assert!(
+            view.state.data.can_save(),
+            "an empty endpoint is the correct state for local"
+        );
+
+        view.emit_save_profile();
+    });
+
+    // Drain the key-refresh event the save flow emits first.
+    let mut saw_save = false;
+    for _ in 0..2 {
+        if let Ok(UserEvent::SaveProfile { profile }) = user_rx.try_recv() {
+            saw_save = true;
+            assert_eq!(profile.provider_id.as_deref(), Some("local"));
+            assert_eq!(
+                profile.base_url.as_deref(),
+                Some(""),
+                "persisted JSON must carry no endpoint"
+            );
+            assert!(matches!(profile.auth, Some(ModelProfileAuth::None)));
+        }
+    }
+    assert!(saw_save, "SaveProfile event was not emitted");
+}
+
+/// @plan:PLAN-20260903-LOCALMODEL.P03
+/// @requirement:REQ-LM-007
+#[gpui::test]
+async fn legacy_local_profile_with_baked_openai_url_normalizes_to_empty(cx: &mut TestAppContext) {
+    let (bridge, _user_rx) = make_bridge();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        view.handle_command(
+            ViewCommand::ProfileEditorLoad {
+                id: Uuid::new_v4(),
+                name: "Old Local".to_string(),
+                provider_id: "local".to_string(),
+                model_id: "granite-4.2-3b".to_string(),
+                // Profiles written before REQ-LM-007 baked this in.
+                base_url: "https://api.openai.com/v1".to_string(),
+                api_key_label: String::new(),
+                oauth_account: String::new(),
+                temperature: 0.7,
+                max_tokens: None,
+                max_tokens_field_name: String::new(),
+                extra_request_fields: String::new(),
+                context_limit: None,
+                show_thinking: false,
+                enable_thinking: false,
+                thinking_budget: None,
+                reasoning_effort: String::new(),
+                system_prompt: String::new(),
+            },
+            cx,
+        );
+
+        assert_eq!(view.state.data.api_type, ApiType::Local);
+        view.state.data.apply_api_type_change();
+        assert_eq!(
+            view.state.data.base_url, "",
+            "legacy local profile must migrate to an empty endpoint"
+        );
+        assert!(view.state.data.can_save());
+    });
+}

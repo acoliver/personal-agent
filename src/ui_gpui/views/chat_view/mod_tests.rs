@@ -935,3 +935,42 @@ async fn send_message_targets_selected_conversation(cx: &mut TestAppContext) {
         });
     });
 }
+
+// ── profile dropdown engine-status dot (PLAN-20260903-LOCALMODEL.P05) ────
+
+/// Opening the dropdown must capture an engine snapshot for the local row's
+/// dot, and closing must keep it (reopening refreshes it).
+#[gpui::test]
+async fn opening_profile_dropdown_snapshots_local_engine_status(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| ChatView::new(ChatState::default(), cx));
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut ChatView, cx| {
+            // Warm the engine singleton, then let the actor settle so the
+            // snapshot below reads its stable state instead of racing
+            // startup.
+            let _warm = crate::llm::local::status();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let settled = crate::llm::local::status();
+
+            assert!(view.state.profile_dropdown_engine_status.is_none());
+
+            view.toggle_profile_dropdown(cx);
+            assert!(view.state.profile_dropdown_open);
+            let captured = view.state.profile_dropdown_engine_status.clone();
+            assert!(
+                captured.is_some(),
+                "open must capture an engine status snapshot"
+            );
+            assert_eq!(captured, Some(settled));
+
+            view.toggle_profile_dropdown(cx);
+            assert!(!view.state.profile_dropdown_open);
+            assert_eq!(
+                view.state.profile_dropdown_engine_status, captured,
+                "closing keeps the last snapshot"
+            );
+        });
+    });
+}
