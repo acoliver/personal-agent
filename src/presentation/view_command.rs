@@ -112,6 +112,59 @@ pub enum ViewCommand {
     /// Message was saved
     MessageSaved { conversation_id: Uuid },
 
+    /// A steering message was accepted and is waiting for the running turn to
+    /// reach its boundary. The view shows `text` as queued until the matching
+    /// `SteeringDelivered` or `SteeringRejected` arrives for `steer_id`.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-003
+    SteeringQueued {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+        text: String,
+    },
+
+    /// A queued steering message was handed to the model, so the view stops
+    /// showing `steer_id` as waiting.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-003
+    SteeringDelivered {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    },
+
+    /// A queued steering message will never be handed to the model, because
+    /// the turn it was waiting on ended first. The view stops showing
+    /// `steer_id` as waiting, the same withdrawal `SteeringDelivered`
+    /// performs: an entry nobody will ever deliver must not wait forever.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P06
+    /// @requirement REQ-222-003
+    SteeringDiscarded {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    },
+
+    /// A steering message was refused: no turn was running, the queue was
+    /// full, or the text was blank. The service queued nothing, so no
+    /// `SteeringQueued` follows for it, and `error` says why it did not take.
+    ///
+    /// `text` is what the user submitted. The composer clears on submit
+    /// rather than waiting for an answer, so a refusal is the only thing
+    /// that can give those words back, and nothing else on this path still
+    /// holds them.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @plan PLAN-20260903-ISSUE222.P08
+    /// @requirement REQ-222-002
+    /// @requirement REQ-222-004
+    SteeringRejected {
+        conversation_id: Uuid,
+        error: String,
+        text: String,
+    },
+
     /// Toggle thinking visibility
     ToggleThinkingVisibility,
 

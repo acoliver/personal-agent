@@ -27,15 +27,20 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod prompt;
+mod steering;
 mod streaming;
 mod titling;
 
 use prompt::{build_system_prompt, filter_emoji_setting};
+use steering::{drain_steering_queue, emit_steering_discarded, QueuedSteering, SteeringQueues};
 use streaming::{
     build_stream_error_diagnostics, clear_streaming_state, emit_stream_error, run_stream_task,
     StreamDiagnosticContext, StreamTranscript, STREAM_ERROR_MESSAGE,
 };
 use titling::{generate_and_apply_title, TitleGenerationRequest};
+
+#[cfg(test)]
+use steering::MAX_QUEUED_STEERING_MESSAGES;
 
 // Re-export for tests
 #[cfg(test)]
@@ -79,6 +84,10 @@ pub struct ChatServiceImpl {
     /// @plan PLAN-20260416-ISSUE173.P03
     /// @requirement REQ-173-001.1
     active_streams: Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    /// Steering messages queued per conversation while its turn runs.
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-004
+    steering_queues: SteeringQueues,
     /// Channel for sending view commands (used for tool approval UI)
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     /// Approval gate for coordinating user approval of tool execution
@@ -110,6 +119,9 @@ impl ChatServiceImpl {
             // @plan PLAN-20260416-ISSUE173.P03
             // @requirement REQ-173-001.1
             active_streams: Arc::new(StdMutex::new(HashMap::new())),
+            // @plan PLAN-20260903-ISSUE222.P01
+            // @requirement REQ-222-004
+            steering_queues: Arc::new(StdMutex::new(HashMap::new())),
             view_tx,
             approval_gate,
             policy,
@@ -317,6 +329,27 @@ impl ChatServiceImpl {
                 handle.abort();
             }
         }
+
+        // A cancelled turn never reaches a delivery boundary, so anything it
+        // had queued is dropped rather than left to leak into the next turn.
+        // The view is rendering each of those entries as waiting, so each one
+        // is announced: a stopped turn is the terminal state of everything it
+        // was holding.
+        // The `active_streams` guard above is already released here, and
+        // `drain_steering` releases `steering_queues` before this returns.
+        // @plan PLAN-20260903-ISSUE222.P01
+        // @plan PLAN-20260903-ISSUE222.P06
+        // @requirement REQ-222-003
+        // @requirement REQ-222-004
+        let discarded = self.drain_steering(conversation_id);
+        if !discarded.is_empty() {
+            tracing::debug!(
+                conversation_id = %conversation_id,
+                discarded = discarded.len(),
+                "Discarded queued steering messages for a cancelled turn"
+            );
+        }
+        emit_steering_discarded(conversation_id, &discarded);
 
         // @plan PLAN-20260416-ISSUE173.P07
         // @requirement REQ-173-003.3
@@ -575,6 +608,7 @@ impl ChatServiceImpl {
         tx: tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     ) {
         let active_streams = self.active_streams.clone();
+        let steering_queues = self.steering_queues.clone();
         let conversation_service = self.conversation_service.clone();
         let view_tx = self.view_tx.clone();
         let approval_gate = self.approval_gate.clone();
@@ -586,6 +620,7 @@ impl ChatServiceImpl {
                 mcp_tools,
                 tx,
                 active_streams,
+                steering_queues,
                 cancel,
                 conversation_service,
                 conversation_id,
@@ -722,6 +757,7 @@ async fn create_stream_agent(
     stream_id: Uuid,
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
     active_streams: &Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    steering_queues: &SteeringQueues,
     _cancel: &tokio_util::sync::CancellationToken,
     diagnostics_context: &StreamDiagnosticContext,
 ) -> Option<serdes_ai_agent::Agent<crate::llm::client_agent::McpToolContext>> {
@@ -746,7 +782,7 @@ async fn create_stream_agent(
                 Some(Box::new(diagnostics)),
                 tx,
             );
-            clear_streaming_state(active_streams, conversation_id, stream_id);
+            clear_streaming_state(active_streams, steering_queues, conversation_id, stream_id);
             None
         }
     }
@@ -832,6 +868,14 @@ impl ChatService for ChatServiceImpl {
             .is_some_and(|a| matches!(a.state, StreamLifecycle::Running))
     }
 
+    /// Queue a steering message for this conversation's running turn.
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-004
+    /// @requirement REQ-222-006
+    async fn steer(&self, conversation_id: Uuid, text: String) -> ServiceResult<Uuid> {
+        self.queue_steering(conversation_id, &text)
+    }
+
     async fn resolve_tool_approval(
         &self,
         request_id: String,
@@ -909,6 +953,18 @@ impl ChatServiceImpl {
     pub(crate) fn stream_id_for_test(&self, conversation_id: Uuid) -> Option<Uuid> {
         let map = self.active_streams.lock().expect("active_streams poisoned");
         map.get(&conversation_id).map(|a| a.stream_id)
+    }
+
+    /// Test-only handles to the two registries a spawned stream task is
+    /// given, so tests can drive the steering delivery loop against the same
+    /// state the real service reads through `is_streaming_for` and `steer`.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P02
+    /// @requirement REQ-222-005
+    pub(in crate::services::chat_impl) fn stream_registries_for_test(
+        &self,
+    ) -> (Arc<StdMutex<HashMap<Uuid, ActiveStream>>>, SteeringQueues) {
+        (self.active_streams.clone(), self.steering_queues.clone())
     }
 
     /// Test-only helper to clear all mock streams.

@@ -279,6 +279,10 @@ impl ConversationService for MockConversationService {
 struct MockChatService {
     fail_send: Mutex<Option<String>>,
     cancelled: AtomicBool,
+    /// `(conversation_id, text)` for every `steer` call, in order.
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-006
+    steered: Mutex<Vec<(Uuid, String)>>,
 }
 
 impl MockChatService {
@@ -286,6 +290,7 @@ impl MockChatService {
         Self {
             fail_send: Mutex::new(None),
             cancelled: AtomicBool::new(false),
+            steered: Mutex::new(Vec::new()),
         }
     }
 
@@ -319,6 +324,13 @@ impl ChatService for MockChatService {
 
     fn is_streaming_for(&self, _conversation_id: Uuid) -> bool {
         false
+    }
+
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-006
+    async fn steer(&self, conversation_id: Uuid, text: String) -> Result<Uuid, ServiceError> {
+        self.steered.lock().await.push((conversation_id, text));
+        Ok(Uuid::new_v4())
     }
 
     async fn resolve_tool_approval(
@@ -850,6 +862,14 @@ async fn stop_streaming_invokes_chat_service_cancel() {
     let _ = collect_commands(&mut view_rx).await;
 
     assert!(chat_service.cancelled.load(Ordering::SeqCst));
+    // Stop and steer are separate controls: stopping a turn must not queue a
+    // steering message.
+    // @plan PLAN-20260903-ISSUE222.P01
+    // @requirement REQ-222-006
+    assert!(
+        chat_service.steered.lock().await.is_empty(),
+        "StopStreaming must not reach ChatService::steer"
+    );
 }
 
 #[tokio::test]

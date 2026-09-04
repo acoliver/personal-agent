@@ -29,6 +29,15 @@ impl ChatPresenter {
             UserEvent::StopStreaming { conversation_id } => {
                 Self::handle_stop_streaming(deps.chat_service, view_tx, conversation_id).await;
             }
+            // @plan PLAN-20260903-ISSUE222.P03
+            // @requirement REQ-222-002
+            UserEvent::SteerStreaming {
+                conversation_id,
+                text,
+            } => {
+                Self::handle_steer_streaming(deps.chat_service, view_tx, conversation_id, text)
+                    .await;
+            }
             UserEvent::NewConversation => {
                 Self::handle_new_conversation_for_event(deps, state, view_tx).await;
             }

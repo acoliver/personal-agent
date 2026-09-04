@@ -10,20 +10,51 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-/// Mock `ChatService` that records cancel calls for verification
-struct RecordingChatService {
+/// Mock `ChatService` that records cancel and steer calls for verification
+pub(super) struct RecordingChatService {
     cancelled_conversations: Arc<Mutex<Vec<Uuid>>>,
+    /// `(conversation_id, text)` for every `steer` call, in order.
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-006
+    steered: Arc<Mutex<Vec<(Uuid, String)>>>,
+    /// When set, `steer` records the call and then refuses it with this text,
+    /// standing in for a conversation with no running turn or a full queue.
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-004
+    steer_error: Option<String>,
 }
 
 impl RecordingChatService {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             cancelled_conversations: Arc::new(Mutex::new(Vec::new())),
+            steered: Arc::new(Mutex::new(Vec::new())),
+            steer_error: None,
         }
     }
 
-    fn cancelled_ids(&self) -> Vec<Uuid> {
+    /// A double whose `steer` records the call and then refuses it with
+    /// `error`, the way the service refuses a steer with no turn to join.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-004
+    pub(super) fn rejecting(error: &str) -> Self {
+        Self {
+            steer_error: Some(error.to_string()),
+            ..Self::new()
+        }
+    }
+
+    pub(super) fn cancelled_ids(&self) -> Vec<Uuid> {
         self.cancelled_conversations.lock().unwrap().clone()
+    }
+
+    /// Every `steer` call this double received, in order.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-006
+    pub(super) fn steer_calls(&self) -> Vec<(Uuid, String)> {
+        self.steered.lock().unwrap().clone()
     }
 }
 
@@ -54,6 +85,20 @@ impl ChatService for RecordingChatService {
 
     fn is_streaming_for(&self, _conversation_id: Uuid) -> bool {
         false
+    }
+
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-006
+    async fn steer(
+        &self,
+        conversation_id: Uuid,
+        text: String,
+    ) -> Result<Uuid, crate::services::ServiceError> {
+        self.steered.lock().unwrap().push((conversation_id, text));
+        if let Some(error) = &self.steer_error {
+            return Err(crate::services::ServiceError::Validation(error.clone()));
+        }
+        Ok(Uuid::new_v4())
     }
 
     async fn resolve_tool_approval(
@@ -110,6 +155,15 @@ async fn handle_stop_streaming_forwards_conversation_id() {
         cancelled[0], conversation_id_a,
         "Expected cancel to be called with conversation_id A"
     );
+
+    // Stop and steer are separate controls: stopping a turn must not queue a
+    // steering message.
+    // @plan PLAN-20260903-ISSUE222.P01
+    // @requirement REQ-222-006
+    assert!(
+        chat_service.steer_calls().is_empty(),
+        "StopStreaming must not reach ChatService::steer"
+    );
 }
 
 /// Test that `StopStreaming` for conversation A does NOT cancel conversation B.
@@ -160,7 +214,7 @@ async fn handle_stop_streaming_does_not_cancel_other_conversations() {
 }
 
 /// Mock `AppSettingsService` for testing
-struct MockAppSettingsService;
+pub(super) struct MockAppSettingsService;
 
 #[async_trait::async_trait]
 impl AppSettingsService for MockAppSettingsService {

@@ -21,13 +21,20 @@ fn finalize_context<'a>(
     conversation_id: Uuid,
     stream_id: Uuid,
     active_streams: &'a Arc<StdMutex<HashMap<Uuid, ActiveStream>>>,
+    steering_queues: &'a SteeringQueues,
 ) -> streaming::StreamFinalizeContext<'a> {
     streaming::StreamFinalizeContext {
         conversation_service,
         conversation_id,
         stream_id,
         active_streams,
+        steering_queues,
     }
+}
+
+/// An empty steering registry, for finalize paths that never queue a steer.
+fn no_steering_queues() -> SteeringQueues {
+    Arc::new(StdMutex::new(HashMap::new()))
 }
 
 /// A `CompressionResult` that leaves the conversation's context untouched
@@ -66,11 +73,14 @@ async fn interrupted_finalize_persists_partial_output_as_interrupted() {
     };
 
     streaming::finalize_interrupted_stream(
-        &conversation_service,
-        conversation_id,
-        stream_id,
+        &finalize_context(
+            &conversation_service,
+            conversation_id,
+            stream_id,
+            &active_streams,
+            &no_steering_queues(),
+        ),
         &transcript,
-        &active_streams,
         "Interrupted Model",
     )
     .await;
@@ -138,11 +148,14 @@ async fn interrupted_finalize_skips_persistence_when_no_assistant_output() {
         .expect("active_streams poisoned")
         .insert(empty_conversation, active_stream_entry(empty_stream));
     streaming::finalize_interrupted_stream(
-        &conversation_service,
-        empty_conversation,
-        empty_stream,
+        &finalize_context(
+            &conversation_service,
+            empty_conversation,
+            empty_stream,
+            &active_streams,
+            &no_steering_queues(),
+        ),
         &streaming::StreamTranscript::default(),
-        &active_streams,
         "Interrupted Model",
     )
     .await;
@@ -167,11 +180,14 @@ async fn interrupted_finalize_skips_persistence_when_no_assistant_output() {
         ..streaming::StreamTranscript::default()
     };
     streaming::finalize_interrupted_stream(
-        &conversation_service,
-        tool_only_conversation,
-        tool_only_stream,
+        &finalize_context(
+            &conversation_service,
+            tool_only_conversation,
+            tool_only_stream,
+            &active_streams,
+            &no_steering_queues(),
+        ),
         &tool_only,
-        &active_streams,
         "Interrupted Model",
     )
     .await;
@@ -217,11 +233,14 @@ async fn interrupted_finalize_persists_thinking_only_output() {
     };
 
     streaming::finalize_interrupted_stream(
-        &conversation_service,
-        conversation_id,
-        stream_id,
+        &finalize_context(
+            &conversation_service,
+            conversation_id,
+            stream_id,
+            &active_streams,
+            &no_steering_queues(),
+        ),
         &transcript,
-        &active_streams,
         "Interrupted Model",
     )
     .await;
@@ -262,9 +281,13 @@ async fn normal_finalize_persists_message_not_interrupted_and_emits_completion()
     };
 
     streaming::finalize_stream_task(
-        &conversation_service,
-        conversation_id,
-        stream_id,
+        &finalize_context(
+            &conversation_service,
+            conversation_id,
+            stream_id,
+            &active_streams,
+            &no_steering_queues(),
+        ),
         CompressionResult {
             messages: vec![],
             phase: crate::models::CompressionPhase::None,
@@ -274,7 +297,6 @@ async fn normal_finalize_persists_message_not_interrupted_and_emits_completion()
             estimated_tokens: 0,
         },
         transcript,
-        &active_streams,
         "Normal Model",
     )
     .await;
@@ -350,6 +372,7 @@ async fn finalize_dispatch_completed_persists_updates_context_and_emits_completi
             conversation_id,
             stream_id,
             &active_streams,
+            &no_steering_queues(),
         ),
         no_compression(),
         transcript,
@@ -430,6 +453,7 @@ async fn finalize_dispatch_errored_incomplete_persists_interrupted_without_conte
             conversation_id,
             stream_id,
             &active_streams,
+            &no_steering_queues(),
         ),
         no_compression(),
         transcript,
@@ -506,6 +530,7 @@ async fn finalize_dispatch_benign_incomplete_persists_nothing_and_clears_stream_
             conversation_id,
             stream_id,
             &active_streams,
+            &no_steering_queues(),
         ),
         no_compression(),
         transcript,

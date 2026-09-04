@@ -85,7 +85,82 @@ impl ChatPresenter {
             } => {
                 Self::handle_message_saved(view_tx, conversation_id).await;
             }
+            ChatEvent::SteeringQueued {
+                conversation_id,
+                steer_id,
+                text,
+            } => {
+                Self::handle_steering_queued(view_tx, conversation_id, steer_id, text).await;
+            }
+            ChatEvent::SteeringDelivered {
+                conversation_id,
+                steer_id,
+            } => {
+                Self::handle_steering_delivered(view_tx, conversation_id, steer_id).await;
+            }
+            ChatEvent::SteeringDiscarded {
+                conversation_id,
+                steer_id,
+            } => {
+                Self::handle_steering_discarded(view_tx, conversation_id, steer_id).await;
+            }
         }
+    }
+
+    /// A steering message is waiting for the running turn's boundary.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-003
+    async fn handle_steering_queued(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        steer_id: Uuid,
+        text: String,
+    ) {
+        let _ = view_tx
+            .send(ViewCommand::SteeringQueued {
+                conversation_id,
+                steer_id,
+                text,
+            })
+            .await;
+    }
+
+    /// A queued steering message reached the model, so it is no longer waiting.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P03
+    /// @requirement REQ-222-003
+    async fn handle_steering_delivered(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    ) {
+        let _ = view_tx
+            .send(ViewCommand::SteeringDelivered {
+                conversation_id,
+                steer_id,
+            })
+            .await;
+    }
+
+    /// A queued steering message will never reach the model, because the turn
+    /// it was waiting on ended first. Same id, same withdrawal as delivery:
+    /// the view has no other way to learn that the entry it is rendering as
+    /// waiting is never going to resolve.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P06
+    /// @requirement REQ-222-003
+    async fn handle_steering_discarded(
+        view_tx: &mut mpsc::Sender<ViewCommand>,
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    ) {
+        let _ = view_tx
+            .send(ViewCommand::SteeringDiscarded {
+                conversation_id,
+                steer_id,
+            })
+            .await;
     }
 
     async fn handle_stream_started(

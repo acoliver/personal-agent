@@ -133,6 +133,10 @@ impl ChatView {
         let previous_messages_empty = self.state.messages.is_empty();
 
         self.carry_draft_across_selection(previous_conversation_id, selected_conversation_id);
+        self.drop_queued_steering_across_selection(
+            previous_conversation_id,
+            selected_conversation_id,
+        );
 
         self.state.conversations = conversations;
         self.state.active_conversation_id = selected_conversation_id;
@@ -220,6 +224,26 @@ impl ChatView {
             // user can send it into the wrong conversation.
             self.state.input_text = take_draft(new_id).unwrap_or_default();
             self.state.cursor_position = self.state.input_text.len();
+        }
+    }
+
+    /// Drop queued steering entries when the selection moves.
+    ///
+    /// `queued_steering` describes the transcript on screen, so it cannot
+    /// follow the user into another conversation the way a draft does: the
+    /// entries belong to a turn that is still running somewhere else, and
+    /// they come back with that conversation's own `SteeringQueued` events
+    /// only if the service still holds them.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-003
+    fn drop_queued_steering_across_selection(
+        &mut self,
+        previous_conversation_id: Option<Uuid>,
+        selected_conversation_id: Option<Uuid>,
+    ) {
+        if previous_conversation_id != selected_conversation_id {
+            self.state.queued_steering.clear();
         }
     }
 

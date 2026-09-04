@@ -12,14 +12,29 @@ pub(super) enum TranscriptRow {
     Message(usize),
     Approval(usize),
     Streaming,
+    /// A steering message waiting for the running turn's boundary, indexed
+    /// into `ChatState::queued_steering`.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-003
+    QueuedSteering(usize),
 }
 
+/// Flattens the transcript into the rows the virtualized list paints.
+///
+/// Queued steering entries sit after the live stream block: they were typed
+/// after everything above them and have not reached the model yet, so they
+/// are the newest thing in the conversation and belong last.
+///
+/// @plan PLAN-20260903-ISSUE222.P04
+/// @requirement REQ-222-003
 pub(super) fn build_transcript_rows(
     message_count: usize,
     approval_bubbles: &[ToolApprovalBubble],
     streaming: &StreamingState,
+    queued_steering_count: usize,
 ) -> Vec<TranscriptRow> {
-    let mut rows = Vec::with_capacity(message_count + 2);
+    let mut rows = Vec::with_capacity(message_count + 2 + queued_steering_count);
     rows.extend((0..message_count).map(TranscriptRow::Message));
 
     if let Some((index, _)) = approval_bubbles
@@ -33,6 +48,8 @@ pub(super) fn build_transcript_rows(
     if matches!(streaming, StreamingState::Streaming { .. }) {
         rows.push(TranscriptRow::Streaming);
     }
+
+    rows.extend((0..queued_steering_count).map(TranscriptRow::QueuedSteering));
 
     rows
 }
@@ -103,7 +120,13 @@ pub(super) fn transcript_row_leaf_count(
                 displayed_message_thinking(message, show_thinking, filter_emoji),
             )
         }
-        TranscriptRow::Approval(_) => return 0,
+        // Approvals and queued steering entries are chrome, not transcript
+        // content: neither is selectable or copyable, so neither contributes
+        // a leaf and neither shifts the document order of the rows around it.
+        //
+        // @plan PLAN-20260903-ISSUE222.P04
+        // @requirement REQ-222-003
+        TranscriptRow::Approval(_) | TranscriptRow::QueuedSteering(_) => return 0,
         TranscriptRow::Streaming => {
             let content = match streaming {
                 StreamingState::Streaming { content, .. } => content.as_str(),
@@ -353,7 +376,7 @@ mod tests {
 
     #[test]
     fn empty_transcript_has_no_rows() {
-        assert!(build_transcript_rows(0, &[], &StreamingState::Idle).is_empty());
+        assert!(build_transcript_rows(0, &[], &StreamingState::Idle, 0).is_empty());
     }
 
     #[test]
@@ -366,6 +389,7 @@ mod tests {
                     content: "partial".to_string(),
                     done: false,
                 },
+                0,
             ),
             vec![
                 TranscriptRow::Message(0),
@@ -388,12 +412,59 @@ mod tests {
         };
 
         assert_eq!(
-            build_transcript_rows(1, &bubbles, &streaming),
+            build_transcript_rows(1, &bubbles, &streaming, 0),
             vec![
                 TranscriptRow::Message(0),
                 TranscriptRow::Approval(1),
                 TranscriptRow::Streaming,
             ]
+        );
+    }
+
+    /// Queued steers are the newest thing in the conversation: typed after
+    /// everything above them and not yet seen by the model.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-003
+    #[test]
+    fn queued_steering_rows_follow_the_streaming_row() {
+        let bubbles = vec![approval(ApprovalBubbleState::Pending)];
+        let streaming = StreamingState::Streaming {
+            content: "partial".to_string(),
+            done: false,
+        };
+
+        assert_eq!(
+            build_transcript_rows(1, &bubbles, &streaming, 2),
+            vec![
+                TranscriptRow::Message(0),
+                TranscriptRow::Approval(0),
+                TranscriptRow::Streaming,
+                TranscriptRow::QueuedSteering(0),
+                TranscriptRow::QueuedSteering(1),
+            ]
+        );
+    }
+
+    /// A queued steer contributes no selectable leaf, so it cannot shift the
+    /// document order of the rows it follows.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-003
+    #[test]
+    fn queued_steering_rows_contribute_no_leaves() {
+        let messages = vec![ChatMessage::user("go")];
+
+        assert_eq!(
+            transcript_row_leaf_count(
+                TranscriptRow::QueuedSteering(0),
+                &messages,
+                &StreamingState::Idle,
+                false,
+                true,
+                Some("thinking"),
+            ),
+            0
         );
     }
 

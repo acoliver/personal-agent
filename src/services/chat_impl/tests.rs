@@ -12,11 +12,37 @@ mod approval_persistence;
 mod chat_test_support;
 mod compression_persistence;
 mod concurrent_streams;
+mod steering;
+mod steering_delivery;
 mod stream_failure;
 mod three_stream_concurrency;
 mod title_generation;
 
 use chat_test_support::*;
+
+/// Serializes the steering tests that observe the global event bus.
+///
+/// The bus is a 16-slot broadcast ring shared by every test in the binary,
+/// and each `#[tokio::test]` brings its own runtime running in parallel. If
+/// two bus-observing steering tests emit concurrently, a collector that goes
+/// even briefly unpolled can be lagged past all of its own events, end
+/// marker included, and then wait forever for what was already overwritten.
+/// With at most one steering test emitting at a time, one test's events
+/// total well under the ring's capacity, so every collector still finds all
+/// of them in order.
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-008
+static STEERING_BUS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Hold the returned guard for the whole body of a steering test that emits
+/// on the bus, acquired before the test subscribes to the bus.
+///
+/// @plan PLAN-20260903-ISSUE222.P08
+/// @requirement REQ-222-008
+async fn lock_steering_bus() -> tokio::sync::MutexGuard<'static, ()> {
+    STEERING_BUS_LOCK.lock().await
+}
 
 struct FailingSkillsService;
 

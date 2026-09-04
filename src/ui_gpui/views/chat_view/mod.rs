@@ -11,6 +11,7 @@
 //! @requirement REQ-GPUI-003
 
 mod command;
+mod composer_submit;
 mod emoji;
 mod focus;
 
@@ -20,6 +21,7 @@ mod render;
 mod render_bars;
 #[cfg(test)]
 mod render_bars_tests;
+mod render_composer;
 
 #[cfg(test)]
 mod selection_autoscroll_tests;
@@ -38,8 +40,8 @@ mod transcript;
 // ── Re-exports so downstream consumers (mod.rs, tests, main_panel.rs) ──
 // see the same type paths as before extraction.
 pub use state::{
-    ApprovalBubbleState, ChatMessage, ChatState, GroupedOperation, MessageRole, StreamingState,
-    ToolApprovalBubble,
+    ApprovalBubbleState, ChatMessage, ChatState, GroupedOperation, MessageRole,
+    QueuedSteeringEntry, StreamingState, ToolApprovalBubble,
 };
 
 use crate::events::types::UserEvent;
@@ -193,6 +195,7 @@ impl ChatView {
             self.state.messages.len(),
             approval_bubbles,
             &self.state.streaming,
+            self.state.queued_steering.len(),
         )
     }
 
@@ -803,6 +806,15 @@ impl ChatView {
     }
 
     /// Handle enter key (called from `MainPanel`)
+    ///
+    /// The overlay early-returns come first and are unrelated to submitting:
+    /// an inline rename, the conversation dropdown and the profile dropdown
+    /// each own Enter while they are open. Everything past them is a composer
+    /// submit, which `submit_composer` decides for both Enter and the Send
+    /// button.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-002
     pub fn handle_enter(&mut self, cx: &mut gpui::Context<Self>) {
         if self.state.conversation_title_editing {
             self.submit_rename_conversation(cx);
@@ -819,40 +831,7 @@ impl ChatView {
             return;
         }
 
-        if matches!(self.state.streaming, StreamingState::Streaming { .. }) {
-            tracing::info!("ChatView::handle_enter ignored while stream is active");
-            return;
-        }
-
-        if !self.state.input_text.trim().is_empty() {
-            let text = self.state.input_text.clone();
-            tracing::info!("ChatView::handle_enter - emitting SendMessage: {}", text);
-            self.send_message_and_start_streaming(text, cx);
-        }
-    }
-
-    pub(super) fn send_message_and_start_streaming(
-        &mut self,
-        text: String,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.emit(UserEvent::SendMessage {
-            text,
-            conversation_id: self.conversation_id,
-        });
-        self.state.input_text.clear();
-        self.state.cursor_position = 0;
-        self.state.chat_autoscroll_enabled = true;
-        self.state.conversation_dropdown_open = false;
-        self.state.profile_dropdown_open = false;
-        self.state.conversation_title_editing = false;
-        self.state.streaming = StreamingState::Streaming {
-            content: String::new(),
-            done: false,
-        };
-        self.refresh_transcript_selection_revisions();
-        self.maybe_scroll_chat_to_bottom();
-        cx.notify();
+        self.submit_composer(cx);
     }
 }
 
@@ -875,3 +854,17 @@ mod mod_tests;
 #[cfg(test)]
 #[path = "performance_tests.rs"]
 mod performance_tests;
+
+/// Composer controls for mid-turn steering.
+///
+/// @plan PLAN-20260903-ISSUE222.P04
+#[cfg(test)]
+#[path = "steering_tests.rs"]
+mod steering_tests;
+
+/// Queued steering entries in the transcript.
+///
+/// @plan PLAN-20260903-ISSUE222.P04
+#[cfg(test)]
+#[path = "steering_queue_tests.rs"]
+mod steering_queue_tests;

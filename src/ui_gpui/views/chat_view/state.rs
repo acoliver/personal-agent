@@ -211,6 +211,33 @@ impl ToolApprovalBubble {
     }
 }
 
+/// A steering message accepted by the service and waiting for the running
+/// turn to reach its boundary.
+///
+/// `text` is `Arc<String>` for the same reason `ChatMessage::content` is: the
+/// transcript clones every row it paints, and a queued entry is repainted on
+/// each streaming token.
+///
+/// @plan PLAN-20260903-ISSUE222.P04
+/// @requirement REQ-222-003
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueuedSteeringEntry {
+    /// The id the service issued, which `SteeringDelivered` names to withdraw
+    /// this entry.
+    pub id: Uuid,
+    pub text: Arc<String>,
+}
+
+impl QueuedSteeringEntry {
+    #[must_use]
+    pub fn new(id: Uuid, text: impl Into<String>) -> Self {
+        Self {
+            id,
+            text: Arc::new(text.into()),
+        }
+    }
+}
+
 /// Main chat state container
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
@@ -251,6 +278,16 @@ pub struct ChatState {
     pub marked_range: Option<Range<usize>>,
     /// Inline tool approval bubbles pending or resolved in this session, keyed by conversation.
     pub approval_bubbles: HashMap<Uuid, Vec<ToolApprovalBubble>>,
+    /// Steering messages accepted for the active conversation's running turn
+    /// and not yet delivered, in the order they were submitted.
+    ///
+    /// Scoped to the active conversation rather than keyed by one: the view
+    /// renders these inline in the transcript it is showing, and drops them
+    /// when the selection moves elsewhere.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P04
+    /// @requirement REQ-222-003
+    pub queued_steering: Vec<QueuedSteeringEntry>,
     /// Whether YOLO mode (auto-approve all) is currently active.
     pub yolo_mode: bool,
     /// Whether the sidebar is visible (popout mode only).
@@ -299,6 +336,7 @@ impl Default for ChatState {
             chat_autoscroll_enabled: true,
             marked_range: None,
             approval_bubbles: HashMap::new(),
+            queued_steering: Vec::new(),
             yolo_mode: false,
             sidebar_visible: true,
             sidebar_search_query: String::new(),

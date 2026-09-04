@@ -33,6 +33,53 @@ fn make_test_chat_service() -> ChatServiceImpl {
     ChatServiceImpl::new_for_tests(conversation_service, profile_service)
 }
 
+/// Drop everything already buffered for this receiver.
+///
+/// A `Lagged` reply means other tests' events fell out of the shared ring, not
+/// that this receiver is drained, so it keeps going.
+fn discard_buffered_events(rx: &mut tokio::sync::broadcast::Receiver<AppEvent>) {
+    while matches!(
+        rx.try_recv(),
+        Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_))
+    ) {}
+}
+
+/// Count `StreamCancelled` events for conversations `a` and `b` over `window`.
+///
+/// The global event bus is shared by concurrently running tests, so every
+/// event is matched against a conversation UUID unique to this test and a
+/// lagging receiver keeps draining rather than giving up.
+async fn count_stream_cancelled(
+    rx: &mut tokio::sync::broadcast::Receiver<AppEvent>,
+    a: Uuid,
+    b: Uuid,
+    window: Duration,
+) -> (usize, usize) {
+    let mut counts = (0usize, 0usize);
+    let deadline = tokio::time::Instant::now() + window;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Ok(AppEvent::Chat(ChatEvent::StreamCancelled {
+                conversation_id, ..
+            }))) => {
+                if conversation_id == a {
+                    counts.0 += 1;
+                } else if conversation_id == b {
+                    counts.1 += 1;
+                }
+            }
+            Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
+            Err(_elapsed) => break,
+        }
+    }
+    counts
+}
+
 /// @plan PLAN-20260416-ISSUE173.P02
 /// @plan PLAN-20260416-ISSUE173.P14-CR3
 /// @requirement REQ-173-001.1
@@ -156,29 +203,21 @@ async fn cancel_emits_event_only_for_target() {
         .begin_stream_for_test(conversation_b)
         .expect("begin_stream(B) should succeed");
 
+    // The global bus is a small ring shared with every concurrently running
+    // test. Clear what they have already published so this test's own
+    // cancellation cannot be evicted from the ring before it is read.
+    discard_buffered_events(&mut event_rx);
+
     // Cancel only conversation A using the trait method
     ChatService::cancel(&service, conversation_a);
 
-    // Give a moment for cancellation to process and events to be emitted
-    sleep(Duration::from_millis(50)).await;
-
-    // Drain events and look for StreamCancelled
-    let mut a_cancellations = 0;
-    let mut b_cancellations = 0;
-
-    // Process events that have been received (non-blocking)
-    while let Ok(event) = event_rx.try_recv() {
-        if let AppEvent::Chat(ChatEvent::StreamCancelled {
-            conversation_id, ..
-        }) = &event
-        {
-            if conversation_id == &conversation_a {
-                a_cancellations += 1;
-            } else if conversation_id == &conversation_b {
-                b_cancellations += 1;
-            }
-        }
-    }
+    let (a_cancellations, b_cancellations) = count_stream_cancelled(
+        &mut event_rx,
+        conversation_a,
+        conversation_b,
+        Duration::from_millis(250),
+    )
+    .await;
 
     // Should have exactly one StreamCancelled for A, zero for B
     assert_eq!(

@@ -62,6 +62,15 @@ pub enum UserEvent {
     /// @requirement REQ-173-002.3
     StopStreaming { conversation_id: Uuid },
 
+    /// User submitted a steering message while a turn is active.
+    ///
+    /// Carries the composer text verbatim; the service trims it and decides
+    /// whether the conversation has a turn that can accept it.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-002
+    SteerStreaming { conversation_id: Uuid, text: String },
+
     /// User clicked new conversation
     NewConversation,
 
@@ -451,6 +460,42 @@ pub enum ChatEvent {
     MessageSaved {
         conversation_id: Uuid,
         message_id: Uuid,
+    },
+
+    /// A steering message was accepted for a conversation's active turn and is
+    /// waiting for the next turn boundary.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-003
+    SteeringQueued {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+        text: String,
+    },
+
+    /// A queued steering message left the queue and was handed to the model.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P01
+    /// @requirement REQ-222-005
+    SteeringDelivered {
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    },
+
+    /// A queued steering message will never be handed to the model: the turn
+    /// it was waiting on ended first.
+    ///
+    /// This is the terminal state of a queued entry that is not delivered.
+    /// A steer is accepted, announced with `SteeringQueued`, and then either
+    /// reaches the model (`SteeringDelivered`) or does not (this). Without
+    /// the second terminal state the view has no way to learn that the entry
+    /// it is rendering as waiting is never going to resolve.
+    ///
+    /// @plan PLAN-20260903-ISSUE222.P06
+    /// @requirement REQ-222-003
+    SteeringDiscarded {
+        conversation_id: Uuid,
+        steer_id: Uuid,
     },
 }
 
