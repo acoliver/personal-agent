@@ -28,7 +28,7 @@ use serdes_ai::models::{Model, ModelRequestParameters, StreamedResponse};
 use serdes_ai_models::error::ModelError;
 use serdes_ai_models::profile::ModelProfile as SerdesModelProfile;
 
-use super::generator::{GenEvent, GenRequest, GenSampling, Generator};
+use super::generator::{AbortGuard, GenEvent, GenRequest, GenSampling, Generator};
 use super::render::{render, ChatTurn, ToolSpec};
 use super::toolcall::{parse_call_block, RawToolCall, TOOL_CALL_CLOSE, TOOL_CALL_OPEN};
 
@@ -236,10 +236,19 @@ struct GenerationStream {
     max_tokens: usize,
     finished: bool,
     failure: Option<String>,
+    /// Held while the generation runs; dropping it before the stream ends
+    /// would mark the generation cancelled in the engine and silently yield
+    /// zero tokens. Released on normal completion so a post-stream drop
+    /// cannot write a stale cancel entry.
+    abort: Option<AbortGuard>,
 }
 
 impl GenerationStream {
-    fn new(events: Pin<Box<dyn Stream<Item = GenEvent> + Send>>, max_tokens: usize) -> Self {
+    fn new(
+        events: Pin<Box<dyn Stream<Item = GenEvent> + Send>>,
+        max_tokens: usize,
+        abort: AbortGuard,
+    ) -> Self {
         Self {
             events,
             buffer: String::new(),
@@ -252,6 +261,7 @@ impl GenerationStream {
             max_tokens,
             finished: false,
             failure: None,
+            abort: Some(abort),
         }
     }
 
@@ -347,6 +357,9 @@ impl GenerationStream {
     /// Terminal flush: everything still buffered becomes text, then the
     /// completion event carries the token counts.
     fn finish(&mut self, prompt_tokens: usize, generated_tokens: usize) {
+        // The actor finished the turn; dropping the guard here keeps a later
+        // stream drop from inserting a dead generation into the cancel set.
+        self.abort = None;
         if !self.in_block {
             let end = self.buffer.len();
             if end > self.scan {
@@ -514,10 +527,12 @@ impl Model for LocalLlamaModel {
             .generate(request.clone())
             .await
             .map_err(|error| ModelError::configuration(error.0))?;
-        Ok(Box::pin(GenerationStream::new(
-            generation.events,
-            max_tokens,
-        )))
+        // The abort guard travels with the stream: leaving it in `generation`
+        // cancels the generation the moment this function returns, and the
+        // actor then stops before sampling its first token.
+        // @requirement:REQ-LM-004
+        let (_, events, abort) = generation.into_parts();
+        Ok(Box::pin(GenerationStream::new(events, max_tokens, abort)))
     }
 
     fn profile(&self) -> &SerdesModelProfile {

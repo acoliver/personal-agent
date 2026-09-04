@@ -82,6 +82,17 @@ pub fn unload_local() {
     engine().request_unload();
 }
 
+/// Stops the engine actor and frees llama.cpp state now: drops any resident
+/// model/context, releases the backend guard, and joins the thread.
+///
+/// This is the app quit path's quiesce point; it must run before process
+/// exit machinery starts, because llama.cpp may not be live during C++
+/// static teardown. Afterwards new jobs fail with the usual "engine thread
+/// is gone" errors.
+pub fn shutdown_local() {
+    engine().shutdown();
+}
+
 /// Preloads the model with the persisted settings and reports the outcome.
 ///
 /// # Errors

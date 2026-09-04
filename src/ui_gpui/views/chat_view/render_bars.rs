@@ -338,6 +338,10 @@ impl ChatView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _, _window, _cx| {
+                    // Quiesce the local-model engine while the process is
+                    // still fully alive; llama.cpp must not be live during
+                    // C++ static teardown or exit faults.
+                    crate::llm::local::shutdown_local();
                     std::process::exit(0);
                 }),
             )

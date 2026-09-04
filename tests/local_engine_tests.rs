@@ -54,6 +54,35 @@ fn scripted_model(events: Vec<GenEvent>) -> LocalLlamaModel {
     LocalLlamaModel::new(Arc::new(ScriptedGenerator { events }), "granite-4.2-3b")
 }
 
+/// llama.cpp's backend is process-global, so the engine-spawning tests in
+/// this binary must not race each other for it; the load-failure test needs
+/// to WIN init to exercise the missing-file branch deterministically.
+static ENGINE_SPAWN_LOCK: Mutex<()> = Mutex::new(());
+
+/// A generator that shares its cancel set with the test and hands out a
+/// never-ending stream, so abort-guard ownership is observable without a
+/// GGUF and without waiting on generation events.
+struct ObservableGenerator {
+    cancelled: Arc<Mutex<HashSet<u64>>>,
+}
+
+#[async_trait::async_trait]
+impl Generator for ObservableGenerator {
+    async fn generate(&self, _request: GenRequest) -> Result<Generation, GenerateError> {
+        Ok(Generation::new(
+            42,
+            Box::pin(futures::stream::pending::<GenEvent>()),
+            Arc::clone(&self.cancelled),
+        ))
+    }
+
+    fn status(&self) -> EngineStatus {
+        EngineStatus::NotLoaded
+    }
+
+    async fn unload(&self) {}
+}
+
 fn simple_request() -> Vec<ModelRequest> {
     let mut request = ModelRequest::default();
     request
@@ -310,11 +339,54 @@ async fn dropping_a_generation_inserts_it_into_the_cancel_set() {
     assert!(cancelled.lock().expect("set").contains(&7));
 }
 
+/// The stream returned by `request_stream` must own the abort guard: a live
+/// stream is not cancelled in the engine, and dropping it early is. The
+/// regression: `request_stream` dropped the guard as soon as it returned, so
+/// every real generation was cancelled before its first token and completed
+/// cleanly with zero content.
+// @requirement:REQ-LM-004
+#[tokio::test]
+async fn request_stream_holds_the_abort_guard_for_the_streams_lifetime() {
+    let cancelled = Arc::new(Mutex::new(HashSet::new()));
+    let model = LocalLlamaModel::new(
+        Arc::new(ObservableGenerator {
+            cancelled: Arc::clone(&cancelled),
+        }),
+        "granite-4.2-3b",
+    );
+
+    let stream = model
+        .request_stream(
+            &simple_request(),
+            &serdes_ai::core::ModelSettings::default(),
+            &ModelRequestParameters::default(),
+        )
+        .await
+        .expect("stream starts");
+
+    assert!(
+        !cancelled.lock().expect("set").contains(&42),
+        "a live stream must not be cancelled in the engine"
+    );
+
+    drop(stream);
+
+    assert!(
+        cancelled.lock().expect("set").contains(&42),
+        "dropping the stream early must cancel the generation"
+    );
+}
+
 /// A load failure (missing GGUF here) must surface as a Failed event and an
 /// Error status, not a hang. Which engine thread wins the process-global
 /// backend decides the message, so only the shape is asserted.
 #[tokio::test]
+// The guard is the point: llama.cpp's backend is process-global, so engine
+// spawns must serialize across libtest threads; each test owns its own
+// current-thread runtime, so holding it across awaits cannot self-deadlock.
+#[allow(clippy::await_holding_lock)]
 async fn engine_load_failure_fails_the_generation_and_sets_error_status() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
     let engine = EngineHandle::spawn();
     assert_eq!(engine.status(), EngineStatus::NotLoaded);
 
@@ -377,11 +449,52 @@ async fn engine_load_failure_fails_the_generation_and_sets_error_status() {
     panic!("status never reached Error: {:?}", engine.status());
 }
 
+/// `shutdown` joins the actor deterministically: when it returns, the
+/// receiver is gone, so new jobs fail fast instead of queueing forever. This
+/// is the contract the exit-time hook relies on to quiesce llama.cpp before
+/// its C++ static destructors run (process-exit SIGABRT regression).
+// @requirement:REQ-LM-004
+#[tokio::test]
+// Same serialization as the load-failure test: see the note there.
+#[allow(clippy::await_holding_lock)]
+async fn engine_shutdown_joins_the_actor_and_fails_new_jobs() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
+    let engine = EngineHandle::spawn();
+    engine.shutdown();
+
+    let result = engine.start_generation(
+        GenRequest {
+            prompt: "hi".to_string(),
+            sampling: GenSampling {
+                temperature: 0.1,
+                top_p: None,
+                seed: None,
+            },
+            max_tokens: 1,
+            stop: Vec::new(),
+        },
+        EngineLoadSettings {
+            model_path: PathBuf::from("/nonexistent/model.gguf"),
+            n_ctx: 512,
+            gpu_layers: 0,
+            idle_unload: false,
+            idle_timeout: Duration::from_secs(60),
+        },
+    );
+    assert!(
+        result.is_err(),
+        "jobs after shutdown must fail fast, got a generation"
+    );
+}
+
 /// Real-model end-to-end: load, generate a few tokens, then idle-unload.
 /// Requires the Granite GGUF; see the file header for the invocation.
 #[tokio::test]
+// Same serialization as the load-failure test: see the note there.
+#[allow(clippy::await_holding_lock)]
 #[ignore = "loads the 3.6 GB GGUF and runs Metal inference"]
 async fn real_model_generates_and_idle_unloads() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
     let Some(path) = std::env::var_os("PA_LOCAL_GGUF").map(PathBuf::from) else {
         panic!("PA_LOCAL_GGUF must point at the Granite GGUF");
     };

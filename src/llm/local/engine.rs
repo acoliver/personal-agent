@@ -8,6 +8,15 @@
 //! model, phase two runs while the pair is alive, and leaving phase two drops
 //! it. That drop is the idle unload; model memory returns to the OS.
 //!
+//! Process exit is orderly, not abrupt: llama.cpp work must never run during
+//! C++ static teardown, because ggml registers destructors for function-local
+//! statics lazily (backend init, model load, Metal device creation), and
+//! atexit's LIFO order destroys them before any hook inside `main` can run.
+//! The engine is therefore quiesced while the process is fully alive: the app
+//! calls `shutdown_local` on quit, and dropping the last `EngineHandle`
+//! stops the actor, which drops model, context, and the backend guard on its
+//! own stack before the thread is joined.
+//!
 // @plan:PLAN-20260903-LOCALMODEL.P02
 // @plan:PLAN-20260903-LOCALMODEL.P05
 // @requirement:REQ-LM-003 REQ-LM-006
@@ -16,7 +25,7 @@ use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -142,13 +151,53 @@ enum Job {
         settings: EngineLoadSettings,
         events: tokio_mpsc::UnboundedSender<GenEvent>,
     },
+    /// Exit the actor loop, dropping model/context/backend first. Sent by the
+    /// at-exit hook and explicit shutdown so process exit never tears
+    /// llama.cpp down underneath a live engine thread.
+    Shutdown,
+}
+
+/// The two stop conditions shared between the handle and the actor: a
+/// generation's cancel entry, and the engine-wide shutdown flag.
+struct StopFlags {
+    cancelled: Arc<Mutex<HashSet<u64>>>,
+    shutting_down: Arc<AtomicBool>,
+}
+
+/// One live engine. The `EngineHandle` is the only strong owner, so dropping
+/// the last handle stops the actor and frees llama.cpp state while the
+/// process is still fully alive.
+struct EngineEntry {
+    tx: mpsc::Sender<Job>,
+    join: Mutex<Option<std::thread::JoinHandle<()>>>,
+    stop: StopFlags,
+}
+
+/// Stops one engine: raises its shutdown flag, tells the actor to exit, and
+/// joins the thread.
+///
+/// The join is the determinism guarantee: when it returns, the actor has
+/// dropped any resident model, context, and the `LlamaBackend` guard on its
+/// own stack. That must happen before process exit machinery starts — during
+/// finalize, ggml's lazily-registered statics are already destroyed and any
+/// llama.cpp call faults.
+fn shutdown_engine(entry: &EngineEntry) {
+    entry.stop.shutting_down.store(true, Ordering::SeqCst);
+    let _ = entry.tx.send(Job::Shutdown);
+    let join = entry
+        .join
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    if let Some(join) = join {
+        let _ = join.join();
+    }
 }
 
 /// Process-wide handle to the engine actor.
 pub struct EngineHandle {
-    tx: mpsc::Sender<Job>,
+    entry: Arc<EngineEntry>,
     status: Arc<Mutex<EngineStatus>>,
-    cancelled: Arc<Mutex<HashSet<u64>>>,
     next_gen_id: AtomicU64,
 }
 
@@ -156,18 +205,26 @@ impl EngineHandle {
     /// Spawns the actor thread and returns its handle.
     ///
     /// Called at most once (the caller holds an `OnceLock`), because
-    /// `LlamaBackend::init` is process-global.
+    /// `LlamaBackend::init` is process-global. Each engine also registers an
+    /// at-exit hook so its thread shuts down before llama.cpp's static
+    /// destructors run.
     #[must_use]
     pub fn spawn() -> Self {
         let (tx, rx) = mpsc::channel::<Job>();
         let status = Arc::new(Mutex::new(EngineStatus::NotLoaded));
-        let cancelled = Arc::new(Mutex::new(HashSet::new()));
+        let stop = StopFlags {
+            cancelled: Arc::new(Mutex::new(HashSet::new())),
+            shutting_down: Arc::new(AtomicBool::new(false)),
+        };
         let thread_status = Arc::clone(&status);
-        let thread_cancelled = Arc::clone(&cancelled);
+        let thread_stop = StopFlags {
+            cancelled: Arc::clone(&stop.cancelled),
+            shutting_down: Arc::clone(&stop.shutting_down),
+        };
         let spawned = std::thread::Builder::new()
             .name("local-model-engine".to_string())
-            .spawn(move || actor_entry(&rx, &thread_status, &thread_cancelled));
-        if let Err(error) = spawned {
+            .spawn(move || actor_entry(&rx, &thread_status, &thread_stop));
+        if let Err(error) = &spawned {
             // The engine cannot start without its thread; record why so the
             // first request fails with the real cause instead of a hang.
             set_status(
@@ -177,10 +234,14 @@ impl EngineHandle {
                 },
             );
         }
-        Self {
+        let entry = Arc::new(EngineEntry {
             tx,
+            join: Mutex::new(spawned.ok()),
+            stop,
+        });
+        Self {
+            entry,
             status,
-            cancelled,
             next_gen_id: AtomicU64::new(0),
         }
     }
@@ -197,7 +258,8 @@ impl EngineHandle {
     ) -> Result<Generation, GenerateError> {
         let gen_id = self.next_gen_id.fetch_add(1, Ordering::Relaxed);
         let (events_tx, events_rx) = tokio_mpsc::unbounded_channel();
-        self.tx
+        self.entry
+            .tx
             .send(Job::Generate {
                 gen_id,
                 request,
@@ -208,14 +270,21 @@ impl EngineHandle {
         Ok(Generation::new(
             gen_id,
             Box::pin(ReceiverStream::new(events_rx)),
-            Arc::clone(&self.cancelled),
+            Arc::clone(&self.entry.stop.cancelled),
         ))
     }
 
     /// Asks the actor to drop the resident model. Best effort: a running
     /// generation finishes first.
     pub fn request_unload(&self) {
-        let _ = self.tx.send(Job::Unload);
+        let _ = self.entry.tx.send(Job::Unload);
+    }
+
+    /// Stops the actor thread, letting it drop any resident model, context,
+    /// and the backend guard while the process is fully alive. Idempotent;
+    /// later jobs fail with the usual "engine thread is gone" errors.
+    pub fn shutdown(&self) {
+        shutdown_engine(&self.entry);
     }
 
     /// The current status snapshot.
@@ -236,7 +305,8 @@ impl EngineHandle {
     /// Returns the load failure message.
     pub async fn load(&self, settings: EngineLoadSettings) -> Result<(), String> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        self.tx
+        self.entry
+            .tx
             .send(Job::Load {
                 settings,
                 reply: reply_tx,
@@ -248,11 +318,19 @@ impl EngineHandle {
     }
 }
 
-fn actor_entry(
-    rx: &mpsc::Receiver<Job>,
-    status: &Arc<Mutex<EngineStatus>>,
-    cancelled: &Arc<Mutex<HashSet<u64>>>,
-) {
+/// The exit-time contract: llama.cpp must never be live during C++ static
+/// teardown (ggml destroys its lazily-registered statics first, and any
+/// later `llama_free` faults). When the last handle goes, quiesce the engine
+/// while the process is still fully alive.
+impl Drop for EngineHandle {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.entry) == 1 {
+            shutdown_engine(&self.entry);
+        }
+    }
+}
+
+fn actor_entry(rx: &mpsc::Receiver<Job>, status: &Arc<Mutex<EngineStatus>>, stop: &StopFlags) {
     // LlamaBackend::init is process-global and refuses a second call, so the
     // guard lives on this thread for the process lifetime.
     let backend = match LlamaBackend::init() {
@@ -268,7 +346,7 @@ fn actor_entry(
             return;
         }
     };
-    actor_loop(&backend, rx, status, cancelled);
+    actor_loop(&backend, rx, status, stop);
 }
 
 /// Answers every queued job with a failure after an unrecoverable init error.
@@ -289,6 +367,9 @@ fn drain_failed(rx: &mpsc::Receiver<Job>, status: &Mutex<EngineStatus>) {
                 let _ = events.send(GenEvent::Failed(message.clone()));
             }
             Job::Unload => {}
+            // Exiting the drain ends the thread, which is what a shutdown of
+            // a failed-to-init engine means.
+            Job::Shutdown => return,
         }
     }
 }
@@ -311,7 +392,7 @@ fn actor_loop(
     backend: &LlamaBackend,
     rx: &mpsc::Receiver<Job>,
     status: &Mutex<EngineStatus>,
-    cancelled: &Mutex<HashSet<u64>>,
+    stop: &StopFlags,
 ) {
     // A job that arrived for the wrong resident model is replayed after the
     // unload; the channel cannot take it back.
@@ -334,6 +415,8 @@ fn actor_loop(
             };
             match job {
                 Job::Unload => {}
+                // Nothing resident: exiting the loop ends the thread.
+                Job::Shutdown => return,
                 Job::Load {
                     settings: next,
                     reply,
@@ -401,9 +484,10 @@ fn actor_loop(
             let _ = reply.send(Ok(()));
         }
 
-        // Phase 2: model resident. Serve jobs until Unload or the idle timer.
+        // Phase 2: model resident. Serve jobs until Unload, Shutdown, or the
+        // idle timer.
         let mut last_tok_s = if let Some((gen_id, request, events)) = pending_gen {
-            run_generation(&model, &mut ctx, &request, &events, cancelled, gen_id)
+            run_generation(&model, &mut ctx, &request, &events, stop, gen_id)
         } else {
             0.0
         };
@@ -411,6 +495,7 @@ fn actor_loop(
         let mut idle_deadline = settings
             .idle_unload
             .then(|| Instant::now() + settings.idle_timeout);
+        let mut shutdown_requested = false;
         loop {
             let job = match idle_deadline {
                 Some(deadline) => {
@@ -428,6 +513,10 @@ fn actor_loop(
             match job {
                 // Idle timer fired: fall through to the unload.
                 None | Some(Job::Unload) => break,
+                Some(Job::Shutdown) => {
+                    shutdown_requested = true;
+                    break;
+                }
                 Some(Job::Load {
                     settings: next,
                     reply,
@@ -450,7 +539,7 @@ fn actor_loop(
                 }) => {
                     if settings.same_model(&next) {
                         last_tok_s =
-                            run_generation(&model, &mut ctx, &request, &events, cancelled, gen_id);
+                            run_generation(&model, &mut ctx, &request, &events, stop, gen_id);
                         update_loaded_status(status, &model, &settings, last_tok_s);
                     } else {
                         deferred = Some(Job::Generate {
@@ -468,10 +557,15 @@ fn actor_loop(
             }
         }
         // Dropping `ctx` and `model` here is the unload: llama.cpp frees its
-        // allocations and the mmap is released.
+        // allocations and the mmap is released. On shutdown the backend guard
+        // drops right after, when `actor_entry` returns, before the join in
+        // `shutdown_engine` completes.
         drop(ctx);
         drop(model);
         set_status(status, EngineStatus::NotLoaded);
+        if shutdown_requested {
+            return;
+        }
     }
 }
 
@@ -506,12 +600,15 @@ fn run_generation(
     ctx: &mut LlamaContext<'_>,
     request: &GenRequest,
     events: &tokio_mpsc::UnboundedSender<GenEvent>,
-    cancelled: &Mutex<HashSet<u64>>,
+    stop: &StopFlags,
     gen_id: u64,
 ) -> f64 {
     let started = Instant::now();
-    let outcome = generate_turn(model, ctx, request, events, cancelled, gen_id);
-    let _ = cancelled.lock().is_ok_and(|mut set| set.remove(&gen_id));
+    let outcome = generate_turn(model, ctx, request, events, stop, gen_id);
+    let _ = stop
+        .cancelled
+        .lock()
+        .is_ok_and(|mut set| set.remove(&gen_id));
     match outcome {
         Ok((prompt_tokens, generated_tokens)) => {
             let elapsed = started.elapsed().as_secs_f64();
@@ -540,7 +637,7 @@ fn generate_turn(
     ctx: &mut LlamaContext<'_>,
     request: &GenRequest,
     events: &tokio_mpsc::UnboundedSender<GenEvent>,
-    cancelled: &Mutex<HashSet<u64>>,
+    stop: &StopFlags,
     gen_id: u64,
 ) -> Result<(usize, usize), String> {
     ctx.clear_kv_cache();
@@ -569,7 +666,7 @@ fn generate_turn(
     let mut generated_tokens = 0usize;
 
     for next_position in (prompt_tokens as i32..).take(request.max_tokens) {
-        if is_cancelled(cancelled, gen_id) {
+        if is_cancelled(stop, gen_id) {
             break;
         }
         let token = sampler.sample(ctx, batch.n_tokens() - 1);
@@ -637,8 +734,11 @@ fn detect_bos_handling(model: &LlamaModel, prompt: &str) -> Result<AddBos, Strin
     }
 }
 
-fn is_cancelled(cancelled: &Mutex<HashSet<u64>>, gen_id: u64) -> bool {
-    cancelled.lock().is_ok_and(|set| set.contains(&gen_id))
+/// Shutdown shares the cancellation path: an in-flight generation stops at
+/// the next token boundary, so the exit-time join is bounded by one decode.
+fn is_cancelled(stop: &StopFlags, gen_id: u64) -> bool {
+    stop.shutting_down.load(Ordering::SeqCst)
+        || stop.cancelled.lock().is_ok_and(|set| set.contains(&gen_id))
 }
 
 fn set_status(status: &Mutex<EngineStatus>, next: EngineStatus) {
