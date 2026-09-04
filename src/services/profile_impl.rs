@@ -25,6 +25,44 @@ pub const SEED_PROVIDER_ID: &str = "local";
 /// Model label of the seeded profile; display-only for the local engine.
 pub const SEED_MODEL_ID: &str = "granite-4.2-3b";
 
+/// Create the "Granite (local)" profile and make it the default, unless a
+/// local profile already exists.
+///
+/// Shared by first-install seeding (`initialize`) and the Settings → Local
+/// Model one-click button, so an existing install ends up with exactly the
+/// profile a fresh install gets (REQ-LM-002). Idempotent: a no-op when any
+/// `provider_id == "local"` profile is present.
+///
+/// # Errors
+///
+/// Returns `ServiceError` when listing profiles, creating the seed profile,
+/// or persisting the new default fails.
+///
+/// @plan:PLAN-20260903-LOCALMODEL.P05
+/// @requirement:REQ-LM-002 REQ-LM-006
+pub async fn ensure_local_seed_profile(service: &dyn ProfileService) -> ServiceResult<()> {
+    if service
+        .list()
+        .await?
+        .iter()
+        .any(|profile| profile.provider_id.trim() == SEED_PROVIDER_ID)
+    {
+        return Ok(());
+    }
+    let profile = service
+        .create(
+            SEED_PROFILE_NAME.to_string(),
+            SEED_PROVIDER_ID.to_string(),
+            SEED_MODEL_ID.to_string(),
+            None,
+            AuthConfig::None,
+            ModelParameters::default(),
+            None,
+        )
+        .await?;
+    service.set_default(profile.id).await
+}
+
 impl ProfileServiceImpl {
     fn legacy_profile_id_for_path(path: &Path) -> Uuid {
         let identifier = path.file_name().and_then(|name| name.to_str()).map_or_else(
@@ -102,27 +140,17 @@ impl ProfileServiceImpl {
         Ok(())
     }
 
-    /// Create the first-install "Granite (local)" profile via the normal
-    /// `create()` path, so the first-profile auto-default logic applies.
+    /// Create the first-install "Granite (local)" profile via the shared
+    /// seeding helper, so boot-time seeding and the one-click button produce
+    /// the identical profile shape.
     ///
     /// @plan:PLAN-20260903-LOCALMODEL.P01
     /// @requirement:REQ-LM-002
     async fn seed_default_local_profile(&self) -> Result<(), super::ServiceError> {
-        let profile = self
-            .create(
-                SEED_PROFILE_NAME.to_string(),
-                SEED_PROVIDER_ID.to_string(),
-                SEED_MODEL_ID.to_string(),
-                None,
-                AuthConfig::None,
-                ModelParameters::default(),
-                None,
-            )
-            .await?;
+        ensure_local_seed_profile(self).await?;
         tracing::info!(
-            "ProfileService: seeded first-install local profile '{}' ({})",
-            profile.name,
-            profile.id
+            "ProfileService: local seed profile '{}' present and default",
+            SEED_PROFILE_NAME
         );
         Ok(())
     }

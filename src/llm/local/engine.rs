@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 use std::num::NonZeroU32;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -293,6 +293,19 @@ fn drain_failed(rx: &mpsc::Receiver<Job>, status: &Mutex<EngineStatus>) {
     }
 }
 
+/// The user-facing message for a missing GGUF. The fix travels inside the
+/// error string so a chat toast, the error log, and the settings card all
+/// point at the one place the file can be chosen.
+#[must_use]
+pub fn missing_model_file_message(path: &Path) -> String {
+    format!(
+        "Local model file not found: {}. Pick the GGUF file in Settings → Local Model.",
+        path.display()
+    )
+}
+
+// One coherent state machine: splitting the load/resident phases apart would
+// scatter the `model`/`ctx` borrows and the deferred-job replay.
 #[allow(clippy::too_many_lines)]
 fn actor_loop(
     backend: &LlamaBackend,
@@ -355,10 +368,7 @@ fn actor_loop(
         // llama-cpp-2 panics on a missing model file instead of returning an
         // error; a bad path must fail the job, not kill the actor thread.
         if !settings.model_path.exists() {
-            fail_load(format!(
-                "model file not found: {}",
-                settings.model_path.display()
-            ));
+            fail_load(missing_model_file_message(&settings.model_path));
             continue;
         }
         // `ctx` borrows `model`, so both stay locals of this iteration and the
@@ -652,5 +662,22 @@ impl futures::Stream for ReceiverStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<GenEvent>> {
         // The receiver is `Unpin`, so getting a plain `&mut` is sound here.
         self.get_mut().0.poll_recv(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // @plan:PLAN-20260903-LOCALMODEL.P05
+    // @requirement:REQ-LM-006
+    #[test]
+    fn missing_file_message_carries_the_fix() {
+        let message = missing_model_file_message(Path::new("/models/granite.gguf"));
+        assert_eq!(
+            message,
+            "Local model file not found: /models/granite.gguf. Pick the GGUF file in \
+             Settings → Local Model."
+        );
     }
 }

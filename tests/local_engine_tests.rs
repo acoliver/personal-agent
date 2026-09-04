@@ -346,8 +346,23 @@ async fn engine_load_failure_fails_the_generation_and_sets_error_status() {
     let mut saw_failure = false;
     while let Some(event) = events.next().await {
         match event {
-            GenEvent::Failed(_) => {
+            GenEvent::Failed(message) => {
                 saw_failure = true;
+                // This binary spawns exactly one engine, so the missing-file
+                // branch is deterministic here; the backend-init race only
+                // arises when the `#[ignore]`d real-model test below spawns a
+                // second engine in the same process.
+                if !message.contains("backend init failed") {
+                    assert!(
+                        message
+                            .contains("Local model file not found: /nonexistent/path/model.gguf"),
+                        "missing-file failure must name the path, got: {message}"
+                    );
+                    assert!(
+                        message.contains("Settings → Local Model"),
+                        "missing-file failure must carry the fix, got: {message}"
+                    );
+                }
             }
             other => panic!("unexpected event before failure: {other:?}"),
         }

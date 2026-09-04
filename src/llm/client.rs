@@ -779,7 +779,18 @@ impl LlmClient {
     /// - `@ai-sdk/openai-compatible` -> use "openai" provider with custom `base_url`
     /// - `@ai-sdk/openai` -> native openai
     /// - `@ai-sdk/anthropic` -> native anthropic
+    ///
+    /// A local profile is answered before any of that: the resolution below
+    /// maps unknown provider ids to a transport, and the only transport it
+    /// knows is HTTP, which is precisely what the in-process engine must
+    /// never become.
     pub(crate) fn get_serdes_provider(&self) -> &str {
+        // @plan:PLAN-20260903-LOCALMODEL.P02
+        // @requirement:REQ-LM-004
+        if self.profile.provider_id == crate::llm::local::LOCAL_PROVIDER_ID {
+            return crate::llm::local::LOCAL_PROVIDER_ID;
+        }
+
         if let Ok(cache_path) = RegistryCache::default_path() {
             let cache = RegistryCache::new(cache_path, 24);
             if let Ok(Some(registry)) = cache.load() {

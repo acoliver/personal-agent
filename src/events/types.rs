@@ -360,6 +360,15 @@ pub enum UserEvent {
     /// @requirement:REQ-LM-006
     UnloadLocalModel,
 
+    /// User asked for the one-click local profile in Settings → Local Model
+    /// (existing installs that predate seeding). The presenter creates the
+    /// "Granite (local)" profile via the shared seeding helper and makes it
+    /// the default, mirroring fresh-install behavior.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002 REQ-LM-006
+    CreateLocalProfile,
+
     /// User toggled "Launch at login" (macOS only).
     ///
     /// @plan PLAN-20260409-ISSUE177

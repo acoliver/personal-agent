@@ -4,7 +4,6 @@
 //! @requirement:REQ-LM-001
 
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 use personal_agent::services::app_settings::AppSettingsService;
 use personal_agent::services::app_settings_impl::AppSettingsServiceImpl;
@@ -14,8 +13,9 @@ use personal_agent::services::local_model_settings::{
 };
 
 /// `std::env` mutation is process-global, so every test that touches
-/// `PA_LOCAL_GGUF` serializes through this lock.
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+/// `PA_LOCAL_GGUF` serializes through this lock. Async-aware so the async
+/// test can hold it across `await` without tripping `await_holding_lock`.
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn test_service(dir: &tempfile::TempDir) -> AppSettingsServiceImpl {
     AppSettingsServiceImpl::new(dir.path().join("app_settings.json")).expect("settings service")
@@ -69,7 +69,7 @@ async fn persisted_blob_lives_under_the_local_model_key() {
 
 #[test]
 fn env_override_changes_the_default_model_path() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.blocking_lock();
     // SAFETY: single-threaded w.r.t. env mutation via ENV_LOCK; tests in this
     // binary that read the var hold the same lock.
     std::env::set_var(ENV_MODEL_PATH, "/tmp/env-chosen.gguf");
@@ -79,7 +79,7 @@ fn env_override_changes_the_default_model_path() {
 
 #[test]
 fn env_override_wins_over_data_dir_but_not_persisted_settings() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.blocking_lock();
     std::env::set_var(ENV_MODEL_PATH, "/tmp/env-chosen.gguf");
     let defaults = LocalModelSettings::default();
     assert_eq!(defaults.model_path, PathBuf::from("/tmp/env-chosen.gguf"));
@@ -100,6 +100,35 @@ fn env_override_wins_over_data_dir_but_not_persisted_settings() {
     // Fields absent from the blob fall back to their defaults.
     assert_eq!(loaded.gpu_layers, 999);
     std::env::remove_var(ENV_MODEL_PATH);
+}
+
+#[tokio::test]
+async fn persisted_path_always_beats_the_env_var_via_the_service_loader() {
+    let _guard = ENV_LOCK.lock().await;
+    // PA_LOCAL_GGUF stays an undocumented test hook: it may only supply the
+    // first-run default. A user's persisted choice must never be shadowed.
+    std::env::set_var(ENV_MODEL_PATH, "/tmp/env-chosen.gguf");
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let service = test_service(&dir);
+    let settings = LocalModelSettings {
+        model_path: PathBuf::from("/data/user-picked.gguf"),
+        n_ctx: 4096,
+        gpu_layers: 41,
+        idle_unload: false,
+        idle_timeout_minutes: 3,
+    };
+    settings.save(&service).await.unwrap();
+
+    let loaded = LocalModelSettings::load(&service).await.unwrap();
+    std::env::remove_var(ENV_MODEL_PATH);
+
+    assert_eq!(
+        loaded.model_path,
+        PathBuf::from("/data/user-picked.gguf"),
+        "the persisted path must win over PA_LOCAL_GGUF"
+    );
+    assert_eq!(loaded.n_ctx, 4096);
 }
 
 #[test]

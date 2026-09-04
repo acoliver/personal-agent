@@ -17,6 +17,7 @@ use crate::config::default_api_base_url_for_provider;
 use crate::events::types::{ModelProfileAuth, ModelProfileParameters, UserEvent};
 use crate::models::{capabilities_for, effort_from_stored, ModelCapabilities, ReasoningEffort};
 use crate::presentation::view_command::{ViewCommand, ViewId};
+use crate::services::local_model_settings::LocalModelSettings;
 use crate::ui_gpui::bridge::GpuiBridge;
 
 /// Auth method enum for display
@@ -267,6 +268,12 @@ impl ProfileEditorData {
             // the OpenAI default here would let an edit silently re-route a
             // local profile at a remote API.
             self.base_url = String::new();
+            // The model id is a display label for the local engine; an empty
+            // one would block Save with nothing obvious to type. Seed the
+            // engine's default model so a fresh Local profile saves as-is.
+            if self.model_id.trim().is_empty() {
+                self.model_id = crate::services::profile_impl::SEED_MODEL_ID.to_string();
+            }
         } else if self.base_url.trim().is_empty() || self.base_url_is_managed_elsewhere() {
             // A managed endpoint belongs to the type that manages it. Carrying
             // ChatGPT's websocket URL onto a plain HTTP provider would save an
@@ -322,6 +329,17 @@ pub struct ProfileEditorState {
     pub(super) advanced_request_parameters_expanded: bool,
     /// Validation message for the advanced request JSON field.
     pub(super) advanced_json_validation_message: Option<String>,
+    /// Engine snapshot captured when the editor last targeted the local
+    /// engine; `None` for every other API type (no status row).
+    pub local_engine_status: Option<crate::llm::local::engine::EngineStatus>,
+    /// Shared engine settings behind the LOCAL ENGINE (shared) section.
+    pub local_model_settings: Option<crate::services::local_model_settings::LocalModelSettings>,
+    /// The GGUF path the section displays, synced from `local_model_settings`.
+    pub local_model_path_input: String,
+    /// A file was picked before the shared snapshot arrived; the pick is
+    /// pushed to the store as soon as a snapshot is at hand. See
+    /// [`ProfileEditorView::apply_local_model_settings`].
+    pub(super) local_model_path_dirty: bool,
 }
 
 impl ProfileEditorState {
@@ -339,6 +357,10 @@ impl ProfileEditorState {
             active_field: None,
             advanced_request_parameters_expanded: false,
             advanced_json_validation_message: None,
+            local_engine_status: None,
+            local_model_settings: None,
+            local_model_path_input: String::new(),
+            local_model_path_dirty: false,
         }
     }
 
@@ -351,6 +373,10 @@ impl ProfileEditorState {
             active_field: None,
             advanced_request_parameters_expanded: advanced_expanded,
             advanced_json_validation_message: None,
+            local_engine_status: None,
+            local_model_settings: None,
+            local_model_path_input: String::new(),
+            local_model_path_dirty: false,
         }
     }
 }
@@ -464,6 +490,92 @@ impl ProfileEditorView {
 
     fn request_api_key_refresh(&self) {
         self.emit(&UserEvent::RefreshApiKeys);
+    }
+
+    /// Sync the Local-engine section with the current API type: capture the
+    /// engine status snapshot and request the shared local-model settings.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-006 REQ-LM-007
+    pub(super) fn refresh_local_engine_state(&mut self) {
+        if self.state.data.api_type != ApiType::Local {
+            self.state.local_engine_status = None;
+            return;
+        }
+        // One mutex snapshot per entry mirrors the chat dropdown's approach:
+        // cosmetic staleness while the editor stays open is acceptable, and
+        // the GPUI thread never polls.
+        self.state.local_engine_status = Some(crate::llm::local::status());
+        self.emit(&UserEvent::LoadLocalModelSettings);
+    }
+
+    /// Open a file picker and push the picked GGUF into the shared engine
+    /// settings (same store Settings → Local Model writes).
+    #[allow(clippy::unused_self)]
+    pub(super) fn choose_local_model_file(&mut self, cx: &mut gpui::Context<Self>) {
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Select Model File (GGUF)".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(path) = paths.first() {
+                    let path_str = path.to_string_lossy().to_string();
+                    cx.update(|cx| {
+                        this.update(cx, |view, cx| {
+                            view.adopt_chosen_local_model_path(path_str);
+                            cx.notify();
+                        })
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Record a picked GGUF path and persist it onto the shared settings.
+    ///
+    /// Only `model_path` is written; every other engine knob is copied from
+    /// the loaded snapshot untouched, so picking a file can never reset the
+    /// context size or GPU layers configured in Settings → Local Model.
+    pub fn adopt_chosen_local_model_path(&mut self, path: String) {
+        self.state.local_model_path_input = path;
+        self.state.local_model_path_dirty = true;
+        match self.state.local_model_settings.clone() {
+            Some(snapshot) => self.save_chosen_local_model_path(snapshot),
+            // The snapshot has not arrived yet; keep the pick dirty and ask
+            // for it. `apply_local_model_settings` completes the save.
+            None => self.emit(&UserEvent::LoadLocalModelSettings),
+        }
+    }
+
+    /// Send the picked path to the shared store, leaving the rest of the
+    /// snapshot as loaded.
+    fn save_chosen_local_model_path(&mut self, mut snapshot: LocalModelSettings) {
+        snapshot.model_path = std::path::PathBuf::from(&self.state.local_model_path_input);
+        self.state.local_model_path_dirty = false;
+        self.emit(&UserEvent::SaveLocalModelSettings { settings: snapshot });
+    }
+
+    /// Re-sync the LOCAL ENGINE (shared) section from a settings snapshot.
+    ///
+    /// A path the user already picked wins over the arriving snapshot — a
+    /// slow settings load must never drop a just-chosen file — and is pushed
+    /// to the store immediately.
+    pub fn apply_local_model_settings(&mut self, settings: LocalModelSettings) {
+        self.state.local_model_settings = Some(settings.clone());
+        if self.state.local_model_path_dirty {
+            let picked = self.state.local_model_path_input.trim().to_string();
+            if !picked.is_empty() {
+                self.save_chosen_local_model_path(settings);
+                return;
+            }
+            self.state.local_model_path_dirty = false;
+        }
+        self.state.local_model_path_input = settings.model_path.display().to_string();
     }
 
     /// Set profile data from presenter
@@ -854,6 +966,11 @@ impl ProfileEditorView {
                 self.state.data.reasoning_effort = effort_from_stored(&reasoning_effort);
                 self.state.data.system_prompt = system_prompt;
                 self.state.active_field = None;
+                self.refresh_local_engine_state();
+            }
+
+            ViewCommand::LocalModelSettingsLoaded { settings } => {
+                self.apply_local_model_settings(settings);
             }
 
             ViewCommand::ApiKeysListed { keys } => {

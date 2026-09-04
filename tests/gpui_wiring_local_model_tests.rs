@@ -270,3 +270,64 @@ async fn unload_emits_unload_event(_cx: &mut TestAppContext) {
         .expect("UnloadLocalModel must traverse the bridge");
     assert_eq!(event, UserEvent::UnloadLocalModel);
 }
+
+// ── one-click local profile (PLAN-20260903-LOCALMODEL.P05, REQ-LM-002) ────
+
+fn profile_summary(id: uuid::Uuid, name: &str, provider: &str) -> ViewCommand {
+    ViewCommand::ShowSettings {
+        profiles: vec![personal_agent::presentation::view_command::ProfileSummary {
+            id,
+            name: name.to_string(),
+            provider_id: provider.to_string(),
+            model_id: "some-model".to_string(),
+            is_default: true,
+        }],
+        selected_profile_id: Some(id),
+    }
+}
+
+/// @plan:PLAN-20260903-LOCALMODEL.P05
+/// @requirement:REQ-LM-002
+#[gpui::test]
+async fn create_button_tracks_whether_a_local_profile_exists(cx: &mut TestAppContext) {
+    let view = cx.new(SettingsView::new);
+    view.update(cx, |view, cx| {
+        assert!(
+            !view.has_local_profile(),
+            "a fresh view has no local profile"
+        );
+
+        // An existing install with a remote-only profile list still shows
+        // the button.
+        view.handle_command(
+            profile_summary(uuid::Uuid::new_v4(), "Remote", "anthropic"),
+            cx,
+        );
+        assert!(!view.has_local_profile());
+
+        // Once any profile routes to the local engine, the button's reason
+        // to exist is gone.
+        view.handle_command(
+            profile_summary(uuid::Uuid::new_v4(), "Granite (local)", "local"),
+            cx,
+        );
+        assert!(view.has_local_profile());
+    });
+}
+
+/// @plan:PLAN-20260903-LOCALMODEL.P05
+/// @requirement:REQ-LM-002
+#[gpui::test]
+async fn create_button_emits_create_local_profile(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(SettingsView::new);
+    view.update(cx, |view, _cx| {
+        view.set_bridge(bridge);
+        assert!(!view.has_local_profile(), "precondition for the button");
+        view.emit_create_local_profile();
+    });
+    let event = user_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("the create button must emit CreateLocalProfile");
+    assert_eq!(event, UserEvent::CreateLocalProfile);
+}

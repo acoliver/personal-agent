@@ -386,8 +386,37 @@ impl SettingsPresenter {
                 Self::on_edit_profile(profile_service, view_tx, *id).await;
                 true
             }
+            UserEvent::CreateLocalProfile => {
+                Self::on_create_local_profile(profile_service, app_settings_service, view_tx).await;
+                true
+            }
             _ => false,
         }
+    }
+
+    /// One-click local profile for existing installs (REQ-LM-002): create
+    /// the seed profile through the shared helper, make it the default, and
+    /// refresh the profile snapshots so the create button disappears.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002 REQ-LM-006
+    async fn on_create_local_profile(
+        profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
+        if let Err(error) =
+            crate::services::profile_impl::ensure_local_seed_profile(profile_service.as_ref()).await
+        {
+            tracing::warn!("Failed to create the local profile: {error}");
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "Local Model".to_string(),
+                message: format!("Failed to create the local profile: {error}"),
+                severity: super::view_command::ErrorSeverity::Warning,
+            });
+            return;
+        }
+        Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
     }
 
     async fn handle_refresh_user_event(

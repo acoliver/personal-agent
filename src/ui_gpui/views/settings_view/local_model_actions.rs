@@ -21,6 +21,26 @@ impl SettingsView {
         self.emit(&UserEvent::UnloadLocalModel);
     }
 
+    /// Ask the presenter to create the one-click local profile and make it
+    /// the default (existing installs, REQ-LM-002).
+    pub fn emit_create_local_profile(&self) {
+        self.emit(&UserEvent::CreateLocalProfile);
+    }
+
+    /// Whether any profile routes to the local engine. Gates the one-click
+    /// create button; profiles arrive via the standard `ShowSettings` /
+    /// `ChatProfilesUpdated` snapshots.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002
+    #[must_use]
+    pub fn has_local_profile(&self) -> bool {
+        self.state
+            .profiles
+            .iter()
+            .any(|profile| profile.provider.trim() == crate::llm::local::LOCAL_PROVIDER_ID)
+    }
+
     /// Flip the idle-unload toggle; persists only on Save.
     pub(super) const fn set_local_model_idle_unload(&mut self, enabled: bool) {
         self.state.local_model_idle_unload = enabled;

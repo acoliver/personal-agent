@@ -27,12 +27,64 @@ impl SettingsView {
             .flex_1()
             .gap(px(16.0))
             .overflow_y_scroll()
+            // One-click local profile for installs that predate seeding
+            // (REQ-LM-002); hidden once a local profile exists.
+            .when(!self.has_local_profile(), |panel| {
+                panel.child(self.render_create_local_profile_row(cx))
+            })
             .child(self.render_local_model_status_card(cx))
             .child(self.render_local_model_path_field(cx))
             .child(self.render_local_model_numbers_row(cx))
             .child(self.render_local_model_idle_toggle(cx))
             .child(self.render_local_model_idle_minutes_field(cx))
             .child(self.render_local_model_save_row(cx))
+    }
+
+    /// "Create 'Granite (local)' profile" row: creates the seeded local
+    /// profile via the `ProfileService` and makes it the default, mirroring
+    /// fresh-install behavior.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002
+    fn render_create_local_profile_row(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .p(px(12.0))
+            .bg(Theme::bg_darker())
+            .border_1()
+            .border_color(Theme::border())
+            .rounded(px(6.0))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::text_secondary())
+                    .child(
+                        "No local profile yet. One click sets up the built-in model and makes \
+                         it the default.",
+                    ),
+            )
+            .child(
+                div()
+                    .id("btn-create-local-profile")
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::accent_hover()))
+                    .bg(Theme::selection_bg())
+                    .text_size(px(Theme::font_size_ui()))
+                    .text_color(Theme::selection_fg())
+                    .child("Create \u{201c}Granite (local)\u{201d} profile")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.emit_create_local_profile();
+                            cx.notify();
+                        }),
+                    ),
+            )
     }
 
     /// Live engine state card: colored dot, headline, detail line, unload.

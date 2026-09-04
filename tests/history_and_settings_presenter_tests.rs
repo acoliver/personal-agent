@@ -21,6 +21,7 @@ use personal_agent::presentation::{
     settings_presenter::SettingsPresenter,
     view_command::{ErrorSeverity, McpStatus, ProfileSummary, ViewCommand, ViewId},
 };
+use personal_agent::services::profile_impl::{ProfileServiceImpl, SEED_PROFILE_NAME};
 use personal_agent::services::{
     AppSettingsService, BackupService, ConversationService, ProfileService, ServiceError,
 };
@@ -2472,5 +2473,140 @@ mod settings_presenter_tests {
             }
             other => panic!("expected ToolApprovalPolicyUpdated, got {other:?}"),
         }
+    }
+
+    // ── one-click local profile (PLAN-20260903-LOCALMODEL.P05, REQ-LM-002) ──
+
+    /// Settings presenter over the REAL `ProfileServiceImpl` (the seeding
+    /// logic under test lives there), backed by a temp profiles dir.
+    async fn setup_presenter_with_real_profiles(
+        dir: &tempfile::TempDir,
+    ) -> (
+        SettingsPresenter,
+        broadcast::Sender<AppEvent>,
+        broadcast::Receiver<ViewCommand>,
+        Arc<ProfileServiceImpl>,
+    ) {
+        let profile_service =
+            Arc::new(ProfileServiceImpl::new(dir.path().to_path_buf()).expect("profile service"));
+        let app_settings_service = MockAppSettingsService::new(None);
+        let (event_tx, _) = broadcast::channel(64);
+        let (view_tx, mut view_rx) = broadcast::channel(128);
+        let skills_service = Arc::new(
+            personal_agent::services::SkillsServiceImpl::new_for_tests(
+                Arc::new(app_settings_service.clone()),
+                std::path::PathBuf::from("/tmp/nonexistent-bundled-skills"),
+                std::env::temp_dir().join(format!(
+                    "settings-local-profile-test-skills-{}",
+                    uuid::Uuid::new_v4()
+                )),
+            )
+            .expect("skills service should initialize for tests"),
+        );
+        let mut presenter = SettingsPresenter::new(
+            profile_service.clone() as Arc<dyn ProfileService>,
+            Arc::new(app_settings_service),
+            Arc::new(MockBackupService),
+            skills_service,
+            &event_tx,
+            view_tx,
+        );
+        presenter.start().await.expect("start should succeed");
+        // Startup commands are queued synchronously inside `start()`; drain
+        // them so tests below only observe post-event snapshots.
+        drain_startup(&mut view_rx).await;
+        (presenter, event_tx, view_rx, profile_service)
+    }
+
+    async fn find_chat_profiles_updated(
+        view_rx: &mut broadcast::Receiver<ViewCommand>,
+    ) -> Vec<ProfileSummary> {
+        for _ in 0..16 {
+            match timeout(RECV_TIMEOUT, view_rx.recv()).await {
+                Ok(Ok(ViewCommand::ChatProfilesUpdated { profiles, .. })) => return profiles,
+                Ok(Ok(_) | Err(broadcast::error::RecvError::Lagged(_))) => {}
+                Ok(Err(broadcast::error::RecvError::Closed)) | Err(_) => break,
+            }
+        }
+        panic!("no ChatProfilesUpdated arrived");
+    }
+
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002
+    #[tokio::test]
+    async fn create_local_profile_seeds_granite_and_makes_it_default() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (_presenter, event_tx, mut view_rx, profile_service) =
+            setup_presenter_with_real_profiles(&dir).await;
+
+        // Existing install: remote profiles only, nothing local.
+        profile_service
+            .create(
+                "Remote".to_string(),
+                "anthropic".to_string(),
+                "claude-sonnet-4".to_string(),
+                None,
+                AuthConfig::Keychain {
+                    label: "k".to_string(),
+                },
+                ModelParameters::default(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        send_settings_event(&event_tx, AppEvent::User(UserEvent::CreateLocalProfile)).await;
+
+        let profiles = find_chat_profiles_updated(&mut view_rx).await;
+        let local = profiles
+            .iter()
+            .find(|profile| profile.provider_id == "local")
+            .expect("the seeded local profile must appear in the snapshot");
+        assert_eq!(local.name, SEED_PROFILE_NAME);
+        assert!(
+            local.is_default,
+            "the one-click profile becomes the default"
+        );
+
+        let default_profile = profile_service
+            .get_default()
+            .await
+            .unwrap()
+            .expect("default");
+        assert_eq!(default_profile.provider_id, "local");
+        assert_eq!(default_profile.base_url, "");
+        assert_eq!(default_profile.auth, AuthConfig::None);
+    }
+
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002
+    #[tokio::test]
+    async fn create_local_profile_is_a_no_op_when_one_already_exists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (_presenter, event_tx, mut view_rx, profile_service) =
+            setup_presenter_with_real_profiles(&dir).await;
+
+        profile_service
+            .create(
+                "Already local".to_string(),
+                "local".to_string(),
+                "granite-4.2-3b".to_string(),
+                None,
+                AuthConfig::None,
+                ModelParameters::default(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        send_settings_event(&event_tx, AppEvent::User(UserEvent::CreateLocalProfile)).await;
+
+        let profiles = find_chat_profiles_updated(&mut view_rx).await;
+        assert_eq!(
+            profiles.iter().filter(|p| p.provider_id == "local").count(),
+            1,
+            "no duplicate local profile may be created"
+        );
+        assert_eq!(profile_service.list().await.unwrap().len(), 1);
     }
 }
