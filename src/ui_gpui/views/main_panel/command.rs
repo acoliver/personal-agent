@@ -69,7 +69,8 @@ impl MainPanel {
             // ── settings-only forwarding ─────────────────────────────
             ExportDirectoryLoaded { .. }
             | SkillsLoaded { .. }
-            | ToolApprovalPolicyUpdated { .. } => self.forward_to_settings(cmd, cx),
+            | ToolApprovalPolicyUpdated { .. }
+            | LocalModelStatusUpdated { .. } => self.forward_to_settings(cmd, cx),
 
             // The editor needs these too: without them its account row can
             // only offer a fresh sign-in, even for an account already held.
@@ -123,9 +124,28 @@ impl MainPanel {
 
             DatabaseRestored => self.handle_database_restored(cx),
 
+            // ── local model (settings panel + the editor's shared section) ──
+            LocalModelSettingsLoaded { .. } => self.forward_to_settings_and_editor(cmd, cx),
+
             other => {
                 tracing::debug!("MainPanel: command {:?} not forwarded to child view", other);
             }
+        }
+    }
+
+    /// Route the local-model settings snapshot to everything that displays
+    /// it: the Settings → Local Model panel and the profile editor's
+    /// LOCAL ENGINE (shared) section.
+    fn forward_to_settings_and_editor(&self, cmd: ViewCommand, cx: &mut gpui::Context<Self>) {
+        if let Some(ref settings) = self.settings_view {
+            settings.update(cx, |view, cx| {
+                view.handle_command(cmd.clone(), cx);
+            });
+        }
+        if let Some(ref editor) = self.profile_editor_view {
+            editor.update(cx, |view, cx| {
+                view.handle_command(cmd, cx);
+            });
         }
     }
 

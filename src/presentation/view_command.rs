@@ -434,6 +434,25 @@ pub enum ViewCommand {
     /// Database was restored - refresh all data
     DatabaseRestored,
 
+    // ===== Local Model Commands =====
+    /// Persisted local-model settings were loaded (or saved); the settings
+    /// panel re-syncs its edit buffers from this snapshot.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P04
+    /// @requirement:REQ-LM-006
+    LocalModelSettingsLoaded {
+        settings: crate::services::local_model_settings::LocalModelSettings,
+    },
+
+    /// Engine status snapshot for the Local Model status card; pushed once on
+    /// panel entry and then polled while the panel is visible.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P04
+    /// @requirement:REQ-LM-006
+    LocalModelStatusUpdated {
+        status: crate::llm::local::engine::EngineStatus,
+    },
+
     /// Clear the active conversation (e.g., after restore if conversation no longer exists)
     ClearActiveConversation,
 

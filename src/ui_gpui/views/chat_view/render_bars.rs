@@ -1,9 +1,13 @@
 //! Chat view bar and dropdown render subtrees above the chat area.
 //! Contains `render_top_bar`, `render_title_bar`, `render_conversation_dropdown`, and `render_profile_dropdown`.
 //! @plan PLAN-20260325-ISSUE11B.P02
+// @plan:PLAN-20260903-LOCALMODEL.P05
+// @requirement:REQ-LM-005
 use super::state::StreamingState;
 use super::ChatView;
 use crate::events::types::UserEvent;
+use crate::llm::local::engine::EngineStatus;
+use crate::llm::local::LOCAL_PROVIDER_ID;
 use crate::presentation::view_command::{AppMode, ConversationSummary, ProfileSummary};
 use crate::ui_gpui::components::copy_icons::copy_icon;
 use crate::ui_gpui::theme::Theme;
@@ -334,6 +338,10 @@ impl ChatView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _, _window, _cx| {
+                    // Quiesce the local-model engine while the process is
+                    // still fully alive; llama.cpp must not be live during
+                    // C++ static teardown or exit faults.
+                    crate::llm::local::shutdown_local();
                     std::process::exit(0);
                 }),
             )
@@ -892,11 +900,21 @@ impl ChatView {
                             .iter()
                             .enumerate()
                             .map(|(index, profile)| {
+                                // Only local rows carry the engine dot; remote
+                                // profiles have no engine state to reflect.
+                                let engine_status = (profile.provider_id == LOCAL_PROVIDER_ID)
+                                    .then(|| {
+                                        self.state
+                                            .profile_dropdown_engine_status
+                                            .clone()
+                                            .unwrap_or(EngineStatus::NotLoaded)
+                                    });
                                 Self::render_profile_item(
                                     index,
                                     profile,
                                     self.state.selected_profile_id,
                                     self.state.profile_dropdown_index,
+                                    engine_status.as_ref(),
                                     cx,
                                 )
                             }),
@@ -910,6 +928,7 @@ impl ChatView {
         profile: &ProfileSummary,
         selected_id: Option<uuid::Uuid>,
         highlighted_index: usize,
+        engine_status: Option<&EngineStatus>,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let is_selected = selected_id == Some(profile.id);
@@ -946,9 +965,29 @@ impl ChatView {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_size(px(Theme::font_size_ui())).child(label))
                     .child(
                         div()
+                            .flex()
+                            .min_w(px(0.0))
+                            .flex_1()
+                            .items_center()
+                            .gap(px(6.0))
+                            // `children` skips the gap when the dot is absent,
+                            // so non-local rows keep their old layout.
+                            .children(engine_status.map(engine_status_dot))
+                            .child(
+                                div()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis_start()
+                                    .text_size(px(Theme::font_size_ui()))
+                                    .child(label),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
                             .text_size(px(Theme::font_size_ui()))
                             .text_color(Theme::text_secondary())
                             .child(model_id),
@@ -971,6 +1010,73 @@ impl ChatView {
             36.0
         } else {
             0.0
+        }
+    }
+}
+
+/// The small engine-status dot on `provider == "local"` dropdown rows
+/// (mockup section 2): gray not-resident, amber loading, green resident,
+/// red load failure.
+fn engine_status_dot(status: &EngineStatus) -> gpui::AnyElement {
+    div()
+        .size(px(8.0))
+        .rounded(px(4.0))
+        .flex_shrink_0()
+        .bg(engine_status_dot_color(status))
+        .into_any_element()
+}
+
+/// Dot palette per engine state; mirrors the settings status card's colors.
+fn engine_status_dot_color(status: &EngineStatus) -> gpui::Hsla {
+    match status {
+        EngineStatus::NotLoaded => Theme::text_muted(),
+        EngineStatus::Loading => Theme::warning(),
+        EngineStatus::Loaded { .. } => Theme::accent(),
+        EngineStatus::Error { .. } => Theme::error(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the dot's state→token pairing (gray not-resident, amber loading,
+    /// green resident, red failure). Headless tests resolve several tokens to
+    /// the same fallback color, so token *identity* is asserted, not visual
+    /// distinctness — the mac-native palette keeps them visibly apart.
+    #[test]
+    fn engine_states_map_to_the_intended_theme_tokens() {
+        let cases = [
+            (EngineStatus::NotLoaded, Theme::text_muted()),
+            (EngineStatus::Loading, Theme::warning()),
+            (
+                EngineStatus::Loaded {
+                    layers: 41,
+                    total_layers: 41,
+                    n_ctx: 8192,
+                    last_tok_s: 0.0,
+                },
+                Theme::accent(),
+            ),
+            (
+                EngineStatus::Error {
+                    message: "boom".to_string(),
+                },
+                Theme::error(),
+            ),
+        ];
+        for (status, expected) in cases {
+            let got = engine_status_dot_color(&status);
+            // Hsla has no PartialEq and exact float equality trips
+            // clippy::float_cmp, so compare components with a tiny tolerance.
+            let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON * 4.0;
+            assert!(
+                same(got.h, expected.h)
+                    && same(got.s, expected.s)
+                    && same(got.l, expected.l)
+                    && same(got.a, expected.a),
+                "{status:?} must use its intended dot token"
+            );
         }
     }
 }

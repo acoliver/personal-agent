@@ -180,3 +180,57 @@ async fn build_model_openai_uses_quirks_path() {
 
     let _ = crate::services::secure_store::api_keys::delete("_test_build_openai");
 }
+
+fn local_profile() -> ModelProfile {
+    ModelProfile::new(
+        "Granite (local)".to_string(),
+        crate::llm::local::LOCAL_PROVIDER_ID.to_string(),
+        "granite-4.2-3b".to_string(),
+        String::new(),
+        AuthConfig::None,
+    )
+}
+
+#[test]
+fn local_profile_resolves_to_the_local_provider() {
+    // Regression: effective_serdes_provider's fallback launders unknown ids
+    // into "openai", so a local profile went to api.openai.com and 401'd.
+    let client = LlmClient::from_profile(&local_profile()).expect("local profile needs no key");
+
+    assert_eq!(
+        client.get_serdes_provider(),
+        crate::llm::local::LOCAL_PROVIDER_ID
+    );
+}
+
+#[tokio::test]
+async fn local_profile_request_path_builds_the_in_process_engine_model() {
+    // Drives the full request-path seam (base_url_override + provider
+    // resolution + build_model) without touching the network or the GGUF:
+    // building the local model only wraps the engine handle. `system()` is
+    // the Model-trait identity, "openai" there means the profile was
+    // laundered onto an HTTP transport again.
+    let profile = local_profile();
+    let client = LlmClient::from_profile(&profile).expect("client");
+
+    let (model, _params) = client
+        .build_model_and_params(&[])
+        .await
+        .expect("local profile builds the engine model");
+
+    assert_eq!(model.system(), crate::llm::local::LOCAL_PROVIDER_ID);
+    assert_eq!(model.name(), profile.model_id);
+}
+
+#[test]
+fn conversation_title_client_construction_keeps_local_routing() {
+    // `LlmConversationTitleGenerator` builds its client exactly like this
+    // before asking for a title, so title generation rides the same
+    // provider resolution as chat.
+    let client = LlmClient::from_profile(&local_profile()).expect("client");
+
+    assert_eq!(
+        client.get_serdes_provider(),
+        crate::llm::local::LOCAL_PROVIDER_ID
+    );
+}

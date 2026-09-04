@@ -74,6 +74,11 @@ aes-gcm = "0.10"
 sha2 = "0.10"
 rust-embed = "8"
 base64 = "0.22"
+# Local in-process engine (REQ-LM-003): llama.cpp bindings. `metal` selects the
+# Metal offload on macOS arm64; on other targets the crate falls back to CPU.
+# encoding_rs is required by `token_to_piece`, which takes a `&mut` decoder.
+llama-cpp-2 = { version = "0.1.156", features = ["metal"] }
+encoding_rs = "0.8"
 
 
 

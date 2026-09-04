@@ -9,6 +9,7 @@
 //! @plan PLAN-20260219-NEXTGPUIREMEDIATE.P03
 //! @requirement REQ-WIRE-006
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tokio::sync::broadcast;
@@ -61,6 +62,11 @@ pub struct SettingsPresenter {
     /// implementation: `SMAppService` on macOS, an `Unsupported` stub
     /// elsewhere. Tests inject a fake via `with_login_item_service`.
     login_item_service: Arc<dyn LoginItemService>,
+
+    /// Generation counter that arbitrates the local-model status poll: each
+    /// panel entry bumps it, which both re-arms polling and terminates the
+    /// previous poll task.
+    local_model_poll_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl SettingsPresenter {
@@ -87,6 +93,7 @@ impl SettingsPresenter {
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
             login_item_service: Arc::from(default_login_item_service()),
+            local_model_poll_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -134,6 +141,7 @@ impl SettingsPresenter {
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
             login_item_service: Arc::from(default_login_item_service()),
+            local_model_poll_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -181,6 +189,7 @@ impl SettingsPresenter {
         let view_tx = self.view_tx.clone();
         let backup_service = self.backup_service.clone();
         let login_item_service = self.login_item_service.clone();
+        let local_model_poll_generation = self.local_model_poll_generation.clone();
 
         let config_path = self.config_path_override.clone();
 
@@ -194,6 +203,7 @@ impl SettingsPresenter {
                             &backup_service,
                             &skills_service,
                             &login_item_service,
+                            &local_model_poll_generation,
                             &view_tx,
                             event,
                             config_path.as_deref(),
@@ -247,6 +257,7 @@ impl SettingsPresenter {
         backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
         login_item_service: &Arc<dyn LoginItemService>,
+        local_model_poll_generation: &Arc<std::sync::atomic::AtomicU64>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
         config_path: Option<&std::path::Path>,
@@ -259,6 +270,7 @@ impl SettingsPresenter {
                     backup_service,
                     skills_service,
                     login_item_service,
+                    local_model_poll_generation,
                     view_tx,
                     user_evt,
                     config_path,
@@ -291,6 +303,7 @@ impl SettingsPresenter {
         backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
         login_item_service: &Arc<dyn LoginItemService>,
+        local_model_poll_generation: &Arc<std::sync::atomic::AtomicU64>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
         config_path: Option<&std::path::Path>,
@@ -340,6 +353,17 @@ impl SettingsPresenter {
             return;
         }
 
+        if Self::handle_local_model_user_event(
+            app_settings_service,
+            view_tx,
+            &event,
+            local_model_poll_generation,
+        )
+        .await
+        {
+            return;
+        }
+
         Self::handle_appearance_user_event(app_settings_service, view_tx, &event).await;
     }
 
@@ -362,8 +386,37 @@ impl SettingsPresenter {
                 Self::on_edit_profile(profile_service, view_tx, *id).await;
                 true
             }
+            UserEvent::CreateLocalProfile => {
+                Self::on_create_local_profile(profile_service, app_settings_service, view_tx).await;
+                true
+            }
             _ => false,
         }
+    }
+
+    /// One-click local profile for existing installs (REQ-LM-002): create
+    /// the seed profile through the shared helper, make it the default, and
+    /// refresh the profile snapshots so the create button disappears.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002 REQ-LM-006
+    async fn on_create_local_profile(
+        profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
+        if let Err(error) =
+            crate::services::profile_impl::ensure_local_seed_profile(profile_service.as_ref()).await
+        {
+            tracing::warn!("Failed to create the local profile: {error}");
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "Local Model".to_string(),
+                message: format!("Failed to create the local profile: {error}"),
+                severity: super::view_command::ErrorSeverity::Warning,
+            });
+            return;
+        }
+        Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
     }
 
     async fn handle_refresh_user_event(
@@ -939,6 +992,99 @@ impl SettingsPresenter {
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "Skills".to_string(),
                     message: format!("Failed to install skill from '{url}': {error}"),
+                    severity: super::view_command::ErrorSeverity::Warning,
+                });
+            }
+        }
+    }
+
+    /// Handle Local Model panel events (REQ-LM-006): settings load + status
+    /// poll on entry, save, and unload.
+    async fn handle_local_model_user_event(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        event: &UserEvent,
+        poll_generation: &Arc<std::sync::atomic::AtomicU64>,
+    ) -> bool {
+        match event {
+            UserEvent::LoadLocalModelSettings => {
+                Self::on_load_local_model_settings(app_settings_service, view_tx, poll_generation)
+                    .await;
+                true
+            }
+            UserEvent::SaveLocalModelSettings { settings } => {
+                Self::on_save_local_model_settings(app_settings_service, view_tx, settings.clone())
+                    .await;
+                true
+            }
+            UserEvent::UnloadLocalModel => {
+                crate::llm::local::unload_local();
+                let _ = view_tx.send(ViewCommand::LocalModelStatusUpdated {
+                    status: crate::llm::local::status(),
+                });
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Load the persisted local-model settings, push them to the panel, and
+    /// (re)arm the engine-status poll. Each panel entry bumps the poll
+    /// generation, terminating the previous poll task, so at most one poll
+    /// loop runs at a time.
+    async fn on_load_local_model_settings(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        poll_generation: &Arc<std::sync::atomic::AtomicU64>,
+    ) {
+        let settings = crate::services::local_model_settings::LocalModelSettings::load(
+            app_settings_service.as_ref(),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!("Failed to load local model settings: {error}; using defaults");
+            crate::services::local_model_settings::LocalModelSettings::default()
+        });
+        let _ = view_tx.send(ViewCommand::LocalModelSettingsLoaded { settings });
+
+        let generation = poll_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let poll_generation = Arc::clone(poll_generation);
+        let view_tx = view_tx.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
+            loop {
+                // The first tick fires immediately, which covers the initial
+                // status push for the freshly-opened panel.
+                ticker.tick().await;
+                if poll_generation.load(Ordering::Relaxed) != generation {
+                    break;
+                }
+                let _ = view_tx.send(ViewCommand::LocalModelStatusUpdated {
+                    status: crate::llm::local::status(),
+                });
+            }
+        });
+    }
+
+    /// Persist edited local-model settings and echo the snapshot back so the
+    /// panel re-syncs; failures surface through `ShowError`.
+    async fn on_save_local_model_settings(
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+        settings: crate::services::local_model_settings::LocalModelSettings,
+    ) {
+        match settings.save(app_settings_service.as_ref()).await {
+            Ok(()) => {
+                let _ = view_tx.send(ViewCommand::LocalModelSettingsLoaded { settings });
+                let _ = view_tx.send(ViewCommand::ShowNotification {
+                    message: "Local model settings saved".to_string(),
+                });
+            }
+            Err(error) => {
+                tracing::warn!("Failed to save local model settings: {error}");
+                let _ = view_tx.send(ViewCommand::ShowError {
+                    title: "Local Model".to_string(),
+                    message: format!("Failed to save settings: {error}"),
                     severity: super::view_command::ErrorSeverity::Warning,
                 });
             }

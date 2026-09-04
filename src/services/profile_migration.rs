@@ -54,7 +54,13 @@ where
 {
     let ephemeral = obj.get("ephemeralSettings");
     ModelProfile {
-        id: legacy_profile_id_for_path(path),
+        // Preserve the id stored in the file when present, so later edits
+        // rewrite the same file instead of orphaning the stale original.
+        id: obj
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|stored| Uuid::parse_str(stored).ok())
+            .unwrap_or_else(|| legacy_profile_id_for_path(path)),
         name: modern_legacy_name(obj, path),
         provider_id: modern_legacy_provider_id(obj),
         model_id: modern_legacy_model_id(obj),
@@ -293,6 +299,28 @@ mod tests {
         assert!(parsed.parameters.enable_thinking);
         assert!(parsed.parameters.show_thinking);
         assert_eq!(parsed.parameters.thinking_budget, Some(512));
+    }
+
+    #[test]
+    fn parse_legacy_profile_preserves_stored_id_from_modern_payload() {
+        let stored_id = "94e19798-a440-4175-ba8e-94b8b397009b";
+        let path = Path::new("/tmp/stored-id.json");
+        let parsed = parse_legacy_profile(
+            &json!({
+                "id": stored_id,
+                "name": "old local",
+                "provider_id": "local",
+                "model_id": "granite-4.2-3b",
+                "base_url": "https://api.openai.com/v1"
+            }),
+            path,
+            legacy_id_for_path,
+            parse_auth,
+            parse_parameters,
+        )
+        .expect("modern payload with an id should parse");
+
+        assert_eq!(parsed.id.to_string(), stored_id);
     }
 
     #[test]

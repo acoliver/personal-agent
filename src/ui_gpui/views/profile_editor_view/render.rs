@@ -1,6 +1,6 @@
 //! Render implementation for `ProfileEditorView`.
 
-use super::{ActiveField, ProfileEditorView};
+use super::{ActiveField, ApiType, ProfileEditorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
@@ -183,6 +183,9 @@ impl ProfileEditorView {
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_model_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let active = self.state.active_field == Some(ActiveField::Model);
+        // REQ-LM-007: the local model id is a free-text label; the registry
+        // browse flow has nothing to offer an in-process engine.
+        let is_local = self.state.data.api_type == super::ApiType::Local;
 
         div()
             .flex()
@@ -198,7 +201,11 @@ impl ProfileEditorView {
                         Self::render_text_field(
                             "field-model-id",
                             &self.state.data.model_id,
-                            "e.g. claude-sonnet-4-20250514",
+                            if is_local {
+                                "e.g. granite-4.2-3b"
+                            } else {
+                                "e.g. claude-sonnet-4-20250514"
+                            },
                             active,
                         )
                         .flex_1()
@@ -210,42 +217,44 @@ impl ProfileEditorView {
                             }),
                         ),
                     )
-                    .child(
-                        div()
-                            .id("btn-browse-model")
-                            .w(px(60.0))
-                            .h(px(24.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(Theme::border())
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::bg_darker()))
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_secondary())
-                            .child("Browse")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
-                                    tracing::info!(
-                                        "Browse model clicked - navigating to ModelSelector \
-                                         (preserving edit state)"
-                                    );
-                                    // Do NOT reset state here — preserve `id`, `key_label`,
-                                    // `name`, `is_new`, `system_prompt`, etc. so that an
-                                    // edit-flow user can swap models without losing their
-                                    // work. `ModelSelected` will only update the model
-                                    // fields on return. See issue #182.
-                                    this.request_api_key_refresh();
-                                    crate::ui_gpui::navigation_channel().request_navigate(
+                    .when(!is_local, |row| {
+                        row.child(
+                            div()
+                                .id("btn-browse-model")
+                                .w(px(60.0))
+                                .h(px(24.0))
+                                .bg(Theme::bg_dark())
+                                .border_1()
+                                .border_color(Theme::border())
+                                .rounded(px(4.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(Theme::bg_darker()))
+                                .text_size(px(Theme::font_size_ui()))
+                                .text_color(Theme::text_secondary())
+                                .child("Browse")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _window, _cx| {
+                                        tracing::info!(
+                                            "Browse model clicked - navigating to ModelSelector \
+                                             (preserving edit state)"
+                                        );
+                                        // Do NOT reset state here — preserve `id`, `key_label`,
+                                        // `name`, `is_new`, `system_prompt`, etc. so that an
+                                        // edit-flow user can swap models without losing their
+                                        // work. `ModelSelected` will only update the model
+                                        // fields on return. See issue #182.
+                                        this.request_api_key_refresh();
+                                        crate::ui_gpui::navigation_channel().request_navigate(
                                         crate::presentation::view_command::ViewId::ModelSelector,
                                     );
-                                }),
-                            ),
-                    ),
+                                    }),
+                                ),
+                        )
+                    }),
             )
     }
 
@@ -280,6 +289,7 @@ impl ProfileEditorView {
                             this.state.data.api_type = this.state.data.api_type.next();
                             this.state.data.apply_api_type_change();
                             this.request_account_refresh();
+                            this.refresh_local_engine_state();
                             cx.notify();
                         }),
                     )
@@ -291,6 +301,11 @@ impl ProfileEditorView {
     /// Render base URL field
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_base_url_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // REQ-LM-007: a local profile has no endpoint, so offering an empty
+        // field would invite a value the engine ignores and Save would store.
+        if super::ApiType::Local == self.state.data.api_type {
+            return div().flex().flex_col();
+        }
         let active = self.state.active_field == Some(ActiveField::BaseUrl);
 
         div()
@@ -609,6 +624,20 @@ impl ProfileEditorView {
             )
     }
 
+    /// Read-only stand-in for the CONTEXT LIMIT field on local profiles.
+    fn render_context_limit_note() -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(Self::render_label("CONTEXT LIMIT"))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_small()))
+                    .text_color(Theme::text_secondary())
+                    .child("Set by the engine: Settings → Local Model → Context size"),
+            )
+    }
+
     /// Render show thinking checkbox
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_show_thinking_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -805,6 +834,103 @@ impl ProfileEditorView {
         }
     }
 
+    /// Local-engine section (mockup section 3): engine status dot, the
+    /// shared GGUF path with its picker, and the shared-store hint. Rendered
+    /// only for `ApiType::Local`; the settings panel stays the full editor
+    /// for the engine knobs.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-006 REQ-LM-007
+    fn render_local_engine_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        if self.state.data.api_type != super::ApiType::Local {
+            return div().flex().flex_col();
+        }
+        let status = self
+            .state
+            .local_engine_status
+            .clone()
+            .unwrap_or(crate::llm::local::engine::EngineStatus::NotLoaded);
+        let (phrase, dot) = local_engine_status_presentation(&status);
+
+        div()
+            .flex()
+            .flex_col()
+            .child(Self::render_section_divider("LOCAL ENGINE (shared)"))
+            .child(
+                div()
+                    .mt(px(8.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.0))
+                    // Live engine state, same tokens as the chat dropdown dot.
+                    .child(
+                        div().flex().items_center().gap(px(8.0)).child(dot).child(
+                            div()
+                                .text_size(px(Theme::font_size_ui()))
+                                .text_color(Theme::text_secondary())
+                                .child(phrase),
+                        ),
+                    )
+                    // Shared GGUF path: displayed read-only; the picker is
+                    // the writer, mirroring the settings panel.
+                    .child(
+                        div()
+                            .id("field-local-model-path")
+                            .w(px(292.0))
+                            .h(px(24.0))
+                            .px(px(8.0))
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .overflow_hidden()
+                            .text_size(px(Theme::font_size_mono()))
+                            .text_color(if self.state.local_model_path_input.is_empty() {
+                                Theme::text_muted()
+                            } else {
+                                Theme::text_primary()
+                            })
+                            .child(if self.state.local_model_path_input.is_empty() {
+                                "No model file chosen".to_string()
+                            } else {
+                                self.state.local_model_path_input.clone()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id("btn-choose-local-model")
+                            .w(px(60.0))
+                            .h(px(24.0))
+                            .bg(Theme::bg_dark())
+                            .border_1()
+                            .border_color(Theme::border())
+                            .rounded(px(4.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::bg_darker()))
+                            .text_size(px(Theme::font_size_ui()))
+                            .text_color(Theme::text_secondary())
+                            .child("Choose…")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _window, cx| {
+                                    this.choose_local_model_file(cx);
+                                }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(Theme::font_size_small()))
+                            .text_color(Theme::text_muted())
+                            .child("One model file serves every local profile"),
+                    ),
+            )
+    }
+
     /// Render the content area
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_content(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -829,6 +955,8 @@ impl ProfileEditorView {
             .child(self.render_base_url_section(cx))
             // API Key (keychain label dropdown + manage button)
             .child(self.render_key_label_section(cx))
+            // Local engine (status + shared GGUF path), Local variant only
+            .child(self.render_local_engine_section(cx))
             // Parameters section
             .child(Self::render_section_divider("PARAMETERS"))
             .child(
@@ -844,7 +972,16 @@ impl ProfileEditorView {
                         el.child(self.render_max_tokens_section(cx))
                     })
                     .child(self.render_advanced_request_parameters_section(cx))
-                    .child(self.render_context_limit_section(cx))
+                    // A local profile's context budget is the engine's
+                    // Context size (Settings → Local Model); showing an
+                    // editable per-profile value here would let the two
+                    // drift. @requirement:REQ-LM-001
+                    .when(self.state.data.api_type == ApiType::Local, |el| {
+                        el.child(Self::render_context_limit_note())
+                    })
+                    .when(self.state.data.api_type != ApiType::Local, |el| {
+                        el.child(self.render_context_limit_section(cx))
+                    })
                     .child(self.render_show_thinking_section(cx))
                     .child(self.render_reasoning_effort_section(cx))
                     .when(capabilities.thinking_budget, |el| {
@@ -854,6 +991,37 @@ impl ProfileEditorView {
             // System Prompt
             .child(self.render_system_prompt_section(cx))
     }
+}
+
+/// Status dot + short phrase for the local engine row, using the same
+/// state→token mapping as the chat dropdown's `engine_status_dot` (gray
+/// not-resident, amber loading, green resident, red failure).
+///
+/// @plan:PLAN-20260903-LOCALMODEL.P05
+/// @requirement:REQ-LM-006
+fn local_engine_status_presentation(
+    status: &crate::llm::local::engine::EngineStatus,
+) -> (String, gpui::AnyElement) {
+    use crate::llm::local::engine::EngineStatus;
+    let color = match status {
+        EngineStatus::NotLoaded => Theme::text_muted(),
+        EngineStatus::Loading => Theme::warning(),
+        EngineStatus::Loaded { .. } => Theme::accent(),
+        EngineStatus::Error { .. } => Theme::error(),
+    };
+    let phrase = match status {
+        EngineStatus::NotLoaded => "Engine not loaded".to_string(),
+        EngineStatus::Loading => "Engine loading…".to_string(),
+        EngineStatus::Loaded { .. } => "Engine loaded".to_string(),
+        EngineStatus::Error { message } => format!("Engine error: {message}"),
+    };
+    let dot = div()
+        .size(px(8.0))
+        .rounded(px(4.0))
+        .flex_shrink_0()
+        .bg(color)
+        .into_any_element();
+    (phrase, dot)
 }
 
 impl gpui::Focusable for ProfileEditorView {

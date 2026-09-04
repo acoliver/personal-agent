@@ -337,6 +337,38 @@ pub enum UserEvent {
     /// User requested to restore a database from a backup file (recovery flow)
     RestoreDatabaseBackup { backup_path: std::path::PathBuf },
 
+    // ===== Local Model Actions =====
+    /// User opened the Local Model settings panel; the presenter loads the
+    /// persisted settings and starts polling engine status while it is visible.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P04
+    /// @requirement:REQ-LM-006
+    LoadLocalModelSettings,
+
+    /// User saved the Local Model panel; the settings persist at the app level
+    /// via the P01 settings service.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P04
+    /// @requirement:REQ-LM-006
+    SaveLocalModelSettings {
+        settings: crate::services::local_model_settings::LocalModelSettings,
+    },
+
+    /// User clicked "Unload now" on the Local Model panel.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P04
+    /// @requirement:REQ-LM-006
+    UnloadLocalModel,
+
+    /// User asked for the one-click local profile in Settings → Local Model
+    /// (existing installs that predate seeding). The presenter creates the
+    /// "Granite (local)" profile via the shared seeding helper and makes it
+    /// the default, mirroring fresh-install behavior.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002 REQ-LM-006
+    CreateLocalProfile,
+
     /// User toggled "Launch at login" (macOS only).
     ///
     /// @plan PLAN-20260409-ISSUE177
