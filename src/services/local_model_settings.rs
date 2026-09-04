@@ -24,6 +24,14 @@ pub const LOCAL_MODEL_FILE: &str = "granite-4.2-3b-Q8_0.gguf";
 /// Environment override for the model path, read by [`default_model_path`].
 pub const ENV_MODEL_PATH: &str = "PA_LOCAL_GGUF";
 
+/// Upper bound for the context size, set to the Granite 4.2 3B training
+/// window (`n_ctx_train`).
+///
+/// A larger hand-edited value would decode past the positions the model was
+/// trained on; the engine clamps to the loaded GGUF's own limit on top of
+/// this.
+pub const MAX_N_CTX: u32 = 131_072;
+
 /// Engine-level configuration for the in-process local model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalModelSettings {
@@ -46,7 +54,7 @@ pub struct LocalModelSettings {
 }
 
 const fn default_n_ctx() -> u32 {
-    8192
+    32_768
 }
 
 const fn default_gpu_layers() -> u32 {
@@ -93,6 +101,14 @@ impl Default for LocalModelSettings {
 }
 
 impl LocalModelSettings {
+    /// Bounds `n_ctx` at [`MAX_N_CTX`]; applied on every load path so a
+    /// hand-edited settings file cannot exceed the trained window.
+    #[must_use]
+    pub fn clamped(mut self) -> Self {
+        self.n_ctx = self.n_ctx.min(MAX_N_CTX);
+        self
+    }
+
     /// Load the persisted settings, returning defaults when none were saved.
     ///
     /// # Errors
@@ -106,11 +122,13 @@ impl LocalModelSettings {
             .map_or_else(
                 || Ok(Self::default()),
                 |json| {
-                    serde_json::from_str(&json).map_err(|e| {
-                        ServiceError::Serialization(format!(
-                            "Failed to parse local model settings: {e}"
-                        ))
-                    })
+                    serde_json::from_str(&json)
+                        .map(|loaded: Self| loaded.clamped())
+                        .map_err(|e| {
+                            ServiceError::Serialization(format!(
+                                "Failed to parse local model settings: {e}"
+                            ))
+                        })
                 },
             )
     }
@@ -152,7 +170,7 @@ pub fn try_load_from_disk(path: &Path) -> Result<Option<LocalModelSettings>, Str
         .get(LOCAL_MODEL_SETTINGS_KEY)
         .map_or(Ok(None), |blob| {
             serde_json::from_value::<LocalModelSettings>(blob.clone())
-                .map(Some)
+                .map(|loaded| Some(loaded.clamped()))
                 .map_err(|e| format!("invalid local model settings in {}: {e}", path.display()))
         })
 }
@@ -164,12 +182,26 @@ mod tests {
     #[test]
     fn defaults_match_the_plan() {
         let settings = LocalModelSettings::default();
-        assert_eq!(settings.n_ctx, 8192);
+        assert_eq!(settings.n_ctx, 32_768);
         assert_eq!(settings.gpu_layers, 999);
         assert!(settings.idle_unload);
         assert_eq!(settings.idle_timeout_minutes, 5);
         assert!(settings
             .model_path
             .ends_with("PersonalAgent/models/granite-4.2-3b-Q8_0.gguf"));
+    }
+
+    #[test]
+    fn clamp_bounds_n_ctx_at_the_trained_window() {
+        let settings = LocalModelSettings {
+            n_ctx: 131_072,
+            ..LocalModelSettings::default()
+        };
+        assert_eq!(settings.clamped().n_ctx, 131_072);
+        let settings = LocalModelSettings {
+            n_ctx: 200_000,
+            ..LocalModelSettings::default()
+        };
+        assert_eq!(settings.clamped().n_ctx, 131_072);
     }
 }

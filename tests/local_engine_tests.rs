@@ -17,8 +17,11 @@ use personal_agent::llm::local::engine::{EngineHandle, EngineLoadSettings, Engin
 use personal_agent::llm::local::generator::{
     GenEvent, GenRequest, GenSampling, GenerateError, Generation, Generator,
 };
-use personal_agent::llm::local::llama_model::LocalLlamaModel;
+use personal_agent::llm::local::llama_model::{LocalLlamaModel, DEFAULT_MAX_TOKENS};
 use personal_agent::llm::local::toolcall::TOOL_CALL_CLOSE;
+use personal_agent::llm::local::{effective_context_window, effective_context_window_for};
+use personal_agent::models::profile::{AuthConfig, ModelProfile};
+use personal_agent::services::local_model_settings::LocalModelSettings;
 use serdes_ai::core::messages::{
     FinishReason, ModelRequest, ModelRequestPart, ModelResponsePart, ModelResponsePartDelta,
     ModelResponseStreamEvent, SystemPromptPart, UserContent, UserPromptPart,
@@ -553,4 +556,204 @@ async fn real_model_generates_and_idle_unloads() {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("engine never idle-unloaded: {:?}", engine.status());
+}
+
+// --- Effective context window (one budget, one pipeline) ---
+
+/// A local-provider profile with adjustable sampler `max_tokens`.
+fn local_profile(max_tokens: Option<u32>) -> ModelProfile {
+    let mut profile = ModelProfile::new(
+        "Granite (local)".to_string(),
+        "local".to_string(),
+        "granite-4.2-3b".to_string(),
+        String::new(),
+        AuthConfig::None,
+    );
+    profile.parameters.max_tokens = max_tokens;
+    profile
+}
+
+/// Remote profiles keep exactly the profile's configured window; engine
+/// settings must not touch them.
+// @requirement:REQ-LM-001
+#[test]
+fn remote_profiles_keep_their_configured_window() {
+    let mut profile = local_profile(None);
+    profile.provider_id = "anthropic".to_string();
+    profile.context_window_size = 200_000;
+    let engine = LocalModelSettings {
+        n_ctx: 8192,
+        ..LocalModelSettings::default()
+    };
+    assert_eq!(effective_context_window_for(&profile, &engine), 200_000);
+    assert_eq!(effective_context_window(&profile), 200_000);
+}
+
+/// Local: the engine window minus the output reserve, where the reserve is
+/// the larger of the profile's `max_tokens` and the engine default; never an
+/// underflow.
+// @requirement:REQ-LM-001
+#[test]
+fn local_profiles_budget_against_the_engine_window_minus_the_output_reserve() {
+    let engine_32k = LocalModelSettings {
+        n_ctx: 32_768,
+        ..LocalModelSettings::default()
+    };
+
+    // No profile max_tokens: reserve is the engine's output default.
+    assert_eq!(
+        effective_context_window_for(&local_profile(None), &engine_32k),
+        32_768 - DEFAULT_MAX_TOKENS
+    );
+
+    // A larger profile max_tokens raises the reserve.
+    assert_eq!(
+        effective_context_window_for(&local_profile(Some(16_384)), &engine_32k),
+        32_768 - 16_384
+    );
+
+    // A smaller profile max_tokens never lowers the reserve below default.
+    assert_eq!(
+        effective_context_window_for(&local_profile(Some(1024)), &engine_32k),
+        32_768 - DEFAULT_MAX_TOKENS
+    );
+
+    // Reserve larger than the window saturates at zero instead of panicking.
+    let tiny = LocalModelSettings {
+        n_ctx: 4096,
+        ..LocalModelSettings::default()
+    };
+    assert_eq!(
+        effective_context_window_for(&local_profile(Some(16_384)), &tiny),
+        0
+    );
+}
+
+/// The chat `compress()` budget: a long local-profile conversation must hit
+/// the shared pipeline under the engine-derived window, where the profile's
+/// 128k default would have waved it through (the original overflow).
+// @requirement:REQ-LM-001
+#[test]
+fn local_budget_routes_long_conversations_into_the_shared_pipeline() {
+    use personal_agent::compression::pipeline::CompressionPipeline;
+    use personal_agent::config::CompressionConfig;
+    use personal_agent::llm::Message as LlmMessage;
+    use personal_agent::models::CompressionPhase;
+
+    let profile = local_profile(Some(4096));
+    let engine = LocalModelSettings {
+        n_ctx: 32_768,
+        ..LocalModelSettings::default()
+    };
+    let budget = effective_context_window_for(&profile, &engine);
+
+    // About 24k estimated tokens (cl100k): past the local engine budget's
+    // truncation threshold, but far below even the observation-mask
+    // threshold of the profile's 128k default, so only the local budget
+    // compresses.
+    let filler = "tool output line ".repeat(1_000);
+    let messages: Vec<LlmMessage> = (0..6).map(|_| LlmMessage::user(filler.clone())).collect();
+
+    let compressed = CompressionPipeline::new().compress(
+        messages.clone(),
+        budget,
+        &CompressionConfig::default(),
+    );
+    assert_ne!(
+        compressed.phase,
+        CompressionPhase::None,
+        "the engine-derived window must trigger compression"
+    );
+
+    let passthrough = CompressionPipeline::new().compress(
+        messages,
+        profile.context_window_size,
+        &CompressionConfig::default(),
+    );
+    assert_eq!(
+        passthrough.phase,
+        CompressionPhase::None,
+        "the profile's 128k default must not compress (this was the overflow)"
+    );
+}
+
+/// The context-overflow regression: a prompt larger than `n_ctx` used to
+/// SIGABRT the whole process inside `llama_decode`'s prefill assert
+/// (`GGML_ASSERT(n_tokens_all <= cparams.n_batch)`). It must instead fail
+/// the generation with an actionable message and leave the process alive.
+///
+/// Requires the Granite GGUF; see the file header for the invocation.
+// @requirement:REQ-LM-003
+#[tokio::test]
+// Same serialization as the load-failure test: see the note there.
+#[allow(clippy::await_holding_lock)]
+#[ignore = "loads the 3.6 GB GGUF and runs Metal inference"]
+async fn oversized_prompt_fails_the_generation_without_killing_the_process() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
+    let Some(path) = std::env::var_os("PA_LOCAL_GGUF").map(PathBuf::from) else {
+        panic!("PA_LOCAL_GGUF must point at the Granite GGUF");
+    };
+    let engine = EngineHandle::spawn();
+    let settings = EngineLoadSettings {
+        model_path: path,
+        n_ctx: 2048,
+        gpu_layers: 999,
+        idle_unload: false,
+        idle_timeout: Duration::from_secs(60),
+    };
+    // ~40k tokens against a 2048-token context: far past the old prefill
+    // assert, deliberately bypassing every compression layer.
+    let oversized_prompt = "context overflow filler ".repeat(10_000);
+    let generation = engine
+        .start_generation(
+            GenRequest {
+                prompt: oversized_prompt,
+                sampling: GenSampling {
+                    temperature: 0.1,
+                    top_p: None,
+                    seed: Some(1234),
+                },
+                max_tokens: 16,
+                stop: Vec::new(),
+            },
+            settings,
+        )
+        .expect("job accepted");
+
+    let mut events = generation.events;
+    let mut failure = None;
+    while let Some(event) = events.next().await {
+        match event {
+            GenEvent::Failed(message) => {
+                failure = Some(message);
+                break;
+            }
+            GenEvent::Delta(_) => {}
+            GenEvent::Complete { .. } => panic!("an oversized prompt must not generate"),
+        }
+    }
+    let message = failure.expect("the generation must fail with the actionable message");
+    assert!(
+        message.contains("conversation exceeds the local context window"),
+        "failure must name the overflow, got: {message}"
+    );
+    assert!(
+        message.contains("tokens > 2048"),
+        "failure must carry N/M token counts, got: {message}"
+    );
+    assert!(
+        message.contains("raise Context size in Settings"),
+        "failure must carry the fix, got: {message}"
+    );
+
+    // The process (and engine) survived: the actor still reports a coherent
+    // status after declining the generation.
+    assert!(
+        matches!(
+            engine.status(),
+            EngineStatus::Loaded { .. } | EngineStatus::NotLoaded
+        ),
+        "engine must stay alive after an oversized prompt: {:?}",
+        engine.status()
+    );
 }

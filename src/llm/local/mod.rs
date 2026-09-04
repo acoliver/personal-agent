@@ -28,6 +28,62 @@ pub mod toolcall;
 /// endpoint.
 pub const LOCAL_PROVIDER_ID: &str = "local";
 
+/// The context budget the shared compression pipeline may assume for a
+/// profile.
+///
+/// Remote profiles use their own configured window; local profiles budget
+/// against the engine's real window minus the room the answer needs, because
+/// a local profile's `context_window_size` (128k default) is disconnected
+/// from the engine's `n_ctx` and trusting it overflows the context the
+/// engine actually decodes with.
+///
+/// The output reserve is the profile's `max_tokens` when it exceeds the
+/// engine default, else the engine default itself, so a full-length answer
+/// always fits beside the compressed history.
+///
+/// @requirement:REQ-LM-001
+#[must_use]
+pub fn effective_context_window_for(
+    profile: &crate::models::ModelProfile,
+    engine: &crate::services::local_model_settings::LocalModelSettings,
+) -> usize {
+    if profile.provider_id != LOCAL_PROVIDER_ID {
+        return profile.context_window_size;
+    }
+    let n_ctx = usize::try_from(engine.n_ctx).unwrap_or(0);
+    let reserve = profile
+        .parameters
+        .max_tokens
+        .map_or(llama_model::DEFAULT_MAX_TOKENS, |tokens| {
+            usize::try_from(tokens)
+                .unwrap_or(llama_model::DEFAULT_MAX_TOKENS)
+                .max(llama_model::DEFAULT_MAX_TOKENS)
+        });
+    n_ctx.saturating_sub(reserve)
+}
+
+/// [`effective_context_window_for`] with the engine settings read through the
+/// same disk load the generation path uses.
+///
+/// `EngineLoadSettings::from_persisted` is that loader, so the chat-side
+/// budget and the engine can never disagree. Missing settings fall back to
+/// defaults via that existing loader; a corrupt blob fails the load there
+/// too.
+///
+/// @requirement:REQ-LM-001
+#[must_use]
+pub fn effective_context_window(profile: &crate::models::ModelProfile) -> usize {
+    if profile.provider_id != LOCAL_PROVIDER_ID {
+        return profile.context_window_size;
+    }
+    let n_ctx = EngineLoadSettings::from_persisted().n_ctx;
+    let engine = crate::services::local_model_settings::LocalModelSettings {
+        n_ctx,
+        ..crate::services::local_model_settings::LocalModelSettings::default()
+    };
+    effective_context_window_for(profile, &engine)
+}
+
 use engine::{EngineHandle, EngineLoadSettings, EngineStatus};
 use llama_model::LocalLlamaModel;
 

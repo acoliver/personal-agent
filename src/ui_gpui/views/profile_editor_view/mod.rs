@@ -881,8 +881,12 @@ impl ProfileEditorView {
                     .unwrap_or_default()
             }),
             // Issue #182: carry the editor's "CONTEXT LIMIT" field through
-            // to the presenter so it actually gets persisted.
-            context_window_size: Some(self.state.data.context_limit as usize),
+            // to the presenter so it actually gets persisted. Local profiles
+            // carry None: their budget is the engine's Context size (Settings
+            // → Local Model), and persisting an editor value here would let
+            // the two drift. @requirement:REQ-LM-001
+            context_window_size: (self.state.data.api_type != ApiType::Local)
+                .then_some(self.state.data.context_limit as usize),
         });
 
         self.emit(&UserEvent::SaveProfile {

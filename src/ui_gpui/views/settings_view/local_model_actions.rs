@@ -5,7 +5,7 @@
 
 use super::SettingsView;
 use crate::events::types::UserEvent;
-use crate::services::local_model_settings::LocalModelSettings;
+use crate::services::local_model_settings::{LocalModelSettings, MAX_N_CTX};
 
 impl SettingsView {
     /// Ask the presenter to load persisted settings and start status polling.
@@ -63,14 +63,16 @@ impl SettingsView {
     }
 
     /// Combine the persisted snapshot with the edit buffers. Numeric fields
-    /// must parse as whole numbers; `n_ctx` and the idle timeout are floored
-    /// at 1 because llama.cpp cannot use a zero-sized context.
+    /// must parse as whole numbers; `n_ctx` is floored at 1 (llama.cpp cannot
+    /// use a zero-sized context) and capped at [`LocalModelSettings::MAX_N_CTX`];
+    /// the idle timeout is floored at 1.
     fn build_local_model_edits(&self) -> Result<LocalModelSettings, String> {
         let path = self.state.local_model_path_input.trim();
         if path.is_empty() {
             return Err("Model file path cannot be empty.".to_string());
         }
-        let n_ctx = parse_u32_field("Context size", &self.state.local_model_ctx_input)?.max(1);
+        let n_ctx =
+            parse_u32_field("Context size", &self.state.local_model_ctx_input)?.clamp(1, MAX_N_CTX);
         let gpu_layers = parse_u32_field("GPU layers", &self.state.local_model_gpu_layers_input)?;
         let idle_timeout_minutes =
             parse_u32_field("Idle timeout", &self.state.local_model_idle_minutes_input)?.max(1);
@@ -129,5 +131,19 @@ mod tests {
         assert!(parse_u32_field("Context size", "abc").is_err());
         assert!(parse_u32_field("Context size", "-1").is_err());
         assert!(parse_u32_field("Context size", "").is_err());
+    }
+
+    /// The same floor/ceiling formula `build_local_model_edits` applies to
+    /// the Context size input, pinned so the bound cannot silently regress.
+    #[test]
+    fn context_size_input_clamps_at_the_trained_window() {
+        let clamp = |raw: &str| {
+            parse_u32_field("Context size", raw)
+                .unwrap()
+                .clamp(1, MAX_N_CTX)
+        };
+        assert_eq!(clamp("999999999"), MAX_N_CTX);
+        assert_eq!(clamp("131072"), MAX_N_CTX);
+        assert_eq!(clamp("0"), 1);
     }
 }

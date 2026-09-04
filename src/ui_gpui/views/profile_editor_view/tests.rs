@@ -665,6 +665,48 @@ async fn emit_save_profile_carries_context_window_size_for_issue_182(cx: &mut Te
     );
 }
 
+/// A local profile's context budget is the engine's Context size (Settings →
+/// Local Model), so the save payload must not carry the editor's field: it
+/// would let the persisted per-profile number drift from the engine's `n_ctx`.
+// @requirement:REQ-LM-001
+#[gpui::test]
+async fn emit_save_profile_omits_context_window_for_local_profiles(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        view.handle_command(
+            ViewCommand::ModelSelected {
+                provider_id: "local".to_string(),
+                model_id: "granite-4.2-3b".to_string(),
+                provider_api_url: None,
+                context_length: Some(128_000),
+            },
+            cx,
+        );
+        view.state.data.api_type = ApiType::Local;
+        view.state.data.context_limit = 64_000;
+        view.emit_save_profile();
+    });
+
+    // Drain the RefreshApiKeys event the bridge always emits first.
+    let _ = user_rx.recv().expect("refresh api keys event");
+
+    let event = user_rx.recv().expect("save profile event");
+    let UserEvent::SaveProfile { profile } = event else {
+        panic!("expected SaveProfile, got {event:?}");
+    };
+    let parameters = profile
+        .parameters
+        .as_ref()
+        .expect("save payload must include parameters");
+    assert_eq!(
+        parameters.context_window_size, None,
+        "local profiles must not persist an editor context value"
+    );
+}
+
 #[gpui::test]
 async fn emit_save_profile_clears_blank_token_field_name_for_issue_205(cx: &mut TestAppContext) {
     let (bridge, user_rx) = make_bridge();

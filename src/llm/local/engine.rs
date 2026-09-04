@@ -470,9 +470,21 @@ fn actor_loop(
                 continue;
             }
         };
+        // A hand-edited n_ctx above the model's trained window would decode
+        // past positions the GGUF never saw; clamp to the model's own limit
+        // and record the adjustment. The clamped value is what the status
+        // card shows, so the effective window is always the honest one.
+        let n_ctx = settings.n_ctx.min(model.n_ctx_train());
+        if n_ctx < settings.n_ctx {
+            tracing::warn!(
+                requested = settings.n_ctx,
+                effective = n_ctx,
+                "local model context size clamped to the GGUF's n_ctx_train"
+            );
+        }
         let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(settings.n_ctx))
-            .with_n_batch(settings.n_ctx);
+            .with_n_ctx(NonZeroU32::new(n_ctx))
+            .with_n_batch(n_ctx);
         let mut ctx = match model.new_context(backend, ctx_params) {
             Ok(ctx) => ctx,
             Err(error) => {
@@ -491,7 +503,7 @@ fn actor_loop(
         } else {
             0.0
         };
-        update_loaded_status(status, &model, &settings, last_tok_s);
+        update_loaded_status(status, &model, n_ctx, &settings, last_tok_s);
         let mut idle_deadline = settings
             .idle_unload
             .then(|| Instant::now() + settings.idle_timeout);
@@ -540,7 +552,7 @@ fn actor_loop(
                     if settings.same_model(&next) {
                         last_tok_s =
                             run_generation(&model, &mut ctx, &request, &events, stop, gen_id);
-                        update_loaded_status(status, &model, &settings, last_tok_s);
+                        update_loaded_status(status, &model, n_ctx, &settings, last_tok_s);
                     } else {
                         deferred = Some(Job::Generate {
                             gen_id,
@@ -572,19 +584,21 @@ fn actor_loop(
 fn update_loaded_status(
     status: &Mutex<EngineStatus>,
     model: &LlamaModel,
+    n_ctx: u32,
     settings: &EngineLoadSettings,
     last_tok_s: f64,
 ) {
     // llama.cpp clamps the requested gpu layer count to the model's total;
     // reproducing that clamp here keeps the N/M pair the status card shows
-    // honest for both partial offload and the "999 = all" sentinel.
+    // honest for both partial offload and the "999 = all" sentinel. `n_ctx`
+    // arrives pre-clamped to `n_ctx_train` for the same honesty.
     let total_layers = model.n_layer();
     set_status(
         status,
         EngineStatus::Loaded {
             layers: settings.gpu_layers.min(total_layers),
             total_layers,
-            n_ctx: settings.n_ctx,
+            n_ctx,
             last_tok_s,
         },
     );
@@ -650,6 +664,21 @@ fn generate_turn(
         return Ok((0, 0));
     }
 
+    // The shared compression estimator is approximate; the tokenizer is
+    // exact. This check is the last exit before llama.cpp asserts (SIGABRT,
+    // killing the process) on a prefill batch larger than the context.
+    // @requirement:REQ-LM-003
+    let n_ctx = usize::try_from(ctx.n_ctx()).unwrap_or(0);
+    if prompt_tokens > n_ctx {
+        return Err(format!(
+            "conversation exceeds the local context window ({prompt_tokens} tokens > {n_ctx}); \
+             raise Context size in Settings → Local Model or start a new conversation"
+        ));
+    }
+    // A KV position past n_ctx-1 overflows the allocation: cap the decode at
+    // what fits beside the prompt, regardless of the requested max_tokens.
+    let max_new_tokens = request.max_tokens.min(n_ctx - prompt_tokens);
+
     let mut batch = LlamaBatch::new(prompt_tokens, 1);
     for (position, &token) in tokens.iter().enumerate() {
         batch
@@ -665,7 +694,7 @@ fn generate_turn(
     let mut text = String::new();
     let mut generated_tokens = 0usize;
 
-    for next_position in (prompt_tokens as i32..).take(request.max_tokens) {
+    for next_position in (prompt_tokens as i32..).take(max_new_tokens) {
         if is_cancelled(stop, gen_id) {
             break;
         }

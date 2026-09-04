@@ -1,6 +1,6 @@
 //! Render implementation for `ProfileEditorView`.
 
-use super::{ActiveField, ProfileEditorView};
+use super::{ActiveField, ApiType, ProfileEditorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
@@ -624,6 +624,20 @@ impl ProfileEditorView {
             )
     }
 
+    /// Read-only stand-in for the CONTEXT LIMIT field on local profiles.
+    fn render_context_limit_note() -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(Self::render_label("CONTEXT LIMIT"))
+            .child(
+                div()
+                    .text_size(px(Theme::font_size_small()))
+                    .text_color(Theme::text_secondary())
+                    .child("Set by the engine: Settings → Local Model → Context size"),
+            )
+    }
+
     /// Render show thinking checkbox
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_show_thinking_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -958,7 +972,16 @@ impl ProfileEditorView {
                         el.child(self.render_max_tokens_section(cx))
                     })
                     .child(self.render_advanced_request_parameters_section(cx))
-                    .child(self.render_context_limit_section(cx))
+                    // A local profile's context budget is the engine's
+                    // Context size (Settings → Local Model); showing an
+                    // editable per-profile value here would let the two
+                    // drift. @requirement:REQ-LM-001
+                    .when(self.state.data.api_type == ApiType::Local, |el| {
+                        el.child(Self::render_context_limit_note())
+                    })
+                    .when(self.state.data.api_type != ApiType::Local, |el| {
+                        el.child(self.render_context_limit_section(cx))
+                    })
                     .child(self.render_show_thinking_section(cx))
                     .child(self.render_reasoning_effort_section(cx))
                     .when(capabilities.thinking_budget, |el| {

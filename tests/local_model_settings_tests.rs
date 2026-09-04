@@ -63,8 +63,40 @@ async fn persisted_blob_lives_under_the_local_model_key() {
         .unwrap()
         .expect("blob persisted");
     let parsed: serde_json::Value = serde_json::from_str(&stored).unwrap();
-    assert_eq!(parsed["n_ctx"], 8192);
+    assert_eq!(parsed["n_ctx"], 32_768);
     assert_eq!(parsed["gpu_layers"], 999);
+}
+
+/// A hand-edited or stale blob above the trained window must load clamped,
+/// in both loader paths, so no consumer can see an oversized `n_ctx`.
+// @requirement:REQ-LM-001
+#[tokio::test]
+async fn service_load_clamps_n_ctx_at_the_trained_window() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let service = test_service(&dir);
+
+    let settings = LocalModelSettings {
+        n_ctx: 200_000,
+        ..LocalModelSettings::default()
+    };
+    settings.save(&service).await.unwrap();
+
+    let loaded = LocalModelSettings::load(&service).await.unwrap();
+    assert_eq!(loaded.n_ctx, 131_072);
+}
+
+#[test]
+fn disk_loader_clamps_n_ctx_at_the_trained_window() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let app_settings = dir.path().join("app_settings.json");
+    std::fs::write(
+        &app_settings,
+        format!(r#"{{"{LOCAL_MODEL_SETTINGS_KEY}": {{"n_ctx": 999999}}}}"#),
+    )
+    .unwrap();
+
+    let loaded = try_load_from_disk(&app_settings).unwrap().unwrap();
+    assert_eq!(loaded.n_ctx, 131_072);
 }
 
 #[test]

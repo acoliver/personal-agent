@@ -36,7 +36,11 @@ use super::toolcall::{parse_call_block, RawToolCall, TOOL_CALL_CLOSE, TOOL_CALL_
 /// proven default.
 const DEFAULT_TEMPERATURE: f64 = 0.1;
 /// Token ceiling when a profile does not set `max_tokens`.
-const DEFAULT_MAX_TOKENS: usize = 1024;
+///
+/// Large enough that an agent turn can stream a full answer plus tool calls;
+/// also the floor of the output reserve the shared compression budget leaves
+/// for the answer.
+pub const DEFAULT_MAX_TOKENS: usize = 8192;
 /// Bytes held back from text emission so a `<tool_call>` marker split across
 /// decoded pieces can never leak into visible text.
 const MARKER_HOLDBACK: usize = TOOL_CALL_OPEN.len() - 1;

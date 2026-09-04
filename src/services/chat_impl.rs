@@ -386,9 +386,13 @@ impl ChatServiceImpl {
         let mut messages = Self::build_llm_messages(&conversation, &profile);
         strip_thinking_from_previous_turns(&mut messages);
         let compression_config = self.load_compression_config().await;
+        // Local profiles must budget against the engine's real window, not
+        // the profile's default 128k: two disconnected context numbers let
+        // the prompt outgrow the local engine's n_ctx and abort the process.
+        // @requirement:REQ-LM-001
         let compression_result = CompressionPipeline::new().compress(
             messages,
-            profile.context_window_size,
+            crate::llm::local::effective_context_window(&profile),
             &compression_config,
         );
         // The emoji filter drives both the system prompt and tool-output filtering, so
