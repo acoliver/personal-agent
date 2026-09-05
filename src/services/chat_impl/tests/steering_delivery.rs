@@ -29,6 +29,7 @@ use tokio::sync::Notify;
 use tokio::time::Duration;
 
 mod discard;
+mod sink;
 
 /// The future a scripted turn runner hands back.
 ///

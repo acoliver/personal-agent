@@ -89,6 +89,29 @@ pub(super) fn drain_steering_queue(
         .unwrap_or_default()
 }
 
+/// Take the oldest steering message queued for a conversation, if any.
+///
+/// The mid-turn sink resolves deliveries by FIFO position: the fork drains
+/// its transport in the order acceptance pushed, so the head is always the
+/// entry whose text was just delivered, whatever that text says. This is the
+/// single-entry counterpart of [`drain_steering_queue`], and it holds the
+/// same lock discipline: take the entry, release the lock, then let the
+/// caller emit.
+///
+/// @plan PLAN-20260905-STEERINT.P04
+/// @requirement REQ-SI-003
+/// @requirement REQ-SI-005
+pub(super) fn pop_steering_head(
+    queues: &SteeringQueues,
+    conversation_id: Uuid,
+) -> Option<QueuedSteering> {
+    queues
+        .lock()
+        .expect("steering_queues poisoned")
+        .get_mut(&conversation_id)
+        .and_then(VecDeque::pop_front)
+}
+
 /// Announce that queued steering messages are never going to be delivered.
 ///
 /// A queued entry is rendered as waiting until something reports what became

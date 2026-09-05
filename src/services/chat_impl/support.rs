@@ -4,6 +4,7 @@ use crate::models::{AuthConfig, Message, ModelParameters};
 use crate::services::{AppSettingsService, ServiceError, ServiceResult};
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -21,6 +22,9 @@ pub(super) struct MockConversationService {
     /// When set, `add_message` returns a storage error instead of recording
     /// the message, exercising persistence-failure logging paths.
     pub(super) add_message_fails: Arc<RwLock<bool>>,
+    /// How many times `add_message` was called, failed attempts included, so
+    /// tests can tell a single refused write from a retry loop.
+    pub(super) add_message_attempts: Arc<AtomicUsize>,
 }
 
 pub(super) struct InMemoryAppSettingsService {
@@ -226,7 +230,13 @@ impl MockConversationService {
             rename_calls: Arc::new(RwLock::new(Vec::new())),
             load_missing: Arc::new(RwLock::new(false)),
             add_message_fails: Arc::new(RwLock::new(false)),
+            add_message_attempts: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// The number of `add_message` calls so far, failed attempts included.
+    pub(super) fn add_message_attempts(&self) -> usize {
+        self.add_message_attempts.load(Ordering::SeqCst)
     }
 
     pub(super) async fn set_load_missing(&self, missing: bool) {
@@ -288,6 +298,7 @@ impl super::super::ConversationService for MockConversationService {
         _conversation_id: Uuid,
         message: Message,
     ) -> Result<Message, crate::services::ServiceError> {
+        self.add_message_attempts.fetch_add(1, Ordering::SeqCst);
         if *self.add_message_fails.read().await {
             return Err(crate::services::ServiceError::Storage(
                 "simulated add_message persistence failure".to_string(),

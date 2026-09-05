@@ -9,13 +9,14 @@ use crate::events::{emit, AppEvent};
 use crate::llm::error::{debug_error_message, LlmError};
 use crate::llm::{LlmClient, StreamEvent as LlmStreamEvent};
 use crate::models::{ContextState, Message};
-use crate::services::ConversationService;
+use crate::services::{ConversationService, SkillsService};
 use crate::ui_gpui::error_log::{
     base_url_host, sanitize_text, ErrorLogDiagnosticContext, ErrorLogRunStatus,
     ErrorLogStreamLifecycle, ErrorLogToolContext,
 };
 
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -23,8 +24,12 @@ use uuid::Uuid;
 use super::{build_stream_context, create_stream_agent};
 
 pub(super) mod steering_delivery;
+pub(super) mod steering_sink;
 
 use steering_delivery::{run_steered_turns_and_finalize, SteeringDeliveryContext};
+use steering_sink::MidTurnSteering;
+
+use crate::llm::steering::SteeringInput;
 
 pub(super) const STREAM_ERROR_MESSAGE: &str = "An error interrupted the chat stream.";
 
@@ -63,6 +68,13 @@ impl StreamDiagnosticContext {
     }
 }
 
+/// Run one turn of a send, with the send's steering transport attached: texts
+/// the fork delivers mid-turn reach `steering_sink`, which persists them,
+/// resolves the queue head by FIFO position, and announces the delivery.
+///
+/// @plan PLAN-20260905-STEERINT.P04
+/// @requirement REQ-SI-001
+/// @requirement REQ-SI-003
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn stream_agent_response(
     client: &LlmClient,
@@ -72,11 +84,22 @@ pub(super) async fn stream_agent_response(
     diagnostics_context: &StreamDiagnosticContext,
     conversation_id: Uuid,
     tx: &tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    steering_queue: &serdes_ai_agent::SteeringQueue,
+    steering_sink: &Arc<AsyncMutex<MidTurnSteering>>,
 ) -> StreamTranscript {
     let mut transcript = StreamTranscript::default();
 
+    // The guard lives for the whole run because the fork calls the sink from
+    // inside it. The mutex exists for the type system only: one sink per
+    // send, and a send's turns run sequentially, so nothing ever contends.
+    let mut steering_guard = steering_sink.lock().await;
+    let steering_input = SteeringInput {
+        queue: steering_queue.clone(),
+        sink: &mut *steering_guard,
+    };
+
     if let Err(error) = client
-        .run_agent_stream(agent, messages, context, None, |event| {
+        .run_agent_stream(agent, messages, context, Some(steering_input), |event| {
             handle_llm_stream_event(
                 diagnostics_context,
                 event,
@@ -95,6 +118,12 @@ pub(super) async fn stream_agent_response(
             tx,
         );
     }
+
+    tracing::debug!(
+        conversation_id = %conversation_id,
+        delivered_steering = steering_guard.delivered.len(),
+        "agent stream finished"
+    );
 
     transcript
 }
@@ -301,6 +330,59 @@ impl StreamFinalizeContext<'_> {
     }
 }
 
+/// The future one steered turn runs on.
+///
+/// Boxed so the runner closure has a single callable type across turns while
+/// carrying the send's borrowed pieces; one allocation per user-visible turn.
+type SteeredTurnFuture<'a> =
+    Pin<Box<dyn std::future::Future<Output = StreamTranscript> + Send + 'a>>;
+
+/// Build the turn runner `run_steered_turns_and_finalize` drives: each turn
+/// runs with the send's transport and mid-turn sink attached.
+///
+/// @plan PLAN-20260905-STEERINT.P04
+/// @requirement REQ-SI-001
+#[allow(clippy::too_many_arguments)]
+fn steered_turn_runner<'a>(
+    client: &'a LlmClient,
+    agent: &'a serdes_ai_agent::Agent<crate::llm::client_agent::McpToolContext>,
+    diagnostics_context: &'a StreamDiagnosticContext,
+    conversation_id: Uuid,
+    tx: &'a tokio::sync::mpsc::UnboundedSender<ChatStreamEvent>,
+    view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
+    approval_gate: Arc<ApprovalGate>,
+    policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
+    skills_service: Arc<dyn SkillsService>,
+    filter_emoji: bool,
+    steering_queue: &'a serdes_ai_agent::SteeringQueue,
+    mid_turn_steering: &'a Arc<AsyncMutex<MidTurnSteering>>,
+) -> impl FnMut(Vec<LlmMessage>) -> SteeredTurnFuture<'a> + 'a {
+    move |turn_messages: Vec<LlmMessage>| {
+        let context = build_stream_context(
+            conversation_id,
+            view_tx.clone(),
+            approval_gate.clone(),
+            policy.clone(),
+            skills_service.clone(),
+            filter_emoji,
+        );
+        Box::pin(async move {
+            stream_agent_response(
+                client,
+                agent,
+                &turn_messages,
+                context,
+                diagnostics_context,
+                conversation_id,
+                tx,
+                steering_queue,
+                mid_turn_steering,
+            )
+            .await
+        })
+    }
+}
+
 /// Run a stream task for a conversation.
 ///
 /// One user send runs one turn, plus any further turns queued steering
@@ -363,12 +445,18 @@ pub(super) async fn run_stream_task(
         return;
     };
 
-    // P03 wires the send's transport this far; P04 attaches it to every
-    // turn's run so delivered texts reach the sink mid-turn.
+    // The send's transport is attached to every turn's run: texts the fork
+    // delivers mid-turn reach this sink, which persists them, resolves the
+    // queue head, and announces the delivery.
     //
     // @plan PLAN-20260905-STEERINT.P04
     // @requirement REQ-SI-001
-    let _steering_queue = steering_queue;
+    // @requirement REQ-SI-003
+    let mid_turn_steering = Arc::new(AsyncMutex::new(MidTurnSteering::new(
+        conversation_service.clone(),
+        conversation_id,
+        steering_queues.clone(),
+    )));
 
     let delivery_ctx = SteeringDeliveryContext {
         finalize: StreamFinalizeContext {
@@ -384,37 +472,24 @@ pub(super) async fn run_stream_task(
 
     // Bound outside the turn runner so the future it returns has one type for
     // every turn, independent of the call that produced it.
-    let client = &client;
-    let agent = &agent;
-    let diagnostics_context = &diagnostics_context;
-    let tx = &tx;
-
     run_steered_turns_and_finalize(
         &delivery_ctx,
         compression_result,
         messages,
-        move |turn_messages: Vec<LlmMessage>| {
-            let context = build_stream_context(
-                conversation_id,
-                view_tx.clone(),
-                approval_gate.clone(),
-                policy.clone(),
-                skills_service.clone(),
-                filter_emoji,
-            );
-            async move {
-                stream_agent_response(
-                    client,
-                    agent,
-                    &turn_messages,
-                    context,
-                    diagnostics_context,
-                    conversation_id,
-                    tx,
-                )
-                .await
-            }
-        },
+        steered_turn_runner(
+            &client,
+            &agent,
+            &diagnostics_context,
+            conversation_id,
+            &tx,
+            view_tx,
+            approval_gate,
+            policy,
+            skills_service,
+            filter_emoji,
+            &steering_queue,
+            &mid_turn_steering,
+        ),
     )
     .await;
 }
