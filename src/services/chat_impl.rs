@@ -33,7 +33,7 @@ mod titling;
 
 use prompt::{build_system_prompt, filter_emoji_setting};
 use steering::{
-    drain_steering_queue, emit_steering_discarded, pop_steering_head, QueuedSteering,
+    drain_steering_queue, emit_steering_discarded, has_queued_steering, pop_steering_head,
     SteeringQueues,
 };
 use streaming::{
@@ -43,7 +43,7 @@ use streaming::{
 use titling::{generate_and_apply_title, TitleGenerationRequest};
 
 #[cfg(test)]
-use steering::MAX_QUEUED_STEERING_MESSAGES;
+use steering::{QueuedSteering, MAX_QUEUED_STEERING_MESSAGES};
 
 // Re-export for tests
 #[cfg(test)]

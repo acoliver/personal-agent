@@ -89,6 +89,26 @@ pub(super) fn drain_steering_queue(
         .unwrap_or_default()
 }
 
+/// Whether any steering message is queued for a conversation, without
+/// taking any of them.
+///
+/// The chaining loop only needs to know whether a follow-up turn could still
+/// deliver something. The texts stay owned by the transport, which delivers
+/// them and resolves their entries through the sink; draining them here
+/// would strand a text the transport still holds. An entry popped by the
+/// sink can leave an empty deque behind, so an empty queue counts as no.
+///
+/// @plan PLAN-20260905-STEERINT.P04
+/// @requirement REQ-SI-002
+/// @requirement REQ-SI-006
+pub(super) fn has_queued_steering(queues: &SteeringQueues, conversation_id: Uuid) -> bool {
+    queues
+        .lock()
+        .expect("steering_queues poisoned")
+        .get(&conversation_id)
+        .is_some_and(|entries| !entries.is_empty())
+}
+
 /// Take the oldest steering message queued for a conversation, if any.
 ///
 /// The mid-turn sink resolves deliveries by FIFO position: the fork drains

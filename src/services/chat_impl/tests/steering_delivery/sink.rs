@@ -14,15 +14,6 @@ use super::*;
 
 use crate::llm::steering::SteeringDeliverySink;
 
-/// A sink wired to the fixture's conversation service and steering queues.
-fn sink_for(fixture: &DeliveryFixture) -> streaming::steering_sink::MidTurnSteering {
-    streaming::steering_sink::MidTurnSteering::new(
-        fixture.conversation_service.clone(),
-        fixture.conversation_id,
-        fixture.steering_queues.clone(),
-    )
-}
-
 /// Queue an entry directly, without announcing it, under a caller-chosen id.
 fn queue_entry(fixture: &DeliveryFixture, id: Uuid, text: &str) {
     assert!(
