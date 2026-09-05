@@ -23,8 +23,13 @@ use personal_agent::llm::local::{effective_context_window, effective_context_win
 use personal_agent::models::profile::{AuthConfig, ModelProfile};
 use personal_agent::services::local_model_settings::LocalModelSettings;
 use serdes_ai::core::messages::{
-    FinishReason, ModelRequest, ModelRequestPart, ModelResponsePart, ModelResponsePartDelta,
-    ModelResponseStreamEvent, SystemPromptPart, UserContent, UserPromptPart,
+    BuiltinToolReturnContent, BuiltinToolReturnPart, RetryContent, RetryPromptPart,
+    ToolReturnContent, ToolReturnPart,
+};
+use serdes_ai::core::messages::{
+    FinishReason, ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart,
+    ModelResponsePartDelta, ModelResponseStreamEvent, SystemPromptPart, TextPart, ToolCallArgs,
+    ToolCallPart, UserContent, UserContentPart, UserPromptPart,
 };
 use serdes_ai::models::Model;
 use serdes_ai::models::ModelRequestParameters;
@@ -423,10 +428,10 @@ async fn engine_load_failure_fails_the_generation_and_sets_error_status() {
         match event {
             GenEvent::Failed(message) => {
                 saw_failure = true;
-                // This binary spawns exactly one engine, so the missing-file
-                // branch is deterministic here; the backend-init race only
-                // arises when the `#[ignore]`d real-model test below spawns a
-                // second engine in the same process.
+                // Whichever engine in this binary spawned first holds the
+                // process-global backend; the loser drains with a
+                // "backend init failed" message instead of reaching the
+                // missing-file branch, so only one of the two is asserted.
                 if !message.contains("backend init failed") {
                     assert!(
                         message
@@ -756,4 +761,602 @@ async fn oversized_prompt_fails_the_generation_without_killing_the_process() {
         "engine must stay alive after an oversized prompt: {:?}",
         engine.status()
     );
+}
+
+// ── engine actor job plumbing (Load/Unload/Shutdown/Drop), no GGUF needed ──
+
+/// Settings naming a GGUF that does not exist, so an actor that wins the
+/// backend init still never loads weights.
+fn missing_model_settings(path: &str) -> EngineLoadSettings {
+    EngineLoadSettings {
+        model_path: PathBuf::from(path),
+        n_ctx: 512,
+        gpu_layers: 0,
+        idle_unload: false,
+        idle_timeout: Duration::from_secs(60),
+    }
+}
+
+/// Both load-failure shapes settle in `Error`: a won init reports the missing
+/// file, a lost init reports the drained backend. Bounded so a wedged actor
+/// fails the test instead of hanging it.
+fn wait_for_error_status(engine: &EngineHandle) -> String {
+    for _ in 0..300 {
+        if let EngineStatus::Error { message } = engine.status() {
+            return message;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("status never reached Error: {:?}", engine.status());
+}
+
+/// A `Load` job against a missing GGUF must fail with an actionable message
+/// and push the engine into `Error` — never hang, never panic.
+#[tokio::test]
+// The guard is the point: llama.cpp's backend is process-global, so engine
+// spawns must serialize across libtest threads; each test owns its own
+// current-thread runtime, so holding it across awaits cannot self-deadlock.
+#[allow(clippy::await_holding_lock)]
+async fn engine_load_job_reports_missing_file_and_error_status() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
+    let engine = EngineHandle::spawn();
+
+    let message = engine
+        .load(missing_model_settings("/nonexistent/load-job/model.gguf"))
+        .await
+        .expect_err("a missing GGUF must fail the load job");
+    if !message.contains("backend init failed") {
+        assert!(
+            message.contains("Local model file not found: /nonexistent/load-job/model.gguf"),
+            "missing-file failure must name the path, got: {message}"
+        );
+        assert!(
+            message.contains("Settings → Local Model"),
+            "missing-file failure must carry the fix, got: {message}"
+        );
+    }
+
+    let status_message = wait_for_error_status(&engine);
+    assert!(
+        status_message.contains("not found") || status_message.contains("backend init failed"),
+        "error status must explain the failure, got: {status_message}"
+    );
+    engine.shutdown();
+}
+
+/// An `Unload` with nothing resident must be absorbed silently: the actor
+/// stays alive and still answers the next job in order.
+#[tokio::test]
+// Same serialization as the load-failure test: see the note there.
+#[allow(clippy::await_holding_lock)]
+async fn engine_unload_before_any_load_keeps_the_actor_serving_jobs() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
+    let engine = EngineHandle::spawn();
+    engine.request_unload();
+
+    let message = engine
+        .load(missing_model_settings("/nonexistent/after-unload.gguf"))
+        .await
+        .expect_err("the follow-up load must still fail on the missing file");
+    assert!(
+        message.contains("Local model file not found") || message.contains("backend init failed"),
+        "the actor must survive the unload and answer the next job, got: {message}"
+    );
+    engine.shutdown();
+}
+
+/// Whoever holds the process-global llama backend, any *second* actor
+/// deterministically loses init: it must report the failure once, answer
+/// every queued job with it (Load reply, Generate event), absorb Unload,
+/// and exit promptly on Shutdown.
+#[tokio::test]
+// Same serialization as the load-failure test: see the note there.
+#[allow(clippy::await_holding_lock)]
+async fn a_second_engine_drains_all_jobs_after_losing_backend_init() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
+    // Answering one job proves some actor owns the backend (this one or an
+    // earlier test's); the flag never resets, so the next spawn must lose.
+    let first = EngineHandle::spawn();
+    let _ = first
+        .load(missing_model_settings("/nonexistent/init-holder.gguf"))
+        .await;
+
+    let drained = EngineHandle::spawn();
+    let message = wait_for_error_status(&drained);
+    assert!(
+        message.contains("backend init failed"),
+        "a losing actor must report the init failure, got: {message}"
+    );
+
+    // Load: the drain answers with the same failure message.
+    let load_error = drained
+        .load(missing_model_settings("/nonexistent/drained.gguf"))
+        .await
+        .expect_err("a drained load must fail");
+    assert_eq!(load_error, message);
+
+    // Generate: the drain answers through the event channel, then closes it.
+    let generation = drained
+        .start_generation(
+            GenRequest {
+                prompt: "hi".to_string(),
+                sampling: GenSampling {
+                    temperature: 0.1,
+                    top_p: None,
+                    seed: None,
+                },
+                max_tokens: 1,
+                stop: Vec::new(),
+            },
+            missing_model_settings("/nonexistent/drained-too.gguf"),
+        )
+        .expect("the job is accepted even while drained");
+    let mut events = generation.events;
+    match events.next().await {
+        Some(GenEvent::Failed(failure)) => assert_eq!(failure, message),
+        other => panic!("expected the drained failure event, got {other:?}"),
+    }
+    assert!(events.next().await.is_none(), "the channel must close");
+
+    // Unload: absorbed silently by the drain.
+    drained.request_unload();
+
+    // Shutdown: ends the drain and joins; later jobs fail fast.
+    drained.shutdown();
+    let late = drained
+        .load(missing_model_settings("/nonexistent/late.gguf"))
+        .await
+        .expect_err("jobs after shutdown must fail fast");
+    assert_eq!(late, "local model engine thread is gone");
+}
+
+/// `shutdown` joins the actor, so a `Load` sent afterwards fails fast with
+/// the thread-gone message instead of queueing forever.
+#[tokio::test]
+// Same serialization as the load-failure test: see the note there.
+#[allow(clippy::await_holding_lock)]
+async fn engine_load_after_shutdown_reports_the_thread_gone() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
+    let engine = EngineHandle::spawn();
+    engine.shutdown();
+
+    let message = engine
+        .load(missing_model_settings("/nonexistent/late.gguf"))
+        .await
+        .expect_err("a load after shutdown must fail");
+    assert_eq!(message, "local model engine thread is gone");
+}
+
+/// The exit-time contract: dropping the last handle quiesces the engine
+/// (raises the flag, tells the actor to exit, joins) instead of leaving
+/// llama.cpp state to C++ static teardown.
+#[tokio::test]
+// Same serialization as the load-failure test: see the note there.
+#[allow(clippy::await_holding_lock)]
+async fn dropping_the_last_handle_joins_the_actor() {
+    let _serial = ENGINE_SPAWN_LOCK.lock().expect("engine spawn lock");
+    let engine = EngineHandle::spawn();
+    let drop_completed = tokio::time::timeout(Duration::from_secs(10), async move {
+        drop(engine);
+    })
+    .await;
+    assert!(
+        drop_completed.is_ok(),
+        "dropping the last handle must quiesce the actor without hanging"
+    );
+}
+
+// ── serdes → GenRequest mapping (capturing generator) ──────────────────────
+
+/// A generator that records the mapped `GenRequest` and replays a fixed event
+/// list, making the serdes settings mapping observable without an engine.
+#[derive(Clone)]
+struct CapturingGenerator {
+    events: Vec<GenEvent>,
+    captured: Arc<Mutex<Option<GenRequest>>>,
+    fail_start: bool,
+}
+
+#[async_trait::async_trait]
+impl Generator for CapturingGenerator {
+    async fn generate(&self, request: GenRequest) -> Result<Generation, GenerateError> {
+        if self.fail_start {
+            return Err(GenerateError(
+                "local model engine thread is gone".to_string(),
+            ));
+        }
+        *self.captured.lock().expect("captured request") = Some(request);
+        let cancelled = Arc::new(Mutex::new(HashSet::new()));
+        Ok(Generation::new(
+            0,
+            Box::pin(futures::stream::iter(self.events.clone())),
+            cancelled,
+        ))
+    }
+
+    fn status(&self) -> EngineStatus {
+        EngineStatus::NotLoaded
+    }
+
+    async fn unload(&self) {}
+}
+
+fn capturing_model(events: Vec<GenEvent>) -> (LocalLlamaModel, Arc<Mutex<Option<GenRequest>>>) {
+    let captured = Arc::new(Mutex::new(None));
+    (
+        LocalLlamaModel::new(
+            Arc::new(CapturingGenerator {
+                events,
+                captured: Arc::clone(&captured),
+                fail_start: false,
+            }),
+            "granite-4.2-3b",
+        ),
+        captured,
+    )
+}
+
+fn captured_request(captured: &Arc<Mutex<Option<GenRequest>>>) -> GenRequest {
+    captured
+        .lock()
+        .expect("captured request")
+        .take()
+        .expect("the generator must receive the mapped request")
+}
+
+/// Every sampler knob, the token ceiling, and the stop strings must travel
+/// from serdes settings onto the engine request; the prompt must be the
+/// rendered Granite conversation with the tool scaffold included.
+#[tokio::test]
+async fn request_stream_maps_serdes_settings_and_tools_onto_the_gen_request() {
+    let (model, captured) = capturing_model(vec![GenEvent::Complete {
+        prompt_tokens: 1,
+        generated_tokens: 0,
+    }]);
+    let settings = serdes_ai::core::ModelSettings {
+        max_tokens: Some(128),
+        temperature: Some(0.7),
+        top_p: Some(0.9),
+        seed: Some(7),
+        stop: Some(vec!["DONE".to_string()]),
+        ..serdes_ai::core::ModelSettings::default()
+    };
+    let params =
+        ModelRequestParameters::default().with_tools(vec![serdes_ai_tools::ToolDefinition::new(
+            "get_weather",
+            "Look up weather",
+        )
+        .with_parameters(serde_json::json!({
+            "type": "object",
+            "properties": {"city": {"type": "string"}}
+        }))]);
+
+    let mut stream = model
+        .request_stream(&simple_request(), &settings, &params)
+        .await
+        .expect("stream starts");
+    while let Some(event) = stream.next().await {
+        event.expect("stream event");
+    }
+
+    let request = captured_request(&captured);
+    assert_eq!(request.max_tokens, 128);
+    assert!((request.sampling.temperature - 0.7).abs() < 1e-12);
+    assert_eq!(request.sampling.top_p, Some(0.9));
+    assert_eq!(request.sampling.seed, Some(7));
+    assert_eq!(request.stop, vec!["DONE".to_string()]);
+    assert!(
+        request.prompt.starts_with("<|im_start|>system\nbe brief"),
+        "the prompt must render the conversation, got: {}",
+        request.prompt
+    );
+    assert!(
+        request
+            .prompt
+            .ends_with("<|im_start|>assistant\n<think></think>"),
+        "the prompt must end on the open assistant header"
+    );
+    assert!(
+        request.prompt.contains("\"name\":\"get_weather\""),
+        "tool schemas must travel inside the system scaffold"
+    );
+}
+
+/// Empty serdes settings fall back to the engine defaults: the 8192 token
+/// ceiling and the `PoC`'s `0.1` temperature.
+#[tokio::test]
+async fn request_stream_falls_back_to_engine_defaults_without_settings() {
+    let (model, captured) = capturing_model(vec![GenEvent::Complete {
+        prompt_tokens: 1,
+        generated_tokens: 0,
+    }]);
+
+    collect_events_with(
+        &model,
+        &simple_request(),
+        &serdes_ai::core::ModelSettings::default(),
+    )
+    .await;
+
+    let request = captured_request(&captured);
+    assert_eq!(request.max_tokens, DEFAULT_MAX_TOKENS);
+    assert!((request.sampling.temperature - 0.1).abs() < 1e-12);
+    assert_eq!(request.sampling.top_p, None);
+    assert_eq!(request.sampling.seed, None);
+    assert!(request.stop.is_empty());
+}
+
+/// A generator that cannot start (engine gone) surfaces as a configuration
+/// error, not as a broken stream.
+#[tokio::test]
+async fn a_failed_generation_start_surfaces_as_a_configuration_error() {
+    let captured = Arc::new(Mutex::new(None));
+    let model = LocalLlamaModel::new(
+        Arc::new(CapturingGenerator {
+            events: Vec::new(),
+            captured,
+            fail_start: true,
+        }),
+        "granite-4.2-3b",
+    );
+    let Err(error) = model
+        .request_stream(
+            &simple_request(),
+            &serdes_ai::core::ModelSettings::default(),
+            &ModelRequestParameters::default(),
+        )
+        .await
+    else {
+        panic!("an unreachable generator must fail the stream start");
+    };
+    assert!(error.to_string().contains("engine thread is gone"));
+}
+
+// ── stream terminal states and finish reasons ─────────────────────────────
+
+/// A generation that fills its token budget must report `Length`, not `Stop`.
+#[tokio::test]
+async fn generation_that_fills_max_tokens_finishes_with_length() {
+    let model = scripted_model(vec![
+        GenEvent::Delta("a".to_string()),
+        GenEvent::Delta("b".to_string()),
+        GenEvent::Delta("c".to_string()),
+        GenEvent::Complete {
+            prompt_tokens: 4,
+            generated_tokens: 3,
+        },
+    ]);
+    let settings = serdes_ai::core::ModelSettings {
+        max_tokens: Some(3),
+        ..serdes_ai::core::ModelSettings::default()
+    };
+
+    let events = collect_events_with(&model, &simple_request(), &settings).await;
+    let Some(ModelResponseStreamEvent::StreamComplete(complete)) = events.last() else {
+        panic!("expected a completion event, got {events:?}");
+    };
+    assert_eq!(complete.finish_reason, FinishReason::Length);
+    assert_eq!(complete.output_tokens, Some(3));
+    // The tail held back by the marker window flushes with the part close.
+    let text: String = events
+        .iter()
+        .filter_map(|event| match event {
+            ModelResponseStreamEvent::PartDelta(delta) => match &delta.delta {
+                ModelResponsePartDelta::Text(text) => Some(text.content_delta.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "abc");
+}
+
+/// A structurally broken tool-call block must end the stream with a typed
+/// error naming the malformed output.
+#[tokio::test]
+async fn malformed_tool_call_block_surfaces_as_a_stream_error() {
+    let model = scripted_model(vec![GenEvent::Delta(
+        "<tool_call>\nnot a function\n</tool_call>".to_string(),
+    )]);
+
+    let settings = serdes_ai::core::ModelSettings::default();
+    let mut stream = model
+        .request_stream(
+            &simple_request(),
+            &settings,
+            &ModelRequestParameters::default(),
+        )
+        .await
+        .expect("stream starts");
+    let error = stream
+        .next()
+        .await
+        .expect("an event")
+        .expect_err("a parse failure");
+    assert!(
+        error
+            .to_string()
+            .contains("malformed tool call from local model"),
+        "got: {error}"
+    );
+}
+
+/// The actor always sends a terminal event; an early channel close means the
+/// thread died and must surface as an incomplete-stream error, not silence.
+#[tokio::test]
+async fn stream_closed_without_completion_is_an_error() {
+    let model = scripted_model(Vec::new());
+
+    let settings = serdes_ai::core::ModelSettings::default();
+    let mut stream = model
+        .request_stream(
+            &simple_request(),
+            &settings,
+            &ModelRequestParameters::default(),
+        )
+        .await
+        .expect("stream starts");
+    let error = stream
+        .next()
+        .await
+        .expect("an event")
+        .expect_err("an early close");
+    assert!(error.to_string().contains("ended without completion"));
+}
+
+/// An unterminated `<tool_call>` block drops its own text (it is malformed
+/// output) but the prose before it stays visible and the stream completes
+/// cleanly.
+#[tokio::test]
+async fn unterminated_tool_call_block_keeps_the_prior_prose_only() {
+    let model = scripted_model(vec![
+        GenEvent::Delta("before ".to_string()),
+        GenEvent::Delta("<tool_call>\n<function=ping>\nnever closed".to_string()),
+        GenEvent::Complete {
+            prompt_tokens: 3,
+            generated_tokens: 9,
+        },
+    ]);
+
+    let events = collect_events(&model, &simple_request()).await;
+    let text: String = events
+        .iter()
+        .filter_map(|event| match event {
+            ModelResponseStreamEvent::PartDelta(delta) => match &delta.delta {
+                ModelResponsePartDelta::Text(text) => Some(text.content_delta.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "before ");
+    let Some(ModelResponseStreamEvent::StreamComplete(complete)) = events.last() else {
+        panic!("expected a completion event, got {events:?}");
+    };
+    assert_eq!(complete.finish_reason, FinishReason::Stop);
+    assert!(!text.contains("<tool_call>"), "markers never leak: {text}");
+}
+
+// ── prompt rendering: every serdes request part shape ─────────────────────
+
+/// Every `ModelRequestPart` variant must land in the rendered prompt in the
+/// template's shapes: history responses become assistant turns (text prose
+/// plus `<tool_call>` blocks), consecutive tool returns share one user turn,
+/// retries become user instructions, builtin returns are dropped, and
+/// multi-part user content contributes its text parts only.
+#[tokio::test]
+async fn rendered_prompt_covers_every_request_part_shape() {
+    let (model, captured) = capturing_model(vec![GenEvent::Complete {
+        prompt_tokens: 1,
+        generated_tokens: 0,
+    }]);
+
+    let history = ModelResponse::with_parts(vec![
+        ModelResponsePart::Text(TextPart::new("I will check the weather.")),
+        ModelResponsePart::ToolCall(ToolCallPart::new(
+            "get_weather",
+            ToolCallArgs::Json(serde_json::json!({"city": "Paris"})),
+        )),
+    ]);
+    // String-form args parse back into parameters; unparseable args degrade
+    // to a parameterless call instead of being dropped.
+    let string_args = ModelResponse::with_parts(vec![ModelResponsePart::ToolCall(
+        ToolCallPart::new("ping", ToolCallArgs::String("{\"k\": \"v\"}".to_string())),
+    )]);
+    let broken_args = ModelResponse::with_parts(vec![ModelResponsePart::ToolCall(
+        ToolCallPart::new("note", ToolCallArgs::String("not json".to_string())),
+    )]);
+
+    let request = vec![ModelRequest {
+        parts: vec![
+            ModelRequestPart::SystemPrompt(SystemPromptPart::new("be brief")),
+            ModelRequestPart::UserPrompt(UserPromptPart::new(UserContent::text("hello there"))),
+            ModelRequestPart::ModelResponse(Box::new(history)),
+            ModelRequestPart::ToolReturn(ToolReturnPart::new(
+                "get_weather",
+                ToolReturnContent::text("sunny"),
+            )),
+            ModelRequestPart::ToolReturn(ToolReturnPart::new(
+                "get_weather",
+                ToolReturnContent::text("rainy"),
+            )),
+            ModelRequestPart::ModelResponse(Box::new(string_args)),
+            ModelRequestPart::ModelResponse(Box::new(broken_args)),
+            ModelRequestPart::RetryPrompt(RetryPromptPart::new(RetryContent::text("try again"))),
+            ModelRequestPart::RetryPrompt(RetryPromptPart::new(RetryContent::structured(
+                "bad output",
+                Some(vec!["missing city".to_string()]),
+            ))),
+            ModelRequestPart::BuiltinToolReturn(BuiltinToolReturnPart::new(
+                "web_search",
+                BuiltinToolReturnContent::Other {
+                    kind: "test".to_string(),
+                    data: serde_json::json!({}),
+                },
+                "call-1",
+            )),
+            ModelRequestPart::UserPrompt(UserPromptPart::new(UserContent::Parts(vec![
+                UserContentPart::text("see this"),
+                UserContentPart::image_url("https://example.invalid/cat.png"),
+            ]))),
+        ],
+        ..ModelRequest::default()
+    }];
+
+    collect_events_with(&model, &request, &serdes_ai::core::ModelSettings::default()).await;
+    let prompt = captured_request(&captured).prompt;
+
+    assert!(prompt.contains("<|im_start|>system\nbe brief<|im_end|>\n"));
+    assert!(prompt.contains("<|im_start|>user\nhello there<|im_end|>\n"));
+    assert!(
+        prompt.contains(
+            "<|im_start|>assistant\n<think></think>I will check the weather.\n<tool_call>\n\
+             <function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n\
+             </tool_call>\n<|im_end|>\n"
+        ),
+        "history must render as an assistant tool-call turn, got: {prompt}"
+    );
+    assert!(
+        prompt.contains(
+            "<|im_start|>user\n<tool_response>\nsunny\n</tool_response>\n\
+             <tool_response>\nrainy\n</tool_response>\n<|im_end|>\n"
+        ),
+        "consecutive tool returns must share one user turn, got: {prompt}"
+    );
+    assert!(
+        prompt.contains("<function=ping>\n<parameter=k>\nv\n</parameter>\n</function>"),
+        "string-form args must parse back into parameters, got: {prompt}"
+    );
+    assert!(
+        prompt.contains("<function=note>\n</function>"),
+        "unparseable args must degrade to a parameterless call, got: {prompt}"
+    );
+    assert!(prompt.contains("<|im_start|>user\ntry again<|im_end|>\n"));
+    assert!(
+        prompt.contains("bad output\nerrors: missing city"),
+        "structured retries must carry their errors, got: {prompt}"
+    );
+    assert!(prompt.contains("<|im_start|>user\nsee this<|im_end|>\n"));
+    assert!(!prompt.contains("cat.png"), "non-text parts are dropped");
+    assert!(
+        !prompt.contains("web_search"),
+        "builtin returns are dropped"
+    );
+}
+
+/// Variant of `collect_events` that lets a test pin the request settings.
+async fn collect_events_with(
+    model: &LocalLlamaModel,
+    messages: &[ModelRequest],
+    settings: &serdes_ai::core::ModelSettings,
+) -> Vec<ModelResponseStreamEvent> {
+    let mut stream = model
+        .request_stream(messages, settings, &ModelRequestParameters::default())
+        .await
+        .expect("stream starts");
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event.expect("stream event"));
+    }
+    events
 }

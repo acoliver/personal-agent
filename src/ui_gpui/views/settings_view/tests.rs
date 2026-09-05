@@ -15,6 +15,9 @@ mod tests_scrollable;
 #[path = "tests_skills.rs"]
 mod tests_skills;
 
+#[path = "tests_local_model.rs"]
+mod tests_local_model;
+
 use super::*;
 use crate::presentation::view_command::{ViewCommand, ViewId};
 use gpui::{AppContext, Bounds, EntityInputHandler, Pixels, TestAppContext};

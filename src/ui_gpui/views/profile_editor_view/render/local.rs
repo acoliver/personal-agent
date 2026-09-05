@@ -52,6 +52,7 @@ impl ProfileEditorView {
                     .child(
                         div()
                             .id("field-local-model-path")
+                            .debug_selector(|| "field-local-model-path".to_string())
                             .w(px(292.0))
                             .h(px(24.0))
                             .px(px(8.0))
@@ -77,6 +78,7 @@ impl ProfileEditorView {
                     .child(
                         div()
                             .id("btn-choose-local-model")
+                            .debug_selector(|| "btn-choose-local-model".to_string())
                             .w(px(60.0))
                             .h(px(24.0))
                             .bg(Theme::bg_dark())
@@ -137,4 +139,41 @@ fn local_engine_status_presentation(
         .bg(color)
         .into_any_element();
     (phrase, dot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_engine_status_presentation;
+    use crate::llm::local::engine::EngineStatus;
+
+    #[test]
+    fn not_loaded_reads_as_engine_not_loaded() {
+        let (phrase, _dot) = local_engine_status_presentation(&EngineStatus::NotLoaded);
+        assert_eq!(phrase, "Engine not loaded");
+    }
+
+    #[test]
+    fn loading_reads_as_engine_loading() {
+        let (phrase, _dot) = local_engine_status_presentation(&EngineStatus::Loading);
+        assert_eq!(phrase, "Engine loading…");
+    }
+
+    #[test]
+    fn loaded_reads_as_engine_loaded() {
+        let (phrase, _dot) = local_engine_status_presentation(&EngineStatus::Loaded {
+            layers: 41,
+            total_layers: 41,
+            n_ctx: 8192,
+            last_tok_s: 68.4,
+        });
+        assert_eq!(phrase, "Engine loaded");
+    }
+
+    #[test]
+    fn error_names_the_engine_failure() {
+        let (phrase, _dot) = local_engine_status_presentation(&EngineStatus::Error {
+            message: "model file not found".to_string(),
+        });
+        assert_eq!(phrase, "Engine error: model file not found");
+    }
 }

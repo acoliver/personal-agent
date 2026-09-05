@@ -72,6 +72,7 @@ impl ProfileEditorView {
                         row.child(
                             div()
                                 .id("btn-browse-model")
+                                .debug_selector(|| "btn-browse-model".to_string())
                                 .w(px(60.0))
                                 .h(px(24.0))
                                 .bg(Theme::bg_dark())
@@ -247,6 +248,7 @@ impl ProfileEditorView {
             .child(
                 div()
                     .id("dropdown-key-label")
+                    .debug_selector(|| "dropdown-key-label".to_string())
                     .flex_1()
                     .h(px(24.0))
                     .px(px(8.0))
@@ -293,6 +295,7 @@ impl ProfileEditorView {
             .child(
                 div()
                     .id("btn-manage-keys")
+                    .debug_selector(|| "btn-manage-keys".to_string())
                     .h(px(24.0))
                     .px(px(8.0))
                     .bg(Theme::bg_dark())

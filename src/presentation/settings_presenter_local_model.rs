@@ -106,3 +106,7 @@ impl SettingsPresenter {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "settings_presenter_local_model_tests.rs"]
+mod tests;

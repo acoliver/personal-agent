@@ -124,6 +124,7 @@ impl ProfileEditorView {
     ) -> Stateful<gpui::Div> {
         div()
             .id(SharedString::from(id.to_string()))
+            .debug_selector(move || id.to_string())
             .w(px(360.0))
             .h(px(24.0))
             .px(px(8.0))

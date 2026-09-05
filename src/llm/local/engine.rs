@@ -863,6 +863,7 @@ impl futures::Stream for ReceiverStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::local_model_settings::{LocalModelSettings, MAX_N_CTX};
 
     // @plan:PLAN-20260903-LOCALMODEL.P05
     // @requirement:REQ-LM-006
@@ -874,5 +875,32 @@ mod tests {
             "Local model file not found: /models/granite.gguf. Pick the GGUF file in \
              Settings → Local Model."
         );
+    }
+
+    #[test]
+    fn from_local_maps_every_engine_knob() {
+        let settings = LocalModelSettings {
+            model_path: PathBuf::from("/models/tiny.gguf"),
+            n_ctx: 4096,
+            gpu_layers: 41,
+            idle_unload: false,
+            idle_timeout_minutes: 7,
+        };
+        let mapped = EngineLoadSettings::from_local(&settings);
+        assert_eq!(mapped.model_path, PathBuf::from("/models/tiny.gguf"));
+        assert_eq!(mapped.n_ctx, 4096);
+        assert_eq!(mapped.gpu_layers, 41);
+        assert!(!mapped.idle_unload);
+        assert_eq!(mapped.idle_timeout, Duration::from_mins(7));
+    }
+
+    /// The persisted read resolves to defaults or a clamped disk blob; either
+    /// way the engine must never see a context window above the trained
+    /// limit, and the idle deadline is always minutes-to-seconds converted.
+    #[test]
+    fn from_persisted_stays_within_the_trained_context_window() {
+        let persisted = EngineLoadSettings::from_persisted();
+        assert!(persisted.n_ctx <= MAX_N_CTX);
+        assert!(!persisted.model_path.as_os_str().is_empty());
     }
 }

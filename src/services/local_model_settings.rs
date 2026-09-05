@@ -15,6 +15,12 @@ use serde::{Deserialize, Serialize};
 use super::app_settings::AppSettingsService;
 use super::{ServiceError, ServiceResult};
 
+/// `std::env` mutation is process-global, so every test that reads or writes
+/// `PA_LOCAL_GGUF` — including the local-model tests elsewhere in the crate
+/// that resolve default paths — serializes through this lock.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// App-settings key the serialized [`LocalModelSettings`] blob lives under.
 pub const LOCAL_MODEL_SETTINGS_KEY: &str = "local_model";
 
@@ -203,5 +209,62 @@ mod tests {
             ..LocalModelSettings::default()
         };
         assert_eq!(settings.clamped().n_ctx, 131_072);
+    }
+
+    /// An empty `PA_LOCAL_GGUF` is treated as unset: the data-dir default
+    /// must win over an empty string.
+    #[test]
+    fn empty_env_override_falls_back_to_the_data_dir_default() {
+        let _guard = ENV_LOCK.blocking_lock();
+        // SAFETY: single-threaded w.r.t. env mutation via ENV_LOCK; every
+        // reader of the var holds the same lock.
+        std::env::set_var(ENV_MODEL_PATH, "");
+        let path = default_model_path();
+        std::env::remove_var(ENV_MODEL_PATH);
+        assert!(path.ends_with("PersonalAgent/models/granite-4.2-3b-Q8_0.gguf"));
+    }
+
+    /// The app-settings file lives under the standard data-dir location.
+    #[test]
+    fn app_settings_path_points_at_the_app_settings_file() {
+        let path = app_settings_path().expect("data dir exists on supported targets");
+        assert!(path.ends_with("PersonalAgent/app_settings.json"));
+    }
+
+    /// A stored blob that is not valid `LocalModelSettings` JSON must fail
+    /// the load with a serialization error, not silently become defaults.
+    #[tokio::test]
+    async fn service_load_reports_serialization_error_for_a_corrupt_blob() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let service = crate::services::app_settings_impl::AppSettingsServiceImpl::new(
+            dir.path().join("app_settings.json"),
+        )
+        .unwrap();
+        service
+            .set_setting(LOCAL_MODEL_SETTINGS_KEY, "{not json".to_string())
+            .await
+            .unwrap();
+
+        let error = LocalModelSettings::load(&service)
+            .await
+            .expect_err("a corrupt blob must fail the load");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse local model settings"),
+            "error should name the parse failure, got: {error}"
+        );
+    }
+
+    /// A path that cannot be read as a file (a directory here) is an error,
+    /// not silent defaults.
+    #[test]
+    fn disk_loader_reports_an_unreadable_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let error = try_load_from_disk(dir.path()).expect_err("directories are not readable");
+        assert!(
+            error.contains("failed to read"),
+            "error should name the read failure, got: {error}"
+        );
     }
 }

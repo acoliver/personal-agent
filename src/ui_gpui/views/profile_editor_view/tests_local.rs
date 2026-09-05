@@ -4,7 +4,7 @@
 
 use super::super::*;
 use super::make_bridge;
-use gpui::{AppContext, TestAppContext};
+use gpui::{AppContext, TestAppContext, VisualTestContext};
 
 #[gpui::test]
 async fn local_api_type_requires_no_key_and_can_be_saved(cx: &mut TestAppContext) {
@@ -328,4 +328,116 @@ async fn switching_to_local_seeds_the_model_label_and_keeps_the_name_editable(
         view.append_to_active_field(" Granite");
         assert_eq!(view.state.data.name, "My Granite");
     });
+}
+
+// ── LOCAL variant rendering (PLAN-20260903-LOCALMODEL.P05, REQ-LM-007) ────
+//
+// These run the real `Render` impl inside GPUI's headless test window and
+// assert which controls exist by their element IDs, so "hidden for Local"
+// means actually absent from a drawn frame.
+
+fn draw_editor(window_cx: &mut VisualTestContext) {
+    window_cx.simulate_resize(gpui::size(gpui::px(900.0), gpui::px(2000.0)));
+    window_cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+}
+
+fn assert_ids_rendered(window_cx: &mut VisualTestContext, ids: &[&'static str], present: bool) {
+    for id in ids {
+        assert_eq!(
+            window_cx.debug_bounds(id).is_some(),
+            present,
+            "element `{id}`: expected present = {present}"
+        );
+    }
+}
+
+fn remote_load_command() -> ViewCommand {
+    ViewCommand::ProfileEditorLoad {
+        id: Uuid::new_v4(),
+        name: "Claude".to_string(),
+        provider_id: "anthropic".to_string(),
+        model_id: "claude-sonnet-4".to_string(),
+        base_url: "https://api.anthropic.com/v1".to_string(),
+        api_key_label: "anthropic-key".to_string(),
+        oauth_account: String::new(),
+        temperature: 0.7,
+        max_tokens: Some(4096),
+        max_tokens_field_name: String::new(),
+        extra_request_fields: "{}".to_string(),
+        context_limit: Some(200_000),
+        show_thinking: false,
+        enable_thinking: false,
+        thinking_budget: None,
+        reasoning_effort: String::new(),
+        system_prompt: String::new(),
+    }
+}
+
+/// @plan:PLAN-20260903-LOCALMODEL.P05
+/// @requirement:REQ-LM-006 REQ-LM-007
+#[gpui::test]
+async fn local_variant_renders_the_shared_engine_row_and_hides_key_endpoint_and_browse(
+    cx: &mut TestAppContext,
+) {
+    let (bridge, _user_rx) = make_bridge();
+    let (view, window_cx) = cx.add_window_view(|_window, cx| ProfileEditorView::new(cx));
+
+    window_cx.update(|_window, app| {
+        view.update(app, |editor, cx| {
+            editor.set_bridge(Arc::clone(&bridge));
+            editor.handle_command(local_load_command(), cx);
+        });
+    });
+    draw_editor(window_cx);
+
+    assert_ids_rendered(
+        window_cx,
+        &["field-local-model-path", "btn-choose-local-model"],
+        true,
+    );
+    assert_ids_rendered(
+        window_cx,
+        &[
+            "field-base-url",
+            "dropdown-key-label",
+            "btn-manage-keys",
+            "btn-browse-model",
+        ],
+        false,
+    );
+}
+
+/// @requirement:REQ-LM-007
+#[gpui::test]
+async fn remote_variant_shows_key_endpoint_and_browse_but_no_local_engine_row(
+    cx: &mut TestAppContext,
+) {
+    let (bridge, _user_rx) = make_bridge();
+    let (view, window_cx) = cx.add_window_view(|_window, cx| ProfileEditorView::new(cx));
+
+    window_cx.update(|_window, app| {
+        view.update(app, |editor, cx| {
+            editor.set_bridge(Arc::clone(&bridge));
+            editor.handle_command(remote_load_command(), cx);
+        });
+    });
+    draw_editor(window_cx);
+
+    assert_ids_rendered(
+        window_cx,
+        &[
+            "field-base-url",
+            "dropdown-key-label",
+            "btn-manage-keys",
+            "btn-browse-model",
+        ],
+        true,
+    );
+    assert_ids_rendered(
+        window_cx,
+        &["field-local-model-path", "btn-choose-local-model"],
+        false,
+    );
 }

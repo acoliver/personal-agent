@@ -145,3 +145,38 @@ pub trait Generator: Send + Sync {
     /// may be busy finishing a generation, which then completes normally.
     async fn unload(&self);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A live generation reads as uncancelled, and a dropped one lands in the
+    /// shared cancel set — the signal the actor polls at token boundaries.
+    #[test]
+    fn abort_guard_tracks_consumer_cancellation() {
+        let cancelled = Arc::new(Mutex::new(HashSet::new()));
+        let guard = AbortGuard::new(9, Arc::clone(&cancelled));
+        assert!(!guard.is_cancelled(), "a live generation is not cancelled");
+
+        drop(guard);
+        assert!(
+            cancelled.lock().expect("cancel set").contains(&9),
+            "dropping the guard must mark the generation cancelled"
+        );
+    }
+
+    /// `into_parts` moves the guard out of the generation, so dropping the
+    /// leftover shell must not write a stale cancel entry for the id.
+    #[test]
+    fn into_parts_transfers_cancel_ownership_to_the_caller() {
+        let cancelled = Arc::new(Mutex::new(HashSet::new()));
+        let generation = Generation::new(
+            3,
+            Box::pin(futures::stream::empty::<GenEvent>()),
+            Arc::clone(&cancelled),
+        );
+        let (_, _, guard) = generation.into_parts();
+        drop(guard);
+        assert!(cancelled.lock().expect("cancel set").contains(&3));
+    }
+}

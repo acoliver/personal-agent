@@ -22,6 +22,7 @@ impl SettingsView {
     ) -> impl IntoElement {
         div()
             .id("local-model-panel-scroll")
+            .debug_selector(|| "local-model-panel-scroll".to_string())
             .flex()
             .flex_col()
             .flex_1()
@@ -68,6 +69,7 @@ impl SettingsView {
             .child(
                 div()
                     .id("btn-create-local-profile")
+                    .debug_selector(|| "btn-create-local-profile".to_string())
                     .px(px(12.0))
                     .py(px(6.0))
                     .rounded(px(4.0))
@@ -125,6 +127,7 @@ impl SettingsView {
             .child(
                 div()
                     .id("btn-unload-local-model")
+                    .debug_selector(|| "btn-unload-local-model".to_string())
                     .px(px(12.0))
                     .py(px(6.0))
                     .rounded(px(4.0))
@@ -160,6 +163,7 @@ impl SettingsView {
             .child(
                 div()
                     .id("btn-choose-local-model")
+                    .debug_selector(|| "btn-choose-local-model".to_string())
                     .px(px(12.0))
                     .py(px(4.0))
                     .rounded(px(4.0))
@@ -220,6 +224,7 @@ impl SettingsView {
 
         div()
             .id("local-model-idle-toggle")
+            .debug_selector(|| "local-model-idle-toggle".to_string())
             .flex()
             .items_center()
             .justify_between()
@@ -275,6 +280,7 @@ impl SettingsView {
         div().flex().child(
             div()
                 .id("btn-save-local-model")
+                .debug_selector(|| "btn-save-local-model".to_string())
                 .px(px(16.0))
                 .py(px(8.0))
                 .rounded(px(4.0))
@@ -322,6 +328,7 @@ impl SettingsView {
 
         div()
             .id(SharedString::from(id))
+            .debug_selector(move || id.to_string())
             .w_full()
             .h(px(28.0))
             .px(px(8.0))
@@ -472,5 +479,46 @@ mod tests {
             None,
         );
         assert_eq!(detail, "Metal: 41 layers · ctx 4096 · last gen 0.0 tok/s");
+    }
+
+    #[test]
+    fn not_loaded_card_promises_load_on_first_request() {
+        let (title, detail, _) = local_model_status_presentation(&EngineStatus::NotLoaded, None);
+        assert_eq!(title, "Not loaded");
+        assert_eq!(detail, "Model loads on first request.");
+    }
+
+    #[test]
+    fn loading_card_reports_reading_the_gguf() {
+        let (title, detail, _) = local_model_status_presentation(&EngineStatus::Loading, None);
+        assert_eq!(title, "Loading…");
+        assert_eq!(detail, "Reading GGUF into memory.");
+    }
+
+    #[test]
+    fn error_card_prefers_the_reported_error_line_over_the_status_message() {
+        let (title, detail, _) = local_model_status_presentation(
+            &EngineStatus::Error {
+                message: "backend init failed".to_string(),
+            },
+            Some("GGUF header corrupt"),
+        );
+        assert_eq!(title, "Load error");
+        assert_eq!(
+            detail, "GGUF header corrupt",
+            "the presenter's error line is what the user must see"
+        );
+    }
+
+    #[test]
+    fn error_card_falls_back_to_the_engine_message() {
+        let (title, detail, _) = local_model_status_presentation(
+            &EngineStatus::Error {
+                message: "backend init failed".to_string(),
+            },
+            None,
+        );
+        assert_eq!(title, "Load error");
+        assert_eq!(detail, "backend init failed");
     }
 }
