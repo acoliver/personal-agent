@@ -12,6 +12,7 @@ fn active_stream_entry(stream_id: Uuid) -> ActiveStream {
         task: None,
         cancel: CancellationToken::new(),
         state: StreamLifecycle::Running,
+        steering: serdes_ai_agent::SteeringQueue::new(),
     }
 }
 

@@ -327,6 +327,12 @@ pub(super) async fn run_stream_task(
     view_tx: tokio::sync::mpsc::Sender<ViewCommand>,
     approval_gate: Arc<ApprovalGate>,
     policy: Arc<AsyncMutex<ToolApprovalPolicy>>,
+    // The send's steering transport, cloned from its `ActiveStream` slot.
+    // Attached to every chained turn so delivered texts reach the sink.
+    //
+    // @plan PLAN-20260905-STEERINT.P03
+    // @requirement REQ-SI-002
+    steering_queue: serdes_ai_agent::SteeringQueue,
 ) {
     let PreparedMessageContext {
         profile,
@@ -356,6 +362,13 @@ pub(super) async fn run_stream_task(
     else {
         return;
     };
+
+    // P03 wires the send's transport this far; P04 attaches it to every
+    // turn's run so delivered texts reach the sink mid-turn.
+    //
+    // @plan PLAN-20260905-STEERINT.P04
+    // @requirement REQ-SI-001
+    let _steering_queue = steering_queue;
 
     let delivery_ctx = SteeringDeliveryContext {
         finalize: StreamFinalizeContext {

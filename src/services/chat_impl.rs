@@ -73,6 +73,13 @@ pub(super) struct ActiveStream {
     pub(super) cancel: CancellationToken,
     /// Current lifecycle state of the stream.
     pub(super) state: StreamLifecycle,
+    /// The send's steering transport: one fork queue per send, shared by
+    /// every chained turn, dropped with this entry. The acceptance path
+    /// commits to it; the turns attach it so delivered texts reach the sink.
+    ///
+    /// @plan PLAN-20260905-STEERINT.P03
+    /// @requirement REQ-SI-002
+    pub(super) steering: serdes_ai_agent::SteeringQueue,
 }
 
 pub struct ChatServiceImpl {
@@ -259,6 +266,12 @@ impl ChatServiceImpl {
                     task: None,
                     cancel: cancel.clone(),
                     state: StreamLifecycle::Starting,
+                    // Created with the slot so the send's lifetime bounds the
+                    // transport: texts committed to it die with the send.
+                    //
+                    // @plan PLAN-20260905-STEERINT.P03
+                    // @requirement REQ-SI-002
+                    steering: serdes_ai_agent::SteeringQueue::new(),
                 },
             );
         }
@@ -614,6 +627,22 @@ impl ChatServiceImpl {
         let approval_gate = self.approval_gate.clone();
         let policy = self.policy.clone();
 
+        // The send's transport is read from the reservation so the turn
+        // runner can attach the same queue the acceptance path commits to.
+        // The lock is released before the spawn; a superseded or removed
+        // reservation means there is nothing to run for, exactly the state
+        // the post-spawn guard below aborts.
+        //
+        // @plan PLAN-20260905-STEERINT.P03
+        // @requirement REQ-SI-002
+        let steering_queue = {
+            let map = self.active_streams.lock().expect("active_streams poisoned");
+            match map.get(&conversation_id) {
+                Some(entry) if entry.stream_id == stream_id => entry.steering.clone(),
+                _ => return,
+            }
+        };
+
         let handle = tokio::spawn(async move {
             run_stream_task(
                 prepared,
@@ -628,6 +657,7 @@ impl ChatServiceImpl {
                 view_tx,
                 approval_gate,
                 policy,
+                steering_queue,
             )
             .await;
         });
@@ -965,6 +995,20 @@ impl ChatServiceImpl {
         &self,
     ) -> (Arc<StdMutex<HashMap<Uuid, ActiveStream>>>, SteeringQueues) {
         (self.active_streams.clone(), self.steering_queues.clone())
+    }
+
+    /// Test-only handle to a conversation's steering transport: the fork
+    /// queue the send's slot holds, so acceptance tests can observe the
+    /// commit that puts committed text where a run will deliver it.
+    ///
+    /// @plan PLAN-20260905-STEERINT.P03
+    /// @requirement REQ-SI-002
+    pub(in crate::services::chat_impl) fn steering_transport_for_test(
+        &self,
+        conversation_id: Uuid,
+    ) -> Option<serdes_ai_agent::SteeringQueue> {
+        let map = self.active_streams.lock().expect("active_streams poisoned");
+        map.get(&conversation_id).map(|a| a.steering.clone())
     }
 
     /// Test-only helper to clear all mock streams.

@@ -193,7 +193,62 @@ impl ChatServiceImpl {
             text: queued_text,
         }));
 
-        self.confirm_or_withdraw_steering(conversation_id, steer_id)
+        self.confirm_or_withdraw_steering(conversation_id, steer_id)?;
+
+        // The transport commit is the acceptance's point of no return, so it
+        // runs only after the re-check confirmed the entry: a committed text
+        // reaches a model request whether or not anything else ever refuses
+        // it, which is why nothing that can refuse may run after this.
+        //
+        // @plan PLAN-20260905-STEERINT.P03
+        // @requirement REQ-SI-002
+        self.commit_steering_to_transport(conversation_id, steer_id, trimmed)?;
+        Ok(steer_id)
+    }
+
+    /// Commit an accepted steer's text to its send's transport queue.
+    ///
+    /// The fork queue lives on the send's `ActiveStream` slot; cloning the
+    /// handle and dropping the lock before the commit keeps the registry
+    /// discipline intact (the two locks are still never held together, and
+    /// nothing is emitted under either).
+    ///
+    /// A `false` from `steer` means the transport is closed: the send went
+    /// away between the confirm re-check and this commit, so the text can
+    /// never reach a model request. The entry is taken back off the queue
+    /// and announced as discarded, with the same `no_active_turn` refusal
+    /// the re-check returns, so a caller cannot tell the two windows apart.
+    ///
+    /// Lock discipline: the `active_streams` guard is released before
+    /// `remove_steering` locks `steering_queues`, and both are released
+    /// before anything is emitted. See [`SteeringQueues`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same `ServiceError::Validation` the confirm re-check
+    /// returns when the send is gone and the commit cannot happen.
+    ///
+    /// @plan PLAN-20260905-STEERINT.P03
+    /// @requirement REQ-SI-002
+    pub(super) fn commit_steering_to_transport(
+        &self,
+        conversation_id: Uuid,
+        steer_id: Uuid,
+        text: &str,
+    ) -> ServiceResult<()> {
+        let transport = {
+            let map = self.active_streams.lock().expect("active_streams poisoned");
+            map.get(&conversation_id)
+                .map(|entry| entry.steering.clone())
+        };
+
+        if transport.is_some_and(|queue| queue.steer(text.to_string())) {
+            return Ok(());
+        }
+
+        let _ = self.remove_steering(conversation_id, steer_id);
+        emit_steering_discarded_id(conversation_id, steer_id);
+        Err(no_active_turn())
     }
 
     /// Confirm a steer that is now on the queue, or take it back.
