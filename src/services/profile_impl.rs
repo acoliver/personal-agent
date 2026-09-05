@@ -1,7 +1,6 @@
 //! Profile service implementation
 
 use super::{profile_migration, ProfileService, ServiceResult};
-use crate::config::default_api_base_url_for_provider;
 use crate::models::{AuthConfig, ModelParameters, ModelProfile};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -18,50 +17,11 @@ pub struct ProfileServiceImpl {
     profiles: Arc<RwLock<Vec<ModelProfile>>>,
 }
 
-/// Name of the profile seeded on first install (REQ-LM-002).
-pub const SEED_PROFILE_NAME: &str = "Granite (local)";
-/// Provider id of the seeded profile; routes to the in-process engine.
-pub const SEED_PROVIDER_ID: &str = "local";
-/// Model label of the seeded profile; display-only for the local engine.
-pub const SEED_MODEL_ID: &str = "granite-4.2-3b";
-
-/// Create the "Granite (local)" profile and make it the default, unless a
-/// local profile already exists.
-///
-/// Shared by first-install seeding (`initialize`) and the Settings → Local
-/// Model one-click button, so an existing install ends up with exactly the
-/// profile a fresh install gets (REQ-LM-002). Idempotent: a no-op when any
-/// `provider_id == "local"` profile is present.
-///
-/// # Errors
-///
-/// Returns `ServiceError` when listing profiles, creating the seed profile,
-/// or persisting the new default fails.
-///
-/// @plan:PLAN-20260903-LOCALMODEL.P05
-/// @requirement:REQ-LM-002 REQ-LM-006
-pub async fn ensure_local_seed_profile(service: &dyn ProfileService) -> ServiceResult<()> {
-    if service
-        .list()
-        .await?
-        .iter()
-        .any(|profile| profile.provider_id.trim() == SEED_PROVIDER_ID)
-    {
-        return Ok(());
-    }
-    let profile = service
-        .create(
-            SEED_PROFILE_NAME.to_string(),
-            SEED_PROVIDER_ID.to_string(),
-            SEED_MODEL_ID.to_string(),
-            None,
-            AuthConfig::None,
-            ModelParameters::default(),
-            None,
-        )
-        .await?;
-    service.set_default(profile.id).await
-}
+/// Seeding lives in its own module; re-exported here so existing
+/// `profile_impl::` paths for the seed consts and helper keep working.
+pub use super::profile_seeding::{
+    ensure_local_seed_profile, SEED_MODEL_ID, SEED_PROFILE_NAME, SEED_PROVIDER_ID,
+};
 
 impl ProfileServiceImpl {
     fn legacy_profile_id_for_path(path: &Path) -> Uuid {
@@ -71,19 +31,6 @@ impl ProfileServiceImpl {
         );
 
         Uuid::new_v5(&Uuid::NAMESPACE_URL, identifier.as_bytes())
-    }
-
-    fn normalize_api_base_url(provider: &str, base_url: Option<String>) -> String {
-        // A local profile has no HTTP endpoint. Persisting one would let the
-        // profile silently route to OpenAI (REQ-LM-007), so the field stays
-        // empty regardless of what the caller supplied.
-        if provider.trim() == crate::llm::local::LOCAL_PROVIDER_ID {
-            return String::new();
-        }
-        match base_url {
-            Some(candidate) if !candidate.trim().is_empty() => candidate.trim().to_string(),
-            _ => default_api_base_url_for_provider(provider),
-        }
     }
 
     fn normalize_system_prompt(system_prompt: Option<String>) -> String {
@@ -137,21 +84,6 @@ impl ProfileServiceImpl {
         if self.load_profiles_from_disk()?.is_empty() && self.load_default_id()?.is_none() {
             self.seed_default_local_profile().await?;
         }
-        Ok(())
-    }
-
-    /// Create the first-install "Granite (local)" profile via the shared
-    /// seeding helper, so boot-time seeding and the one-click button produce
-    /// the identical profile shape.
-    ///
-    /// @plan:PLAN-20260903-LOCALMODEL.P01
-    /// @requirement:REQ-LM-002
-    async fn seed_default_local_profile(&self) -> Result<(), super::ServiceError> {
-        ensure_local_seed_profile(self).await?;
-        tracing::info!(
-            "ProfileService: local seed profile '{}' present and default",
-            SEED_PROFILE_NAME
-        );
         Ok(())
     }
 
@@ -258,7 +190,6 @@ impl ProfileServiceImpl {
     }
 
     /// Load all profiles from disk, with compatibility support for legacy schemas.
-    #[allow(clippy::cognitive_complexity)]
     fn load_profiles_from_disk(&self) -> Result<Vec<ModelProfile>, super::ServiceError> {
         let mut profiles = Vec::new();
         let mut seen = HashSet::<Uuid>::new();
@@ -331,29 +262,7 @@ impl ProfileServiceImpl {
                 }
             };
 
-            // Guarantee non-empty critical fields.
-            if profile.name.trim().is_empty() {
-                profile.name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Recovered Profile")
-                    .to_string();
-            }
-            if profile.provider_id.trim().is_empty() {
-                profile.provider_id = "openai".to_string();
-            }
-            if profile.model_id.trim().is_empty() {
-                profile.model_id = "gpt-4".to_string();
-            }
-            if profile.base_url.trim().is_empty() {
-                profile.base_url = Self::normalize_api_base_url(&profile.provider_id, None);
-            }
-            // Migrate local profiles that predate REQ-LM-007 and carry a baked
-            // OpenAI endpoint; the engine never reads base_url, and leaving
-            // one behind would keep routing lies in the persisted JSON.
-            if profile.provider_id.trim() == crate::llm::local::LOCAL_PROVIDER_ID {
-                profile.base_url = String::new();
-            }
+            profile_migration::normalize_loaded_profile(&mut profile, &path);
 
             // Avoid duplicate IDs if legacy conversion generated conflicting entries.
             while seen.contains(&profile.id) {
@@ -523,7 +432,8 @@ impl ProfileService for ProfileServiceImpl {
         system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile> {
         let normalized_provider = provider.trim().to_string();
-        let normalized_base_url = Self::normalize_api_base_url(&normalized_provider, base_url);
+        let normalized_base_url =
+            profile_migration::normalize_api_base_url(&normalized_provider, base_url);
         let normalized_system_prompt = Self::normalize_system_prompt(system_prompt);
 
         let mut profile =
@@ -607,7 +517,8 @@ impl ProfileService for ProfileServiceImpl {
         // or other non-URL edit still cleans a legacy baked base_url.
         if base_url.is_some() || profile.provider_id.trim() == crate::llm::local::LOCAL_PROVIDER_ID
         {
-            profile.base_url = Self::normalize_api_base_url(&profile.provider_id, base_url);
+            profile.base_url =
+                profile_migration::normalize_api_base_url(&profile.provider_id, base_url);
         }
 
         if let Some(auth) = auth {

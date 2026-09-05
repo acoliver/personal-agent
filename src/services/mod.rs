@@ -38,6 +38,7 @@ pub mod oauth;
 pub mod profile;
 pub mod profile_impl;
 pub mod profile_migration;
+mod profile_seeding;
 pub mod secrets;
 pub mod secrets_impl;
 pub mod secure_store;

@@ -1,7 +1,49 @@
+use crate::config::default_api_base_url_for_provider;
 use crate::models::{AuthConfig, ModelParameters, ModelProfile};
 use serde_json::{Map, Value};
 use std::path::Path;
 use uuid::Uuid;
+
+/// Fills in defaults for critical fields a migrated or hand-edited profile
+/// left empty, so nothing downstream has to handle blank names or providers.
+pub(crate) fn normalize_loaded_profile(profile: &mut ModelProfile, path: &Path) {
+    // Guarantee non-empty critical fields.
+    if profile.name.trim().is_empty() {
+        profile.name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Recovered Profile")
+            .to_string();
+    }
+    if profile.provider_id.trim().is_empty() {
+        profile.provider_id = "openai".to_string();
+    }
+    if profile.model_id.trim().is_empty() {
+        profile.model_id = "gpt-4".to_string();
+    }
+    if profile.base_url.trim().is_empty() {
+        profile.base_url = normalize_api_base_url(&profile.provider_id, None);
+    }
+    // Migrate local profiles that predate REQ-LM-007 and carry a baked
+    // OpenAI endpoint; the engine never reads base_url, and leaving
+    // one behind would keep routing lies in the persisted JSON.
+    if profile.provider_id.trim() == crate::llm::local::LOCAL_PROVIDER_ID {
+        profile.base_url = String::new();
+    }
+}
+
+/// A local profile has no HTTP endpoint. Persisting one would let the
+/// profile silently route to `OpenAI` (`REQ-LM-007`), so the field stays
+/// empty regardless of what the caller supplied.
+pub(crate) fn normalize_api_base_url(provider: &str, base_url: Option<String>) -> String {
+    if provider.trim() == crate::llm::local::LOCAL_PROVIDER_ID {
+        return String::new();
+    }
+    match base_url {
+        Some(candidate) if !candidate.trim().is_empty() => candidate.trim().to_string(),
+        _ => default_api_base_url_for_provider(provider),
+    }
+}
 
 pub(crate) fn parse_legacy_profile<LegacyId, ParseAuth, ParseParameters>(
     value: &Value,

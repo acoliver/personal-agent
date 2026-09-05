@@ -346,7 +346,7 @@ fn actor_entry(rx: &mpsc::Receiver<Job>, status: &Arc<Mutex<EngineStatus>>, stop
             return;
         }
     };
-    actor_loop(&backend, rx, status, stop);
+    actor_loop(&backend, ActorCx { rx, status, stop });
 }
 
 /// Answers every queued job with a failure after an unrecoverable init error.
@@ -385,60 +385,35 @@ pub fn missing_model_file_message(path: &Path) -> String {
     )
 }
 
-// One coherent state machine: splitting the load/resident phases apart would
-// scatter the `model`/`ctx` borrows and the deferred-job replay.
-#[allow(clippy::too_many_lines)]
-fn actor_loop(
-    backend: &LlamaBackend,
-    rx: &mpsc::Receiver<Job>,
-    status: &Mutex<EngineStatus>,
-    stop: &StopFlags,
-) {
+/// The actor-wide services every phase shares: the job channel, the status
+/// cell, and the stop flags.
+#[derive(Clone, Copy)]
+struct ActorCx<'a> {
+    rx: &'a mpsc::Receiver<Job>,
+    status: &'a Mutex<EngineStatus>,
+    stop: &'a StopFlags,
+}
+
+/// One coherent state machine: the resident phase borrows `model`/`ctx` for a
+/// single loop iteration and hands a deferred job back instead of taking
+/// ownership, so the phase helpers cannot scatter the borrows or the replay.
+fn actor_loop(backend: &LlamaBackend, cx: ActorCx<'_>) {
     // A job that arrived for the wrong resident model is replayed after the
     // unload; the channel cannot take it back.
     let mut deferred: Option<Job> = None;
     loop {
         // No NotLoaded reset here: a failed load must stay `Error` until the
         // next job arrives, and later iterations end NotLoaded at the unload.
-        //
-        // Phase 1: unloaded. Block until a job names the model to load.
-        let mut load_reply = None;
-        let mut pending_gen = None;
-        let settings;
-        loop {
-            let job = match deferred.take() {
-                Some(job) => job,
-                None => match rx.recv() {
-                    Ok(job) => job,
-                    Err(_) => return,
-                },
-            };
-            match job {
-                Job::Unload => {}
-                // Nothing resident: exiting the loop ends the thread.
-                Job::Shutdown => return,
-                Job::Load {
-                    settings: next,
-                    reply,
-                } => {
-                    settings = next;
-                    load_reply = Some(reply);
-                    break;
-                }
-                Job::Generate {
-                    gen_id,
-                    request,
-                    settings: next,
-                    events,
-                } => {
-                    settings = next;
-                    pending_gen = Some((gen_id, request, events));
-                    break;
-                }
-            }
-        }
+        let Some(PendingModelJob {
+            settings,
+            mut load_reply,
+            mut pending_gen,
+        }) = wait_for_model_job(cx.rx, &mut deferred)
+        else {
+            return;
+        };
 
-        set_status(status, EngineStatus::Loading);
+        set_status(cx.status, EngineStatus::Loading);
         let mut fail_load = |message: String| {
             if let Some(reply) = load_reply.take() {
                 let _ = reply.send(Err(message.clone()));
@@ -446,42 +421,17 @@ fn actor_loop(
             if let Some((_, _, events)) = pending_gen.take() {
                 let _ = events.send(GenEvent::Failed(message.clone()));
             }
-            set_status(status, EngineStatus::Error { message });
+            set_status(cx.status, EngineStatus::Error { message });
         };
-        // llama-cpp-2 panics on a missing model file instead of returning an
-        // error; a bad path must fail the job, not kill the actor thread.
-        if !settings.model_path.exists() {
-            fail_load(missing_model_file_message(&settings.model_path));
-            continue;
-        }
-        // `ctx` borrows `model`, so both stay locals of this iteration and the
-        // context is created before any value moves.
-        let model = match LlamaModel::load_from_file(
-            backend,
-            &settings.model_path,
-            &LlamaModelParams::default().with_n_gpu_layers(settings.gpu_layers),
-        ) {
-            Ok(model) => model,
-            Err(error) => {
-                fail_load(format!(
-                    "failed to load {}: {error}",
-                    settings.model_path.display()
-                ));
+        let (model, n_ctx) = match load_resident(backend, &settings) {
+            Ok(loaded) => loaded,
+            Err(message) => {
+                fail_load(message);
                 continue;
             }
         };
-        // A hand-edited n_ctx above the model's trained window would decode
-        // past positions the GGUF never saw; clamp to the model's own limit
-        // and record the adjustment. The clamped value is what the status
-        // card shows, so the effective window is always the honest one.
-        let n_ctx = settings.n_ctx.min(model.n_ctx_train());
-        if n_ctx < settings.n_ctx {
-            tracing::warn!(
-                requested = settings.n_ctx,
-                effective = n_ctx,
-                "local model context size clamped to the GGUF's n_ctx_train"
-            );
-        }
+        // `ctx` borrows `model`, so both stay locals of this iteration and the
+        // context is created before any value moves.
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(n_ctx))
             .with_n_batch(n_ctx);
@@ -496,87 +446,203 @@ fn actor_loop(
             let _ = reply.send(Ok(()));
         }
 
-        // Phase 2: model resident. Serve jobs until Unload, Shutdown, or the
-        // idle timer.
-        let mut last_tok_s = if let Some((gen_id, request, events)) = pending_gen {
-            run_generation(&model, &mut ctx, &request, &events, stop, gen_id)
-        } else {
-            0.0
-        };
-        update_loaded_status(status, &model, n_ctx, &settings, last_tok_s);
-        let mut idle_deadline = settings
-            .idle_unload
-            .then(|| Instant::now() + settings.idle_timeout);
-        let mut shutdown_requested = false;
-        loop {
-            let job = match idle_deadline {
-                Some(deadline) => {
-                    match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                        Ok(job) => Some(job),
-                        Err(mpsc::RecvTimeoutError::Timeout) => None,
-                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                    }
-                }
-                None => match rx.recv() {
-                    Ok(job) => Some(job),
-                    Err(_) => return,
-                },
-            };
-            match job {
-                // Idle timer fired: fall through to the unload.
-                None | Some(Job::Unload) => break,
-                Some(Job::Shutdown) => {
-                    shutdown_requested = true;
-                    break;
-                }
-                Some(Job::Load {
-                    settings: next,
-                    reply,
-                }) => {
-                    if settings.same_model(&next) {
-                        let _ = reply.send(Ok(()));
-                    } else {
-                        deferred = Some(Job::Load {
-                            settings: next,
-                            reply,
-                        });
-                        break;
-                    }
-                }
-                Some(Job::Generate {
-                    gen_id,
-                    request,
-                    settings: next,
-                    events,
-                }) => {
-                    if settings.same_model(&next) {
-                        last_tok_s =
-                            run_generation(&model, &mut ctx, &request, &events, stop, gen_id);
-                        update_loaded_status(status, &model, n_ctx, &settings, last_tok_s);
-                    } else {
-                        deferred = Some(Job::Generate {
-                            gen_id,
-                            request,
-                            settings: next,
-                            events,
-                        });
-                        break;
-                    }
-                }
-            }
-            if settings.idle_unload {
-                idle_deadline = Some(Instant::now() + settings.idle_timeout);
-            }
-        }
+        let outcome = serve_resident(cx, &model, &mut ctx, &settings, n_ctx, pending_gen);
         // Dropping `ctx` and `model` here is the unload: llama.cpp frees its
         // allocations and the mmap is released. On shutdown the backend guard
         // drops right after, when `actor_entry` returns, before the join in
         // `shutdown_engine` completes.
         drop(ctx);
         drop(model);
-        set_status(status, EngineStatus::NotLoaded);
-        if shutdown_requested {
-            return;
+        match outcome {
+            ResidentOutcome::Unloaded => set_status(cx.status, EngineStatus::NotLoaded),
+            ResidentOutcome::Deferred(job) => {
+                set_status(cx.status, EngineStatus::NotLoaded);
+                deferred = Some(job);
+            }
+            ResidentOutcome::Shutdown => {
+                set_status(cx.status, EngineStatus::NotLoaded);
+                return;
+            }
+            // Every sender is gone; exit without the status write, like the
+            // early return this replaces.
+            ResidentOutcome::Disconnected => return,
+        }
+    }
+}
+
+/// A `Load` or `Generate` job acquired while unloaded, flattened so the
+/// caller does not re-match on which variant arrived.
+struct PendingModelJob {
+    settings: EngineLoadSettings,
+    load_reply: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+    pending_gen: Option<(u64, GenRequest, tokio_mpsc::UnboundedSender<GenEvent>)>,
+}
+
+/// Phase 1: unloaded. Block until a job names the model to load, returning
+/// `None` when the thread should end (`Shutdown` or a disconnected channel).
+fn wait_for_model_job(
+    rx: &mpsc::Receiver<Job>,
+    deferred: &mut Option<Job>,
+) -> Option<PendingModelJob> {
+    loop {
+        let job = match deferred.take() {
+            Some(job) => job,
+            None => match rx.recv() {
+                Ok(job) => job,
+                Err(_) => return None,
+            },
+        };
+        match job {
+            Job::Unload => {}
+            // Nothing resident: exiting the loop ends the thread.
+            Job::Shutdown => return None,
+            Job::Load { settings, reply } => {
+                return Some(PendingModelJob {
+                    settings,
+                    load_reply: Some(reply),
+                    pending_gen: None,
+                });
+            }
+            Job::Generate {
+                gen_id,
+                request,
+                settings,
+                events,
+            } => {
+                return Some(PendingModelJob {
+                    settings,
+                    load_reply: None,
+                    pending_gen: Some((gen_id, request, events)),
+                });
+            }
+        }
+    }
+}
+
+/// Loads the GGUF and reports the effective context size. The inference
+/// context is created by the caller: `LlamaContext` borrows the model, so
+/// the pair cannot be assembled here and returned together.
+fn load_resident(
+    backend: &LlamaBackend,
+    settings: &EngineLoadSettings,
+) -> Result<(LlamaModel, u32), String> {
+    // llama-cpp-2 panics on a missing model file instead of returning an
+    // error; a bad path must fail the job, not kill the actor thread.
+    if !settings.model_path.exists() {
+        return Err(missing_model_file_message(&settings.model_path));
+    }
+    let model = LlamaModel::load_from_file(
+        backend,
+        &settings.model_path,
+        &LlamaModelParams::default().with_n_gpu_layers(settings.gpu_layers),
+    )
+    .map_err(|error| format!("failed to load {}: {error}", settings.model_path.display()))?;
+    // A hand-edited n_ctx above the model's trained window would decode
+    // past positions the GGUF never saw; clamp to the model's own limit
+    // and record the adjustment. The clamped value is what the status
+    // card shows, so the effective window is always the honest one.
+    let n_ctx = settings.n_ctx.min(model.n_ctx_train());
+    if n_ctx < settings.n_ctx {
+        tracing::warn!(
+            requested = settings.n_ctx,
+            effective = n_ctx,
+            "local model context size clamped to the GGUF's n_ctx_train"
+        );
+    }
+    Ok((model, n_ctx))
+}
+
+/// How the resident phase ended. The caller drops the model pair, then
+/// either loops back to the unloaded phase, replays a deferred job, or exits.
+enum ResidentOutcome {
+    /// Idle timer fired or an explicit unload arrived.
+    Unloaded,
+    /// A job for a different model arrived; replay it after the unload.
+    Deferred(Job),
+    /// Drop the pair, reset the status, then exit the actor.
+    Shutdown,
+    /// Every sender is gone; exit without the `NotLoaded` status write.
+    Disconnected,
+}
+
+/// Phase 2: model resident. Serve jobs until Unload, Shutdown, or the idle
+/// timer; a job naming a different model is returned for replay after the
+/// unload. `pending_gen` is a `Generate` that arrived while unloaded and
+/// runs before the first resident status snapshot is published.
+fn serve_resident(
+    cx: ActorCx<'_>,
+    model: &LlamaModel,
+    ctx: &mut LlamaContext<'_>,
+    settings: &EngineLoadSettings,
+    n_ctx: u32,
+    pending_gen: Option<(u64, GenRequest, tokio_mpsc::UnboundedSender<GenEvent>)>,
+) -> ResidentOutcome {
+    let mut last_tok_s = if let Some((gen_id, request, events)) = pending_gen {
+        run_generation(model, ctx, &request, &events, cx.stop, gen_id)
+    } else {
+        0.0
+    };
+    update_loaded_status(cx.status, model, n_ctx, settings, last_tok_s);
+    let mut idle_deadline = settings
+        .idle_unload
+        .then(|| Instant::now() + settings.idle_timeout);
+    loop {
+        let job = match idle_deadline {
+            Some(deadline) => {
+                match cx
+                    .rx
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                {
+                    Ok(job) => Some(job),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return ResidentOutcome::Disconnected;
+                    }
+                }
+            }
+            None => match cx.rx.recv() {
+                Ok(job) => Some(job),
+                Err(_) => return ResidentOutcome::Disconnected,
+            },
+        };
+        match job {
+            // Idle timer fired: fall through to the unload.
+            None | Some(Job::Unload) => return ResidentOutcome::Unloaded,
+            Some(Job::Shutdown) => return ResidentOutcome::Shutdown,
+            Some(Job::Load {
+                settings: next,
+                reply,
+            }) => {
+                if settings.same_model(&next) {
+                    let _ = reply.send(Ok(()));
+                } else {
+                    return ResidentOutcome::Deferred(Job::Load {
+                        settings: next,
+                        reply,
+                    });
+                }
+            }
+            Some(Job::Generate {
+                gen_id,
+                request,
+                settings: next,
+                events,
+            }) => {
+                if settings.same_model(&next) {
+                    last_tok_s = run_generation(model, ctx, &request, &events, cx.stop, gen_id);
+                    update_loaded_status(cx.status, model, n_ctx, settings, last_tok_s);
+                } else {
+                    return ResidentOutcome::Deferred(Job::Generate {
+                        gen_id,
+                        request,
+                        settings: next,
+                        events,
+                    });
+                }
+            }
+        }
+        if settings.idle_unload {
+            idle_deadline = Some(Instant::now() + settings.idle_timeout);
         }
     }
 }

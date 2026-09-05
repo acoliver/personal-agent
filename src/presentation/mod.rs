@@ -53,9 +53,12 @@ pub mod mcp_configure_presenter;
 pub mod model_selector_presenter;
 pub mod profile_editor_presenter;
 pub mod settings_presenter;
+mod settings_presenter_appearance;
 mod settings_presenter_backup;
 mod settings_presenter_launch_at_login;
+mod settings_presenter_local_model;
 mod settings_presenter_mcp;
+mod settings_presenter_skills;
 mod settings_presenter_tool_approval;
 pub mod view_command;
 
