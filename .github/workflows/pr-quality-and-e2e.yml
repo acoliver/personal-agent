@@ -245,7 +245,7 @@ jobs:
       - coverage
     timeout-minutes: 60
     env:
-      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      PA_E2E_API_KEY: ${{ secrets.PA_E2E_API_KEY }}
       PA_E2E_PROVIDER_ID: ${{ vars.PA_E2E_PROVIDER_ID }}
       PA_E2E_MODEL_ID: ${{ vars.PA_E2E_MODEL_ID }}
       PA_E2E_BASE_URL: ${{ vars.PA_E2E_BASE_URL }}
@@ -261,25 +261,53 @@ jobs:
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
 
-      - name: Resolve PA_E2E defaults
+      - name: Validate PA_E2E configuration
         run: |
           set -euo pipefail
-          if [ -z "${OLLAMA_API_KEY}" ]; then
-            echo "Missing required secret OLLAMA_API_KEY"
+
+          missing=()
+          if [ -z "${PA_E2E_API_KEY}" ]; then
+            missing+=("secret PA_E2E_API_KEY")
+          fi
+          if [ -z "${PA_E2E_PROVIDER_ID}" ]; then
+            missing+=("variable PA_E2E_PROVIDER_ID")
+          fi
+          if [ -z "${PA_E2E_MODEL_ID}" ]; then
+            missing+=("variable PA_E2E_MODEL_ID")
+          fi
+          if [ -z "${PA_E2E_BASE_URL}" ]; then
+            missing+=("variable PA_E2E_BASE_URL")
+          fi
+          if [ -z "${PA_E2E_KEY_LABEL}" ]; then
+            missing+=("variable PA_E2E_KEY_LABEL")
+          fi
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Provider-backed E2E is not configured; missing:"
+            printf '  - %s\n' "${missing[@]}"
+            echo "Set these in Settings > Secrets and variables > Actions. There are no defaults."
             exit 1
           fi
 
-          E2E_PROVIDER_ID="${PA_E2E_PROVIDER_ID:-ollama}"
-          E2E_MODEL_ID="${PA_E2E_MODEL_ID:-minimax-m2.7:cloud}"
-          E2E_BASE_URL="${PA_E2E_BASE_URL:-https://ollama.com/v1}"
-          E2E_KEY_LABEL="${PA_E2E_KEY_LABEL:-pa-e2e-ollama-cloud}"
+          case "${PA_E2E_PROVIDER_ID}" in
+            anthropic | claude) wire="Anthropic" ;;
+            *) wire="OpenAI-compatible" ;;
+          esac
+
+          echo "Resolved provider-backed E2E configuration:"
+          echo "  provider:   ${PA_E2E_PROVIDER_ID}"
+          echo "  model:      ${PA_E2E_MODEL_ID}"
+          echo "  base URL:   ${PA_E2E_BASE_URL}"
+          echo "  key label:  ${PA_E2E_KEY_LABEL}"
+          echo "  wire proto: ${wire}"
+          echo "The API key from secret PA_E2E_API_KEY is used but never printed."
 
           {
-            echo "PA_E2E_PROVIDER_ID=${E2E_PROVIDER_ID}"
-            echo "PA_E2E_MODEL_ID=${E2E_MODEL_ID}"
-            echo "PA_E2E_BASE_URL=${E2E_BASE_URL}"
-            echo "PA_E2E_KEY_LABEL=${E2E_KEY_LABEL}"
-            echo "PA_E2E_API_KEY=${OLLAMA_API_KEY}"
+            echo "PA_E2E_PROVIDER_ID=${PA_E2E_PROVIDER_ID}"
+            echo "PA_E2E_MODEL_ID=${PA_E2E_MODEL_ID}"
+            echo "PA_E2E_BASE_URL=${PA_E2E_BASE_URL}"
+            echo "PA_E2E_KEY_LABEL=${PA_E2E_KEY_LABEL}"
+            echo "PA_E2E_API_KEY=${PA_E2E_API_KEY}"
           } >> "$GITHUB_ENV"
 
       - name: Seed secure store label for fallback auth path
