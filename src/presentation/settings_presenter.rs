@@ -200,12 +200,11 @@ impl SettingsPresenter {
                         )
                         .await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("SettingsPresenter lagged: {} events missed", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("SettingsPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("SettingsPresenter", &err) {
+                            tracing::info!("SettingsPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

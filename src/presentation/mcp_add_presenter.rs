@@ -114,12 +114,11 @@ impl McpAddPresenter {
                     Ok(event) => {
                         Self::handle_event(&mcp_registry_service, &view_tx, event).await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("McpAddPresenter lagged: {} events missed", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("McpAddPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("McpAddPresenter", &err) {
+                            tracing::info!("McpAddPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

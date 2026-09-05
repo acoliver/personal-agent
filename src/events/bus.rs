@@ -87,6 +87,28 @@ impl EventBus {
     }
 }
 
+/// Single handler for receive errors from bus broadcast receiver poll loops.
+///
+/// Lag is the one broadcast failure mode that is silently irreversible: the
+/// skipped events are already gone, so the `warn` line emitted here is the
+/// only observability a production drop gets. Every loop that polls a bus
+/// receiver routes its receive errors through this function instead of
+/// matching `RecvError` inline.
+///
+/// Returns `true` while the receiver is still usable and the caller should
+/// continue polling; `false` once the channel is closed and the caller
+/// should exit its loop.
+#[must_use = "a closed receiver must end the polling loop"]
+pub fn handle_recv_error(component: &str, err: &broadcast::error::RecvError) -> bool {
+    match err {
+        broadcast::error::RecvError::Lagged(skipped) => {
+            tracing::warn!("{component} lagged: {skipped} events skipped and lost");
+            true
+        }
+        broadcast::error::RecvError::Closed => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +117,25 @@ mod tests {
         UserEvent, ViewId,
     };
     use tokio::time::Duration;
+
+    /// `handle_recv_error` keeps the polling loop alive on `Lagged` (after
+    /// reporting the skip count) and reports closure on `Closed`.
+    ///
+    /// GIVEN: the shared receive-error handler
+    /// WHEN: called with `Lagged(7)` and with `Closed`
+    /// THEN: `Lagged` returns true (continue polling) and `Closed` returns
+    /// false (exit the loop)
+    #[test]
+    fn test_handle_recv_error_classification() {
+        assert!(handle_recv_error(
+            "TestComponent",
+            &broadcast::error::RecvError::Lagged(7)
+        ));
+        assert!(!handle_recv_error(
+            "TestComponent",
+            &broadcast::error::RecvError::Closed
+        ));
+    }
 
     /// `EventBus` creation test
     ///
