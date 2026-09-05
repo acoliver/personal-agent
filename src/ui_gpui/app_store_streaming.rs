@@ -72,9 +72,15 @@ pub(super) fn show_thinking_for_target(
     };
 
     let state = streaming_state_mut(inner, target);
-    let changed = !state.thinking_visible || state.model_id.as_deref() != Some(model_id.as_str());
+    // ShowThinking is the stream-start seam: an error recorded by a finished
+    // turn belongs to that turn, not to the one starting here, so clear it or
+    // the projection stays on Error and renders nothing for this turn.
+    let changed = !state.thinking_visible
+        || state.model_id.as_deref() != Some(model_id.as_str())
+        || state.last_error.is_some();
     state.thinking_visible = true;
     state.model_id = Some(model_id);
+    state.last_error = None;
 
     if changed {
         inner.active_streaming_targets.insert(target);
