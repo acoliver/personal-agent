@@ -76,7 +76,7 @@ pub(super) async fn stream_agent_response(
     let mut transcript = StreamTranscript::default();
 
     if let Err(error) = client
-        .run_agent_stream(agent, messages, context, |event| {
+        .run_agent_stream(agent, messages, context, None, |event| {
             handle_llm_stream_event(
                 diagnostics_context,
                 event,

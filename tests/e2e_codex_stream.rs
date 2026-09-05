@@ -276,6 +276,7 @@ async fn a_live_turn_through_the_agent_streams_text() {
             &agent,
             &[Message::user("Reply with exactly: agent ok")],
             McpToolContext::default(),
+            None,
             move |event| {
                 sink.lock().expect("event sink").push(event);
             },

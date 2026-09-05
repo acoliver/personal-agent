@@ -59,6 +59,7 @@ async fn test_agent_mode_basic() {
             &agent,
             &messages,
             McpToolContext::default(),
+            None,
             |event| match &event {
                 StreamEvent::TextDelta(text) => {
                     print!("{text}");
@@ -153,6 +154,7 @@ async fn test_agent_tool_events() {
             &agent,
             &messages,
             McpToolContext::default(),
+            None,
             |event| match &event {
                 StreamEvent::TextDelta(text) => {
                     print!("{text}");

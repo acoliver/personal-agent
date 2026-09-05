@@ -361,8 +361,8 @@ fn collect_tool_transcript_uses_built_history_request_count_not_message_count() 
     assert_eq!(tool_results[0].tool_use_id, "current-tool-call");
 }
 
-#[test]
-fn tool_executed_emits_completion_without_interim_tool_transcript() {
+#[tokio::test]
+async fn tool_executed_emits_completion_without_interim_tool_transcript() {
     let mut events = Vec::new();
     crate::llm::LlmClient::handle_agent_stream_event(
         AgentStreamEvent::ToolExecuted {
@@ -372,8 +372,11 @@ fn tool_executed_emits_completion_without_interim_tool_transcript() {
             error: None,
         },
         0,
+        None,
         &mut |event| events.push(event),
-    );
+    )
+    .await
+    .expect("handling a non-steering event should not fail");
     crate::llm::LlmClient::handle_agent_stream_event(
         AgentStreamEvent::ToolExecuted {
             tool_name: "shell_exec".to_string(),
@@ -382,8 +385,11 @@ fn tool_executed_emits_completion_without_interim_tool_transcript() {
             error: Some("command failed".to_string()),
         },
         0,
+        None,
         &mut |event| events.push(event),
-    );
+    )
+    .await
+    .expect("handling a non-steering event should not fail");
 
     assert_eq!(
         events.len(),
@@ -430,8 +436,8 @@ fn tool_executed_emits_completion_without_interim_tool_transcript() {
     }
 }
 
-#[test]
-fn run_complete_emits_authoritative_tool_transcript_then_complete() {
+#[tokio::test]
+async fn run_complete_emits_authoritative_tool_transcript_then_complete() {
     let mut response = ModelResponse::new();
     response.add_part(ModelResponsePart::ToolCall(
         ToolCallPart::new(
@@ -456,8 +462,11 @@ fn run_complete_emits_authoritative_tool_transcript_then_complete() {
             usage: RunUsage::default(),
         },
         0,
+        None,
         &mut |event| events.push(event),
-    );
+    )
+    .await
+    .expect("handling a non-steering event should not fail");
 
     assert_eq!(
         events.len(),
@@ -607,4 +616,202 @@ async fn resolving_one_conversation_does_not_wake_another() {
 
     let result = tokio::time::timeout(Duration::from_millis(50), waiter_b.wait()).await;
     assert!(result.is_err(), "waiter B should still be pending");
+}
+
+// ---------------------------------------------------------------------------
+// Steering delivery contract of `handle_agent_stream_event`
+// PLAN-20260905-STEERINT.P02
+// ---------------------------------------------------------------------------
+
+use crate::llm::steering::SteeringDeliverySink;
+use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
+
+/// Records every event the handler emits so tests can assert the exact
+/// output sequence.
+#[derive(Clone, Default)]
+struct EventLog(Arc<Mutex<Vec<StreamEvent>>>);
+
+impl EventLog {
+    fn record(&self, event: StreamEvent) {
+        self.0.lock().expect("event log lock").push(event);
+    }
+
+    fn events(&self) -> Vec<StreamEvent> {
+        self.0.lock().expect("event log lock").clone()
+    }
+
+    fn error_count(&self) -> usize {
+        self.events()
+            .iter()
+            .filter(|event| matches!(event, StreamEvent::Error(_)))
+            .count()
+    }
+}
+
+/// Sink that records the texts it was handed; the buffer is shared so the
+/// test can read it after the handler call returns.
+#[derive(Default)]
+struct RecordingSink {
+    texts: Arc<Mutex<Vec<String>>>,
+}
+
+impl RecordingSink {
+    fn texts(&self) -> Vec<String> {
+        self.texts.lock().expect("sink lock").clone()
+    }
+}
+
+#[async_trait]
+impl SteeringDeliverySink for RecordingSink {
+    async fn delivered(&mut self, text: &str) -> StdResult<(), LlmError> {
+        self.texts.lock().expect("sink lock").push(text.to_string());
+        Ok(())
+    }
+}
+
+/// Sink that refuses every delivery.
+struct FailingSink;
+
+#[async_trait]
+impl SteeringDeliverySink for FailingSink {
+    async fn delivered(&mut self, _text: &str) -> StdResult<(), LlmError> {
+        Err(LlmError::Stream("sink refused the delivery".to_string()))
+    }
+}
+
+/// REGRESSION GUARD: a `SteeringDelivered` event must reach the sink. If the
+/// explicit match arm goes missing, the catch-all debug-logs the event and
+/// swallows it silently, the sink sees nothing, and no error is emitted; this
+/// test fails in exactly that state.
+///
+/// @plan PLAN-20260905-STEERINT.P02
+/// @requirement REQ-SI-001
+/// @requirement REQ-SI-003
+#[tokio::test]
+async fn steering_delivered_event_reaches_the_sink() {
+    let mut sink = RecordingSink::default();
+    let log = EventLog::default();
+    let mut input = SteeringInput {
+        queue: SteeringQueue::new(),
+        sink: &mut sink,
+    };
+
+    crate::llm::LlmClient::handle_agent_stream_event(
+        AgentStreamEvent::SteeringDelivered {
+            step: 1,
+            text: "focus on the error case".to_string(),
+        },
+        0,
+        Some(&mut input),
+        &mut |event: StreamEvent| log.record(event),
+    )
+    .await
+    .expect("delivery should not fail the stream");
+
+    assert_eq!(sink.texts(), ["focus on the error case"]);
+    assert_eq!(log.error_count(), 0);
+}
+
+/// A sink refusal is loud: the handler emits a stream error and reports the
+/// failure to its caller instead of continuing as if the text had landed.
+///
+/// @plan PLAN-20260905-STEERINT.P02
+/// @requirement REQ-SI-003
+#[tokio::test]
+async fn failing_sink_emits_error_and_reports_err() {
+    let log = EventLog::default();
+    let mut sink = FailingSink;
+    let mut input = SteeringInput {
+        queue: SteeringQueue::new(),
+        sink: &mut sink,
+    };
+
+    let result = crate::llm::LlmClient::handle_agent_stream_event(
+        AgentStreamEvent::SteeringDelivered {
+            step: 1,
+            text: "any".to_string(),
+        },
+        0,
+        Some(&mut input),
+        &mut |event: StreamEvent| log.record(event),
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert_eq!(log.error_count(), 1);
+}
+
+/// A delivery with no steering input attached is an internal bug (no queue
+/// attached means the fork can never drain, so the event is impossible by
+/// construction). It must be reported as a stream error, not swallowed by the
+/// catch-all's debug log.
+///
+/// @plan PLAN-20260905-STEERINT.P02
+/// @requirement REQ-SI-001
+#[tokio::test]
+async fn steering_delivered_without_input_is_a_loud_error() {
+    let log = EventLog::default();
+
+    let result = crate::llm::LlmClient::handle_agent_stream_event(
+        AgentStreamEvent::SteeringDelivered {
+            step: 1,
+            text: "ghost".to_string(),
+        },
+        0,
+        None,
+        &mut |event: StreamEvent| log.record(event),
+    )
+    .await;
+
+    assert_eq!(log.error_count(), 1);
+    assert!(result.is_err());
+}
+
+/// Without steering traffic the handler's output events are exactly what they
+/// were before steering existed.
+///
+/// @plan PLAN-20260905-STEERINT.P02
+#[tokio::test]
+async fn non_steering_events_map_unchanged() {
+    let log = EventLog::default();
+    let events = vec![
+        AgentStreamEvent::TextDelta {
+            text: "hello".to_string(),
+        },
+        AgentStreamEvent::RunComplete {
+            run_id: "run".to_string(),
+            messages: Vec::new(),
+            usage: serdes_ai_agent::RunUsage::default(),
+        },
+    ];
+
+    for event in events {
+        crate::llm::LlmClient::handle_agent_stream_event(
+            event,
+            0,
+            None,
+            &mut |event: StreamEvent| log.record(event),
+        )
+        .await
+        .expect("non-steering events must not fail");
+    }
+
+    let emitted = log.events();
+    assert_eq!(emitted.len(), 3);
+    assert!(matches!(&emitted[0], StreamEvent::TextDelta(t) if t == "hello"));
+    assert!(matches!(
+        &emitted[1],
+        StreamEvent::ToolTranscript {
+            tool_calls,
+            tool_results
+        } if tool_calls.is_empty() && tool_results.is_empty()
+    ));
+    assert!(matches!(
+        &emitted[2],
+        StreamEvent::Complete {
+            input_tokens: None,
+            output_tokens: None
+        }
+    ));
 }

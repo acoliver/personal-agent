@@ -152,6 +152,7 @@ async fn test_install_exa_and_search() {
             &agent,
             &messages,
             McpToolContext::default(),
+            None,
             |event| match &event {
                 StreamEvent::TextDelta(text) => {
                     print!("{text}");
