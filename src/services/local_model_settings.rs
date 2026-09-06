@@ -21,6 +21,31 @@ use super::{ServiceError, ServiceResult};
 #[cfg(test)]
 pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Snapshots `PA_LOCAL_GGUF` and restores it on drop — including during a
+/// panic's unwind — so a test that set the variable cannot leak the value
+/// into tests running later on other threads. Pair with [`ENV_LOCK`];
+/// integration tests carry their own copy because `cfg(test)` items are
+/// invisible to them.
+#[cfg(test)]
+pub(crate) struct EnvRestore(Option<std::ffi::OsString>);
+
+#[cfg(test)]
+impl EnvRestore {
+    pub(crate) fn take() -> Self {
+        Self(std::env::var_os(ENV_MODEL_PATH))
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(value) => std::env::set_var(ENV_MODEL_PATH, value),
+            None => std::env::remove_var(ENV_MODEL_PATH),
+        }
+    }
+}
+
 /// App-settings key the serialized [`LocalModelSettings`] blob lives under.
 pub const LOCAL_MODEL_SETTINGS_KEY: &str = "local_model";
 
@@ -187,6 +212,7 @@ mod tests {
 
     #[test]
     fn defaults_match_the_plan() {
+        let _guard = ENV_LOCK.blocking_lock();
         let settings = LocalModelSettings::default();
         assert_eq!(settings.n_ctx, 32_768);
         assert_eq!(settings.gpu_layers, 999);
@@ -199,6 +225,7 @@ mod tests {
 
     #[test]
     fn clamp_bounds_n_ctx_at_the_trained_window() {
+        let _guard = ENV_LOCK.blocking_lock();
         let settings = LocalModelSettings {
             n_ctx: 131_072,
             ..LocalModelSettings::default()
@@ -216,11 +243,9 @@ mod tests {
     #[test]
     fn empty_env_override_falls_back_to_the_data_dir_default() {
         let _guard = ENV_LOCK.blocking_lock();
-        // SAFETY: single-threaded w.r.t. env mutation via ENV_LOCK; every
-        // reader of the var holds the same lock.
+        let _restore = EnvRestore::take();
         std::env::set_var(ENV_MODEL_PATH, "");
         let path = default_model_path();
-        std::env::remove_var(ENV_MODEL_PATH);
         assert!(path.ends_with("PersonalAgent/models/granite-4.2-3b-Q8_0.gguf"));
     }
 

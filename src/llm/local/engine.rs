@@ -899,6 +899,9 @@ mod tests {
     /// limit, and the idle deadline is always minutes-to-seconds converted.
     #[test]
     fn from_persisted_stays_within_the_trained_context_window() {
+        // Missing persisted settings fall back to `default()`, which reads
+        // `PA_LOCAL_GGUF`; serialize against tests that mutate it.
+        let _guard = crate::services::local_model_settings::ENV_LOCK.blocking_lock();
         let persisted = EngineLoadSettings::from_persisted();
         assert!(persisted.n_ctx <= MAX_N_CTX);
         assert!(!persisted.model_path.as_os_str().is_empty());

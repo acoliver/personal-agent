@@ -12,7 +12,9 @@ use tokio::sync::broadcast;
 
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::{ErrorSeverity, ViewCommand};
-use crate::services::local_model_settings::{LocalModelSettings, LOCAL_MODEL_SETTINGS_KEY};
+use crate::services::local_model_settings::{
+    LocalModelSettings, ENV_LOCK, LOCAL_MODEL_SETTINGS_KEY,
+};
 use crate::services::{AppSettingsService, ServiceError, ServiceResult};
 
 use super::SettingsPresenter;
@@ -225,6 +227,9 @@ async fn load_with_failing_storage_falls_back_to_defaults() {
     let (view_tx, mut view_rx) = broadcast::channel(32);
     let poll = poll_generation();
 
+    // The defaults fallback resolves model_path from `PA_LOCAL_GGUF`; hold
+    // the env lock so a sibling test's override cannot interleave.
+    let guard = ENV_LOCK.lock().await;
     let handled = SettingsPresenter::handle_local_model_user_event(
         &mock,
         &view_tx,
@@ -250,6 +255,7 @@ async fn load_with_failing_storage_falls_back_to_defaults() {
         other => panic!("unexpected command: {other:?}"),
     }
 
+    drop(guard);
     retire_poll_tasks(&poll).await;
 }
 
@@ -315,6 +321,7 @@ async fn save_failure_surfaces_a_warning_and_no_echo() {
     let (view_tx, mut view_rx) = broadcast::channel(32);
     let poll = poll_generation();
 
+    let guard = ENV_LOCK.lock().await;
     let handled = SettingsPresenter::handle_local_model_user_event(
         &mock,
         &view_tx,
@@ -325,6 +332,7 @@ async fn save_failure_surfaces_a_warning_and_no_echo() {
     )
     .await;
     assert!(handled);
+    drop(guard);
 
     let error = recv_matching(&mut view_rx, "ShowError", |command| {
         matches!(command, ViewCommand::ShowError { .. })

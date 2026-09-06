@@ -12,10 +12,32 @@ use personal_agent::services::local_model_settings::{
     LOCAL_MODEL_SETTINGS_KEY,
 };
 
-/// `std::env` mutation is process-global, so every test that touches
-/// `PA_LOCAL_GGUF` serializes through this lock. Async-aware so the async
-/// test can hold it across `await` without tripping `await_holding_lock`.
+/// `std::env` mutation is process-global, so every test that reads or writes
+/// `PA_LOCAL_GGUF` serializes through this lock. Async-aware so async tests
+/// can hold it across `await` without tripping `await_holding_lock`, and
+/// poison-free so a panicked test cannot cascade through later acquisitions.
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Restores the prior `PA_LOCAL_GGUF` value on drop (including during a
+/// panic's unwind), so a failing test cannot leak its override into tests
+/// that run later on other threads. This binary cannot see the lib's
+/// `cfg(test)` guard, so it carries its own copy.
+struct EnvRestore(Option<std::ffi::OsString>);
+
+impl EnvRestore {
+    fn take() -> Self {
+        Self(std::env::var_os(ENV_MODEL_PATH))
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(value) => std::env::set_var(ENV_MODEL_PATH, value),
+            None => std::env::remove_var(ENV_MODEL_PATH),
+        }
+    }
+}
 
 fn test_service(dir: &tempfile::TempDir) -> AppSettingsServiceImpl {
     AppSettingsServiceImpl::new(dir.path().join("app_settings.json")).expect("settings service")
@@ -23,12 +45,20 @@ fn test_service(dir: &tempfile::TempDir) -> AppSettingsServiceImpl {
 
 #[tokio::test]
 async fn load_without_persisted_settings_returns_defaults() {
+    // The loader's fallback and the expected value each resolve defaults from
+    // the env var; both reads must happen with it definitively unset and
+    // under the lock, or a sibling test's override can win exactly one read.
+    let _guard = ENV_LOCK.lock().await;
+    let _restore = EnvRestore::take();
+    std::env::remove_var(ENV_MODEL_PATH);
+
     let dir = tempfile::TempDir::new().unwrap();
     let service = test_service(&dir);
 
     let loaded = LocalModelSettings::load(&service).await.unwrap();
+    let expected = LocalModelSettings::default();
 
-    assert_eq!(loaded, LocalModelSettings::default());
+    assert_eq!(loaded, expected);
 }
 
 #[tokio::test]
@@ -52,6 +82,10 @@ async fn save_then_load_round_trips() {
 
 #[tokio::test]
 async fn persisted_blob_lives_under_the_local_model_key() {
+    let _guard = ENV_LOCK.lock().await;
+    let _restore = EnvRestore::take();
+    std::env::remove_var(ENV_MODEL_PATH);
+
     let dir = tempfile::TempDir::new().unwrap();
     let service = test_service(&dir);
 
@@ -72,6 +106,10 @@ async fn persisted_blob_lives_under_the_local_model_key() {
 // @requirement:REQ-LM-001
 #[tokio::test]
 async fn service_load_clamps_n_ctx_at_the_trained_window() {
+    let _guard = ENV_LOCK.lock().await;
+    let _restore = EnvRestore::take();
+    std::env::remove_var(ENV_MODEL_PATH);
+
     let dir = tempfile::TempDir::new().unwrap();
     let service = test_service(&dir);
 
@@ -87,6 +125,10 @@ async fn service_load_clamps_n_ctx_at_the_trained_window() {
 
 #[test]
 fn disk_loader_clamps_n_ctx_at_the_trained_window() {
+    let _guard = ENV_LOCK.blocking_lock();
+    let _restore = EnvRestore::take();
+    std::env::remove_var(ENV_MODEL_PATH);
+
     let dir = tempfile::TempDir::new().unwrap();
     let app_settings = dir.path().join("app_settings.json");
     std::fs::write(
@@ -102,16 +144,15 @@ fn disk_loader_clamps_n_ctx_at_the_trained_window() {
 #[test]
 fn env_override_changes_the_default_model_path() {
     let _guard = ENV_LOCK.blocking_lock();
-    // SAFETY: single-threaded w.r.t. env mutation via ENV_LOCK; tests in this
-    // binary that read the var hold the same lock.
+    let _restore = EnvRestore::take();
     std::env::set_var(ENV_MODEL_PATH, "/tmp/env-chosen.gguf");
     assert_eq!(default_model_path(), PathBuf::from("/tmp/env-chosen.gguf"));
-    std::env::remove_var(ENV_MODEL_PATH);
 }
 
 #[test]
 fn env_override_wins_over_data_dir_but_not_persisted_settings() {
     let _guard = ENV_LOCK.blocking_lock();
+    let _restore = EnvRestore::take();
     std::env::set_var(ENV_MODEL_PATH, "/tmp/env-chosen.gguf");
     let defaults = LocalModelSettings::default();
     assert_eq!(defaults.model_path, PathBuf::from("/tmp/env-chosen.gguf"));
@@ -131,12 +172,12 @@ fn env_override_wins_over_data_dir_but_not_persisted_settings() {
     assert_eq!(loaded.n_ctx, 2048);
     // Fields absent from the blob fall back to their defaults.
     assert_eq!(loaded.gpu_layers, 999);
-    std::env::remove_var(ENV_MODEL_PATH);
 }
 
 #[tokio::test]
 async fn persisted_path_always_beats_the_env_var_via_the_service_loader() {
     let _guard = ENV_LOCK.lock().await;
+    let _restore = EnvRestore::take();
     // PA_LOCAL_GGUF stays an undocumented test hook: it may only supply the
     // first-run default. A user's persisted choice must never be shadowed.
     std::env::set_var(ENV_MODEL_PATH, "/tmp/env-chosen.gguf");
@@ -153,7 +194,6 @@ async fn persisted_path_always_beats_the_env_var_via_the_service_loader() {
     settings.save(&service).await.unwrap();
 
     let loaded = LocalModelSettings::load(&service).await.unwrap();
-    std::env::remove_var(ENV_MODEL_PATH);
 
     assert_eq!(
         loaded.model_path,
