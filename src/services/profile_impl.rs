@@ -1,7 +1,6 @@
 //! Profile service implementation
 
 use super::{profile_migration, ProfileService, ServiceResult};
-use crate::config::default_api_base_url_for_provider;
 use crate::models::{AuthConfig, ModelParameters, ModelProfile};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -18,6 +17,12 @@ pub struct ProfileServiceImpl {
     profiles: Arc<RwLock<Vec<ModelProfile>>>,
 }
 
+/// Seeding lives in its own module; re-exported here so existing
+/// `profile_impl::` paths for the seed consts and helper keep working.
+pub use super::profile_seeding::{
+    ensure_local_seed_profile, SEED_MODEL_ID, SEED_PROFILE_NAME, SEED_PROVIDER_ID,
+};
+
 impl ProfileServiceImpl {
     fn legacy_profile_id_for_path(path: &Path) -> Uuid {
         let identifier = path.file_name().and_then(|name| name.to_str()).map_or_else(
@@ -26,13 +31,6 @@ impl ProfileServiceImpl {
         );
 
         Uuid::new_v5(&Uuid::NAMESPACE_URL, identifier.as_bytes())
-    }
-
-    fn normalize_api_base_url(provider: &str, base_url: Option<String>) -> String {
-        match base_url {
-            Some(candidate) if !candidate.trim().is_empty() => candidate.trim().to_string(),
-            _ => default_api_base_url_for_provider(provider),
-        }
     }
 
     fn normalize_system_prompt(system_prompt: Option<String>) -> String {
@@ -79,6 +77,13 @@ impl ProfileServiceImpl {
             tracing::info!("  Profile: {} ({}) id={}", p.name, p.model_id, p.id);
         }
         *self.profiles.write().await = profiles;
+
+        // REQ-LM-002: first install seeds a working local profile. Both boot
+        // service stacks run initialize(), so the guard must be idempotent:
+        // any existing profile or a persisted default suppresses seeding.
+        if self.load_profiles_from_disk()?.is_empty() && self.load_default_id()?.is_none() {
+            self.seed_default_local_profile().await?;
+        }
         Ok(())
     }
 
@@ -258,23 +263,7 @@ impl ProfileServiceImpl {
                 }
             };
 
-            // Guarantee non-empty critical fields.
-            if profile.name.trim().is_empty() {
-                profile.name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Recovered Profile")
-                    .to_string();
-            }
-            if profile.provider_id.trim().is_empty() {
-                profile.provider_id = "openai".to_string();
-            }
-            if profile.model_id.trim().is_empty() {
-                profile.model_id = "gpt-4".to_string();
-            }
-            if profile.base_url.trim().is_empty() {
-                profile.base_url = Self::normalize_api_base_url(&profile.provider_id, None);
-            }
+            profile_migration::normalize_loaded_profile(&mut profile, &path);
 
             // Avoid duplicate IDs if legacy conversion generated conflicting entries.
             while seen.contains(&profile.id) {
@@ -444,7 +433,8 @@ impl ProfileService for ProfileServiceImpl {
         system_prompt: Option<String>,
     ) -> ServiceResult<ModelProfile> {
         let normalized_provider = provider.trim().to_string();
-        let normalized_base_url = Self::normalize_api_base_url(&normalized_provider, base_url);
+        let normalized_base_url =
+            profile_migration::normalize_api_base_url(&normalized_provider, base_url);
         let normalized_system_prompt = Self::normalize_system_prompt(system_prompt);
 
         let mut profile =
@@ -524,8 +514,12 @@ impl ProfileService for ProfileServiceImpl {
             }
         }
 
-        if base_url.is_some() {
-            profile.base_url = Self::normalize_api_base_url(&profile.provider_id, base_url);
+        // REQ-LM-007: a local profile never persists an endpoint, so a rename
+        // or other non-URL edit still cleans a legacy baked base_url.
+        if base_url.is_some() || profile.provider_id.trim() == crate::llm::local::LOCAL_PROVIDER_ID
+        {
+            profile.base_url =
+                profile_migration::normalize_api_base_url(&profile.provider_id, base_url);
         }
 
         if let Some(auth) = auth {
@@ -549,6 +543,9 @@ impl ProfileService for ProfileServiceImpl {
         // Session-stateful transports bake the endpoint, model, and bearer in
         // at construction, so an edited profile has to start a new session.
         crate::llm::open_responses::invalidate_profile(id);
+        // A local profile edit can change the model label the engine reports;
+        // drop any resident model so the next request rebuilds cleanly.
+        crate::llm::local::invalidate_local();
 
         Ok(updated_profile)
     }
@@ -572,6 +569,8 @@ impl ProfileService for ProfileServiceImpl {
         self.profiles.write().await.retain(|p| p.id != id);
 
         crate::llm::open_responses::invalidate_profile(id);
+        // The deleted profile may be the one holding the model in memory.
+        crate::llm::local::invalidate_local();
 
         Ok(())
     }
@@ -672,11 +671,23 @@ mod tests {
     use super::*;
     use crate::models::{AuthConfig, ModelParameters};
 
+    /// A persisted default id marks the install as already configured, so
+    /// `initialize()` skips first-install seeding (REQ-LM-002) and these tests
+    /// exercise create/list/delete semantics in isolation.
+    fn write_default_id(service: &ProfileServiceImpl) {
+        std::fs::write(
+            service.default_profile_path(),
+            serde_json::to_string(&Uuid::new_v4()).unwrap(),
+        )
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn test_create_and_list_profiles() {
         let temp_dir = tempfile::TempDir::new().unwrap();
 
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        write_default_id(&service);
         service.initialize().await.unwrap();
 
         // Create profile
@@ -781,6 +792,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
 
         let service = ProfileServiceImpl::new(temp_dir.path().to_path_buf()).unwrap();
+        write_default_id(&service);
         service.initialize().await.unwrap();
 
         let auth = AuthConfig::Keychain {

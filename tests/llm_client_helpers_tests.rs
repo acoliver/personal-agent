@@ -101,3 +101,19 @@ fn llm_client_model_spec_uses_openai_transport_for_kimi_quirk() {
 
     delete_test_key("_test_helpers_kimi");
 }
+
+#[test]
+fn llm_client_model_spec_keeps_local_profile_on_local_transport() {
+    // Regression: the provider resolution used to launder "local" into
+    // "openai", which sent local chat traffic to api.openai.com.
+    let profile = ModelProfile::new(
+        "Granite (local)".to_string(),
+        "local".to_string(),
+        "granite-4.2-3b".to_string(),
+        String::new(),
+        AuthConfig::None,
+    );
+
+    let client = LlmClient::from_profile(&profile).expect("local profile needs no api key");
+    assert_eq!(client.model_spec(), "local:granite-4.2-3b");
+}

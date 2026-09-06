@@ -1,11 +1,15 @@
 //! Render implementation for `ProfileEditorView`.
 
-use super::{ActiveField, ProfileEditorView};
+use super::{ActiveField, ApiType, ProfileEditorView};
 use crate::ui_gpui::theme::Theme;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
-    Pixels, ScrollWheelEvent, SharedString, Stateful,
+    Pixels, SharedString, Stateful,
 };
+
+mod fields;
+mod local;
+mod parameters;
 
 impl ProfileEditorView {
     fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -120,6 +124,7 @@ impl ProfileEditorView {
     ) -> Stateful<gpui::Div> {
         div()
             .id(SharedString::from(id.to_string()))
+            .debug_selector(move || id.to_string())
             .w(px(360.0))
             .h(px(24.0))
             .px(px(8.0))
@@ -155,300 +160,6 @@ impl ProfileEditorView {
 
     /// Render the name field
     /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_name_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::Name);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_label("NAME"))
-            .child(
-                Self::render_text_field(
-                    "field-name",
-                    &self.state.data.name,
-                    "Profile name",
-                    active,
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _window, cx| {
-                        this.state.active_field = Some(ActiveField::Name);
-                        cx.notify();
-                    }),
-                ),
-            )
-    }
-
-    /// Render the model field (editable) with browse button
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_model_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::Model);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_label("MODEL"))
-            .child(
-                div()
-                    .w(px(360.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(
-                        Self::render_text_field(
-                            "field-model-id",
-                            &self.state.data.model_id,
-                            "e.g. claude-sonnet-4-20250514",
-                            active,
-                        )
-                        .flex_1()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _window, cx| {
-                                this.state.active_field = Some(ActiveField::Model);
-                                cx.notify();
-                            }),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .id("btn-browse-model")
-                            .w(px(60.0))
-                            .h(px(24.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(Theme::border())
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Theme::bg_darker()))
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_secondary())
-                            .child("Browse")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
-                                    tracing::info!(
-                                        "Browse model clicked - navigating to ModelSelector \
-                                         (preserving edit state)"
-                                    );
-                                    // Do NOT reset state here — preserve `id`, `key_label`,
-                                    // `name`, `is_new`, `system_prompt`, etc. so that an
-                                    // edit-flow user can swap models without losing their
-                                    // work. `ModelSelected` will only update the model
-                                    // fields on return. See issue #182.
-                                    this.request_api_key_refresh();
-                                    crate::ui_gpui::navigation_channel().request_navigate(
-                                        crate::presentation::view_command::ViewId::ModelSelector,
-                                    );
-                                }),
-                            ),
-                    ),
-            )
-    }
-
-    /// Render API type dropdown
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_api_type_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let api_type = self.state.data.api_type.display();
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_label("API TYPE"))
-            .child(
-                div()
-                    .id("dropdown-api-type")
-                    .w(px(360.0))
-                    .h(px(24.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .cursor_pointer()
-                    .text_size(px(Theme::font_size_mono()))
-                    .text_color(Theme::text_primary())
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.data.api_type = this.state.data.api_type.next();
-                            this.state.data.apply_api_type_change();
-                            this.request_account_refresh();
-                            cx.notify();
-                        }),
-                    )
-                    .child(api_type)
-                    .child(div().text_color(Theme::text_muted()).child("v")),
-            )
-    }
-
-    /// Render base URL field
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_base_url_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::BaseUrl);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_label("BASE URL"))
-            .child(
-                Self::render_text_field(
-                    "field-base-url",
-                    &self.state.data.base_url,
-                    "https://api.example.com/v1",
-                    active,
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _window, cx| {
-                        this.state.active_field = Some(ActiveField::BaseUrl);
-                        cx.notify();
-                    }),
-                ),
-            )
-    }
-
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    /// Render the credential control: an API key label, or the account row for
-    /// providers that authenticate with a sign-in. and "Manage Keys" button.
-    fn render_key_label_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        // Account-authenticated providers show who is signed in instead of a
-        // key to pick.
-        if self.state.data.api_type.requires_oauth_account() {
-            return self.render_account_section(cx);
-        }
-
-        // For Local provider, show "No API key required" message instead of key dropdown
-        if !self.state.data.api_type.requires_api_key() {
-            return div()
-                .flex()
-                .flex_col()
-                .child(Self::render_label("API KEY"))
-                .child(
-                    div()
-                        .w(px(360.0))
-                        .h(px(24.0))
-                        .px(px(8.0))
-                        .bg(Theme::bg_dark())
-                        .border_1()
-                        .border_color(Theme::border())
-                        .rounded(px(4.0))
-                        .flex()
-                        .items_center()
-                        .text_size(px(Theme::font_size_mono()))
-                        .text_color(Theme::text_muted())
-                        .child("No API key required"),
-                )
-                .into_any_element();
-        }
-
-        let current_label = if self.state.data.key_label.is_empty() {
-            "Select API Key…".to_string()
-        } else {
-            self.state.data.key_label.clone()
-        };
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_label("API KEY"))
-            .child(Self::render_key_dropdown_and_manage_button(
-                current_label,
-                cx,
-            ))
-            .into_any_element()
-    }
-
-    /// Render the key dropdown and manage button for providers that require API keys.
-    fn render_key_dropdown_and_manage_button(
-        current_label: String,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            // Dropdown cycling through available keys
-            .child(
-                div()
-                    .id("dropdown-key-label")
-                    .flex_1()
-                    .h(px(24.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .cursor_pointer()
-                    .text_size(px(Theme::font_size_mono()))
-                    .text_color(if current_label == "Select API Key…" {
-                        Theme::text_muted()
-                    } else {
-                        Theme::text_primary()
-                    })
-                    .overflow_hidden()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, _window, cx| {
-                            if this.state.data.available_keys.is_empty() {
-                                this.request_api_key_refresh();
-                                cx.notify();
-                                return;
-                            }
-                            let current_idx = this
-                                .state
-                                .data
-                                .available_keys
-                                .iter()
-                                .position(|k| k == &this.state.data.key_label)
-                                .map_or(0, |i| i + 1);
-                            let next_idx = current_idx % this.state.data.available_keys.len();
-                            this.state.data.key_label =
-                                this.state.data.available_keys[next_idx].clone();
-                            cx.notify();
-                        }),
-                    )
-                    .child(current_label)
-                    .child(div().text_color(Theme::text_muted()).child("▾")),
-            )
-            // "Manage Keys" button
-            .child(
-                div()
-                    .id("btn-manage-keys")
-                    .h(px(24.0))
-                    .px(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(4.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(Theme::bg_darker()))
-                    .text_size(px(Theme::font_size_ui()))
-                    .text_color(Theme::text_secondary())
-                    .child("Manage Keys")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
-                            crate::ui_gpui::navigation_channel().request_navigate(
-                                crate::presentation::view_command::ViewId::ApiKeyManager,
-                            );
-                        }),
-                    ),
-            )
-    }
-
     /// Render section divider
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_section_divider(title: &str) -> impl IntoElement {
@@ -467,344 +178,6 @@ impl ProfileEditorView {
                     .child(title.to_string()),
             )
     }
-
-    /// Render temperature field with stepper
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_temperature_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let temp = format!("{:.1}", self.state.data.temperature);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_label("TEMPERATURE"))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    // Number field
-                    .child(
-                        div()
-                            .w(px(80.0))
-                            .h(px(24.0))
-                            .px(px(8.0))
-                            .bg(Theme::bg_dark())
-                            .border_1()
-                            .border_color(Theme::border())
-                            .rounded(px(4.0))
-                            .flex()
-                            .items_center()
-                            .text_size(px(Theme::font_size_mono()))
-                            .text_color(Theme::text_primary())
-                            .child(temp),
-                    )
-                    // Stepper
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .id("stepper-temp-up")
-                                    .w(px(20.0))
-                                    .h(px(12.0))
-                                    .bg(Theme::bg_dark())
-                                    .border_1()
-                                    .border_color(Theme::border())
-                                    .rounded_t(px(2.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(Theme::bg_darker()))
-                                    .text_size(px(Theme::font_size_small()))
-                                    .text_color(Theme::text_secondary())
-                                    .child("▲")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _window, cx| {
-                                            this.state.data.temperature =
-                                                (this.state.data.temperature + 0.1).min(2.0);
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("stepper-temp-down")
-                                    .w(px(20.0))
-                                    .h(px(12.0))
-                                    .bg(Theme::bg_dark())
-                                    .border_1()
-                                    .border_color(Theme::border())
-                                    .rounded_b(px(2.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(Theme::bg_darker()))
-                                    .text_size(px(Theme::font_size_small()))
-                                    .text_color(Theme::text_secondary())
-                                    .child("▼")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _window, cx| {
-                                            this.state.data.temperature =
-                                                (this.state.data.temperature - 0.1).max(0.0);
-                                            cx.notify();
-                                        }),
-                                    ),
-                            ),
-                    ),
-            )
-    }
-
-    /// Render max tokens field
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_max_tokens_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::MaxTokens);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_label("MAX TOKENS"))
-            .child(
-                Self::render_text_field(
-                    "field-max-tokens",
-                    &self.state.data.max_tokens,
-                    "4096",
-                    active,
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _window, cx| {
-                        this.state.active_field = Some(ActiveField::MaxTokens);
-                        cx.notify();
-                    }),
-                ),
-            )
-    }
-
-    fn render_context_limit_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::ContextLimit);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_label("CONTEXT LIMIT"))
-            .child(
-                Self::render_text_field(
-                    "field-context-limit",
-                    &self.state.data.context_limit.to_string(),
-                    "128000",
-                    active,
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _window, cx| {
-                        this.state.active_field = Some(ActiveField::ContextLimit);
-                        cx.notify();
-                    }),
-                ),
-            )
-    }
-
-    /// Render show thinking checkbox
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_show_thinking_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let checked = self.state.data.show_thinking;
-
-        div()
-            .id("checkbox-show-thinking")
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _window, cx| {
-                    this.state.data.show_thinking = !this.state.data.show_thinking;
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .size(px(14.0))
-                    .border_1()
-                    .border_color(Theme::border())
-                    .rounded(px(2.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(checked, |d| {
-                        d.bg(Theme::accent()).child(
-                            div()
-                                .text_size(px(Theme::font_size_ui()))
-                                .text_color(Theme::selection_fg())
-                                .child("v"),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .text_size(px(Theme::font_size_mono()))
-                    .text_color(Theme::text_primary())
-                    .child("Show Thinking"),
-            )
-    }
-
-    /// Render extended thinking checkbox
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_extended_thinking_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let checked = self.state.data.enable_extended_thinking;
-        let budget_active = self.state.active_field == Some(ActiveField::ThinkingBudget);
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(12.0))
-            .child(
-                div()
-                    .id("checkbox-extended-thinking")
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .cursor_pointer()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.data.enable_extended_thinking =
-                                !this.state.data.enable_extended_thinking;
-                            cx.notify();
-                        }),
-                    )
-                    .child(
-                        div()
-                            .size(px(14.0))
-                            .border_1()
-                            .border_color(Theme::border())
-                            .rounded(px(2.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when(checked, |d| {
-                                d.bg(Theme::accent()).child(
-                                    div()
-                                        .text_size(px(Theme::font_size_ui()))
-                                        .text_color(Theme::selection_fg())
-                                        .child("v"),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(Theme::font_size_mono()))
-                            .text_color(Theme::text_primary())
-                            .child("Enable Extended Thinking"),
-                    ),
-            )
-            .when(checked, |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .child(Self::render_label("THINKING BUDGET"))
-                        .child(
-                            Self::render_text_field(
-                                "field-thinking-budget",
-                                &self.state.data.thinking_budget.to_string(),
-                                "10000",
-                                budget_active,
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, cx| {
-                                    this.state.active_field = Some(ActiveField::ThinkingBudget);
-                                    cx.notify();
-                                }),
-                            ),
-                        ),
-                )
-            })
-    }
-
-    /// Render system prompt section
-    /// @plan PLAN-20250130-GPUIREDUX.P08
-    fn render_system_prompt_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let active = self.state.active_field == Some(ActiveField::SystemPrompt);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(Self::render_section_divider("SYSTEM PROMPT"))
-            .child(
-                div()
-                    .id("field-system-prompt")
-                    .mt(px(8.0))
-                    .w(px(360.0))
-                    .h(px(100.0))
-                    .px(px(8.0))
-                    .py(px(8.0))
-                    .bg(Theme::bg_dark())
-                    .border_1()
-                    .border_color(if active {
-                        Theme::accent()
-                    } else {
-                        Theme::border()
-                    })
-                    .rounded(px(4.0))
-                    .text_size(px(Theme::font_size_mono()))
-                    .text_color(Theme::text_primary())
-                    .overflow_y_scroll()
-                    .cursor_text()
-                    .block_mouse_except_scroll()
-                    // Stop scroll events from propagating to parent
-                    .on_scroll_wheel(cx.listener(
-                        |_this, _event: &ScrollWheelEvent, _window, cx| {
-                            cx.stop_propagation();
-                        },
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| {
-                            this.state.active_field = Some(ActiveField::SystemPrompt);
-                            cx.notify();
-                        }),
-                    )
-                    .child(Self::render_system_prompt_content(
-                        active,
-                        &self.state.data.system_prompt,
-                    )),
-            )
-    }
-
-    /// Render system prompt content with cursor visibility when active
-    /// Shows placeholder when empty, cursor when focused, and scrollable content.
-    fn render_system_prompt_content(active: bool, system_prompt: &str) -> impl IntoElement {
-        if system_prompt.is_empty() {
-            // Show placeholder when empty
-            div()
-                .text_color(Theme::text_muted())
-                .child("You are a helpful assistant.")
-        } else if active {
-            // Show cursor at end when field is active
-            let text_content = format!("{system_prompt}|");
-
-            div()
-                .w_full()
-                .text_color(Theme::text_primary())
-                .whitespace_normal()
-                .child(text_content)
-        } else {
-            // Show plain text when not active
-            div()
-                .w_full()
-                .text_color(Theme::text_primary())
-                .whitespace_normal()
-                .child(system_prompt.to_string())
-        }
-    }
-
     /// Render the content area
     /// @plan PLAN-20250130-GPUIREDUX.P08
     fn render_content(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -829,6 +202,8 @@ impl ProfileEditorView {
             .child(self.render_base_url_section(cx))
             // API Key (keychain label dropdown + manage button)
             .child(self.render_key_label_section(cx))
+            // Local engine (status + shared GGUF path), Local variant only
+            .child(self.render_local_engine_section(cx))
             // Parameters section
             .child(Self::render_section_divider("PARAMETERS"))
             .child(
@@ -844,7 +219,16 @@ impl ProfileEditorView {
                         el.child(self.render_max_tokens_section(cx))
                     })
                     .child(self.render_advanced_request_parameters_section(cx))
-                    .child(self.render_context_limit_section(cx))
+                    // A local profile's context budget is the engine's
+                    // Context size (Settings → Local Model); showing an
+                    // editable per-profile value here would let the two
+                    // drift. @requirement:REQ-LM-001
+                    .when(self.state.data.api_type == ApiType::Local, |el| {
+                        el.child(Self::render_context_limit_note())
+                    })
+                    .when(self.state.data.api_type != ApiType::Local, |el| {
+                        el.child(self.render_context_limit_section(cx))
+                    })
                     .child(self.render_show_thinking_section(cx))
                     .child(self.render_reasoning_effort_section(cx))
                     .when(capabilities.thinking_budget, |el| {
@@ -855,7 +239,6 @@ impl ProfileEditorView {
             .child(self.render_system_prompt_section(cx))
     }
 }
-
 impl gpui::Focusable for ProfileEditorView {
     fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
         self.focus_handle.clone()

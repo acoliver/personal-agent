@@ -7,6 +7,7 @@ mod client;
 pub mod client_agent;
 pub mod error;
 pub mod events;
+pub mod local;
 pub mod mcp_tool_executor;
 mod normalizing_model;
 pub mod open_responses;

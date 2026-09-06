@@ -159,6 +159,7 @@ pub enum SettingsCategory {
     General,
     Appearance,
     Models,
+    LocalModel,
     Skills,
     Security,
     McpTools,
@@ -166,10 +167,11 @@ pub enum SettingsCategory {
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::General,
         Self::Appearance,
         Self::Models,
+        Self::LocalModel,
         Self::Skills,
         Self::Security,
         Self::McpTools,
@@ -182,6 +184,7 @@ impl SettingsCategory {
             Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Models => "Models",
+            Self::LocalModel => "Local Model",
             Self::Skills => "Skills",
             Self::Security => "Security",
             Self::McpTools => "MCP Tools",

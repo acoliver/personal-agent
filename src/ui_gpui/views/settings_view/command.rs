@@ -26,6 +26,9 @@ impl SettingsView {
         if self.apply_backup_command(&command) {
             return true;
         }
+        if self.apply_local_model_command(&command) {
+            return true;
+        }
         self.apply_misc_command(command, cx)
     }
 
@@ -363,5 +366,51 @@ impl SettingsView {
             }
             _ => false,
         }
+    }
+
+    /// Handle local-model commands. The apply methods are `pub` so the
+    /// wiring tests can drive state transitions without a presenter.
+    fn apply_local_model_command(&mut self, command: &ViewCommand) -> bool {
+        match command {
+            ViewCommand::LocalModelSettingsLoaded { settings } => {
+                self.apply_local_model_settings(settings.clone());
+                true
+            }
+            ViewCommand::LocalModelStatusUpdated { status } => {
+                self.apply_local_model_status(status.clone())
+            }
+            _ => false,
+        }
+    }
+
+    /// Re-sync the Local Model panel edit buffers from a persisted snapshot.
+    /// Called when the presenter loads settings or echoes a successful save.
+    pub fn apply_local_model_settings(
+        &mut self,
+        settings: crate::services::local_model_settings::LocalModelSettings,
+    ) {
+        self.state.local_model_path_input = settings.model_path.display().to_string();
+        self.state.local_model_ctx_input = settings.n_ctx.to_string();
+        self.state.local_model_gpu_layers_input = settings.gpu_layers.to_string();
+        self.state.local_model_idle_minutes_input = settings.idle_timeout_minutes.to_string();
+        self.state.local_model_idle_unload = settings.idle_unload;
+        self.state.local_model_settings = Some(settings);
+    }
+
+    /// Apply an engine status snapshot to the status card. Returns `true`
+    /// when the card content changed.
+    pub fn apply_local_model_status(
+        &mut self,
+        status: crate::llm::local::engine::EngineStatus,
+    ) -> bool {
+        if self.state.local_model_status == status {
+            return false;
+        }
+        self.state.local_model_error = match &status {
+            crate::llm::local::engine::EngineStatus::Error { message } => Some(message.clone()),
+            _ => None,
+        };
+        self.state.local_model_status = status;
+        true
     }
 }

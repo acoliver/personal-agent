@@ -392,6 +392,10 @@ fn main() {
     Application::new()
         .with_assets(personal_agent::ui_gpui::app_assets::AppAssets)
         .run(|cx: &mut App| run_gpui_app(cx));
+    // Quit paths that return through the run loop land here: stop the
+    // local-model engine while the process is fully alive, because
+    // llama.cpp must not be live during C++ static teardown.
+    personal_agent::llm::local::shutdown_local();
 }
 
 #[cfg(target_os = "linux")]

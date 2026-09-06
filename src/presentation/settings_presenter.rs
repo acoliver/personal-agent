@@ -13,21 +13,11 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use super::view_command::{ProfileSummary, SkillSummary, ThemeSummary};
 use super::{Presenter, PresenterError, ViewCommand};
 
 use crate::events::{types::UserEvent, AppEvent, EventBus};
 use crate::services::login_item::{default_login_item_service, LoginItemService};
 use crate::services::{AppSettingsService, BackupService, ProfileService, SkillsService};
-
-use crate::ui_gpui::theme::{
-    active_mono_font_family, active_mono_ligatures, available_theme_options, is_valid_theme_slug,
-    set_active_font_size, set_active_mono_font_family, set_active_mono_ligatures,
-    set_active_theme_slug, set_active_ui_font_family, MAX_FONT_SIZE, MIN_FONT_SIZE,
-    SETTING_KEY_FONT_SIZE, SETTING_KEY_MONO_FONT_FAMILY, SETTING_KEY_MONO_LIGATURES,
-    SETTING_KEY_UI_FONT_FAMILY,
-};
-
 /// `SettingsPresenter` - handles settings and profile management UI
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
@@ -61,6 +51,11 @@ pub struct SettingsPresenter {
     /// implementation: `SMAppService` on macOS, an `Unsupported` stub
     /// elsewhere. Tests inject a fake via `with_login_item_service`.
     login_item_service: Arc<dyn LoginItemService>,
+
+    /// Generation counter that arbitrates the local-model status poll: each
+    /// panel entry bumps it, which both re-arms polling and terminates the
+    /// previous poll task.
+    local_model_poll_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl SettingsPresenter {
@@ -87,6 +82,7 @@ impl SettingsPresenter {
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
             login_item_service: Arc::from(default_login_item_service()),
+            local_model_poll_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -134,6 +130,7 @@ impl SettingsPresenter {
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path_override: None,
             login_item_service: Arc::from(default_login_item_service()),
+            local_model_poll_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -181,6 +178,7 @@ impl SettingsPresenter {
         let view_tx = self.view_tx.clone();
         let backup_service = self.backup_service.clone();
         let login_item_service = self.login_item_service.clone();
+        let local_model_poll_generation = self.local_model_poll_generation.clone();
 
         let config_path = self.config_path_override.clone();
 
@@ -194,6 +192,7 @@ impl SettingsPresenter {
                             &backup_service,
                             &skills_service,
                             &login_item_service,
+                            &local_model_poll_generation,
                             &view_tx,
                             event,
                             config_path.as_deref(),
@@ -247,6 +246,7 @@ impl SettingsPresenter {
         backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
         login_item_service: &Arc<dyn LoginItemService>,
+        local_model_poll_generation: &Arc<std::sync::atomic::AtomicU64>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: AppEvent,
         config_path: Option<&std::path::Path>,
@@ -259,6 +259,7 @@ impl SettingsPresenter {
                     backup_service,
                     skills_service,
                     login_item_service,
+                    local_model_poll_generation,
                     view_tx,
                     user_evt,
                     config_path,
@@ -291,6 +292,7 @@ impl SettingsPresenter {
         backup_service: &Arc<dyn BackupService>,
         skills_service: &Arc<dyn SkillsService>,
         login_item_service: &Arc<dyn LoginItemService>,
+        local_model_poll_generation: &Arc<std::sync::atomic::AtomicU64>,
         view_tx: &broadcast::Sender<ViewCommand>,
         event: UserEvent,
         config_path: Option<&std::path::Path>,
@@ -340,6 +342,17 @@ impl SettingsPresenter {
             return;
         }
 
+        if Self::handle_local_model_user_event(
+            app_settings_service,
+            view_tx,
+            &event,
+            local_model_poll_generation,
+        )
+        .await
+        {
+            return;
+        }
+
         Self::handle_appearance_user_event(app_settings_service, view_tx, &event).await;
     }
 
@@ -362,8 +375,37 @@ impl SettingsPresenter {
                 Self::on_edit_profile(profile_service, view_tx, *id).await;
                 true
             }
+            UserEvent::CreateLocalProfile => {
+                Self::on_create_local_profile(profile_service, app_settings_service, view_tx).await;
+                true
+            }
             _ => false,
         }
+    }
+
+    /// One-click local profile for existing installs (REQ-LM-002): create
+    /// the seed profile through the shared helper, make it the default, and
+    /// refresh the profile snapshots so the create button disappears.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-002 REQ-LM-006
+    async fn on_create_local_profile(
+        profile_service: &Arc<dyn ProfileService>,
+        app_settings_service: &Arc<dyn AppSettingsService>,
+        view_tx: &broadcast::Sender<ViewCommand>,
+    ) {
+        if let Err(error) =
+            crate::services::profile_impl::ensure_local_seed_profile(profile_service.as_ref()).await
+        {
+            tracing::warn!("Failed to create the local profile: {error}");
+            let _ = view_tx.send(ViewCommand::ShowError {
+                title: "Local Model".to_string(),
+                message: format!("Failed to create the local profile: {error}"),
+                severity: super::view_command::ErrorSeverity::Warning,
+            });
+            return;
+        }
+        Self::emit_profiles_snapshot(profile_service, app_settings_service, view_tx).await;
     }
 
     async fn handle_refresh_user_event(
@@ -552,396 +594,6 @@ impl SettingsPresenter {
                 Self::on_set_mono_ligatures(app_settings_service, view_tx, *enabled).await;
             }
             _ => {}
-        }
-    }
-
-    pub(super) async fn emit_profiles_snapshot(
-        profile_service: &Arc<dyn ProfileService>,
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-    ) {
-        let selected_profile_id = match profile_service.get_default().await {
-            Ok(Some(profile)) => Some(profile.id),
-            _ => app_settings_service
-                .get_default_profile_id()
-                .await
-                .ok()
-                .flatten(),
-        };
-
-        Self::emit_profiles_snapshot_with_default(profile_service, selected_profile_id, view_tx)
-            .await;
-    }
-
-    #[allow(clippy::cognitive_complexity)]
-    pub(super) async fn emit_profiles_snapshot_with_default(
-        profile_service: &Arc<dyn ProfileService>,
-        selected_profile_id: Option<uuid::Uuid>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-    ) {
-        let profiles = match profile_service.list().await {
-            Ok(profiles) => profiles,
-            Err(e) => {
-                tracing::warn!("Failed to list profiles for settings snapshot: {}", e);
-                return;
-            }
-        };
-
-        let selected_profile_id = selected_profile_id
-            .filter(|selected_id| profiles.iter().any(|profile| profile.id == *selected_id));
-
-        let summaries = profiles
-            .into_iter()
-            .map(|profile| ProfileSummary {
-                id: profile.id,
-                name: profile.name,
-                provider_id: profile.provider_id,
-                model_id: profile.model_id,
-                is_default: Some(profile.id) == selected_profile_id,
-            })
-            .collect::<Vec<_>>();
-
-        tracing::info!(
-            "SettingsPresenter::emit_profiles_snapshot: sending {} profiles, default={:?}",
-            summaries.len(),
-            selected_profile_id
-        );
-        match view_tx.send(ViewCommand::ShowSettings {
-            profiles: summaries.clone(),
-            selected_profile_id,
-        }) {
-            Ok(n) => tracing::info!("SettingsPresenter: ShowSettings sent to {} receivers", n),
-            Err(e) => tracing::error!("SettingsPresenter: ShowSettings send failed: {}", e),
-        }
-        match view_tx.send(ViewCommand::ChatProfilesUpdated {
-            profiles: summaries,
-            selected_profile_id,
-        }) {
-            Ok(n) => tracing::info!(
-                "SettingsPresenter: ChatProfilesUpdated sent to {} receivers",
-                n
-            ),
-            Err(e) => tracing::error!("SettingsPresenter: ChatProfilesUpdated send failed: {}", e),
-        }
-    }
-
-    /// Emit the list of available themes and the currently-active slug to the
-    /// settings view.  Called on startup and after a successful theme switch.
-    async fn emit_theme_snapshot(
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        selected_override: Option<String>,
-    ) {
-        let options: Vec<ThemeSummary> = available_theme_options()
-            .into_iter()
-            .map(|opt| ThemeSummary {
-                name: opt.name,
-                slug: opt.slug,
-            })
-            .collect();
-
-        let persisted_slug = app_settings_service
-            .get_theme()
-            .await
-            .ok()
-            .flatten()
-            .filter(|slug| is_valid_theme_slug(slug));
-
-        let selected_slug = selected_override
-            .filter(|slug| is_valid_theme_slug(slug))
-            .or(persisted_slug)
-            .unwrap_or_else(|| "green-screen".to_string());
-
-        let _ = view_tx.send(ViewCommand::ShowSettingsTheme {
-            options,
-            selected_slug,
-        });
-    }
-
-    /// Persist the selected theme slug and apply it to the runtime.
-    async fn on_select_theme(
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        slug: String,
-    ) {
-        if !is_valid_theme_slug(&slug) {
-            tracing::warn!(
-                "Rejected invalid theme selection '{}'; emitting persisted snapshot",
-                slug
-            );
-            Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
-            return;
-        }
-
-        if let Err(e) = app_settings_service.set_theme(slug.clone()).await {
-            tracing::warn!("Failed to persist theme selection '{}': {}", slug, e);
-            Self::emit_theme_snapshot(app_settings_service, view_tx, None).await;
-            return;
-        }
-
-        let applied_slug = app_settings_service
-            .get_theme()
-            .await
-            .ok()
-            .flatten()
-            .filter(|persisted| is_valid_theme_slug(persisted))
-            .unwrap_or_else(|| "green-screen".to_string());
-
-        set_active_theme_slug(&applied_slug);
-
-        Self::emit_theme_snapshot(app_settings_service, view_tx, Some(applied_slug)).await;
-    }
-
-    /// Persist and apply a new font size, then emit a font settings snapshot.
-    async fn on_set_font_size(
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        size: f32,
-    ) {
-        let clamped_size = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
-        if let Err(e) = app_settings_service
-            .set_setting(SETTING_KEY_FONT_SIZE, clamped_size.to_string())
-            .await
-        {
-            tracing::warn!("Failed to persist font_size: {}", e);
-            Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
-            return;
-        }
-        set_active_font_size(clamped_size);
-        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
-    }
-
-    /// Persist and apply a UI font family override, then emit a font settings snapshot.
-    async fn on_set_ui_font_family(
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        name: Option<String>,
-    ) {
-        let value = name.clone().unwrap_or_default();
-        if let Err(e) = app_settings_service
-            .set_setting(SETTING_KEY_UI_FONT_FAMILY, value)
-            .await
-        {
-            tracing::warn!("Failed to persist ui_font_family: {}", e);
-            Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
-            return;
-        }
-        set_active_ui_font_family(name);
-        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
-    }
-
-    /// Persist and apply a monospace font family, then emit a font settings snapshot.
-    async fn on_set_mono_font_family(
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        name: String,
-    ) {
-        if let Err(e) = app_settings_service
-            .set_setting(SETTING_KEY_MONO_FONT_FAMILY, name.clone())
-            .await
-        {
-            tracing::warn!("Failed to persist mono_font_family: {}", e);
-            Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
-            return;
-        }
-        set_active_mono_font_family(&name);
-        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
-    }
-
-    /// Persist and apply the mono-ligatures toggle, then emit a font settings snapshot.
-    async fn on_set_mono_ligatures(
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        enabled: bool,
-    ) {
-        if let Err(e) = app_settings_service
-            .set_setting(SETTING_KEY_MONO_LIGATURES, enabled.to_string())
-            .await
-        {
-            tracing::warn!("Failed to persist mono_ligatures: {}", e);
-            Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
-            return;
-        }
-        set_active_mono_ligatures(enabled);
-        Self::emit_font_settings_snapshot(app_settings_service, view_tx).await;
-    }
-
-    /// Read all four font settings from persistence and emit `ViewCommand::ShowFontSettings`.
-    async fn emit_font_settings_snapshot(
-        app_settings_service: &Arc<dyn AppSettingsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-    ) {
-        use crate::ui_gpui::theme::DEFAULT_FONT_SIZE;
-
-        let size = app_settings_service
-            .get_setting(SETTING_KEY_FONT_SIZE)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|v| v.parse::<f32>().ok())
-            .unwrap_or(DEFAULT_FONT_SIZE)
-            .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
-
-        let ui_family = app_settings_service
-            .get_setting(SETTING_KEY_UI_FONT_FAMILY)
-            .await
-            .ok()
-            .flatten()
-            .filter(|v| !v.is_empty());
-
-        let mono_family = app_settings_service
-            .get_setting(SETTING_KEY_MONO_FONT_FAMILY)
-            .await
-            .ok()
-            .flatten()
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(active_mono_font_family);
-
-        let ligatures = app_settings_service
-            .get_setting(SETTING_KEY_MONO_LIGATURES)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|v| v.parse::<bool>().ok())
-            .unwrap_or_else(active_mono_ligatures);
-
-        let _ = view_tx.send(ViewCommand::ShowFontSettings {
-            size,
-            ui_family,
-            mono_family,
-            ligatures,
-        });
-    }
-
-    async fn emit_skills_snapshot(
-        skills_service: &Arc<dyn SkillsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-    ) {
-        let skills = match skills_service.list_skills().await {
-            Ok(skills) => skills,
-            Err(error) => {
-                tracing::warn!("Failed to list skills for settings snapshot: {error}");
-                return;
-            }
-        };
-        let watched_directories = match skills_service.watched_directories().await {
-            Ok(directories) => directories,
-            Err(error) => {
-                tracing::warn!("Failed to load watched skills directories: {error}");
-                Vec::new()
-            }
-        };
-        let default_directory = skills_service.default_user_skills_dir();
-
-        let summaries = skills
-            .into_iter()
-            .map(|skill| SkillSummary {
-                name: skill.name,
-                description: skill.description,
-                source: skill.source,
-                enabled: skill.enabled,
-                path: skill.path.to_string_lossy().to_string(),
-            })
-            .collect::<Vec<_>>();
-
-        let _ = view_tx.send(ViewCommand::SkillsLoaded {
-            skills: summaries,
-            watched_directories: watched_directories
-                .into_iter()
-                .map(|path| path.to_string_lossy().to_string())
-                .collect(),
-            default_directory: default_directory.to_string_lossy().to_string(),
-        });
-    }
-
-    async fn on_set_skill_enabled(
-        skills_service: &Arc<dyn SkillsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        name: String,
-        enabled: bool,
-    ) {
-        if let Err(error) = skills_service.set_skill_enabled(&name, enabled).await {
-            tracing::warn!(
-                "Failed to update skill enabled state for {}: {}",
-                name,
-                error
-            );
-            let _ = view_tx.send(ViewCommand::ShowError {
-                title: "Skills".to_string(),
-                message: format!("Failed to update skill '{name}': {error}"),
-                severity: super::view_command::ErrorSeverity::Warning,
-            });
-            return;
-        }
-
-        Self::emit_skills_snapshot(skills_service, view_tx).await;
-    }
-
-    async fn on_add_skills_directory(
-        skills_service: &Arc<dyn SkillsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        path: String,
-    ) {
-        if let Err(error) = skills_service
-            .add_watched_directory(std::path::PathBuf::from(path.clone()))
-            .await
-        {
-            let _ = view_tx.send(ViewCommand::ShowError {
-                title: "Skills".to_string(),
-                message: format!("Failed to add skills directory '{path}': {error}"),
-                severity: super::view_command::ErrorSeverity::Warning,
-            });
-            return;
-        }
-
-        let _ = view_tx.send(ViewCommand::ShowNotification {
-            message: format!("Added watched skills directory: {path}"),
-        });
-        Self::emit_skills_snapshot(skills_service, view_tx).await;
-    }
-
-    async fn on_remove_skills_directory(
-        skills_service: &Arc<dyn SkillsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        path: String,
-    ) {
-        if let Err(error) = skills_service
-            .remove_watched_directory(std::path::Path::new(&path))
-            .await
-        {
-            let _ = view_tx.send(ViewCommand::ShowError {
-                title: "Skills".to_string(),
-                message: format!("Failed to remove skills directory '{path}': {error}"),
-                severity: super::view_command::ErrorSeverity::Warning,
-            });
-            return;
-        }
-
-        let _ = view_tx.send(ViewCommand::ShowNotification {
-            message: format!("Removed watched skills directory: {path}"),
-        });
-        Self::emit_skills_snapshot(skills_service, view_tx).await;
-    }
-
-    async fn on_install_skill_from_url(
-        skills_service: &Arc<dyn SkillsService>,
-        view_tx: &broadcast::Sender<ViewCommand>,
-        url: String,
-    ) {
-        match skills_service.install_skill_from_url(&url).await {
-            Ok(skill) => {
-                let _ = view_tx.send(ViewCommand::ShowNotification {
-                    message: format!("Installed skill '{}' from URL", skill.name),
-                });
-                Self::emit_skills_snapshot(skills_service, view_tx).await;
-            }
-            Err(error) => {
-                let _ = view_tx.send(ViewCommand::ShowError {
-                    title: "Skills".to_string(),
-                    message: format!("Failed to install skill from '{url}': {error}"),
-                    severity: super::view_command::ErrorSeverity::Warning,
-                });
-            }
         }
     }
 }

@@ -6,6 +6,10 @@
 
 #[path = "tests_account.rs"]
 mod tests_account;
+#[path = "tests_codex.rs"]
+mod tests_codex;
+#[path = "tests_local.rs"]
+mod tests_local;
 
 use super::*;
 use flume;
@@ -166,44 +170,6 @@ async fn key_refresh_and_navigation_actions_emit_expected_events(cx: &mut TestAp
         user_rx.recv().expect("refresh api keys event"),
         UserEvent::RefreshApiKeys
     );
-}
-
-#[gpui::test]
-async fn local_api_type_requires_no_key_and_can_be_saved(cx: &mut TestAppContext) {
-    let (bridge, user_rx) = make_bridge();
-    let view = cx.new(ProfileEditorView::new);
-
-    view.update(cx, |view: &mut ProfileEditorView, _cx| {
-        view.set_bridge(Arc::clone(&bridge));
-        view.state.data.name = "Local Profile".to_string();
-        view.state.data.model_id = "qwen-3.5-4b".to_string();
-        view.state.data.base_url = "http://localhost:8080/v1".to_string();
-        view.state.data.api_type = ApiType::Local;
-
-        // Local provider should not require API key
-        assert!(!view.state.data.api_type.requires_api_key());
-        assert!(view.state.data.key_label.is_empty());
-
-        // Can save without key_label for Local provider
-        assert!(view.state.data.can_save());
-
-        view.emit_save_profile();
-    });
-
-    assert_eq!(
-        user_rx.recv().expect("refresh api keys event"),
-        UserEvent::RefreshApiKeys
-    );
-    match user_rx.recv().expect("save profile event") {
-        UserEvent::SaveProfile { profile } => {
-            assert_eq!(profile.name, "Local Profile");
-            assert_eq!(profile.provider_id.as_deref(), Some("local"));
-            assert_eq!(profile.model_id.as_deref(), Some("qwen-3.5-4b"));
-            // Should emit None auth for Local provider
-            assert!(matches!(profile.auth, Some(ModelProfileAuth::None)));
-        }
-        other => panic!("expected SaveProfile event, got {other:?}"),
-    }
 }
 
 #[gpui::test]
@@ -665,6 +631,48 @@ async fn emit_save_profile_carries_context_window_size_for_issue_182(cx: &mut Te
     );
 }
 
+/// A local profile's context budget is the engine's Context size (Settings →
+/// Local Model), so the save payload must not carry the editor's field: it
+/// would let the persisted per-profile number drift from the engine's `n_ctx`.
+// @requirement:REQ-LM-001
+#[gpui::test]
+async fn emit_save_profile_omits_context_window_for_local_profiles(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(ProfileEditorView::new);
+
+    view.update(cx, |view: &mut ProfileEditorView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        view.handle_command(
+            ViewCommand::ModelSelected {
+                provider_id: "local".to_string(),
+                model_id: "granite-4.2-3b".to_string(),
+                provider_api_url: None,
+                context_length: Some(128_000),
+            },
+            cx,
+        );
+        view.state.data.api_type = ApiType::Local;
+        view.state.data.context_limit = 64_000;
+        view.emit_save_profile();
+    });
+
+    // Drain the RefreshApiKeys event the bridge always emits first.
+    let _ = user_rx.recv().expect("refresh api keys event");
+
+    let event = user_rx.recv().expect("save profile event");
+    let UserEvent::SaveProfile { profile } = event else {
+        panic!("expected SaveProfile, got {event:?}");
+    };
+    let parameters = profile
+        .parameters
+        .as_ref()
+        .expect("save payload must include parameters");
+    assert_eq!(
+        parameters.context_window_size, None,
+        "local profiles must not persist an editor context value"
+    );
+}
+
 #[gpui::test]
 async fn emit_save_profile_clears_blank_token_field_name_for_issue_205(cx: &mut TestAppContext) {
     let (bridge, user_rx) = make_bridge();
@@ -765,227 +773,4 @@ async fn an_unrecognised_provider_leaves_the_picker_at_the_first_choice(cx: &mut
 
     assert_eq!(custom.next(), ApiType::Anthropic);
     let _ = cx;
-}
-
-#[gpui::test]
-async fn a_codex_profile_needs_an_account_not_a_key(cx: &mut TestAppContext) {
-    let (bridge, _events) = make_bridge();
-    let view = cx.new(|cx| {
-        let mut view = ProfileEditorView::new(cx);
-        view.set_bridge(bridge);
-        view
-    });
-
-    view.update(cx, |view: &mut ProfileEditorView, _cx| {
-        view.state.data.name = "Codex".to_string();
-        view.state.data.model_id = "gpt-5.6-luna".to_string();
-        view.state.data.api_type = ApiType::ChatGptCodex;
-        view.state.data.apply_api_type_change();
-
-        assert!(!view.state.data.api_type.requires_api_key());
-        assert!(view.state.data.api_type.requires_oauth_account());
-        assert!(
-            !view.state.data.can_save(),
-            "Save stays disabled until an account is signed in"
-        );
-
-        view.state.data.oauth_account = "chatgpt-acct-1".to_string();
-        assert!(view.state.data.can_save());
-    });
-}
-
-#[gpui::test]
-async fn choosing_codex_fills_in_the_managed_endpoint(cx: &mut TestAppContext) {
-    let (bridge, _events) = make_bridge();
-    let view = cx.new(|cx| {
-        let mut view = ProfileEditorView::new(cx);
-        view.set_bridge(bridge);
-        view
-    });
-
-    view.update(cx, |view: &mut ProfileEditorView, _cx| {
-        view.state.data.base_url = "https://example.test/v1".to_string();
-        view.state.data.api_type = ApiType::ChatGptCodex;
-        view.state.data.apply_api_type_change();
-
-        assert_eq!(
-            view.state.data.base_url,
-            "wss://chatgpt.com/backend-api/codex/responses"
-        );
-    });
-}
-
-#[gpui::test]
-async fn leaving_codex_drops_the_account(cx: &mut TestAppContext) {
-    let (bridge, _events) = make_bridge();
-    let view = cx.new(|cx| {
-        let mut view = ProfileEditorView::new(cx);
-        view.set_bridge(bridge);
-        view
-    });
-
-    view.update(cx, |view: &mut ProfileEditorView, _cx| {
-        view.state.data.api_type = ApiType::ChatGptCodex;
-        view.state.data.oauth_account = "chatgpt-acct-1".to_string();
-        view.state.data.oauth_account_label = "a@b.c".to_string();
-
-        view.state.data.api_type = ApiType::OpenAI;
-        view.state.data.apply_api_type_change();
-
-        assert!(
-            view.state.data.oauth_account.is_empty(),
-            "a key-authenticated provider cannot use an account"
-        );
-        assert!(view.state.data.oauth_account_label.is_empty());
-    });
-}
-
-#[gpui::test]
-async fn leaving_a_key_provider_drops_the_key_label(cx: &mut TestAppContext) {
-    let (bridge, _events) = make_bridge();
-    let view = cx.new(|cx| {
-        let mut view = ProfileEditorView::new(cx);
-        view.set_bridge(bridge);
-        view
-    });
-
-    view.update(cx, |view: &mut ProfileEditorView, _cx| {
-        view.state.data.api_type = ApiType::OpenAI;
-        view.state.data.key_label = "openai-key".to_string();
-
-        view.state.data.api_type = ApiType::ChatGptCodex;
-        view.state.data.apply_api_type_change();
-
-        assert!(view.state.data.key_label.is_empty());
-    });
-}
-
-#[gpui::test]
-async fn signing_in_asks_for_a_browser_flow(cx: &mut TestAppContext) {
-    clear_navigation_requests();
-    let (bridge, events) = make_bridge();
-    let view = cx.new(|cx| {
-        let mut view = ProfileEditorView::new(cx);
-        view.set_bridge(bridge);
-        view
-    });
-
-    while events.try_recv() == Ok(UserEvent::RefreshApiKeys) {}
-
-    view.update(cx, |view: &mut ProfileEditorView, _cx| {
-        view.start_codex_sign_in();
-    });
-
-    assert_eq!(
-        events.try_recv().expect("event emitted"),
-        UserEvent::StartCodexSignIn {
-            method: crate::events::types::CodexSignInMethod::Browser
-        }
-    );
-
-    // Starting a sign-in also navigates to the sheet. The navigation channel
-    // is a single global slot shared by every test in this binary, so a
-    // request left behind here surfaces as a stray navigation in another test.
-    clear_navigation_requests();
-}
-
-#[gpui::test]
-async fn a_completed_sign_in_populates_the_account_row(cx: &mut TestAppContext) {
-    let (bridge, _events) = make_bridge();
-    let view = cx.new(|cx| {
-        let mut view = ProfileEditorView::new(cx);
-        view.set_bridge(bridge);
-        view
-    });
-
-    view.update(cx, |view: &mut ProfileEditorView, cx| {
-        view.state.data.api_type = ApiType::ChatGptCodex;
-        // Selecting the type is what fills in its managed endpoint.
-        view.state.data.apply_api_type_change();
-        view.handle_command(
-            ViewCommand::CodexSignInCompleted {
-                account: "chatgpt-acct-1".to_string(),
-                label: "andrew@example.com".to_string(),
-                plan: Some("ChatGPT Pro".to_string()),
-            },
-            cx,
-        );
-
-        assert_eq!(view.state.data.oauth_account, "chatgpt-acct-1");
-        assert_eq!(view.state.data.oauth_account_label, "andrew@example.com");
-        assert_eq!(view.state.data.oauth_account_plan, "ChatGPT Pro");
-        // A signed-in account is the credential this API type needs, so with
-        // the other required fields present Save becomes available.
-        view.state.data.name = "Codex".to_string();
-        view.state.data.model_id = "gpt-5.6-luna".to_string();
-        assert!(view.state.data.can_save());
-    });
-}
-
-#[gpui::test]
-async fn signing_out_clears_the_account_and_tells_the_presenter(cx: &mut TestAppContext) {
-    let (bridge, events) = make_bridge();
-    let view = cx.new(|cx| {
-        let mut view = ProfileEditorView::new(cx);
-        view.set_bridge(bridge);
-        view
-    });
-
-    while events.try_recv() == Ok(UserEvent::RefreshApiKeys) {}
-
-    view.update(cx, |view: &mut ProfileEditorView, _cx| {
-        view.state.data.api_type = ApiType::ChatGptCodex;
-        view.state.data.oauth_account = "chatgpt-acct-1".to_string();
-
-        view.sign_out_codex_account("chatgpt-acct-1".to_string());
-
-        assert!(view.state.data.oauth_account.is_empty());
-        assert!(!view.state.data.can_save());
-    });
-
-    assert_eq!(
-        events.try_recv().expect("event emitted"),
-        UserEvent::SignOutCodexAccount {
-            account: "chatgpt-acct-1".to_string()
-        }
-    );
-}
-
-#[gpui::test]
-async fn a_codex_profile_loads_with_its_account(cx: &mut TestAppContext) {
-    let (bridge, _events) = make_bridge();
-    let view = cx.new(|cx| {
-        let mut view = ProfileEditorView::new(cx);
-        view.set_bridge(bridge);
-        view
-    });
-
-    view.update(cx, |view: &mut ProfileEditorView, cx| {
-        view.handle_command(
-            ViewCommand::ProfileEditorLoad {
-                id: Uuid::new_v4(),
-                name: "Codex".to_string(),
-                provider_id: "openai-codex".to_string(),
-                model_id: "gpt-5.6-luna".to_string(),
-                base_url: "wss://chatgpt.com/backend-api/codex/responses".to_string(),
-                api_key_label: String::new(),
-                oauth_account: "chatgpt-acct-1".to_string(),
-                temperature: 1.0,
-                max_tokens: Some(4096),
-                max_tokens_field_name: String::new(),
-                extra_request_fields: String::new(),
-                context_limit: Some(128_000),
-                show_thinking: false,
-                enable_thinking: false,
-                thinking_budget: None,
-                reasoning_effort: String::new(),
-                system_prompt: String::new(),
-            },
-            cx,
-        );
-
-        assert_eq!(view.state.data.api_type, ApiType::ChatGptCodex);
-        assert_eq!(view.state.data.oauth_account, "chatgpt-acct-1");
-        assert!(view.state.data.can_save());
-    });
 }

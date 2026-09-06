@@ -15,6 +15,9 @@ mod tests_scrollable;
 #[path = "tests_skills.rs"]
 mod tests_skills;
 
+#[path = "tests_local_model.rs"]
+mod tests_local_model;
+
 use super::*;
 use crate::presentation::view_command::{ViewCommand, ViewId};
 use gpui::{AppContext, Bounds, EntityInputHandler, Pixels, TestAppContext};
@@ -646,6 +649,30 @@ async fn cycle_active_field_rotates_through_fields(cx: &mut TestAppContext) {
         );
 
         view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::LocalModelPathInput)
+        );
+
+        view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::LocalModelCtxInput)
+        );
+
+        view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::LocalModelGpuLayersInput)
+        );
+
+        view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::LocalModelIdleMinutesInput)
+        );
+
+        view.cycle_active_field();
         assert_eq!(view.state.active_field, Some(ActiveField::ExportDirInput));
     });
 }
@@ -854,6 +881,30 @@ async fn cycle_active_field_includes_export_dir(cx: &mut TestAppContext) {
         assert_eq!(
             view.state.active_field,
             Some(ActiveField::InstallSkillUrlInput)
+        );
+
+        view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::LocalModelPathInput)
+        );
+
+        view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::LocalModelCtxInput)
+        );
+
+        view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::LocalModelGpuLayersInput)
+        );
+
+        view.cycle_active_field();
+        assert_eq!(
+            view.state.active_field,
+            Some(ActiveField::LocalModelIdleMinutesInput)
         );
 
         view.cycle_active_field();

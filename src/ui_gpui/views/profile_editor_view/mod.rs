@@ -3,20 +3,26 @@
 //! @plan PLAN-20250130-GPUIREDUX.P08
 //! @requirement REQ-UI-PE
 
+mod commands;
 mod ime;
 mod render;
 mod render_account;
 mod render_advanced;
 mod render_reasoning;
 
+use commands::ProfileEditorLoadPayload;
+
 use gpui::FocusHandle;
 use std::sync::Arc;
+// The test module consumes these through this module's glob; commands.rs
+// re-imports them, which is what keeps the imports live here.
 use uuid::Uuid;
 
 use crate::config::default_api_base_url_for_provider;
-use crate::events::types::{ModelProfileAuth, ModelProfileParameters, UserEvent};
-use crate::models::{capabilities_for, effort_from_stored, ModelCapabilities, ReasoningEffort};
+use crate::events::types::{ModelProfileAuth, UserEvent};
+use crate::models::{capabilities_for, ModelCapabilities, ReasoningEffort};
 use crate::presentation::view_command::{ViewCommand, ViewId};
+use crate::services::local_model_settings::LocalModelSettings;
 use crate::ui_gpui::bridge::GpuiBridge;
 
 /// Auth method enum for display
@@ -262,6 +268,17 @@ impl ProfileEditorData {
 
         if let Some(managed) = self.api_type.managed_endpoint() {
             self.base_url = managed.to_string();
+        } else if self.api_type == ApiType::Local {
+            // REQ-LM-007: a local profile has no HTTP endpoint. Persisting
+            // the OpenAI default here would let an edit silently re-route a
+            // local profile at a remote API.
+            self.base_url = String::new();
+            // The model id is a display label for the local engine; an empty
+            // one would block Save with nothing obvious to type. Seed the
+            // engine's default model so a fresh Local profile saves as-is.
+            if self.model_id.trim().is_empty() {
+                self.model_id = crate::services::profile_impl::SEED_MODEL_ID.to_string();
+            }
         } else if self.base_url.trim().is_empty() || self.base_url_is_managed_elsewhere() {
             // A managed endpoint belongs to the type that manages it. Carrying
             // ChatGPT's websocket URL onto a plain HTTP provider would save an
@@ -290,7 +307,9 @@ impl ProfileEditorData {
         if self.model_id.trim().is_empty() {
             return false;
         }
-        if self.base_url.trim().is_empty() {
+        // REQ-LM-007: a local profile persists no endpoint at all, so an
+        // empty base_url is its correct state rather than a blocker.
+        if self.base_url.trim().is_empty() && self.api_type != ApiType::Local {
             return false;
         }
         // Only require key_label for API types that need authentication
@@ -315,6 +334,17 @@ pub struct ProfileEditorState {
     pub(super) advanced_request_parameters_expanded: bool,
     /// Validation message for the advanced request JSON field.
     pub(super) advanced_json_validation_message: Option<String>,
+    /// Engine snapshot captured when the editor last targeted the local
+    /// engine; `None` for every other API type (no status row).
+    pub local_engine_status: Option<crate::llm::local::engine::EngineStatus>,
+    /// Shared engine settings behind the LOCAL ENGINE (shared) section.
+    pub local_model_settings: Option<crate::services::local_model_settings::LocalModelSettings>,
+    /// The GGUF path the section displays, synced from `local_model_settings`.
+    pub local_model_path_input: String,
+    /// A file was picked before the shared snapshot arrived; the pick is
+    /// pushed to the store as soon as a snapshot is at hand. See
+    /// [`ProfileEditorView::apply_local_model_settings`].
+    pub(super) local_model_path_dirty: bool,
 }
 
 impl ProfileEditorState {
@@ -332,6 +362,10 @@ impl ProfileEditorState {
             active_field: None,
             advanced_request_parameters_expanded: false,
             advanced_json_validation_message: None,
+            local_engine_status: None,
+            local_model_settings: None,
+            local_model_path_input: String::new(),
+            local_model_path_dirty: false,
         }
     }
 
@@ -344,6 +378,10 @@ impl ProfileEditorState {
             active_field: None,
             advanced_request_parameters_expanded: advanced_expanded,
             advanced_json_validation_message: None,
+            local_engine_status: None,
+            local_model_settings: None,
+            local_model_path_input: String::new(),
+            local_model_path_dirty: false,
         }
     }
 }
@@ -457,6 +495,92 @@ impl ProfileEditorView {
 
     fn request_api_key_refresh(&self) {
         self.emit(&UserEvent::RefreshApiKeys);
+    }
+
+    /// Sync the Local-engine section with the current API type: capture the
+    /// engine status snapshot and request the shared local-model settings.
+    ///
+    /// @plan:PLAN-20260903-LOCALMODEL.P05
+    /// @requirement:REQ-LM-006 REQ-LM-007
+    pub(super) fn refresh_local_engine_state(&mut self) {
+        if self.state.data.api_type != ApiType::Local {
+            self.state.local_engine_status = None;
+            return;
+        }
+        // One mutex snapshot per entry mirrors the chat dropdown's approach:
+        // cosmetic staleness while the editor stays open is acceptable, and
+        // the GPUI thread never polls.
+        self.state.local_engine_status = Some(crate::llm::local::status());
+        self.emit(&UserEvent::LoadLocalModelSettings);
+    }
+
+    /// Open a file picker and push the picked GGUF into the shared engine
+    /// settings (same store Settings → Local Model writes).
+    #[allow(clippy::unused_self)]
+    pub(super) fn choose_local_model_file(&mut self, cx: &mut gpui::Context<Self>) {
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Select Model File (GGUF)".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(path) = paths.first() {
+                    let path_str = path.to_string_lossy().to_string();
+                    cx.update(|cx| {
+                        this.update(cx, |view, cx| {
+                            view.adopt_chosen_local_model_path(path_str);
+                            cx.notify();
+                        })
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Record a picked GGUF path and persist it onto the shared settings.
+    ///
+    /// Only `model_path` is written; every other engine knob is copied from
+    /// the loaded snapshot untouched, so picking a file can never reset the
+    /// context size or GPU layers configured in Settings → Local Model.
+    pub fn adopt_chosen_local_model_path(&mut self, path: String) {
+        self.state.local_model_path_input = path;
+        self.state.local_model_path_dirty = true;
+        match self.state.local_model_settings.clone() {
+            Some(snapshot) => self.save_chosen_local_model_path(snapshot),
+            // The snapshot has not arrived yet; keep the pick dirty and ask
+            // for it. `apply_local_model_settings` completes the save.
+            None => self.emit(&UserEvent::LoadLocalModelSettings),
+        }
+    }
+
+    /// Send the picked path to the shared store, leaving the rest of the
+    /// snapshot as loaded.
+    fn save_chosen_local_model_path(&mut self, mut snapshot: LocalModelSettings) {
+        snapshot.model_path = std::path::PathBuf::from(&self.state.local_model_path_input);
+        self.state.local_model_path_dirty = false;
+        self.emit(&UserEvent::SaveLocalModelSettings { settings: snapshot });
+    }
+
+    /// Re-sync the LOCAL ENGINE (shared) section from a settings snapshot.
+    ///
+    /// A path the user already picked wins over the arriving snapshot — a
+    /// slow settings load must never drop a just-chosen file — and is pushed
+    /// to the store immediately.
+    pub fn apply_local_model_settings(&mut self, settings: LocalModelSettings) {
+        self.state.local_model_settings = Some(settings.clone());
+        if self.state.local_model_path_dirty {
+            let picked = self.state.local_model_path_input.trim().to_string();
+            if !picked.is_empty() {
+                self.save_chosen_local_model_path(settings);
+                return;
+            }
+            self.state.local_model_path_dirty = false;
+        }
+        self.state.local_model_path_input = settings.model_path.display().to_string();
     }
 
     /// Set profile data from presenter
@@ -702,84 +826,6 @@ impl ProfileEditorView {
         self.emit(&UserEvent::SignOutCodexAccount { account });
     }
 
-    fn emit_save_profile(&self) {
-        let id = self
-            .state
-            .data
-            .id
-            .as_deref()
-            .and_then(|raw| Uuid::parse_str(raw).ok())
-            .unwrap_or_else(Uuid::new_v4);
-
-        let provider_id = Some(self.state.data.api_type.provider_id());
-
-        let auth = if self.state.data.api_type.requires_oauth_account() {
-            Some(ModelProfileAuth::OAuth {
-                account: self.state.data.oauth_account.clone(),
-            })
-        } else if self.state.data.api_type.requires_api_key() {
-            Some(ModelProfileAuth::Keychain {
-                label: self.state.data.key_label.clone(),
-            })
-        } else {
-            Some(ModelProfileAuth::None)
-        };
-
-        let extra_request_fields =
-            serde_json::from_str::<serde_json::Value>(&self.state.data.extra_request_fields)
-                .ok()
-                .filter(serde_json::Value::is_object);
-
-        let max_tokens = self.state.data.max_tokens.parse::<u32>().ok();
-
-        let max_tokens_field_name = {
-            let name = self.state.data.max_tokens_field_name.trim();
-            if name.is_empty() {
-                None
-            } else {
-                Some(name.to_string())
-            }
-        };
-
-        let parameters = Some(ModelProfileParameters {
-            temperature: Some(f64::from(self.state.data.temperature)),
-            max_tokens,
-            max_tokens_field_name,
-            extra_request_fields,
-            show_thinking: Some(self.state.data.show_thinking),
-            enable_thinking: Some(self.state.data.enable_extended_thinking),
-            thinking_budget: if self.state.data.enable_extended_thinking {
-                Some(self.state.data.thinking_budget)
-            } else {
-                None
-            },
-            reasoning_effort: self.capabilities().takes_reasoning_effort().then(|| {
-                self.state
-                    .data
-                    .reasoning_effort
-                    .as_ref()
-                    .map(|effort| effort.as_str().to_string())
-                    .unwrap_or_default()
-            }),
-            // Issue #182: carry the editor's "CONTEXT LIMIT" field through
-            // to the presenter so it actually gets persisted.
-            context_window_size: Some(self.state.data.context_limit as usize),
-        });
-
-        self.emit(&UserEvent::SaveProfile {
-            profile: Box::new(crate::events::types::ModelProfile {
-                id,
-                name: self.state.data.name.clone(),
-                provider_id,
-                model_id: Some(self.state.data.model_id.clone()),
-                base_url: Some(self.state.data.base_url.clone()),
-                auth,
-                parameters,
-                system_prompt: Some(self.state.data.system_prompt.clone()),
-            }),
-        });
-    }
-
     /// Handle `ViewCommand` from presenter
     /// @plan PLAN-20250130-GPUIREDUX.P08
     /// @plan PLAN-20260219-NEXTGPUIREMEDIATE.P05
@@ -813,40 +859,29 @@ impl ProfileEditorView {
                 reasoning_effort,
                 system_prompt,
             } => {
-                self.state.is_new = false;
-                self.state.data.id = Some(id.to_string());
-                self.state.data.name = name;
-                self.state.data.model_id = model_id;
-                self.state.data.base_url = base_url;
-                self.state.data.api_type = ApiType::from_provider_id(&provider_id);
-                self.state.data.key_label = api_key_label;
-                self.state.data.oauth_account = oauth_account;
-                self.request_account_refresh();
-                // The load payload carries the slug only. Keeping the previous
-                // profile's label and plan would caption this account with
-                // someone else's name.
-                self.state.data.oauth_account_label.clear();
-                self.state.data.oauth_account_plan.clear();
-                #[allow(clippy::cast_possible_truncation)]
-                {
-                    self.state.data.temperature = temperature as f32;
-                }
-                self.state.data.max_tokens =
-                    max_tokens.map_or_else(String::new, |value| value.to_string());
-                self.state.data.max_tokens_field_name = max_tokens_field_name;
+                self.apply_profile_editor_load(ProfileEditorLoadPayload {
+                    id,
+                    name,
+                    provider_id,
+                    model_id,
+                    base_url,
+                    api_key_label,
+                    oauth_account,
+                    temperature,
+                    max_tokens,
+                    max_tokens_field_name,
+                    extra_request_fields,
+                    context_limit,
+                    show_thinking,
+                    enable_thinking,
+                    thinking_budget,
+                    reasoning_effort,
+                    system_prompt,
+                });
+            }
 
-                self.state.data.extra_request_fields = extra_request_fields;
-                self.state.advanced_request_parameters_expanded =
-                    ProfileEditorState::has_advanced_request_parameters(&self.state.data);
-                if let Some(limit) = context_limit {
-                    self.state.data.context_limit = limit;
-                }
-                self.state.data.show_thinking = show_thinking;
-                self.state.data.enable_extended_thinking = enable_thinking;
-                self.state.data.thinking_budget = thinking_budget.unwrap_or(10_000);
-                self.state.data.reasoning_effort = effort_from_stored(&reasoning_effort);
-                self.state.data.system_prompt = system_prompt;
-                self.state.active_field = None;
+            ViewCommand::LocalModelSettingsLoaded { settings } => {
+                self.apply_local_model_settings(settings);
             }
 
             ViewCommand::ApiKeysListed { keys } => {

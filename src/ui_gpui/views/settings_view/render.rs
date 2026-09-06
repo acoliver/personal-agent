@@ -691,6 +691,7 @@ impl SettingsView {
             SettingsCategory::General => self.render_general_panel(cx).into_any_element(),
             SettingsCategory::Appearance => self.render_appearance_panel(cx).into_any_element(),
             SettingsCategory::Models => self.render_models_panel(cx).into_any_element(),
+            SettingsCategory::LocalModel => self.render_local_model_panel(cx).into_any_element(),
             SettingsCategory::Skills => self.render_skills_panel(cx).into_any_element(),
             SettingsCategory::Security => self.render_security_panel(cx).into_any_element(),
             SettingsCategory::McpTools => self.render_mcp_tools_panel(cx).into_any_element(),

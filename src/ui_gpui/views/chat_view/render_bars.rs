@@ -1,14 +1,20 @@
 //! Chat view bar and dropdown render subtrees above the chat area.
 //! Contains `render_top_bar`, `render_title_bar`, `render_conversation_dropdown`, and `render_profile_dropdown`.
 //! @plan PLAN-20260325-ISSUE11B.P02
-use super::state::StreamingState;
+// @plan:PLAN-20260903-LOCALMODEL.P05
+// @requirement:REQ-LM-005
 use super::ChatView;
 use crate::events::types::UserEvent;
-use crate::presentation::view_command::{AppMode, ConversationSummary, ProfileSummary};
+use crate::llm::local::engine::EngineStatus;
+use crate::llm::local::LOCAL_PROVIDER_ID;
+use crate::presentation::view_command::AppMode;
 use crate::ui_gpui::components::copy_icons::copy_icon;
 use crate::ui_gpui::theme::Theme;
 use crate::ui_gpui::views::main_panel::MainPanelAppState;
-use gpui::{div, prelude::*, px, FontWeight, MouseButton, SharedString};
+use gpui::{div, prelude::*, px, FontWeight, MouseButton};
+
+mod dropdowns;
+mod title_bar;
 /// Height of the top bar.
 const TOP_BAR_HEIGHT: f32 = 44.0;
 /// Height of the title bar where selectors live.
@@ -334,6 +340,10 @@ impl ChatView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _, _window, _cx| {
+                    // Quiesce the local-model engine while the process is
+                    // still fully alive; llama.cpp must not be live during
+                    // C++ static teardown or exit faults.
+                    crate::llm::local::shutdown_local();
                     std::process::exit(0);
                 }),
             )
@@ -491,235 +501,6 @@ impl ChatView {
     /// Bug icon button with unviewed error count badge.
     ///
     /// Hidden via opacity when there are no unviewed errors, preserving title-bar layout stability.
-    #[allow(clippy::unused_self)] // cx.listener borrows the entity, not &self directly
-    fn render_bug_icon_btn(
-        &self,
-        unviewed: usize,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        let count_label = if unviewed > 99 {
-            "99+".to_string()
-        } else {
-            unviewed.to_string()
-        };
-
-        div()
-            .id("btn-error-log")
-            .size(px(28.0))
-            .rounded(px(4.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .relative()
-            // Preserve layout when no errors (like CSS visibility:hidden)
-            .opacity(if unviewed == 0 { 0.0 } else { 1.0 })
-            .when(unviewed > 0, |d| {
-                d.cursor_pointer()
-                    .hover(|s| s.bg(Theme::bg_dark()))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_this, _, _window, _cx| {
-                            crate::ui_gpui::navigation_channel().request_navigate(
-                                crate::presentation::view_command::ViewId::ErrorLog,
-                            );
-                        }),
-                    )
-            })
-            .child(crate::ui_gpui::components::bug_icon::bug_icon(14.0).text_color(Theme::error()))
-            // Count badge — top-right corner, styled like the YOLO badge
-            .when(unviewed > 0, |d| {
-                d.child(
-                    div()
-                        .id("error-log-badge")
-                        .absolute()
-                        .top(px(1.0))
-                        .right(px(1.0))
-                        .min_w(px(13.0))
-                        .h(px(13.0))
-                        .rounded(px(7.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .px(px(2.0))
-                        .bg(Theme::error())
-                        .text_size(px(Theme::font_size_small()))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(Theme::selection_fg())
-                        .child(count_label),
-                )
-            })
-    }
-
-    /// Conversation title / rename field.
-    fn render_conversation_selector(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        if self.state.conversation_title_editing {
-            let input = self.state.conversation_title_input.clone();
-            div()
-                .id("conversation-title-input")
-                .min_w(px(220.0))
-                .px(px(8.0))
-                .py(px(4.0))
-                .rounded(px(4.0))
-                .bg(Theme::bg_dark())
-                .border_1()
-                .border_color(Theme::accent())
-                .child(
-                    div()
-                        .text_size(px(Theme::font_size_mono()))
-                        .text_color(Theme::text_primary())
-                        .child(if input.is_empty() {
-                            "Enter conversation name".to_string()
-                        } else {
-                            input
-                        }),
-                )
-        } else {
-            let title = self.state.conversation_title.clone();
-            let open = self.state.conversation_dropdown_open;
-            div()
-                .id("conversation-dropdown")
-                .min_w(px(220.0))
-                .px(px(8.0))
-                .py(px(4.0))
-                .rounded(px(4.0))
-                .bg(Theme::bg_dark())
-                .border_1()
-                .border_color(if open {
-                    Theme::accent()
-                } else {
-                    Theme::border()
-                })
-                .flex()
-                .items_center()
-                .justify_between()
-                .cursor_pointer()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(px(Theme::font_size_mono()))
-                        .text_color(Theme::text_primary())
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(px(Theme::font_size_ui()))
-                        .text_color(Theme::text_primary())
-                        .child(if open { "\u{25B2}" } else { "\u{25BC}" }),
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _window, cx| {
-                        this.toggle_conversation_dropdown(cx);
-                        this.blur_composer();
-                    }),
-                )
-        }
-    }
-
-    /// "+" new conversation button.
-    #[allow(clippy::unused_self)] // cx.listener borrows the entity, not &self directly
-    fn render_new_conversation_btn(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .id("btn-new")
-            .size(px(28.0))
-            .rounded(px(4.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(|s| s.bg(Theme::bg_dark()))
-            .text_size(px(Theme::font_size_body()))
-            .text_color(Theme::text_primary())
-            .child("+")
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _window, cx| {
-                    tracing::info!("New conversation clicked - emitting UserEvent");
-                    this.emit(UserEvent::NewConversation);
-                    this.state.messages.clear();
-                    this.state.input_text.clear();
-                    this.state.cursor_position = 0;
-                    this.state.streaming = StreamingState::Idle;
-                    this.state.thinking_content = None;
-                    this.state.active_conversation_id = None;
-                    this.conversation_id = None;
-                    this.state.conversation_title = "New Conversation".to_string();
-                    this.state.conversation_dropdown_open = false;
-                    this.state.conversation_title_editing = false;
-                    this.state.conversation_title_input.clear();
-                    this.state.profile_dropdown_open = false;
-                    this.state.chat_autoscroll_enabled = true;
-                    this.scroll_transcript_to_bottom();
-                    this.refresh_transcript_selection_revisions();
-                    cx.notify();
-                }),
-            )
-    }
-
-    /// Profile selector pill in the title bar.
-    fn render_profile_selector(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let selected_profile = self.state.selected_profile().map_or_else(
-            || "Select profile".to_string(),
-            |profile| profile.name.clone(),
-        );
-        let open = self.state.profile_dropdown_open;
-
-        div()
-            .id("chat-profile-dropdown")
-            .max_w(px(225.0 * Theme::ui_scale()))
-            .min_w(px(100.0))
-            .px(px(Theme::spacing_sm_scaled()))
-            .py(px(Theme::spacing_xs_scaled()))
-            .rounded(px(4.0))
-            .bg(Theme::bg_dark())
-            .border_1()
-            .border_color(if open {
-                Theme::accent()
-            } else {
-                Theme::border()
-            })
-            .cursor_pointer()
-            .overflow_hidden()
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis_start()
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_primary())
-                            .child(selected_profile),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(Theme::font_size_small()))
-                            .text_color(Theme::text_secondary())
-                            .child(if open { "\u{25B2}" } else { "\u{25BC}" }),
-                    ),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _window, cx| {
-                    this.blur_composer();
-
-                    this.toggle_profile_dropdown(cx);
-                }),
-            )
-    }
-
     pub(super) fn render_conversation_dropdown(
         &self,
         cx: &mut gpui::Context<Self>,
@@ -780,69 +561,6 @@ impl ChatView {
             )
     }
 
-    /// Single row inside the conversation dropdown.
-    fn render_conversation_item(
-        index: usize,
-        conversation: &ConversationSummary,
-        active_id: Option<uuid::Uuid>,
-        highlighted_index: usize,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        let conversation_id = conversation.id;
-        let selected = active_id == Some(conversation_id);
-        let highlighted = highlighted_index == index;
-        let title = if conversation.title.trim().is_empty() {
-            "Untitled Conversation".to_string()
-        } else {
-            conversation.title.clone()
-        };
-        let count_label = if conversation.message_count == 1 {
-            "1 message".to_string()
-        } else {
-            format!("{} messages", conversation.message_count)
-        };
-
-        div()
-            .id(SharedString::from(format!(
-                "chat-conversation-item-{conversation_id}"
-            )))
-            .w_full()
-            .px(px(Theme::spacing_sm_scaled()))
-            .py(px(Theme::spacing_md_scaled() * 0.5))
-            .cursor_pointer()
-            .when(selected, |row| {
-                row.bg(Theme::accent()).text_color(Theme::selection_fg())
-            })
-            .when(!selected && highlighted, |row| {
-                row.bg(Theme::accent_hover())
-                    .text_color(Theme::selection_fg())
-            })
-            .when(!selected && !highlighted, |row| {
-                row.hover(|s| s.bg(Theme::bg_darker()))
-                    .text_color(Theme::text_primary())
-            })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(div().text_size(px(Theme::font_size_ui())).child(title))
-                    .child(
-                        div()
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_secondary())
-                            .child(count_label),
-                    ),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    this.select_conversation_at_index(index, cx);
-                    cx.stop_propagation();
-                }),
-            )
-    }
-
     /// Render profile dropdown overlay at root level.
     pub(super) fn render_profile_dropdown(
         &self,
@@ -892,85 +610,25 @@ impl ChatView {
                             .iter()
                             .enumerate()
                             .map(|(index, profile)| {
+                                // Only local rows carry the engine dot; remote
+                                // profiles have no engine state to reflect.
+                                let engine_status = (profile.provider_id == LOCAL_PROVIDER_ID)
+                                    .then(|| {
+                                        self.state
+                                            .profile_dropdown_engine_status
+                                            .clone()
+                                            .unwrap_or(EngineStatus::NotLoaded)
+                                    });
                                 Self::render_profile_item(
                                     index,
                                     profile,
                                     self.state.selected_profile_id,
                                     self.state.profile_dropdown_index,
+                                    engine_status.as_ref(),
                                     cx,
                                 )
                             }),
                     ),
             )
-    }
-
-    /// Single row inside the profile dropdown.
-    fn render_profile_item(
-        index: usize,
-        profile: &ProfileSummary,
-        selected_id: Option<uuid::Uuid>,
-        highlighted_index: usize,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        let is_selected = selected_id == Some(profile.id);
-        let is_highlighted = highlighted_index == index;
-        let label = if profile.is_default {
-            format!("{} (default)", profile.name)
-        } else {
-            profile.name.clone()
-        };
-        let model_id = profile.model_id.clone();
-
-        div()
-            .id(SharedString::from(format!(
-                "chat-profile-item-{}",
-                profile.id
-            )))
-            .w_full()
-            .px(px(Theme::spacing_sm_scaled()))
-            .py(px(Theme::spacing_md_scaled() * 0.5))
-            .cursor_pointer()
-            .when(is_selected, |row| {
-                row.bg(Theme::accent()).text_color(Theme::selection_fg())
-            })
-            .when(!is_selected && is_highlighted, |row| {
-                row.bg(Theme::accent_hover())
-                    .text_color(Theme::selection_fg())
-            })
-            .when(!is_selected && !is_highlighted, |row| {
-                row.hover(|s| s.bg(Theme::bg_darker()))
-                    .text_color(Theme::text_primary())
-            })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(div().text_size(px(Theme::font_size_ui())).child(label))
-                    .child(
-                        div()
-                            .text_size(px(Theme::font_size_ui()))
-                            .text_color(Theme::text_secondary())
-                            .child(model_id),
-                    ),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    this.select_profile_at_index(index, cx);
-                }),
-            )
-    }
-
-    /// Extra left offset when the sidebar toggle button is present in popout mode.
-    fn sidebar_toggle_offset(cx: &gpui::Context<Self>) -> f32 {
-        let is_popout = cx
-            .try_global::<MainPanelAppState>()
-            .is_some_and(|s| s.app_mode == AppMode::Popout);
-        if is_popout {
-            36.0
-        } else {
-            0.0
-        }
     }
 }

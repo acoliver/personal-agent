@@ -306,6 +306,9 @@ pub fn capabilities_for(provider_id: &str) -> ModelCapabilities {
     match provider_id {
         "anthropic" => ModelCapabilities::token_budget_thinking(),
         "openai-codex" | "open-responses" => ModelCapabilities::codex_reasoning(),
+        // The local engine takes temperature and a token ceiling for its
+        // sampler and has no reasoning-effort ladder, like every other
+        // provider without a dedicated arm.
         _ => ModelCapabilities::sampling_only(),
     }
 }
@@ -499,6 +502,17 @@ mod lookup_tests {
         let caps = capabilities_for("something-nobody-has-heard-of");
         assert!(caps.sampling);
         assert!(caps.max_tokens);
+        assert!(!caps.takes_reasoning_effort());
+    }
+
+    #[test]
+    fn the_local_engine_takes_sampler_settings_and_no_effort_ladder() {
+        // REQ-LM-007: temperature/max_tokens edit the engine sampler; there is
+        // no reasoning level to pick.
+        let caps = capabilities_for(crate::llm::local::LOCAL_PROVIDER_ID);
+        assert!(caps.sampling);
+        assert!(caps.max_tokens);
+        assert!(!caps.thinking_budget);
         assert!(!caps.takes_reasoning_effort());
     }
 }

@@ -429,6 +429,13 @@ impl LlmClient {
         provider: &str,
         base_url: Option<&str>,
     ) -> StdResult<std::sync::Arc<dyn serdes_ai::Model>, LlmError> {
+        // The local engine is in-process: no endpoint, no key, and no SSE to
+        // normalize, so it must be first and must not be wrapped (same reason
+        // the open-responses transport below is wrapped in nothing).
+        if provider == super::local::LOCAL_PROVIDER_ID {
+            return Ok(super::local::local_model_for(&self.profile));
+        }
+
         if provider == super::open_responses::TRANSPORT {
             return self.build_open_responses_model(base_url).await;
         }
@@ -772,7 +779,18 @@ impl LlmClient {
     /// - `@ai-sdk/openai-compatible` -> use "openai" provider with custom `base_url`
     /// - `@ai-sdk/openai` -> native openai
     /// - `@ai-sdk/anthropic` -> native anthropic
+    ///
+    /// A local profile is answered before any of that: the resolution below
+    /// maps unknown provider ids to a transport, and the only transport it
+    /// knows is HTTP, which is precisely what the in-process engine must
+    /// never become.
     pub(crate) fn get_serdes_provider(&self) -> &str {
+        // @plan:PLAN-20260903-LOCALMODEL.P02
+        // @requirement:REQ-LM-004
+        if self.profile.provider_id == crate::llm::local::LOCAL_PROVIDER_ID {
+            return crate::llm::local::LOCAL_PROVIDER_ID;
+        }
+
         if let Ok(cache_path) = RegistryCache::default_path() {
             let cache = RegistryCache::new(cache_path, 24);
             if let Ok(Some(registry)) = cache.load() {

@@ -7,12 +7,15 @@ mod actions;
 mod backup_actions;
 mod command;
 mod input_handler;
+mod local_model_actions;
 mod render;
 mod render_accounts;
 mod render_appearance;
 mod render_backup_panel;
+mod render_local_model_panel;
 mod render_skills;
 mod render_tool_approval;
+mod skills_actions;
 mod types;
 
 use gpui::FocusHandle;
@@ -37,6 +40,10 @@ pub(super) enum ActiveField {
     DenylistInput,
     ExportDirInput,
     InstallSkillUrlInput,
+    LocalModelPathInput,
+    LocalModelCtxInput,
+    LocalModelGpuLayersInput,
+    LocalModelIdleMinutesInput,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -92,6 +99,21 @@ pub struct SettingsState {
     pub backup_in_progress: bool,
     /// Selected backup ID for restore
     pub selected_backup_id: Option<usize>,
+    // Local Model panel (REQ-LM-006)
+    /// Persisted engine settings snapshot the presenter last loaded or saved.
+    pub local_model_settings: Option<crate::services::local_model_settings::LocalModelSettings>,
+    /// Latest engine status snapshot for the status card.
+    pub local_model_status: crate::llm::local::engine::EngineStatus,
+    /// Error line shown on the status card; mirrors `EngineStatus::Error`.
+    pub local_model_error: Option<String>,
+    /// Edit buffers for the panel's text/numeric inputs; re-synced from
+    /// `local_model_settings` whenever the presenter loads or saves.
+    pub local_model_path_input: String,
+    pub local_model_ctx_input: String,
+    pub local_model_gpu_layers_input: String,
+    pub local_model_idle_minutes_input: String,
+    /// Idle-unload toggle (edited locally; persisted on Save).
+    pub local_model_idle_unload: bool,
     /// When true, emojis are stripped from assistant message display
     pub filter_emoji: bool,
     /// Launch-at-login toggle (Issue #177; macOS only). Reflects the
@@ -154,6 +176,14 @@ impl Default for SettingsState {
             backup_status: None,
             backup_in_progress: false,
             selected_backup_id: None,
+            local_model_settings: None,
+            local_model_status: crate::llm::local::engine::EngineStatus::NotLoaded,
+            local_model_error: None,
+            local_model_path_input: String::new(),
+            local_model_ctx_input: String::new(),
+            local_model_gpu_layers_input: String::new(),
+            local_model_idle_minutes_input: String::new(),
+            local_model_idle_unload: true,
             filter_emoji: false,
             launch_at_login: false,
             launch_at_login_error: None,
@@ -162,7 +192,9 @@ impl Default for SettingsState {
 }
 
 pub struct SettingsView {
-    pub(super) state: SettingsState,
+    /// View state; `pub` so integration tests can drive panel buffers the
+    /// same way they drive `ChatView`.
+    pub state: SettingsState,
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) focus_handle: FocusHandle,
     pub(super) ime_marked_byte_count: usize,
@@ -266,63 +298,6 @@ impl SettingsView {
         }
     }
 
-    fn emit_set_skill_enabled(&self, name: String, enabled: bool) {
-        self.emit(&UserEvent::SetSkillEnabled { name, enabled });
-    }
-
-    fn emit_refresh_skills(&self) {
-        self.emit(&UserEvent::RefreshSkills);
-    }
-
-    fn emit_add_skills_directory(&self, path: String) {
-        self.emit(&UserEvent::AddSkillsDirectory { path });
-    }
-
-    fn emit_remove_skills_directory(&self, path: String) {
-        self.emit(&UserEvent::RemoveSkillsDirectory { path });
-    }
-
-    fn emit_install_skill_from_url(&self, url: String) {
-        self.emit(&UserEvent::InstallSkillFromUrl { url });
-    }
-
-    fn selected_skill(&self) -> Option<&SkillItem> {
-        self.state
-            .selected_skill_name
-            .as_ref()
-            .and_then(|selected_name| {
-                self.state
-                    .skills
-                    .iter()
-                    .find(|skill| &skill.name == selected_name)
-            })
-    }
-
-    fn set_skill_items(&mut self, skills: Vec<SkillItem>) {
-        self.state.skills = skills;
-
-        if self.state.selected_skill_name.is_none() {
-            self.state.selected_skill_name =
-                self.state.skills.first().map(|skill| skill.name.clone());
-        }
-
-        if let Some(selected_name) = self.state.selected_skill_name.as_ref() {
-            if self
-                .state
-                .skills
-                .iter()
-                .all(|skill| &skill.name != selected_name)
-            {
-                self.state.selected_skill_name =
-                    self.state.skills.first().map(|skill| skill.name.clone());
-            }
-        }
-    }
-
-    fn select_skill(&mut self, name: String) {
-        self.state.selected_skill_name = Some(name);
-    }
-
     pub fn set_mcps(&mut self, mcps: Vec<McpItem>) {
         self.state.mcps = mcps;
 
@@ -365,6 +340,18 @@ impl SettingsView {
             Some(ActiveField::InstallSkillUrlInput) => {
                 self.state.install_skill_url_input.push_str(text);
             }
+            Some(ActiveField::LocalModelPathInput) => {
+                self.state.local_model_path_input.push_str(text);
+            }
+            Some(ActiveField::LocalModelCtxInput) => {
+                self.state.local_model_ctx_input.push_str(text);
+            }
+            Some(ActiveField::LocalModelGpuLayersInput) => {
+                self.state.local_model_gpu_layers_input.push_str(text);
+            }
+            Some(ActiveField::LocalModelIdleMinutesInput) => {
+                self.state.local_model_idle_minutes_input.push_str(text);
+            }
 
             None => {}
         }
@@ -383,6 +370,18 @@ impl SettingsView {
             }
             Some(ActiveField::InstallSkillUrlInput) => {
                 self.state.install_skill_url_input.pop();
+            }
+            Some(ActiveField::LocalModelPathInput) => {
+                self.state.local_model_path_input.pop();
+            }
+            Some(ActiveField::LocalModelCtxInput) => {
+                self.state.local_model_ctx_input.pop();
+            }
+            Some(ActiveField::LocalModelGpuLayersInput) => {
+                self.state.local_model_gpu_layers_input.pop();
+            }
+            Some(ActiveField::LocalModelIdleMinutesInput) => {
+                self.state.local_model_idle_minutes_input.pop();
             }
             None => {}
         }
@@ -418,6 +417,30 @@ impl SettingsView {
                     .install_skill_url_input
                     .truncate(len.saturating_sub(byte_count));
             }
+            Some(ActiveField::LocalModelPathInput) => {
+                let len = self.state.local_model_path_input.len();
+                self.state
+                    .local_model_path_input
+                    .truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::LocalModelCtxInput) => {
+                let len = self.state.local_model_ctx_input.len();
+                self.state
+                    .local_model_ctx_input
+                    .truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::LocalModelGpuLayersInput) => {
+                let len = self.state.local_model_gpu_layers_input.len();
+                self.state
+                    .local_model_gpu_layers_input
+                    .truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::LocalModelIdleMinutesInput) => {
+                let len = self.state.local_model_idle_minutes_input.len();
+                self.state
+                    .local_model_idle_minutes_input
+                    .truncate(len.saturating_sub(byte_count));
+            }
             None => {}
         }
     }
@@ -428,6 +451,12 @@ impl SettingsView {
             Some(ActiveField::DenylistInput) => &self.state.denylist_input,
             Some(ActiveField::ExportDirInput) => &self.state.export_dir_input,
             Some(ActiveField::InstallSkillUrlInput) => &self.state.install_skill_url_input,
+            Some(ActiveField::LocalModelPathInput) => &self.state.local_model_path_input,
+            Some(ActiveField::LocalModelCtxInput) => &self.state.local_model_ctx_input,
+            Some(ActiveField::LocalModelGpuLayersInput) => &self.state.local_model_gpu_layers_input,
+            Some(ActiveField::LocalModelIdleMinutesInput) => {
+                &self.state.local_model_idle_minutes_input
+            }
             None => "",
         }
     }
@@ -442,7 +471,11 @@ impl SettingsView {
             Some(ActiveField::ExportDirInput) => ActiveField::AllowlistInput,
             Some(ActiveField::AllowlistInput) => ActiveField::DenylistInput,
             Some(ActiveField::DenylistInput) => ActiveField::InstallSkillUrlInput,
-            Some(ActiveField::InstallSkillUrlInput) | None => ActiveField::ExportDirInput,
+            Some(ActiveField::InstallSkillUrlInput) => ActiveField::LocalModelPathInput,
+            Some(ActiveField::LocalModelPathInput) => ActiveField::LocalModelCtxInput,
+            Some(ActiveField::LocalModelCtxInput) => ActiveField::LocalModelGpuLayersInput,
+            Some(ActiveField::LocalModelGpuLayersInput) => ActiveField::LocalModelIdleMinutesInput,
+            Some(ActiveField::LocalModelIdleMinutesInput) | None => ActiveField::ExportDirInput,
         };
         self.set_active_field(Some(next));
     }
@@ -712,6 +745,16 @@ impl SettingsView {
                 cx.notify();
                 return;
             }
+            Some(
+                ActiveField::LocalModelPathInput
+                | ActiveField::LocalModelCtxInput
+                | ActiveField::LocalModelGpuLayersInput
+                | ActiveField::LocalModelIdleMinutesInput,
+            ) => {
+                self.save_local_model_edits();
+                cx.notify();
+                return;
+            }
             None => {}
         }
         if self.state.selected_category == SettingsCategory::Appearance
@@ -774,7 +817,7 @@ impl SettingsView {
         .detach();
     }
 
-    pub(super) fn select_category(&mut self, category: SettingsCategory) {
+    pub fn select_category(&mut self, category: SettingsCategory) {
         self.state.selected_category = category;
         self.state.theme_dropdown_open = false;
         self.state.active_field = None;
@@ -784,6 +827,11 @@ impl SettingsView {
         // each visit also keeps the list current after a sign-in elsewhere.
         if category == SettingsCategory::Models {
             self.emit(&UserEvent::ListCodexAccounts);
+        }
+        // The Local Model panel shows persisted settings and live engine
+        // status, both of which are fetched by the presenter on request.
+        if category == SettingsCategory::LocalModel {
+            self.emit_load_local_model_settings();
         }
     }
 
