@@ -6,12 +6,14 @@
 //! Run with:
 //!   cargo test --test `e2e_agent_tool_execution` -- --ignored --nocapture
 //!
-//! Requires:
-//! - `PA_E2E_PROVIDER_ID` (optional; default: `ollama`)
-//! - `PA_E2E_MODEL_ID` (optional; default: `minimax-m2.7:cloud`)
-//! - `PA_E2E_BASE_URL` (optional; default: <https://ollama.com/v1>)
-//! - `PA_E2E_KEY_LABEL` (optional; default: `pa-e2e-ollama-cloud`)
-//! - `PA_E2E_API_KEY` (recommended for non-interactive runs)
+//! Requires (no defaults; an unconfigured run fails immediately):
+//! - `PA_E2E_PROVIDER_ID` (required; `anthropic` or `claude` selects the
+//!   Anthropic wire protocol, any other value selects OpenAI-compatible)
+//! - `PA_E2E_MODEL_ID` (required)
+//! - `PA_E2E_BASE_URL` (required)
+//! - `PA_E2E_KEY_LABEL` (required)
+//! - `PA_E2E_API_KEY` (API key; CI seeds the secure store with it under
+//!   `apikey:<PA_E2E_KEY_LABEL>`)
 //! - An MCP server configured with search capability (e.g., Exa)
 //!   OR the test will gracefully skip tool verification if no MCPs configured
 
