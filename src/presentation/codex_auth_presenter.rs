@@ -98,12 +98,11 @@ impl CodexAuthPresenter {
                         Self::handle_event(&profile_service, &sign_in, &in_flight, &view_tx, event)
                             .await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("CodexAuthPresenter lagged: {n} events missed");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("CodexAuthPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("CodexAuthPresenter", &err) {
+                            tracing::info!("CodexAuthPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

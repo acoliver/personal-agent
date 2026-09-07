@@ -100,12 +100,11 @@ impl ErrorPresenter {
                     Ok(event) => {
                         Self::handle_event(&mut view_tx, event).await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("ErrorPresenter lagged: {} events missed", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("ErrorPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("ErrorPresenter", &err) {
+                            tracing::info!("ErrorPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

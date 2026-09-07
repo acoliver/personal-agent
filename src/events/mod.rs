@@ -20,7 +20,7 @@ pub mod global;
 pub mod types;
 
 // Re-export commonly used types
-pub use bus::EventBus;
+pub use bus::{handle_recv_error, EventBus};
 pub use error::EventBusError;
 pub use global::{emit, subscribe};
 pub use types::{AppEvent, SystemEvent};
