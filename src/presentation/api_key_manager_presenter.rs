@@ -72,12 +72,11 @@ impl ApiKeyManagerPresenter {
                     Ok(event) => {
                         Self::handle_event(&profile_service, &view_tx, event).await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("ApiKeyManagerPresenter lagged: {n} events missed");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("ApiKeyManagerPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("ApiKeyManagerPresenter", &err) {
+                            tracing::info!("ApiKeyManagerPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

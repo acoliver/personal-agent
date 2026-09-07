@@ -84,12 +84,11 @@ impl HistoryPresenter {
                     Ok(event) => {
                         Self::handle_event(&conversation_service, &mut view_tx, event).await;
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("HistoryPresenter lagged: {} events missed", n);
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        tracing::info!("HistoryPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("HistoryPresenter", &err) {
+                            tracing::info!("HistoryPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

@@ -240,13 +240,11 @@ fn spawn_broadcast_to_mpsc_view_command_bridge(
                         break;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("{} bridge lagged: {} commands dropped", presenter_name, n);
-                }
-
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    tracing::info!("{} bridge closed", presenter_name);
-                    break;
+                Err(err) => {
+                    if !personal_agent::events::handle_recv_error(presenter_name, &err) {
+                        tracing::info!("{} bridge closed", presenter_name);
+                        break;
+                    }
                 }
             }
         }

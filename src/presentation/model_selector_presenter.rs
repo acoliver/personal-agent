@@ -104,12 +104,11 @@ impl ModelSelectorPresenter {
                     Ok(event) => {
                         Self::handle_event(&models_registry_service, &view_tx, event).await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("ModelSelectorPresenter lagged: {} events missed", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("ModelSelectorPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("ModelSelectorPresenter", &err) {
+                            tracing::info!("ModelSelectorPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

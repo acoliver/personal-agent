@@ -119,12 +119,11 @@ impl McpConfigurePresenter {
                         Self::handle_event(&mcp_service, &view_tx, event, config_path.as_deref())
                             .await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("McpConfigurePresenter lagged: {} events missed", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("McpConfigurePresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("McpConfigurePresenter", &err) {
+                            tracing::info!("McpConfigurePresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

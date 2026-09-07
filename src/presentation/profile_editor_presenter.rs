@@ -127,12 +127,11 @@ impl ProfileEditorPresenter {
                         )
                         .await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("ProfileEditorPresenter lagged: {} events missed", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("ProfileEditorPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("ProfileEditorPresenter", &err) {
+                            tracing::info!("ProfileEditorPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }

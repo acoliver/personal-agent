@@ -1,7 +1,7 @@
 //! `ChatPresenter` - handles user chat events and service coordination
 
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::view_command::{
@@ -304,12 +304,11 @@ impl ChatPresenter {
                         };
                         Self::handle_event(&deps, &state, &mut view_tx, event).await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("ChatPresenter lagged: {} events missed", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::info!("ChatPresenter event stream closed");
-                        break;
+                    Err(err) => {
+                        if !crate::events::handle_recv_error("ChatPresenter", &err) {
+                            tracing::info!("ChatPresenter event stream closed");
+                            break;
+                        }
                     }
                 }
             }
