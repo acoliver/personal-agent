@@ -132,6 +132,7 @@ async fn a_withdrawn_steer_is_never_committed_to_the_transport() {
             conversation_id,
             QueuedSteering {
                 id: steer_id,
+                stream_id: service.stream_id_for_test(conversation_id).unwrap(),
                 text: "take the other branch".to_string(),
             },
         ),
@@ -182,6 +183,7 @@ async fn a_commit_after_the_transport_is_gone_is_withdrawn_and_announced() {
             conversation_id,
             QueuedSteering {
                 id: steer_id,
+                stream_id: service.stream_id_for_test(conversation_id).unwrap(),
                 text: "too late".to_string(),
             },
         ),
@@ -213,4 +215,71 @@ async fn a_commit_after_the_transport_is_gone_is_withdrawn_and_announced() {
         vec![steer_id],
         "the view must be told the entry will never be delivered, got {events:?}"
     );
+}
+
+/// A late insert from a finished send must not be confirmed against its replacement.
+#[tokio::test]
+async fn replacement_stream_cannot_confirm_an_old_steer() {
+    let _steering_bus_guard = lock_steering_bus().await;
+    let service = make_test_chat_service();
+    let conversation_id = Uuid::new_v4();
+    service.begin_stream_for_test(conversation_id).unwrap();
+    let steer_id = service
+        .queue_steering(conversation_id, "old instruction")
+        .unwrap();
+    let entry = service.drain_steering(conversation_id).pop().unwrap();
+    ChatService::cancel(&service, conversation_id);
+    service.begin_stream_for_test(conversation_id).unwrap();
+    assert!(service.push_steering(conversation_id, entry));
+    let mut event_rx = subscribe();
+
+    let result = service.confirm_or_withdraw_steering(conversation_id, steer_id);
+    let remaining = drained_pairs(&service, conversation_id);
+    let pending = transport_of(&service, conversation_id).pending_len();
+    service.clear_all_streams_for_test();
+
+    assert!(
+        result.is_err(),
+        "a replacement is not the turn the user steered"
+    );
+    assert!(remaining.is_empty());
+    assert_eq!(pending, 0);
+    let events =
+        collect_chat_events(&mut event_rx, conversation_id, Duration::from_millis(100)).await;
+    assert_eq!(discarded_ids(&events), vec![steer_id]);
+}
+
+/// Replacement after confirmation must not redirect a commit into the new send.
+#[tokio::test]
+async fn replacement_stream_cannot_receive_an_old_steer_commit() {
+    let _steering_bus_guard = lock_steering_bus().await;
+    let service = make_test_chat_service();
+    let conversation_id = Uuid::new_v4();
+    service.begin_stream_for_test(conversation_id).unwrap();
+    let steer_id = service
+        .queue_steering(conversation_id, "old instruction")
+        .unwrap();
+    service
+        .confirm_or_withdraw_steering(conversation_id, steer_id)
+        .unwrap();
+    let entry = service.drain_steering(conversation_id).pop().unwrap();
+    ChatService::cancel(&service, conversation_id);
+    service.begin_stream_for_test(conversation_id).unwrap();
+    assert!(service.push_steering(conversation_id, entry));
+    let mut event_rx = subscribe();
+
+    let result = service.commit_steering_to_transport(conversation_id, steer_id, "old instruction");
+    let pending = transport_of(&service, conversation_id).pending_len();
+    let remaining = drained_pairs(&service, conversation_id);
+    service.clear_all_streams_for_test();
+
+    assert_eq!(
+        pending, 0,
+        "the new model must never receive the old instruction"
+    );
+    assert!(result.is_err());
+    assert!(remaining.is_empty());
+    let events =
+        collect_chat_events(&mut event_rx, conversation_id, Duration::from_millis(100)).await;
+    assert_eq!(discarded_ids(&events), vec![steer_id]);
 }

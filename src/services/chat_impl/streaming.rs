@@ -121,7 +121,7 @@ pub(super) async fn stream_agent_response(
 
     tracing::debug!(
         conversation_id = %conversation_id,
-        delivered_steering = steering_guard.delivered.len(),
+        delivered_steering = steering_guard.delivered,
         "agent stream finished"
     );
 

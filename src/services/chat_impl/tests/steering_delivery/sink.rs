@@ -21,6 +21,7 @@ fn queue_entry(fixture: &DeliveryFixture, id: Uuid, text: &str) {
             fixture.conversation_id,
             QueuedSteering {
                 id,
+                stream_id: fixture.stream_id,
                 text: text.to_string(),
             },
         ),
@@ -179,8 +180,7 @@ async fn a_delivery_with_no_queue_entry_persists_without_a_terminal_event() {
         "the text must be persisted even though its queue entry is gone"
     );
     assert_eq!(
-        sink.delivered,
-        vec!["landed during teardown".to_string()],
+        sink.delivered, 1,
         "the delivery must be recorded for the turn that delivered it"
     );
 }

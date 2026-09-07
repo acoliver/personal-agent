@@ -345,6 +345,7 @@ async fn a_steer_drained_before_it_was_announced_still_reaches_a_terminal_event(
                 conversation_id,
                 QueuedSteering {
                     id: steer_id,
+                    stream_id,
                     text: "take the other branch".to_string(),
                 },
             ),

@@ -38,9 +38,8 @@ pub(in crate::services::chat_impl) struct MidTurnSteering {
     conversation_service: Arc<dyn ConversationService>,
     conversation_id: Uuid,
     steering_queues: SteeringQueues,
-    /// Every text the model received, in delivery order, for the chaining
-    /// seed to replay.
-    pub(in crate::services::chat_impl) delivered: Vec<String>,
+    /// Number of delivered texts persisted during this send.
+    pub(in crate::services::chat_impl) delivered: usize,
 }
 
 impl MidTurnSteering {
@@ -54,7 +53,7 @@ impl MidTurnSteering {
             conversation_service,
             conversation_id,
             steering_queues,
-            delivered: Vec::new(),
+            delivered: 0,
         }
     }
 }
@@ -62,10 +61,9 @@ impl MidTurnSteering {
 #[async_trait]
 impl SteeringDeliverySink for MidTurnSteering {
     async fn delivered(&mut self, text: &str) -> Result<(), LlmError> {
-        let text = text.to_string();
         if let Err(error) = self
             .conversation_service
-            .add_message(self.conversation_id, Message::user(text.clone()))
+            .add_message(self.conversation_id, Message::user(text.to_string()))
             .await
         {
             // ServiceError's Display never carries user content; the steering
@@ -86,7 +84,7 @@ impl SteeringDeliverySink for MidTurnSteering {
             )));
         }
 
-        self.delivered.push(text);
+        self.delivered += 1;
         // An empty deque means teardown raced the delivery and already
         // announced the discard: the row is persisted and recorded, but no
         // terminal event is emitted and nothing is treated as an error.

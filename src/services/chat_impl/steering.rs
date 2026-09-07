@@ -8,7 +8,7 @@
 //! @requirement REQ-222-004
 //! @requirement REQ-222-006
 
-use super::{ChatService, ChatServiceImpl, ServiceError, ServiceResult};
+use super::{ChatServiceImpl, ServiceError, ServiceResult, StreamLifecycle};
 use crate::events::types::ChatEvent;
 use crate::events::{emit, AppEvent};
 use std::collections::{HashMap, VecDeque};
@@ -31,6 +31,8 @@ pub(super) const MAX_QUEUED_STEERING_MESSAGES: usize = 5;
 /// @requirement REQ-222-004
 pub(super) struct QueuedSteering {
     pub(super) id: Uuid,
+    /// The send the user was steering, never a later send in the same conversation.
+    pub(super) stream_id: Uuid,
     pub(super) text: String,
 }
 
@@ -174,8 +176,8 @@ impl ChatServiceImpl {
     /// never resolves a pending approval. `cancel` stays reachable only from
     /// an explicit user stop (REQ-222-006).
     ///
-    /// Lock discipline: the `active_streams` guard taken by
-    /// `is_streaming_for` is released before `steering_queues` is locked, so
+    /// Lock discipline: the `active_streams` guard capturing the originating
+    /// stream id is released before `steering_queues` is locked, so
     /// the two locks are never held at once. See [`SteeringQueues`]. That
     /// also means the check and the insert are not one atomic step, which is
     /// why the entry is confirmed against the stream state again once it is
@@ -201,12 +203,18 @@ impl ChatServiceImpl {
             ));
         }
 
-        if !ChatService::is_streaming_for(self, conversation_id) {
-            return Err(no_active_turn());
-        }
+        let stream_id = self
+            .active_streams
+            .lock()
+            .expect("active_streams poisoned")
+            .get(&conversation_id)
+            .filter(|entry| matches!(entry.state, StreamLifecycle::Running))
+            .map(|entry| entry.stream_id)
+            .ok_or_else(no_active_turn)?;
 
         let entry = QueuedSteering {
             id: Uuid::new_v4(),
+            stream_id,
             text: trimmed.to_string(),
         };
         let steer_id = entry.id;
@@ -279,11 +287,7 @@ impl ChatServiceImpl {
         steer_id: Uuid,
         text: &str,
     ) -> ServiceResult<()> {
-        let transport = {
-            let map = self.active_streams.lock().expect("active_streams poisoned");
-            map.get(&conversation_id)
-                .map(|entry| entry.steering.clone())
-        };
+        let transport = self.steering_transport_for_entry(conversation_id, steer_id);
 
         if transport.is_some_and(|queue| queue.steer(text.to_string())) {
             return Ok(());
@@ -319,7 +323,10 @@ impl ChatServiceImpl {
     /// the view removes by id, so the second one finds no entry and takes
     /// nothing, which `a_discard_of_an_unknown_id_withdraws_nothing` pins.
     ///
-    /// Lock discipline: `is_streaming_for` releases `active_streams` before
+    /// Confirmation requires the queued entry's originating stream id, not
+    /// merely another running turn in the same conversation.
+    ///
+    /// Lock discipline: `steering_transport_for_entry` releases both registries before
     /// `remove_steering` locks `steering_queues`, and both are released
     /// before anything is emitted. See [`SteeringQueues`].
     ///
@@ -337,13 +344,46 @@ impl ChatServiceImpl {
         conversation_id: Uuid,
         steer_id: Uuid,
     ) -> ServiceResult<Uuid> {
-        if ChatService::is_streaming_for(self, conversation_id) {
+        if self
+            .steering_transport_for_entry(conversation_id, steer_id)
+            .is_some()
+        {
             return Ok(steer_id);
         }
 
         let _ = self.remove_steering(conversation_id, steer_id);
         emit_steering_discarded_id(conversation_id, steer_id);
         Err(no_active_turn())
+    }
+
+    /// Resolve only the running transport belonging to this queued entry's send.
+    ///
+    /// Release the queue lock before reading the stream registry. If teardown
+    /// or replacement occurs between reads, the captured stream id still prevents
+    /// committing this instruction to the replacement's transport.
+    fn steering_transport_for_entry(
+        &self,
+        conversation_id: Uuid,
+        steer_id: Uuid,
+    ) -> Option<serdes_ai_agent::SteeringQueue> {
+        let stream_id = {
+            let queues = self
+                .steering_queues
+                .lock()
+                .expect("steering_queues poisoned");
+            queues
+                .get(&conversation_id)?
+                .iter()
+                .find(|entry| entry.id == steer_id)?
+                .stream_id
+        };
+        let streams = self.active_streams.lock().expect("active_streams poisoned");
+        streams
+            .get(&conversation_id)
+            .filter(|entry| {
+                entry.stream_id == stream_id && matches!(entry.state, StreamLifecycle::Running)
+            })
+            .map(|entry| entry.steering.clone())
     }
 
     /// Append `entry` to a conversation's steering queue.
