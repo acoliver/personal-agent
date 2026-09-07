@@ -855,6 +855,10 @@ mod mod_tests;
 #[path = "performance_tests.rs"]
 mod performance_tests;
 
+#[cfg(test)]
+#[path = "streaming_error_tests.rs"]
+mod streaming_error_tests;
+
 /// Composer controls for mid-turn steering.
 ///
 /// @plan PLAN-20260903-ISSUE222.P04
