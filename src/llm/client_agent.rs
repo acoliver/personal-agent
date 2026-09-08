@@ -1,6 +1,7 @@
 //! Agent-based LLM client with MCP tool integration for `PersonalAgent`.
 use crate::agent::tool_approval_policy::ToolApprovalPolicy;
 use crate::llm::error::debug_error_message;
+use crate::llm::steering::SteeringInput;
 use crate::llm::{LlmError, Message, Role, StreamEvent};
 use crate::presentation::view_command::ViewCommand;
 use futures::StreamExt;
@@ -363,6 +364,7 @@ pub trait AgentClientExt {
         agent: &Agent<McpToolContext>,
         messages: &[Message],
         context: McpToolContext,
+        steering: Option<SteeringInput<'_>>,
         on_event: F,
     ) -> impl std::future::Future<Output = StdResult<(), LlmError>> + Send
     where
@@ -382,12 +384,13 @@ impl AgentClientExt for crate::llm::LlmClient {
         agent: &Agent<McpToolContext>,
         messages: &[Message],
         context: McpToolContext,
+        steering: Option<SteeringInput<'_>>,
         mut on_event: F,
     ) -> StdResult<(), LlmError>
     where
         F: FnMut(StreamEvent) + Send,
     {
-        self.do_run_agent_stream(agent, messages, context, &mut on_event)
+        self.do_run_agent_stream(agent, messages, context, steering, &mut on_event)
             .await
     }
 
@@ -472,11 +475,13 @@ impl crate::llm::LlmClient {
         (tool_calls, tool_results)
     }
 
-    fn handle_agent_stream_event<F>(
+    async fn handle_agent_stream_event<F>(
         event: AgentStreamEvent,
         history_request_count: usize,
+        steering: Option<&mut SteeringInput<'_>>,
         on_event: &mut F,
-    ) where
+    ) -> StdResult<(), LlmError>
+    where
         F: FnMut(StreamEvent) + Send,
     {
         match event {
@@ -529,8 +534,47 @@ impl crate::llm::LlmClient {
                 tracing::error!("run_agent_stream: Error: {}", message);
                 on_event(StreamEvent::Error(message));
             }
+            AgentStreamEvent::SteeringDelivered { text, .. } => {
+                Self::handle_steering_delivered(&text, steering, on_event).await?;
+            }
             other => tracing::debug!("run_agent_stream: other event: {:?}", other),
         }
+        Ok(())
+    }
+
+    /// Hand a delivered steering text to the caller's sink.
+    ///
+    /// A sink refusal emits a stream error and fails the run: the model has
+    /// already seen the text, so the divergence is reported, never retried or
+    /// swallowed. A delivery without steering input is impossible by
+    /// construction (the fork drains only a queue attached through
+    /// [`SteeringInput`]) and is reported as the wiring bug it is, loudly,
+    /// instead of falling into the catch-all's debug log.
+    ///
+    /// @plan PLAN-20260905-STEERINT.P02
+    /// @requirement REQ-SI-001
+    /// @requirement REQ-SI-003
+    async fn handle_steering_delivered<F>(
+        text: &str,
+        steering: Option<&mut SteeringInput<'_>>,
+        on_event: &mut F,
+    ) -> StdResult<(), LlmError>
+    where
+        F: FnMut(StreamEvent) + Send,
+    {
+        let Some(input) = steering else {
+            let message =
+                "internal bug: SteeringDelivered event received without steering input attached"
+                    .to_string();
+            on_event(StreamEvent::Error(message.clone()));
+            return Err(LlmError::Stream(message));
+        };
+        if let Err(error) = input.sink.delivered(text).await {
+            let message = format!("steering delivery failed: {error}");
+            on_event(StreamEvent::Error(message.clone()));
+            return Err(LlmError::Stream(message));
+        }
+        Ok(())
     }
 
     #[allow(clippy::cognitive_complexity)]
@@ -539,6 +583,7 @@ impl crate::llm::LlmClient {
         agent: &Agent<McpToolContext>,
         messages: &[Message],
         context: McpToolContext,
+        mut steering: Option<SteeringInput<'_>>,
         on_event: &mut F,
     ) -> StdResult<(), LlmError>
     where
@@ -555,11 +600,14 @@ impl crate::llm::LlmClient {
         );
 
         let history_request_count = message_history.len();
-        let options = if message_history.is_empty() {
+        let mut options = if message_history.is_empty() {
             RunOptions::default()
         } else {
             RunOptions::default().message_history(message_history)
         };
+        if let Some(channel) = steering.as_ref() {
+            options = options.steering(channel.queue.clone());
+        }
 
         tracing::info!("run_agent_stream: creating AgentStream...");
         let mut stream = AgentStream::new(agent, UserContent::text(prompt), context, options)
@@ -573,7 +621,13 @@ impl crate::llm::LlmClient {
         while let Some(event_result) = stream.next().await {
             match event_result {
                 Ok(event) => {
-                    Self::handle_agent_stream_event(event, history_request_count, on_event);
+                    Self::handle_agent_stream_event(
+                        event,
+                        history_request_count,
+                        steering.as_mut(),
+                        on_event,
+                    )
+                    .await?;
                 }
 
                 Err(e) => {

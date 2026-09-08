@@ -544,6 +544,7 @@ async fn the_agent_path_also_asks_for_reasoning() {
             &agent,
             &[user("think about it")],
             McpToolContext::default(),
+            None,
             |_event| {},
         )
         .await;

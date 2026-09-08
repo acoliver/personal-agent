@@ -22,6 +22,7 @@ use uuid::Uuid;
 // Import test support utilities from parent tests module (support.rs)
 use super::chat_test_support::{MockConversationService, MockProfileService};
 
+mod transport;
 mod withdrawal;
 
 fn make_test_chat_service() -> ChatServiceImpl {

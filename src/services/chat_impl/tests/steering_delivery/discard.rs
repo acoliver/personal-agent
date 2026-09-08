@@ -5,11 +5,11 @@
 //! says that. So must every path that ends a turn with entries still queued,
 //! or the user is left watching an instruction that will never be acted on.
 //!
-//! Two of those paths are driven here: a steer accepted in the window between
-//! the delivery loop's last drain and the release of the stream slot, and a
-//! steer whose own persistence fails. Both are driven from inside a
-//! conversation-service write, so the window is a fact of the call order
-//! rather than something a sleep hopes to hit.
+//! The path driven here: a steer accepted in the window between the chaining
+//! loop's last peek and the release of the stream slot. It is driven from
+//! inside a conversation-service write, so the window is a fact of the call
+//! order rather than something a sleep hopes to hit. (A steer whose own
+//! persistence fails is the sink's to announce; see the sink tests.)
 //!
 //! @plan PLAN-20260903-ISSUE222.P06
 //! @requirement REQ-222-003
@@ -79,36 +79,22 @@ impl LateSteer {
     }
 }
 
-/// What the interposed conversation service does to the turn writing through
-/// it.
-enum Interference {
-    /// Refuse to persist user messages. Assistant output still lands, so the
-    /// chain is intact right up to the steering message that cannot be
-    /// recorded.
-    RefuseUserMessages,
-    /// Steer the conversation from inside `update_context_state`, which
-    /// finalization calls after the delivery loop's final drain and before it
-    /// releases the stream slot.
-    SteerDuringTeardown(Arc<LateSteer>),
-}
-
-/// A conversation service that delegates to the mock and interferes with one
-/// write on the way through.
+/// A conversation service that delegates to the mock and steers the
+/// conversation from inside `update_context_state`, which finalization calls
+/// after the chaining loop's final peek and before it releases the stream
+/// slot.
 struct InterferingConversationService {
     inner: Arc<MockConversationService>,
-    interference: Interference,
+    late: Arc<LateSteer>,
 }
 
 impl InterferingConversationService {
     /// Wrap `inner`, ready to hand to a fixture as its conversation service.
     fn interposed(
         inner: Arc<MockConversationService>,
-        interference: Interference,
+        late: Arc<LateSteer>,
     ) -> Arc<dyn crate::services::ConversationService> {
-        Arc::new(Self {
-            inner,
-            interference,
-        })
+        Arc::new(Self { inner, late })
     }
 }
 
@@ -139,13 +125,6 @@ impl crate::services::ConversationService for InterferingConversationService {
         conversation_id: Uuid,
         message: Message,
     ) -> Result<Message, ServiceError> {
-        if matches!(self.interference, Interference::RefuseUserMessages)
-            && message.role == MessageRole::User
-        {
-            return Err(ServiceError::Storage(
-                "simulated steering persistence failure".to_string(),
-            ));
-        }
         self.inner.add_message(conversation_id, message).await
     }
 
@@ -167,9 +146,7 @@ impl crate::services::ConversationService for InterferingConversationService {
         id: Uuid,
         state: &crate::models::ContextState,
     ) -> Result<(), ServiceError> {
-        if let Interference::SteerDuringTeardown(late) = &self.interference {
-            late.fire().await;
-        }
+        self.late.fire().await;
         self.inner.update_context_state(id, state).await
     }
 
@@ -214,8 +191,9 @@ impl crate::services::ConversationService for InterferingConversationService {
 /// still `Running`, is announced as discarded rather than dropped.
 ///
 /// The steer is submitted from inside `update_context_state`: finalization
-/// calls that after the final drain and before it releases the stream slot,
-/// which is precisely the window the entry used to vanish in. The service
+/// calls that after the chaining loop's final peek and before it releases
+/// the stream slot, which is precisely the window the entry used to vanish
+/// in. The service
 /// accepts it — `SteeringQueued` proves the view was told to render it — and
 /// then nothing is ever going to deliver it, so something has to say so.
 ///
@@ -228,10 +206,7 @@ async fn a_steer_accepted_during_teardown_is_announced_as_discarded() {
     let late = LateSteer::new("too late to be delivered");
     let fixture = DeliveryFixture::with_conversation_service(
         conversations.clone(),
-        InterferingConversationService::interposed(
-            conversations,
-            Interference::SteerDuringTeardown(late.clone()),
-        ),
+        InterferingConversationService::interposed(conversations, late.clone()),
     );
     late.attach(&fixture);
     let log = new_turn_log();
@@ -266,71 +241,6 @@ async fn a_steer_accepted_during_teardown_is_announced_as_discarded() {
     assert!(
         delivered_ids(&events).is_empty(),
         "a steer no turn ever handed to the model must not be reported delivered, got {events:?}"
-    );
-    assert!(
-        !fixture.is_streaming(),
-        "finalization must still release the conversation's stream slot"
-    );
-}
-
-/// A steering message the store refuses is not chained over.
-///
-/// Persisting the steer is what keeps the chained history equal to what a
-/// reload rebuilds. When that write fails, seeding the model with the text
-/// anyway would run a turn over a conversation the database does not have, so
-/// the chain stops here. The entry is announced as discarded, not delivered:
-/// the view withdraws it either way, and reporting delivery would claim the
-/// instruction reached the model when it did not.
-///
-/// @plan PLAN-20260903-ISSUE222.P06
-/// @requirement REQ-222-003
-/// @requirement REQ-222-007
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_steer_that_cannot_be_persisted_is_discarded_and_chains_nothing() {
-    let _steering_bus_guard = lock_steering_bus().await;
-    let conversations = Arc::new(MockConversationService::new(Uuid::new_v4()));
-    let fixture = DeliveryFixture::with_conversation_service(
-        conversations.clone(),
-        InterferingConversationService::interposed(conversations, Interference::RefuseUserMessages),
-    );
-    let log = new_turn_log();
-
-    // One scripted reply: a follow-up turn would run out and panic, so
-    // "chains nothing" is enforced by the runner as well as asserted.
-    let ((first, second), events) = events_during(fixture.conversation_id, async {
-        let first = fixture.steer("first steer").await;
-        let second = fixture.steer("second steer").await;
-        fixture
-            .run_turns(scripted_runner(&log, &["only answer"]))
-            .await;
-        (first, second)
-    })
-    .await;
-
-    assert_eq!(
-        recorded(&log).len(),
-        1,
-        "a steer the store refused must not seed a follow-up turn"
-    );
-    assert!(
-        delivered_ids(&events).is_empty(),
-        "a steer that was never recorded must not be reported delivered, got {events:?}"
-    );
-    assert_eq!(
-        discarded_ids(&events),
-        vec![first, second],
-        "the refused steer and every entry behind it must be announced as discarded, \
-         got {events:?}"
-    );
-    assert_eq!(
-        persisted_shape(&fixture.conversations).await,
-        vec![(MessageRole::Assistant, "only answer".to_string())],
-        "only the assistant output the turn actually produced may be recorded, and only once"
-    );
-    assert_eq!(
-        completion_count(&events),
-        1,
-        "the turn itself finished, so the send must still finalize once, got {events:?}"
     );
     assert!(
         !fixture.is_streaming(),

@@ -99,6 +99,7 @@ async fn agent_path_sends_user_agent_header_to_kimi() {
             &agent,
             &[LlmMessage::user("ping")],
             McpToolContext::default(),
+            None,
             |event| match event {
                 StreamEvent::TextDelta(text) => {
                     collected_text.push_str(&text);
@@ -208,6 +209,7 @@ async fn agent_path_without_kimi_provider_misses_user_agent() {
             &agent,
             &[LlmMessage::user("hi")],
             McpToolContext::default(),
+            None,
             |event| {
                 if let StreamEvent::Error(_) = event {
                     saw_error = true;
@@ -309,6 +311,7 @@ data: [DONE]
             &agent,
             &[LlmMessage::user("hi")],
             McpToolContext::default(),
+            None,
             |event| match event {
                 StreamEvent::TextDelta(text) => collected_text.push_str(&text),
                 StreamEvent::Complete { .. } => saw_complete = true,
@@ -376,6 +379,7 @@ async fn agent_path_kimi_live_e2e() {
             &agent,
             &[LlmMessage::user("Say exactly: pong")],
             McpToolContext::default(),
+            None,
             |event| match event {
                 StreamEvent::TextDelta(text) => {
                     print!("{text}");

@@ -104,11 +104,17 @@ async fn test_real_exa_search() {
         )];
 
         client
-            .run_agent_stream(&agent, &messages, McpToolContext::default(), |event| {
-                if let StreamEvent::TextDelta(text) = event {
-                    print!("{text}");
-                }
-            })
+            .run_agent_stream(
+                &agent,
+                &messages,
+                McpToolContext::default(),
+                None,
+                |event| {
+                    if let StreamEvent::TextDelta(text) = event {
+                        print!("{text}");
+                    }
+                },
+            )
             .await
             .expect("Agent stream failed");
 
@@ -154,6 +160,7 @@ async fn test_real_exa_search() {
             &agent,
             &messages,
             McpToolContext::default(),
+            None,
             |event| match &event {
                 StreamEvent::TextDelta(text) => {
                     print!("{text}");
