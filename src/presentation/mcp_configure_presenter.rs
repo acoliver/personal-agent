@@ -17,6 +17,49 @@ use crate::events::{
 };
 use crate::services::McpService;
 
+/// Persisted MCP fields the configure draft needs beyond the service payload.
+struct PersistedMcpDraft {
+    auth_type: crate::mcp::McpAuthType,
+    /// True when the persisted MCP authenticates with OAuth and already
+    /// holds a token, so the draft may save without re-running the flow.
+    oauth_connected: bool,
+    keyfile_path: String,
+    env: Vec<(String, String, bool)>,
+    stored_secret_names: Vec<String>,
+}
+
+impl PersistedMcpDraft {
+    const fn empty() -> Self {
+        Self {
+            auth_type: crate::mcp::McpAuthType::None,
+            oauth_connected: false,
+            keyfile_path: String::new(),
+            env: Vec::new(),
+            stored_secret_names: Vec::new(),
+        }
+    }
+}
+
+/// A keychain entry written during a save, with the prior value it
+/// overwrote (`None` when no entry existed before).
+struct StoredSecret {
+    name: String,
+    prior: Option<String>,
+}
+
+/// Roll one stored entry back to its pre-save keychain state: restore the
+/// value this save overwrote, or delete the entry this save created.
+fn rollback_secret(
+    saved_id: Uuid,
+    name: &str,
+    prior: Option<&String>,
+) -> Result<(), crate::services::secure_store::SecureStoreError> {
+    if let Some(prior) = prior {
+        return crate::services::secure_store::mcp_keys::store_named(saved_id, name, prior);
+    }
+    crate::services::secure_store::mcp_keys::delete_named(saved_id, name)
+}
+
 /// `McpConfigurePresenter` - handles MCP server configuration UI
 ///
 /// @plan PLAN-20250125-REFACTOR.P10
@@ -189,10 +232,14 @@ impl McpConfigurePresenter {
     ) {
         match event {
             UserEvent::ConfigureMcp { id } => {
-                Self::on_configure_mcp(mcp_service, view_tx, id).await;
+                Self::on_configure_mcp(mcp_service, view_tx, id, config_path).await;
             }
-            UserEvent::SaveMcpConfig { id, config } => {
-                Self::on_save_config(mcp_service, view_tx, id, *config, config_path).await;
+            UserEvent::SaveMcpConfig {
+                id,
+                config,
+                secrets,
+            } => {
+                Self::on_save_config(mcp_service, view_tx, id, *config, secrets, config_path).await;
             }
             UserEvent::StartMcpOAuth { id, provider } => {
                 Self::on_start_oauth(mcp_service, view_tx, id, provider).await;
@@ -207,10 +254,14 @@ impl McpConfigurePresenter {
     /// Handle configure MCP event
     ///
     /// Loads persisted MCP data and projects it into MCP configure draft payload.
+    ///
+    /// Draft env/auth fields come from the persisted app config; drafts for
+    /// MCPs without an app-config entry carry empty defaults.
     async fn on_configure_mcp(
         mcp_service: &Arc<dyn McpService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         id: Uuid,
+        config_path: Option<&std::path::Path>,
     ) {
         tracing::info!("Loading MCP config for id: {}", id);
 
@@ -251,22 +302,48 @@ impl McpConfigurePresenter {
                     ),
                 };
 
-                let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
-                    id: id.to_string(),
-                    name,
-                    package,
-                    package_type,
-                    runtime_hint,
-                    env_var_name: "API_KEY".to_string(),
-                    command,
-                    args,
-                    env: None,
-                    url,
-                });
+                match Self::load_persisted_draft(config_path, id).await {
+                    Err(e) => {
+                        tracing::error!("Failed to load MCP draft for {}: {}", id, e);
+                        let _ = view_tx.send(ViewCommand::ShowError {
+                            title: "Load Failed".to_string(),
+                            message: e,
+                            severity: super::view_command::ErrorSeverity::Error,
+                        });
+                    }
+                    Ok(persisted) => {
+                        let persisted = persisted.unwrap_or_else(PersistedMcpDraft::empty);
+                        // The typed-key slot targets a secret var; a plain
+                        // var name would send the secret to the wrong
+                        // keychain entry (or into the config file).
+                        let env_var_name = persisted
+                            .env
+                            .iter()
+                            .find(|(_, _, is_secret)| *is_secret)
+                            .map_or_else(|| "API_KEY".to_string(), |(var, _, _)| var.clone());
 
-                let _ = view_tx.send(ViewCommand::NavigateTo {
-                    view: super::view_command::ViewId::McpConfigure,
-                });
+                        let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
+                            id: id.to_string(),
+                            name,
+                            package,
+                            package_type,
+                            runtime_hint,
+                            env_var_name,
+                            command,
+                            args,
+                            auth_type: persisted.auth_type,
+                            oauth_connected: persisted.oauth_connected,
+                            keyfile_path: persisted.keyfile_path,
+                            env: persisted.env,
+                            stored_secret_names: persisted.stored_secret_names,
+                            url,
+                        });
+
+                        let _ = view_tx.send(ViewCommand::NavigateTo {
+                            view: super::view_command::ViewId::McpConfigure,
+                        });
+                    }
+                }
             }
             Err(e) => {
                 tracing::error!("Failed to load MCP config {}: {}", id, e);
@@ -279,6 +356,76 @@ impl McpConfigurePresenter {
         }
     }
 
+    /// Load persisted draft fields for `id` off the async path.
+    ///
+    /// Keychain probes and the config read run in `spawn_blocking` (the
+    /// keyring can block on OS prompts). `Ok(None)` means the config has no
+    /// entry for this id (registry-driven draft); a real load failure is an
+    /// `Err` the caller surfaces as `ShowError` instead of silently
+    /// degrading the draft.
+    async fn load_persisted_draft(
+        config_path: Option<&std::path::Path>,
+        id: Uuid,
+    ) -> Result<Option<PersistedMcpDraft>, String> {
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => crate::config::Config::default_path()
+                .map_err(|e| format!("Failed to resolve config path: {e}"))?,
+        };
+        tokio::task::spawn_blocking(move || {
+            let app_config = crate::config::Config::load(&path)
+                .map_err(|e| format!("Failed to load config: {e}"))?;
+            let Some(mcp) = app_config.mcps.iter().find(|m| m.id == id) else {
+                return Ok(None);
+            };
+            let mut stored_secret_names = Vec::new();
+            for var in &mcp.env_vars {
+                if !var.is_secret {
+                    continue;
+                }
+                match crate::services::secure_store::mcp_keys::get_named(id, &var.name) {
+                    Ok(Some(_)) => stored_secret_names.push(var.name.clone()),
+                    // A probe failure is not proof of absence; keep the
+                    // draft usable (treat as not stored) but leave a
+                    // diagnosable trace.
+                    Err(e) => tracing::warn!(
+                        "Keychain probe for MCP {id} secret env var {} failed, \
+                         treating as not stored: {e}",
+                        var.name
+                    ),
+                    Ok(None) => {}
+                }
+            }
+            let env = mcp
+                .env_vars
+                .iter()
+                .map(|var| {
+                    // Secret values never enter the draft; non-secret vars
+                    // carry their configured plain value.
+                    let value = if var.is_secret {
+                        String::new()
+                    } else {
+                        var.value.clone().unwrap_or_default()
+                    };
+                    (var.name.clone(), value, var.is_secret)
+                })
+                .collect();
+            Ok(Some(PersistedMcpDraft {
+                auth_type: mcp.auth_type.clone(),
+                oauth_connected: mcp.auth_type == crate::mcp::McpAuthType::OAuth
+                    && mcp.oauth_token.is_some(),
+                keyfile_path: mcp
+                    .keyfile_path
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.display().to_string()),
+                env,
+                stored_secret_names,
+            }))
+        })
+        .await
+        .map_err(|e| format!("Draft load task failed: {e}"))?
+    }
+
     // Signature fixed by the shared call convention, not by the body.
     #[allow(clippy::unused_async_trait_impl)]
     async fn on_save_config(
@@ -286,6 +433,7 @@ impl McpConfigurePresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
         id: Uuid,
         config: crate::events::types::McpConfig,
+        secrets: Vec<(String, crate::events::types::SecretValue)>,
         config_path_override: Option<&std::path::Path>,
     ) {
         tracing::info!("Saving MCP config for id: {} name: {}", id, config.name);
@@ -298,27 +446,15 @@ impl McpConfigurePresenter {
             config.id = Uuid::new_v4();
         }
         let saved_id = config.id;
+        let config_path = config_path_override.map(std::path::Path::to_path_buf);
 
-        let save_result: Result<(), String> = (|| {
-            let config_path = match config_path_override {
-                Some(p) => p.to_path_buf(),
-                None => crate::config::Config::default_path()
-                    .map_err(|e| format!("Failed to resolve config path: {e}"))?,
-            };
-            let mut app_config = crate::config::Config::load(&config_path)
-                .map_err(|e| format!("Failed to load config: {e}"))?;
-
-            if let Some(existing) = app_config.mcps.iter_mut().find(|m| m.id == saved_id) {
-                *existing = config;
-            } else {
-                app_config.mcps.push(config);
-            }
-
-            app_config
-                .save(&config_path)
-                .map_err(|e| format!("Failed to save config: {e}"))?;
-            Ok(())
-        })();
+        // Keychain writes and the config-file write can block on OS prompts;
+        // run the whole synchronous save off the async path.
+        let save_result = tokio::task::spawn_blocking(move || {
+            Self::persist_save(saved_id, config, &secrets, config_path.as_deref())
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("MCP save task failed: {e}")));
 
         match save_result {
             Ok(()) => {
@@ -353,6 +489,149 @@ impl McpConfigurePresenter {
                 });
             }
         }
+    }
+
+    /// Store secrets then merge `config` into the app config file.
+    ///
+    /// Secrets are stored before the config write so a failed store aborts
+    /// the save; any failure after stores have happened rolls each stored
+    /// entry back. Because a store OVERWRITES any existing entry, the prior
+    /// value is snapshotted first: rollback restores it when there was one
+    /// and deletes only entries this save created, so a failed save can
+    /// never destroy a credential that already worked. On success, keychain
+    /// entries for old secret vars the new config no longer declares are
+    /// deleted so renames cannot strand credentials.
+    fn persist_save(
+        saved_id: Uuid,
+        config: crate::events::types::McpConfig,
+        secrets: &[(String, crate::events::types::SecretValue)],
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), String> {
+        Self::validate_env_payload(&config, secrets)?;
+
+        let secrets_manager = crate::mcp::SecretsManager::new();
+        let mut stored: Vec<StoredSecret> = Vec::new();
+
+        let result = Self::write_config_and_secrets(
+            saved_id,
+            config,
+            secrets,
+            &secrets_manager,
+            &mut stored,
+            config_path,
+        );
+
+        if result.is_err() {
+            for entry in &stored {
+                if let Err(e) = rollback_secret(saved_id, &entry.name, entry.prior.as_ref()) {
+                    tracing::warn!("Failed to roll back MCP secret {}: {e}", entry.name);
+                }
+            }
+        }
+        result
+    }
+
+    /// Reject env var names or secret payload names that could not travel
+    /// safely as HTTP header material before anything is persisted.
+    fn validate_env_payload(
+        config: &crate::events::types::McpConfig,
+        secrets: &[(String, crate::events::types::SecretValue)],
+    ) -> Result<(), String> {
+        for var in &config.env_vars {
+            if !crate::mcp::env_var_name_is_valid(&var.name) {
+                return Err(format!(
+                    "MCP {}: env var name {:?} is invalid; use ASCII letters, digits, \
+                     or underscores (max 64 chars, starting with a letter or underscore)",
+                    config.name, var.name
+                ));
+            }
+        }
+        for (name, _) in secrets {
+            if !crate::mcp::env_var_name_is_valid(name) {
+                return Err(format!(
+                    "MCP {}: secret env var name {:?} is invalid; use ASCII letters, \
+                     digits, or underscores (max 64 chars, starting with a letter or underscore)",
+                    config.name, name
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Store each secret, then merge `config` into the config file and clean
+    /// up keychain entries stranded by renamed secret vars.
+    fn write_config_and_secrets(
+        saved_id: Uuid,
+        config: crate::events::types::McpConfig,
+        secrets: &[(String, crate::events::types::SecretValue)],
+        secrets_manager: &crate::mcp::SecretsManager,
+        stored: &mut Vec<StoredSecret>,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), String> {
+        for (var_name, value) in secrets {
+            // Snapshot before overwriting: the rollback path needs the
+            // prior value to restore, not just the fact we wrote here.
+            let prior = crate::services::secure_store::mcp_keys::get_named(saved_id, var_name)
+                .map_err(|e| format!("Failed to read prior MCP secret {var_name}: {e}"))?;
+            secrets_manager
+                .store_api_key_named(saved_id, var_name, value.expose())
+                .map_err(|e| format!("Failed to store MCP secret {var_name}: {e}"))?;
+            stored.push(StoredSecret {
+                name: var_name.clone(),
+                prior,
+            });
+        }
+
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => crate::config::Config::default_path()
+                .map_err(|e| format!("Failed to resolve config path: {e}"))?,
+        };
+        let mut app_config = crate::config::Config::load(&path)
+            .map_err(|e| format!("Failed to load config: {e}"))?;
+
+        let old_secret_names: Vec<String> = app_config
+            .mcps
+            .iter()
+            .find(|m| m.id == saved_id)
+            .map(|m| {
+                m.env_vars
+                    .iter()
+                    .filter(|var| var.is_secret)
+                    .map(|var| var.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if let Some(existing) = app_config.mcps.iter_mut().find(|m| m.id == saved_id) {
+            *existing = config;
+        } else {
+            app_config.mcps.push(config);
+        }
+
+        app_config
+            .save(&path)
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+
+        for old_name in &old_secret_names {
+            let still_declared = app_config
+                .mcps
+                .iter()
+                .find(|m| m.id == saved_id)
+                .is_some_and(|m| {
+                    m.env_vars
+                        .iter()
+                        .any(|var| var.is_secret && &var.name == old_name)
+                });
+            if !still_declared {
+                if let Err(e) =
+                    crate::services::secure_store::mcp_keys::delete_named(saved_id, old_name)
+                {
+                    tracing::warn!("Failed to delete stranded MCP secret {old_name}: {e}");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Handle start OAuth event

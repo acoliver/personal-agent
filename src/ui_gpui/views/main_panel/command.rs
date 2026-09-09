@@ -464,7 +464,11 @@ impl MainPanel {
                 env_var_name,
                 command,
                 args,
+                auth_type,
+                oauth_connected,
+                keyfile_path,
                 env,
+                stored_secret_names,
                 url,
             } => {
                 if let Some(ref mcp_configure) = self.mcp_configure_view {
@@ -479,7 +483,11 @@ impl MainPanel {
                                 env_var_name,
                                 command,
                                 args,
+                                auth_type,
+                                oauth_connected,
+                                keyfile_path,
                                 env,
+                                stored_secret_names,
                                 url,
                             },
                             cx,

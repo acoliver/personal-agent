@@ -22,6 +22,8 @@ fn base_config() -> McpConfig {
         env_vars: vec![personal_agent::mcp::EnvVarConfig {
             name: "API_KEY".to_string(),
             required: true,
+            is_secret: true,
+            value: None,
         }],
         package_args: vec![],
         keyfile_path: None,
@@ -58,8 +60,183 @@ fn build_env_for_config_loads_secrets() {
     let secrets = SecretsManager::new();
 
     let config = base_config();
-    secrets.store_api_key(config.id, "secret").unwrap();
+    secrets
+        .store_api_key_named(config.id, "API_KEY", "secret")
+        .unwrap();
 
     let env = build_env_for_config(&config, &secrets).unwrap();
     assert_eq!(env.get("API_KEY"), Some(&"secret".to_string()));
+}
+
+#[test]
+fn build_env_for_config_errors_when_secret_is_missing() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let config = base_config();
+    let result = build_env_for_config(&config, &secrets);
+    assert!(
+        result.is_err(),
+        "ApiKey auth with no stored secret must fail fast instead of launching unauthenticated"
+    );
+}
+
+#[test]
+fn build_env_for_config_takes_non_secret_values_from_config() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.env_vars.push(personal_agent::mcp::EnvVarConfig {
+        name: "REGION".to_string(),
+        required: false,
+        is_secret: false,
+        value: Some("eu-west-1".to_string()),
+    });
+    secrets
+        .store_api_key_named(config.id, "API_KEY", "secret")
+        .unwrap();
+
+    let env = build_env_for_config(&config, &secrets).unwrap();
+    assert_eq!(env.get("API_KEY"), Some(&"secret".to_string()));
+    assert_eq!(
+        env.get("REGION"),
+        Some(&"eu-west-1".to_string()),
+        "non-secret vars must come from the config value, not the keychain"
+    );
+}
+
+#[test]
+fn build_env_for_config_keyfile_auth_does_not_touch_keychain() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.auth_type = McpAuthType::Keyfile;
+    config.keyfile_path = Some(std::path::PathBuf::from("/tmp/keyfile-auth.json"));
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "WORKSPACE".to_string(),
+        required: false,
+        is_secret: false,
+        value: Some("acme".to_string()),
+    }];
+
+    let env = build_env_for_config(&config, &secrets).unwrap();
+    assert_eq!(
+        env.get("WORKSPACE"),
+        Some(&"acme".to_string()),
+        "keyfile auth resolves from keyfile_path and must never keychain-load env vars"
+    );
+}
+
+#[test]
+fn build_env_for_config_keyfile_auth_rejects_secret_env_vars() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.auth_type = McpAuthType::Keyfile;
+    config.keyfile_path = Some(std::path::PathBuf::from("/tmp/keyfile-auth.json"));
+    // A secret var has no keyfile slot to resolve into; it used to be
+    // silently dropped, losing the credential.
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "API_KEY".to_string(),
+        required: true,
+        is_secret: true,
+        value: None,
+    }];
+    secrets
+        .store_api_key_named(config.id, "API_KEY", "unused-keychain-value")
+        .unwrap();
+
+    let result = build_env_for_config(&config, &secrets);
+    let err = result.expect_err("Keyfile auth with a secret env var must fail fast");
+    assert!(
+        err.to_string().contains("API_KEY"),
+        "the error must name the unusable secret var, got: {err}"
+    );
+}
+
+#[test]
+fn build_env_for_config_requires_value_for_required_plain_var() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "REGION".to_string(),
+        required: true,
+        is_secret: false,
+        value: None,
+    }];
+
+    let result = build_env_for_config(&config, &secrets);
+    let err = result.expect_err("a required plain var with no value must fail fast");
+    assert!(
+        err.to_string().contains("REGION"),
+        "the error must name the unconfigured var, got: {err}"
+    );
+}
+
+#[test]
+fn build_env_for_config_skips_optional_plain_var_without_value() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "REGION".to_string(),
+        required: false,
+        is_secret: false,
+        value: None,
+    }];
+
+    let env = build_env_for_config(&config, &secrets).unwrap();
+    assert!(
+        !env.contains_key("REGION"),
+        "an optional var without a value must be absent, not present as an empty string"
+    );
+}
+
+#[test]
+fn build_env_for_config_rejects_invalid_env_var_names() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    for bad_name in ["BAD NAME", "KEY\r\n", "", "1KEY"] {
+        let mut config = base_config();
+        config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+            name: bad_name.to_string(),
+            required: true,
+            is_secret: false,
+            value: Some("value".to_string()),
+        }];
+
+        let result = build_env_for_config(&config, &secrets);
+        assert!(
+            result.is_err(),
+            "env var name {bad_name:?} must be rejected before it can reach header material"
+        );
+    }
+}
+
+#[test]
+fn build_env_for_config_rejects_line_breaks_in_plain_value() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "REGION".to_string(),
+        required: true,
+        is_secret: false,
+        value: Some("eu-west\r\n-1".to_string()),
+    }];
+
+    let result = build_env_for_config(&config, &secrets);
+    let err = result.expect_err("a CRLF in a plain value must fail fast");
+    assert!(
+        err.to_string().contains("REGION"),
+        "the error must name the offending var, got: {err}"
+    );
 }

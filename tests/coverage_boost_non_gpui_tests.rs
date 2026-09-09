@@ -69,6 +69,8 @@ fn http_config() -> McpConfig {
         env_vars: vec![EnvVarConfig {
             name: "API_KEY".to_string(),
             required: false,
+            is_secret: false,
+            value: None,
         }],
         package_args: vec![],
         keyfile_path: None,

@@ -269,11 +269,30 @@ impl McpAddPresenter {
 
                 let selected = entries.into_iter().find(|e| e.name == requested_name);
                 if let Some(entry) = selected {
-                    let env_var_name = entry
+                    // Registry service entries flatten env metadata to
+                    // name/value pairs; restore the secret flag from the name
+                    // so the configure draft and the install path agree.
+                    let env: Vec<(String, String, bool)> = entry
                         .env
-                        .as_ref()
-                        .and_then(|vars| vars.first().map(|(k, _)| k.clone()))
-                        .unwrap_or_else(|| "API_KEY".to_string());
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(name, value)| {
+                            let is_secret = crate::mcp::env_var_name_is_secret(&name);
+                            (name, value, is_secret)
+                        })
+                        .collect();
+                    let env_var_name = env
+                        .first()
+                        .map_or_else(|| "API_KEY".to_string(), |(name, _, _)| name.clone());
+                    let registry_env_vars: Vec<crate::mcp::RegistryEnvVar> = env
+                        .iter()
+                        .map(|(name, _, is_secret)| crate::mcp::RegistryEnvVar {
+                            name: name.clone(),
+                            is_secret: *is_secret,
+                            // Registry metadata does not carry the required flag.
+                            is_required: false,
+                        })
+                        .collect();
 
                     let configure_name = entry.display_name;
                     let package_name = entry.name;
@@ -288,7 +307,11 @@ impl McpAddPresenter {
                         env_var_name,
                         command: entry.command,
                         args: entry.args,
-                        env: entry.env,
+                        auth_type: crate::mcp::detect_auth_type(&registry_env_vars),
+                        oauth_connected: false,
+                        keyfile_path: String::new(),
+                        env,
+                        stored_secret_names: vec![],
                         url: entry.url,
                     });
                     let _ = view_tx.send(ViewCommand::NavigateTo {
@@ -358,7 +381,11 @@ impl McpAddPresenter {
                     env_var_name: "API_KEY".to_string(),
                     command: draft.command,
                     args: draft.args,
-                    env: None,
+                    auth_type: crate::mcp::McpAuthType::None,
+                    oauth_connected: false,
+                    keyfile_path: String::new(),
+                    env: vec![],
+                    stored_secret_names: vec![],
                     url: draft.url,
                 });
                 let _ = view_tx.send(ViewCommand::NavigateTo {

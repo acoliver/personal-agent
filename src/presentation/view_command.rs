@@ -380,7 +380,20 @@ pub enum ViewCommand {
         env_var_name: String,
         command: String,
         args: Vec<String>,
-        env: Option<Vec<(String, String)>>,
+        /// Auth type persisted for this MCP; registry drafts infer it from
+        /// env var names.
+        auth_type: crate::mcp::McpAuthType,
+        /// True when the persisted MCP already holds an OAuth token, so the
+        /// configure view may save without re-running the OAuth flow.
+        oauth_connected: bool,
+        /// Persisted keyfile path (empty when the MCP has none).
+        keyfile_path: String,
+        /// Draft env vars as `(name, plain value, is_secret)`. Secret values
+        /// stay empty here; they live in the OS keychain.
+        env: Vec<(String, String, bool)>,
+        /// Env var names that already have an OS keychain entry, so editing
+        /// an existing MCP does not force re-entering its secret.
+        stored_secret_names: Vec<String>,
         /// Remote URL for HTTP/SSE transport MCPs (None for stdio-only).
         url: Option<String>,
     },

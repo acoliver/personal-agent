@@ -22,6 +22,8 @@ fn base_config() -> McpConfig {
         env_vars: vec![EnvVarConfig {
             name: "API_KEY".to_string(),
             required: true,
+            is_secret: true,
+            value: None,
         }],
         package_args: vec![],
         keyfile_path: None,

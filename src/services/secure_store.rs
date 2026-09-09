@@ -12,6 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use thiserror::Error;
@@ -126,6 +127,7 @@ mod name_index {
 
 static MOCK_ACTIVE: OnceLock<bool> = OnceLock::new();
 static MOCK_STORE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+static MOCK_STORE_FAILURE: AtomicBool = AtomicBool::new(false);
 
 fn mock_store() -> &'static Mutex<HashMap<String, String>> {
     MOCK_STORE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -140,6 +142,14 @@ fn is_mock() -> bool {
 /// Safe to call multiple times — the switch happens exactly once.
 pub fn use_mock_backend() {
     let _ = MOCK_ACTIVE.set(true);
+}
+
+/// Make every mock-mode secret write fail until toggled back off.
+///
+/// Test hook for exercising keychain-failure error paths without an OS
+/// keychain; has no effect when the real backend is active.
+pub fn set_mock_store_failure(fail: bool) {
+    MOCK_STORE_FAILURE.store(fail, Ordering::SeqCst);
 }
 
 // ── Debug-only key cache ────────────────────────────────────────────────
@@ -281,6 +291,11 @@ fn macos_security_delete_secret(key: &str) -> Result<(), SecureStoreError> {
 /// Panics in mock mode if the in-memory mock store mutex is poisoned.
 pub fn set_secret(key: &str, value: &str) -> Result<(), SecureStoreError> {
     if is_mock() {
+        if MOCK_STORE_FAILURE.load(Ordering::SeqCst) {
+            return Err(SecureStoreError::Keychain(
+                "mock store failure injected".to_string(),
+            ));
+        }
         mock_store()
             .lock()
             .expect("mock store poisoned")
