@@ -26,5 +26,6 @@ pub use status::{
 };
 pub use toolset::{
     build_command, build_env_for_config, build_headers_for_config, create_toolset_from_config,
+    derive_http_auth_header,
 };
 pub use types::*;

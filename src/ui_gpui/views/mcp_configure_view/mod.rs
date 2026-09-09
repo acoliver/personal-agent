@@ -86,7 +86,11 @@ pub struct McpConfigureData {
     pub runtime_hint: Option<String>,
     pub command: String,
     pub args: Vec<String>,
-    pub env: Option<Vec<(String, String)>>,
+    /// Draft env vars as `(name, plain value, is_secret)`; secret values stay
+    /// empty and are resolved from the OS keychain at save/load time.
+    pub env: Vec<(String, String, bool)>,
+    /// Env var names that already have an OS keychain entry.
+    pub stored_secret_names: Vec<String>,
     pub auth_method: McpAuthMethod,
     pub env_var_name: String,
     pub api_key: String,
@@ -108,7 +112,8 @@ impl Default for McpConfigureData {
             runtime_hint: Some("npx".to_string()),
             command: String::new(),
             args: vec![],
-            env: None,
+            env: vec![],
+            stored_secret_names: vec![],
             auth_method: McpAuthMethod::default(),
             env_var_name: String::new(),
             api_key: String::new(),
@@ -126,11 +131,6 @@ impl McpConfigureData {
     pub fn new() -> Self {
         Self {
             env_var_name: "API_KEY".to_string(),
-            package_type: crate::mcp::McpPackageType::Npm,
-            runtime_hint: Some("npx".to_string()),
-            command: String::new(),
-            args: vec![],
-            env: None,
             ..Default::default()
         }
     }
@@ -151,10 +151,64 @@ impl McpConfigureData {
 
         match self.auth_method {
             McpAuthMethod::None => true,
-            McpAuthMethod::ApiKey => !self.api_key.trim().is_empty(),
+            // A stored keychain entry counts: editing an existing MCP must
+            // not force re-entering its secret.
+            McpAuthMethod::ApiKey => {
+                !self.api_key.trim().is_empty() || !self.stored_secret_names.is_empty()
+            }
             McpAuthMethod::Keyfile => !self.keyfile_path.trim().is_empty(),
             McpAuthMethod::OAuth => matches!(self.oauth_status, OAuthStatus::Connected { .. }),
         }
+    }
+
+    /// Env vars to persist: draft pairs become `EnvVarConfig` entries whose
+    /// plain value rides in the config only for non-secret vars. An `ApiKey`
+    /// draft without any secret var derives one from `env_var_name` so the
+    /// typed key has a keychain slot at runtime.
+    fn persisted_env_vars(&self) -> Vec<crate::mcp::EnvVarConfig> {
+        let mut env_vars: Vec<crate::mcp::EnvVarConfig> = self
+            .env
+            .iter()
+            .map(|(name, value, is_secret)| crate::mcp::EnvVarConfig {
+                name: name.clone(),
+                required: true,
+                is_secret: *is_secret,
+                value: if *is_secret {
+                    None
+                } else {
+                    Some(value.clone())
+                },
+            })
+            .collect();
+        if self.auth_method == McpAuthMethod::ApiKey
+            && !self.env.iter().any(|(_, _, is_secret)| *is_secret)
+        {
+            env_vars.push(crate::mcp::EnvVarConfig {
+                name: self.env_var_name.clone(),
+                required: true,
+                is_secret: true,
+                value: None,
+            });
+        }
+        env_vars
+    }
+
+    /// Secrets payload for the save event: the typed key targets the first
+    /// secret var (or the derived env var name) and is emitted only when the
+    /// field is non-empty, leaving any stored key otherwise untouched.
+    fn typed_secrets(&self) -> Vec<(String, crate::events::types::SecretValue)> {
+        if self.auth_method != McpAuthMethod::ApiKey || self.api_key.is_empty() {
+            return Vec::new();
+        }
+        let var_name = self
+            .env
+            .iter()
+            .find(|(_, _, is_secret)| *is_secret)
+            .map_or_else(|| self.env_var_name.clone(), |(name, _, _)| name.clone());
+        vec![(
+            var_name,
+            crate::events::types::SecretValue::new(&self.api_key),
+        )]
     }
 }
 
@@ -220,6 +274,8 @@ impl McpConfigureView {
     pub fn set_mcp(&mut self, data: McpConfigureData, is_new: bool) {
         self.state.data = data;
         self.state.is_new = is_new;
+        // Fresh payload means no in-flight IME composition can make sense.
+        self.ime_marked_byte_count = 0;
     }
 
     fn navigate_to_settings() {
@@ -228,6 +284,12 @@ impl McpConfigureView {
     }
 
     fn save_current(&self) {
+        // Single gate for every save entrypoint (save button, cmd-s): an
+        // incomplete draft must not emit SaveMcpConfig.
+        if !self.state.data.can_save() {
+            tracing::info!("Save blocked: draft is not complete (can_save is false)");
+            return;
+        }
         self.emit_save_mcp_config();
     }
 
@@ -306,16 +368,16 @@ impl McpConfigureView {
         }
     }
 
-    fn sanitized_clipboard_text(text: &str) -> String {
-        text.trim_matches(|c| c == '\r' || c == '\n').to_string()
-    }
-
     /// Paste sanitized text into the active field (testable seam for cmd-v).
     fn paste_text(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
-        let sanitized = Self::sanitized_clipboard_text(text);
+        let sanitized = crate::ui_gpui::sanitize_single_line(text);
         if sanitized.is_empty() || self.active_field.is_none() {
             return;
         }
+        // A paste during active IME composition replaces the marked range,
+        // mirroring `replace_text_in_range`.
+        self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
+        self.ime_marked_byte_count = 0;
         self.append_to_active_field(&sanitized);
         cx.notify();
     }
@@ -327,6 +389,7 @@ impl McpConfigureView {
         cx: &mut gpui::Context<Self>,
     ) {
         self.active_field = Some(field);
+        self.ime_marked_byte_count = 0;
         self.show_auth_dropdown = false;
         window.activate_window();
         window.focus(&self.focus_handle, cx);
@@ -336,6 +399,7 @@ impl McpConfigureView {
     fn toggle_auth_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
         self.show_auth_dropdown = !self.show_auth_dropdown;
         self.active_field = None;
+        self.ime_marked_byte_count = 0;
         cx.notify();
     }
 
@@ -394,12 +458,22 @@ impl McpConfigureView {
         }
 
         if key == "tab" {
-            self.active_field = Some(match self.active_field {
-                Some(ActiveField::ApiKey) => ActiveField::KeyfilePath,
-                Some(ActiveField::KeyfilePath) | None => ActiveField::ApiKey,
-            });
+            // Only the field rendered for the current auth method can take
+            // focus; other methods render no input at all.
+            self.active_field = Self::tab_target(&self.state.data.auth_method);
+            self.ime_marked_byte_count = 0;
             self.show_auth_dropdown = false;
             cx.notify();
+        }
+    }
+
+    /// Tab focus target for the given auth method: the single input field
+    /// that method renders, or none for methods with no input.
+    const fn tab_target(auth_method: &McpAuthMethod) -> Option<ActiveField> {
+        match auth_method {
+            McpAuthMethod::ApiKey => Some(ActiveField::ApiKey),
+            McpAuthMethod::Keyfile => Some(ActiveField::KeyfilePath),
+            McpAuthMethod::None | McpAuthMethod::OAuth => None,
         }
     }
 
@@ -455,25 +529,7 @@ impl McpConfigureView {
             McpAuthMethod::OAuth => crate::mcp::McpAuthType::OAuth,
         };
 
-        let mut env_vars: Vec<crate::mcp::EnvVarConfig> =
-            d.env.as_ref().map_or_else(Vec::new, |pairs| {
-                pairs
-                    .iter()
-                    .map(|(k, _)| crate::mcp::EnvVarConfig {
-                        name: k.clone(),
-                        required: true,
-                        is_secret: true,
-                    })
-                    .collect()
-            });
-        if env_vars.is_empty() && d.auth_method == McpAuthMethod::ApiKey {
-            env_vars.push(crate::mcp::EnvVarConfig {
-                name: d.env_var_name.clone(),
-                required: true,
-                is_secret: true,
-            });
-        }
-
+        let env_vars = d.persisted_env_vars();
         let keyfile_path =
             if d.auth_method == McpAuthMethod::Keyfile && !d.keyfile_path.trim().is_empty() {
                 Some(std::path::PathBuf::from(&d.keyfile_path))
@@ -481,19 +537,7 @@ impl McpConfigureView {
                 None
             };
 
-        // The typed key travels only in the secrets payload (env var name →
-        // value) so the presenter can store it in the OS keychain; it is never
-        // serialized into the config.
-        let secrets = if d.auth_method == McpAuthMethod::ApiKey && !d.api_key.is_empty() {
-            let var_name = d
-                .env
-                .as_ref()
-                .and_then(|pairs| pairs.first())
-                .map_or_else(|| d.env_var_name.clone(), |(k, _)| k.clone());
-            vec![(var_name, d.api_key.clone())]
-        } else {
-            Vec::new()
-        };
+        let secrets = d.typed_secrets();
 
         let config = crate::mcp::McpConfig {
             id,
@@ -540,18 +584,17 @@ impl McpConfigureView {
                 env_var_name,
                 command,
                 args,
+                auth_type,
+                keyfile_path,
                 env,
+                stored_secret_names,
                 url,
             } => {
-                // Infer auth method from env vars: if no env vars exist the
-                // server needs no credentials (e.g. Exa remote HTTP).
-                let has_env = env
-                    .as_ref()
-                    .is_some_and(|v| v.iter().any(|(k, _)| !k.is_empty()));
-                self.state.data.auth_method = if has_env {
-                    McpAuthMethod::ApiKey
-                } else {
-                    McpAuthMethod::None
+                self.state.data.auth_method = match auth_type {
+                    crate::mcp::McpAuthType::None => McpAuthMethod::None,
+                    crate::mcp::McpAuthType::ApiKey => McpAuthMethod::ApiKey,
+                    crate::mcp::McpAuthType::Keyfile => McpAuthMethod::Keyfile,
+                    crate::mcp::McpAuthType::OAuth => McpAuthMethod::OAuth,
                 };
 
                 self.state.data.id = Some(id);
@@ -563,12 +606,16 @@ impl McpConfigureView {
                 self.state.data.command = command;
                 self.state.data.args = args;
                 self.state.data.env = env;
+                self.state.data.stored_secret_names = stored_secret_names;
+                self.state.data.keyfile_path = keyfile_path;
                 self.state.data.url = url;
                 // Fresh edit session: drop credentials captured for a previous
-                // MCP and close any open input UI.
+                // MCP, reset stale OAuth state so Save cannot ride a stale
+                // Connected, and close any open input UI.
                 self.state.data.api_key.clear();
-                self.state.data.keyfile_path.clear();
                 self.state.mask_api_key = true;
+                self.state.data.oauth_status = OAuthStatus::NotConnected;
+                self.state.data.oauth_provider.clear();
                 self.active_field = None;
                 self.show_auth_dropdown = false;
                 self.ime_marked_byte_count = 0;
@@ -592,9 +639,6 @@ impl McpConfigureView {
                     self.state.data.name = saved_name;
                 }
                 self.state.is_new = id.is_nil();
-                self.state.data.oauth_status = OAuthStatus::Connected {
-                    username: "Saved".to_string(),
-                };
             }
             _ => {}
         }
@@ -646,7 +690,10 @@ mod tests {
                     env_var_name: String::new(),
                     command: String::new(),
                     args: vec![],
-                    env: None,
+                    auth_type: crate::mcp::McpAuthType::None,
+                    keyfile_path: String::new(),
+                    env: vec![],
+                    stored_secret_names: vec![],
                     url: Some("https://exa.example/mcp".to_string()),
                 },
                 cx,
@@ -708,7 +755,10 @@ mod tests {
                         "-y".to_string(),
                         "@modelcontextprotocol/server-filesystem".to_string(),
                     ],
-                    env: Some(vec![("FILESYSTEM_TOKEN".to_string(), String::new())]),
+                    auth_type: crate::mcp::McpAuthType::ApiKey,
+                    keyfile_path: String::new(),
+                    env: vec![("FILESYSTEM_TOKEN".to_string(), String::new(), true)],
+                    stored_secret_names: vec![],
                     url: None,
                 },
                 cx,
@@ -758,11 +808,10 @@ mod tests {
             );
             assert_eq!(view.state.data.name, "Filesystem Saved");
             assert!(!view.state.is_new);
+            // A save must not fake an OAuth connection.
             assert_eq!(
                 view.state.data.oauth_status,
-                OAuthStatus::Connected {
-                    username: "Saved".to_string()
-                }
+                OAuthStatus::Error("denied".to_string())
             );
         });
     }
@@ -785,10 +834,10 @@ mod tests {
             data.package_type = crate::mcp::McpPackageType::Docker;
             data.command = "docker".to_string();
             data.args = vec!["run".to_string(), "--rm".to_string()];
-            data.env = Some(vec![
-                ("FILESYSTEM_TOKEN".to_string(), String::new()),
-                ("ROOT".to_string(), String::new()),
-            ]);
+            data.env = vec![
+                ("FILESYSTEM_TOKEN".to_string(), String::new(), true),
+                ("ROOT".to_string(), String::new(), true),
+            ];
             data.auth_method = McpAuthMethod::Keyfile;
             data.keyfile_path = "/tmp/filesystem-key.json".to_string();
 
@@ -835,11 +884,13 @@ mod tests {
                             name: "FILESYSTEM_TOKEN".to_string(),
                             required: true,
                             is_secret: true,
+                            value: None,
                         },
                         crate::mcp::EnvVarConfig {
                             name: "ROOT".to_string(),
                             required: true,
                             is_secret: true,
+                            value: None,
                         },
                     ]
                 );
@@ -933,6 +984,7 @@ mod tests {
                         url: "npx @example/oauth-mcp".to_string()
                     }
                 );
+                // OAuth drafts carry no env vars and derive no secret var.
                 assert!(config.env_vars.is_empty());
                 assert!(secrets.is_empty());
             }
@@ -1017,7 +1069,10 @@ mod tests {
                 assert_eq!(config.auth_type, crate::mcp::McpAuthType::ApiKey);
                 assert_eq!(
                     secrets,
-                    vec![("WEATHER_API_KEY".to_string(), "secret-token".to_string())]
+                    vec![(
+                        "WEATHER_API_KEY".to_string(),
+                        crate::events::types::SecretValue::new("secret-token")
+                    )]
                 );
             }
             other => panic!("expected SaveMcpConfig event, got {other:?}"),
@@ -1105,20 +1160,29 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn tab_cycles_active_fields(cx: &mut TestAppContext) {
+    async fn tab_targets_only_fields_rendered_for_auth_method(cx: &mut TestAppContext) {
         let view = cx.new(McpConfigureView::new);
         let mut visual_cx = cx.add_empty_window().clone();
 
         visual_cx.update(|window, app| {
             view.update(app, |view: &mut McpConfigureView, cx| {
+                // Default method is ApiKey: the single rendered field.
                 view.handle_key_down(&key_event("tab"), window, cx);
                 assert_eq!(view.active_field, Some(ActiveField::ApiKey));
 
+                view.handle_key_down(&key_event("tab"), window, cx);
+                assert_eq!(view.active_field, Some(ActiveField::ApiKey));
+
+                // Keyfile renders only the path field.
+                view.state.data.auth_method = McpAuthMethod::Keyfile;
                 view.handle_key_down(&key_event("tab"), window, cx);
                 assert_eq!(view.active_field, Some(ActiveField::KeyfilePath));
+                assert_eq!(view.ime_marked_byte_count, 0);
 
+                // None/OAuth render no input field.
+                view.state.data.auth_method = McpAuthMethod::None;
                 view.handle_key_down(&key_event("tab"), window, cx);
-                assert_eq!(view.active_field, Some(ActiveField::ApiKey));
+                assert_eq!(view.active_field, None);
             });
         });
     }
@@ -1220,7 +1284,7 @@ mod tests {
             data.url = Some("https://exa.example/mcp".to_string());
             data.auth_method = McpAuthMethod::ApiKey;
             data.env_var_name = "EXA_API_KEY".to_string();
-            data.env = Some(vec![("EXA_API_KEY".to_string(), String::new())]);
+            data.env = vec![("EXA_API_KEY".to_string(), String::new(), true)];
             data.api_key = "secret".to_string();
             view.set_mcp(data, false);
             view.emit_save_mcp_config();
@@ -1240,11 +1304,15 @@ mod tests {
                         name: "EXA_API_KEY".to_string(),
                         required: true,
                         is_secret: true,
+                        value: None,
                     }]
                 );
                 assert_eq!(
                     secrets,
-                    vec![("EXA_API_KEY".to_string(), "secret".to_string())]
+                    vec![(
+                        "EXA_API_KEY".to_string(),
+                        crate::events::types::SecretValue::new("secret")
+                    )]
                 );
                 assert_eq!(config.keyfile_path, None);
             }
@@ -1266,7 +1334,7 @@ mod tests {
             data.command = "npx".to_string();
             data.auth_method = McpAuthMethod::ApiKey;
             data.env_var_name = "API_KEY".to_string();
-            data.env = None;
+            data.env = vec![];
             data.api_key = "typed-key".to_string();
             view.set_mcp(data, true);
             view.emit_save_mcp_config();
@@ -1283,11 +1351,15 @@ mod tests {
                         name: "API_KEY".to_string(),
                         required: true,
                         is_secret: true,
+                        value: None,
                     }]
                 );
                 assert_eq!(
                     secrets,
-                    vec![("API_KEY".to_string(), "typed-key".to_string())]
+                    vec![(
+                        "API_KEY".to_string(),
+                        crate::events::types::SecretValue::new("typed-key")
+                    )]
                 );
             }
             other => panic!("expected SaveMcpConfig event, got {other:?}"),
@@ -1308,7 +1380,7 @@ mod tests {
             data.command = "npx".to_string();
             data.auth_method = McpAuthMethod::Keyfile;
             data.keyfile_path = "/tmp/service-key.json".to_string();
-            data.env = Some(vec![("FILESYSTEM_TOKEN".to_string(), String::new())]);
+            data.env = vec![("FILESYSTEM_TOKEN".to_string(), String::new(), true)];
             view.set_mcp(data, true);
             view.emit_save_mcp_config();
         });
@@ -1328,6 +1400,7 @@ mod tests {
                         name: "FILESYSTEM_TOKEN".to_string(),
                         required: true,
                         is_secret: true,
+                        value: None,
                     }]
                 );
                 assert!(secrets.is_empty());

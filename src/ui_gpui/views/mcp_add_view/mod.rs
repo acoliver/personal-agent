@@ -311,6 +311,7 @@ impl McpAddView {
     fn toggle_registry_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
         self.state.show_registry_dropdown = !self.state.show_registry_dropdown;
         self.state.active_field = None;
+        self.ime_marked_byte_count = 0;
         cx.notify();
     }
 
@@ -318,12 +319,9 @@ impl McpAddView {
         tracing::info!("Result selected: {}", result_id);
         self.state.selected_result_id = Some(result_id);
         self.state.active_field = None;
+        self.ime_marked_byte_count = 0;
         self.state.manual_entry.clear();
         cx.notify();
-    }
-
-    fn sanitized_clipboard_text(text: &str) -> String {
-        text.trim_matches(|c| c == '\r' || c == '\n').to_string()
     }
 
     fn handle_key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut gpui::Context<Self>) {
@@ -344,8 +342,12 @@ impl McpAddView {
         if modifiers.platform && key == "v" {
             if let Some(item) = cx.read_from_clipboard() {
                 if let Some(text) = item.text() {
-                    let sanitized = Self::sanitized_clipboard_text(&text);
+                    let sanitized = crate::ui_gpui::sanitize_single_line(&text);
                     if !sanitized.is_empty() && self.state.active_field.is_some() {
+                        // A paste during active IME composition replaces the
+                        // marked range, mirroring `replace_text_in_range`.
+                        self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
+                        self.ime_marked_byte_count = 0;
                         self.append_to_active_field(&sanitized);
                         if self.state.active_field == Some(ActiveField::SearchQuery) {
                             self.emit_search_registry();
@@ -385,6 +387,7 @@ impl McpAddView {
                 Some(ActiveField::ManualEntry) => ActiveField::SearchQuery,
                 Some(ActiveField::SearchQuery) | None => ActiveField::ManualEntry,
             });
+            self.ime_marked_byte_count = 0;
             self.state.show_registry_dropdown = false;
             cx.notify();
         }
@@ -492,7 +495,10 @@ impl McpAddView {
                 env_var_name,
                 command,
                 args,
+                auth_type: _,
+                keyfile_path: _,
                 env,
+                stored_secret_names: _,
                 url,
             } => {
                 tracing::info!("MCP draft loaded for configure: {}", name);
@@ -527,17 +533,32 @@ impl McpAddView {
                     McpRegistry::Both => "both".to_string(),
                 });
 
+                // The registry result shows plain env metadata; secret flags
+                // are a configure-screen concern.
+                let env_pairs = if env.is_empty() {
+                    None
+                } else {
+                    Some(
+                        env.iter()
+                            .map(|(name, value, _)| (name.clone(), value.clone()))
+                            .collect(),
+                    )
+                };
+
                 self.state.results =
                     vec![McpSearchResult::new(normalized_id, name, "Selected MCP")
                         .with_registry(registry)
                         .with_command(package)
                         .with_args(args)
-                        .with_env(env)
+                        .with_env(env_pairs)
                         .with_source(inferred_source)
                         .with_package_metadata(Some(package_type), runtime_hint)
                         .with_url(url)];
                 self.state.search_state = SearchState::Results;
                 let _ = env_var_name;
+                // Draft switch is a field change: no in-flight IME
+                // composition can carry over.
+                self.ime_marked_byte_count = 0;
                 crate::ui_gpui::navigation_channel()
                     .request_navigate(crate::presentation::view_command::ViewId::McpConfigure);
             }
@@ -643,7 +664,10 @@ mod tests {
                         "-y".to_string(),
                         "@modelcontextprotocol/server-fetch".to_string(),
                     ],
-                    env: Some(vec![("FETCH_API_KEY".to_string(), String::new())]),
+                    auth_type: crate::mcp::McpAuthType::ApiKey,
+                    keyfile_path: String::new(),
+                    env: vec![("FETCH_API_KEY".to_string(), String::new(), true)],
+                    stored_secret_names: vec![],
                     url: None,
                 },
                 cx,

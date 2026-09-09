@@ -36,6 +36,27 @@ pub struct EnvVarConfig {
     /// Whether the value is a secret resolved from the OS keychain at runtime.
     #[serde(default)]
     pub is_secret: bool,
+    /// Plain value for non-secret vars, serialized into the config.
+    ///
+    /// Invariant: when `is_secret` is true this MUST stay `None` and the
+    /// value is resolved from the OS keychain at runtime; only non-secret
+    /// vars may carry a serialized plain value.
+    #[serde(default)]
+    pub value: Option<String>,
+}
+
+/// Infer whether an env var holds a secret from its name.
+///
+/// Registry search results flatten env metadata to name/value pairs, so this
+/// restores the secret flag for drafts that never see the full registry
+/// metadata. Mirrors the name heuristics in [`detect_auth_type`].
+#[must_use]
+pub fn env_var_name_is_secret(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    upper.contains("TOKEN")
+        || upper.contains("KEY")
+        || upper.contains("SECRET")
+        || upper.contains("PAT")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

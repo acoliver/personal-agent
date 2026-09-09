@@ -153,21 +153,11 @@ impl McpRuntime {
         if let Some(ref oauth_token) = config.oauth_token {
             headers.insert("Authorization".to_string(), format!("Bearer {oauth_token}"));
         } else {
-            // Check if we have auth data that should be passed as headers
-            // For Smithery and other HTTP MCPs, auth is typically passed via Authorization header
+            // Derive auth headers from env vars through the shared rule so
+            // this path and the toolset header builder agree.
             for (key, value) in env {
-                // Convert env var names to header names
-                // Common patterns: API_KEY, TOKEN, ACCESS_TOKEN -> Authorization: Bearer <value>
-                let key_lower = key.to_lowercase();
-                if key_lower.contains("token")
-                    || key_lower.contains("api_key")
-                    || key_lower.contains("key")
-                {
-                    headers.insert("Authorization".to_string(), format!("Bearer {value}"));
-                } else {
-                    // Pass other env vars as custom headers with X- prefix
-                    headers.insert(format!("X-{key}"), value.clone());
-                }
+                let (header, derived) = crate::mcp::toolset::derive_http_auth_header(key, value);
+                headers.insert(header, derived);
             }
         }
 

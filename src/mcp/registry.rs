@@ -474,6 +474,7 @@ impl McpRegistry {
                 name: v.name.clone(),
                 required: v.is_required,
                 is_secret: v.is_secret,
+                value: None,
             })
             .collect();
 

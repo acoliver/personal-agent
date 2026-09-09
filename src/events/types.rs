@@ -6,8 +6,49 @@
 //! @requirement REQ-019.2
 //! @pseudocode event-bus.md lines 80-123
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
+
+/// A plaintext secret that must never reach logs or serialized events.
+///
+/// `Debug` and `Serialize` render the literal string `"[redacted]"` so whole
+/// events can be logged safely; `Deserialize` accepts any string so payloads
+/// remain deserializable. Read the value back with [`SecretValue::expose`]
+/// only at the trust boundary that persists it (the OS keychain writer).
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretValue(String);
+
+impl SecretValue {
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Reveal the plaintext. Only for writing to the OS keychain.
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[redacted]")
+    }
+}
+
+impl Serialize for SecretValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str("[redacted]")
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(SecretValue)
+    }
+}
 
 /// Top-level event enum - all events in the system
 ///
@@ -159,10 +200,11 @@ pub enum UserEvent {
     ///
     /// `secrets` carries plaintext credential values (env var name → value)
     /// for the OS keychain; they must never be serialized into the config.
+    /// [`SecretValue`] keeps them out of logs and serialized events.
     SaveMcpConfig {
         id: Uuid,
         config: Box<McpConfig>,
-        secrets: Vec<(String, String)>,
+        secrets: Vec<(String, SecretValue)>,
     },
 
     /// User clicked delete MCP

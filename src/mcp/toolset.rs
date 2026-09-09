@@ -77,13 +77,27 @@ pub fn build_env_for_config(
 
     match config.auth_type {
         McpAuthType::None => {}
-        // Keyfile auth is deprecated — treated as an API key lookup.
-        McpAuthType::ApiKey | McpAuthType::Keyfile => {
-            // Secrets are stored per env var name (`mcp:{id}:{var_name}`);
-            // load each one by name so store and load sides agree.
+        // Secret vars resolve from the OS keychain by name (stored at
+        // `mcp:{id}:{var_name}`); a missing entry fails the MCP. Non-secret
+        // vars carry their plain value in the config itself.
+        McpAuthType::ApiKey => {
             for var in &config.env_vars {
-                let key = secrets.load_api_key_named(config.id, &var.name)?;
-                env.insert(var.name.clone(), key);
+                if var.is_secret {
+                    let key = secrets.load_api_key_named(config.id, &var.name)?;
+                    env.insert(var.name.clone(), key);
+                } else {
+                    env.insert(var.name.clone(), var.value.clone().unwrap_or_default());
+                }
+            }
+        }
+        // Keyfile auth resolves the credential from `keyfile_path`; the
+        // keychain is never consulted. Secret vars are skipped entirely and
+        // non-secret vars keep their configured plain value.
+        McpAuthType::Keyfile => {
+            for var in &config.env_vars {
+                if !var.is_secret {
+                    env.insert(var.name.clone(), var.value.clone().unwrap_or_default());
+                }
             }
         }
         McpAuthType::OAuth => {
@@ -100,16 +114,33 @@ pub fn build_env_for_config(
     Ok(env)
 }
 
+/// Derive the HTTP auth header for an env var name/value pair.
+///
+/// Authorization-ish names (containing `token`, `api_key`, or `key`) become an
+/// `Authorization: Bearer` header; everything else becomes an `X-{NAME}`
+/// custom header. Shared by [`build_headers_for_config`] and the live runtime
+/// (`McpRuntime::create_http_client`) so both paths agree.
+#[must_use]
+pub fn derive_http_auth_header(name: &str, value: &str) -> (String, String) {
+    let lower = name.to_lowercase();
+    if lower.contains("token") || lower.contains("api_key") || lower.contains("key") {
+        ("Authorization".to_string(), format!("Bearer {value}"))
+    } else {
+        (format!("X-{}", name.to_uppercase()), value.to_string())
+    }
+}
+
 /// Build HTTP headers for an MCP (OAuth token, keyfile bearer, or keychain API key)
 ///
 /// For `Http` transport with `ApiKey` auth, the keychain secret behind the
-/// single configured env var is delivered as an `x-api-key` header. A missing
-/// secret is an error so misconfigured remote MCPs fail at startup instead of
-/// failing per-request with a provider 401.
+/// single configured secret env var is delivered through the shared header
+/// rule. Zero or multiple secret vars is a configuration error: an
+/// unauthenticated request would only fail later with a provider 401.
 ///
 /// # Errors
 ///
-/// Returns `McpError` if the `ApiKey` secret cannot be loaded from the keychain.
+/// Returns `McpError` when the `ApiKey` secret var count is not exactly one or
+/// the secret cannot be loaded from the keychain.
 pub fn build_headers_for_config(
     config: &McpConfig,
     secrets: &SecretsManager,
@@ -119,7 +150,9 @@ pub fn build_headers_for_config(
     // Priority: oauth_token > keyfile
     if let Some(ref token) = config.oauth_token {
         headers.insert("Authorization".to_string(), format!("Bearer {token}"));
-    } else if let Some(ref keyfile) = config.keyfile_path {
+        return Ok(headers);
+    }
+    if let Some(ref keyfile) = config.keyfile_path {
         if let Ok(token) = std::fs::read_to_string(keyfile) {
             headers.insert(
                 "Authorization".to_string(),
@@ -129,10 +162,18 @@ pub fn build_headers_for_config(
     }
 
     if config.transport == McpTransport::Http && config.auth_type == McpAuthType::ApiKey {
-        if let [var] = config.env_vars.as_slice() {
-            let key = secrets.load_api_key_named(config.id, &var.name)?;
-            headers.insert("x-api-key".to_string(), key);
-        }
+        let secret_vars: Vec<&crate::mcp::EnvVarConfig> =
+            config.env_vars.iter().filter(|var| var.is_secret).collect();
+        let [var] = secret_vars.as_slice() else {
+            return Err(McpError::Config(format!(
+                "MCP {} needs exactly one secret env var for HTTP API key auth, found {}",
+                config.name,
+                secret_vars.len()
+            )));
+        };
+        let key = secrets.load_api_key_named(config.id, &var.name)?;
+        let (header, value) = derive_http_auth_header(&var.name, &key);
+        headers.insert(header, value);
     }
 
     Ok(headers)

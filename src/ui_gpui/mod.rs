@@ -29,6 +29,12 @@ pub mod views;
 
 pub use app_store::{is_store_managed, GpuiAppSnapshot, GpuiAppStore};
 
+/// Strip every CR/LF from clipboard text so pastes stay single-line,
+/// including interior newlines from multi-line copies.
+pub(crate) fn sanitize_single_line(text: &str) -> String {
+    text.chars().filter(|c| *c != '\r' && *c != '\n').collect()
+}
+
 pub use app::GpuiApp;
 pub use bridge::{spawn_user_event_forwarder, GpuiBridge, ViewCommandSink};
 pub use navigation::NavigationState;
