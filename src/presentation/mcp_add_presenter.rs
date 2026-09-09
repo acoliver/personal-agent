@@ -269,18 +269,11 @@ impl McpAddPresenter {
 
                 let selected = entries.into_iter().find(|e| e.name == requested_name);
                 if let Some(entry) = selected {
-                    let env_var_name = entry
-                        .env
-                        .as_ref()
-                        .and_then(|vars| vars.first().map(|(k, _)| k.clone()))
-                        .unwrap_or_else(|| "API_KEY".to_string());
-
                     // Registry service entries flatten env metadata to
                     // name/value pairs; restore the secret flag from the name
                     // so the configure draft and the install path agree.
                     let env: Vec<(String, String, bool)> = entry
                         .env
-                        .clone()
                         .unwrap_or_default()
                         .into_iter()
                         .map(|(name, value)| {
@@ -288,12 +281,16 @@ impl McpAddPresenter {
                             (name, value, is_secret)
                         })
                         .collect();
+                    let env_var_name = env
+                        .first()
+                        .map_or_else(|| "API_KEY".to_string(), |(name, _, _)| name.clone());
                     let registry_env_vars: Vec<crate::mcp::RegistryEnvVar> = env
                         .iter()
                         .map(|(name, _, is_secret)| crate::mcp::RegistryEnvVar {
                             name: name.clone(),
                             is_secret: *is_secret,
-                            is_required: true,
+                            // Registry metadata does not carry the required flag.
+                            is_required: false,
                         })
                         .collect();
 

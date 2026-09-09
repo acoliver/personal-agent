@@ -237,14 +237,14 @@ async fn set_mcp_with_keyfile_auth_and_docker_package_emits_stdio_save_payload(
                     crate::mcp::EnvVarConfig {
                         name: "FILESYSTEM_TOKEN".to_string(),
                         required: true,
-                        is_secret: true,
-                        value: None,
+                        is_secret: false,
+                        value: Some(String::new()),
                     },
                     crate::mcp::EnvVarConfig {
                         name: "ROOT".to_string(),
                         required: true,
-                        is_secret: true,
-                        value: None,
+                        is_secret: false,
+                        value: Some(String::new()),
                     },
                 ]
             );
@@ -642,14 +642,42 @@ async fn save_payload_carries_keyfile_path(cx: &mut TestAppContext) {
                 vec![crate::mcp::EnvVarConfig {
                     name: "FILESYSTEM_TOKEN".to_string(),
                     required: true,
-                    is_secret: true,
-                    value: None,
+                    is_secret: false,
+                    value: Some(String::new()),
                 }]
             );
             assert!(secrets.is_empty());
         }
         other => panic!("expected SaveMcpConfig event, got {other:?}"),
     }
+}
+
+#[gpui::test]
+async fn secret_flagged_env_rows_demote_to_plain_under_non_api_key_auth(cx: &mut TestAppContext) {
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, _cx| {
+        let mut data = McpConfigureData::new();
+        data.name = "Path MCP".to_string();
+        data.command = "npx".to_string();
+        data.auth_method = McpAuthMethod::None;
+        // Registry name-heuristic drift can flag a plain path var as
+        // secret; under auth None the typed value must survive as a plain
+        // row rather than being dropped with the secret slot.
+        data.env = vec![("BUNDLE_PATH".to_string(), "/opt/bundle".to_string(), true)];
+        view.set_mcp(data, true);
+
+        let env_vars = view.state.data.persisted_env_vars();
+        assert_eq!(
+            env_vars,
+            vec![crate::mcp::EnvVarConfig {
+                name: "BUNDLE_PATH".to_string(),
+                required: true,
+                is_secret: false,
+                value: Some("/opt/bundle".to_string()),
+            }]
+        );
+    });
 }
 
 #[gpui::test]

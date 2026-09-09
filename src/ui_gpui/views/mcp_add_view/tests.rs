@@ -462,3 +462,89 @@ async fn paste_appends_to_active_fields_sanitized_and_ignores_no_field(cx: &mut 
         "paste must not emit events beyond the search refresh"
     );
 }
+
+#[gpui::test]
+async fn backspace_during_ime_mark_keeps_truncation_on_char_boundaries(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(McpAddView::new);
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|window, app| {
+        view.update(app, |view: &mut McpAddView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            view.state.active_field = Some(ActiveField::ManualEntry);
+            view.state.manual_entry = "aあ".to_string();
+
+            // Mark the ASCII composition tail "bc" (2 bytes).
+            view.replace_and_mark_text_in_range(None, "bc", None, window, cx);
+            assert_eq!(view.get_state().manual_entry, "aあbc");
+            assert_eq!(view.ime_marked_byte_count, 2);
+
+            // Backspace pops 'c': the marked tail shrinks to 1 byte.
+            view.handle_key_down(&key_event("backspace"), cx);
+            assert_eq!(view.get_state().manual_entry, "aあb");
+            assert_eq!(view.ime_marked_byte_count, 1);
+
+            // Pasting replaces the remaining marked byte. A stale counter
+            // of 2 would cut inside the 3-byte 'あ' and panic; the guard
+            // also keeps arbitrary byte splits from ever truncating there.
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("XY".to_string()));
+            view.handle_key_down(&key_event("cmd-v"), cx);
+            assert_eq!(view.get_state().manual_entry, "aあXY");
+            assert_eq!(view.ime_marked_byte_count, 0);
+        });
+    });
+
+    assert!(
+        user_rx.try_recv().is_err(),
+        "manual-entry editing must not emit search events"
+    );
+}
+
+#[gpui::test]
+async fn multibyte_marked_text_backspaces_clear_without_panicking(cx: &mut TestAppContext) {
+    let view = cx.new(McpAddView::new);
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|window, app| {
+        view.update(app, |view: &mut McpAddView, cx| {
+            view.state.active_field = Some(ActiveField::ManualEntry);
+            view.replace_text_in_range(None, "a", window, cx);
+            view.replace_and_mark_text_in_range(None, "こんにちは", None, window, cx);
+            assert_eq!(view.get_state().manual_entry, "aこんにちは");
+            assert_eq!(view.ime_marked_byte_count, 15);
+            assert_eq!(view.marked_text_range(window, cx), Some(1..6));
+
+            // Each backspace pops one 3-byte char and shrinks the mark.
+            for expected in (0..15).step_by(3).rev() {
+                view.handle_key_down(&key_event("backspace"), cx);
+                assert_eq!(view.ime_marked_byte_count, expected);
+            }
+            assert_eq!(view.get_state().manual_entry, "a");
+            assert_eq!(view.marked_text_range(window, cx), None);
+        });
+    });
+}
+
+#[gpui::test]
+async fn paste_during_multibyte_ime_mark_replaces_marked_text(cx: &mut TestAppContext) {
+    let view = cx.new(McpAddView::new);
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|window, app| {
+        view.update(app, |view: &mut McpAddView, cx| {
+            view.state.active_field = Some(ActiveField::ManualEntry);
+            view.replace_text_in_range(None, "hello ", window, cx);
+            view.replace_and_mark_text_in_range(None, "わに", None, window, cx);
+            assert_eq!(view.get_state().manual_entry, "hello わに");
+            assert_eq!(view.ime_marked_byte_count, 6);
+
+            // The paste replaces the multibyte marked range instead of
+            // appending after it.
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("world".to_string()));
+            view.handle_key_down(&key_event("cmd-v"), cx);
+            assert_eq!(view.get_state().manual_entry, "hello world");
+            assert_eq!(view.ime_marked_byte_count, 0);
+        });
+    });
+}

@@ -166,23 +166,28 @@ impl McpConfigureData {
     }
 
     /// Env vars to persist: draft pairs become `EnvVarConfig` entries whose
-    /// plain value rides in the config only for non-secret vars. An `ApiKey`
-    /// draft without any secret var derives one from `env_var_name` so the
-    /// typed key has a keychain slot at runtime; when a plain var already
-    /// carries that name it is converted in place rather than duplicated.
+    /// plain value rides in the config only for non-secret vars.
+    ///
+    /// Keychain-backed secret rows only exist under `ApiKey` auth — the
+    /// runtime rejects secret rows under `Keyfile` and ignores them under
+    /// `None` — so a secret flag under another method is demoted to a plain
+    /// row that keeps the typed value instead of silently discarding it. An
+    /// `ApiKey` draft without any secret var derives one from `env_var_name`
+    /// so the typed key has a keychain slot at runtime; when a plain var
+    /// already carries that name it is converted in place rather than
+    /// duplicated.
     fn persisted_env_vars(&self) -> Vec<crate::mcp::EnvVarConfig> {
         let mut env_vars: Vec<crate::mcp::EnvVarConfig> = self
             .env
             .iter()
-            .map(|(name, value, is_secret)| crate::mcp::EnvVarConfig {
-                name: name.clone(),
-                required: true,
-                is_secret: *is_secret,
-                value: if *is_secret {
-                    None
-                } else {
-                    Some(value.clone())
-                },
+            .map(|(name, value, is_secret)| {
+                let is_secret = *is_secret && self.auth_method == McpAuthMethod::ApiKey;
+                crate::mcp::EnvVarConfig {
+                    name: name.clone(),
+                    required: true,
+                    is_secret,
+                    value: if is_secret { None } else { Some(value.clone()) },
+                }
             })
             .collect();
         if self.auth_method == McpAuthMethod::ApiKey

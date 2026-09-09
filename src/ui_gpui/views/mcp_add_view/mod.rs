@@ -166,6 +166,21 @@ impl McpAddState {
     }
 }
 
+/// Payload consumed by [`McpAddView::apply_configure_draft`]: the subset of
+/// `ViewCommand::McpConfigureDraftLoaded` this view acts on, grouped so the
+/// hand-off is one struct move instead of a positional argument pile.
+struct ConfigureDraftPayload {
+    id: String,
+    name: String,
+    package: String,
+    package_type: crate::mcp::McpPackageType,
+    runtime_hint: Option<String>,
+    command: String,
+    args: Vec<String>,
+    env: Vec<(String, String, bool)>,
+    url: Option<String>,
+}
+
 /// MCP Add view component
 /// @plan PLAN-20250130-GPUIREDUX.P09
 pub struct McpAddView {
@@ -255,10 +270,19 @@ impl McpAddView {
     fn backspace_active_field(&mut self) {
         match self.state.active_field {
             Some(ActiveField::ManualEntry) => {
-                self.state.manual_entry.pop();
+                if let Some(popped) = self.state.manual_entry.pop() {
+                    // A marked composition tail shrinks with the field;
+                    // leaving the counter stale desynchronizes the next
+                    // IME replacement from the marked range.
+                    self.ime_marked_byte_count =
+                        self.ime_marked_byte_count.saturating_sub(popped.len_utf8());
+                }
             }
             Some(ActiveField::SearchQuery) => {
-                self.state.search_query.pop();
+                if let Some(popped) = self.state.search_query.pop() {
+                    self.ime_marked_byte_count =
+                        self.ime_marked_byte_count.saturating_sub(popped.len_utf8());
+                }
                 self.state.selected_result_id = None;
             }
             None => {}
@@ -270,18 +294,21 @@ impl McpAddView {
             return;
         }
 
-        match self.state.active_field {
-            Some(ActiveField::ManualEntry) => {
-                let len = self.state.manual_entry.len();
-                self.state
-                    .manual_entry
-                    .truncate(len.saturating_sub(byte_count));
+        // IME APIs can hand back byte counts that split a multi-byte char;
+        // walk the cut point back to the nearest char boundary before
+        // truncating so arbitrary external input cannot panic here.
+        let cut_marked_tail = |text: &mut String| {
+            let mut target = text.len().saturating_sub(byte_count);
+            while !text.is_char_boundary(target) {
+                target -= 1;
             }
+            text.truncate(target);
+        };
+
+        match self.state.active_field {
+            Some(ActiveField::ManualEntry) => cut_marked_tail(&mut self.state.manual_entry),
             Some(ActiveField::SearchQuery) => {
-                let len = self.state.search_query.len();
-                self.state
-                    .search_query
-                    .truncate(len.saturating_sub(byte_count));
+                cut_marked_tail(&mut self.state.search_query);
                 self.state.selected_result_id = None;
             }
             None => {}
@@ -486,23 +513,18 @@ impl McpAddView {
 
     /// Apply a configure-screen draft to search state and route to the
     /// configure view.
-    ///
-    /// Arguments mirror the payload of `ViewCommand::McpConfigureDraftLoaded`
-    /// minus the fields this view ignores, so the match arm stays a mechanical
-    /// hand-off.
-    #[allow(clippy::too_many_arguments)]
-    fn apply_configure_draft(
-        &mut self,
-        id: &str,
-        name: String,
-        package: String,
-        package_type: crate::mcp::McpPackageType,
-        runtime_hint: Option<String>,
-        command: String,
-        args: Vec<String>,
-        env: &[(String, String, bool)],
-        url: Option<String>,
-    ) {
+    fn apply_configure_draft(&mut self, payload: ConfigureDraftPayload) {
+        let ConfigureDraftPayload {
+            id,
+            name,
+            package,
+            package_type,
+            runtime_hint,
+            command,
+            args,
+            env,
+            url,
+        } = payload;
         tracing::info!("MCP draft loaded for configure: {}", name);
         self.state.manual_entry = url.as_ref().map_or_else(
             || {
@@ -518,7 +540,7 @@ impl McpAddView {
         );
 
         let (source_hint, normalized_id) = id.split_once("::").map_or_else(
-            || (None, id.to_string()),
+            || (None, id.clone()),
             |(source, raw_id)| (Some(source.to_string()), raw_id.to_string()),
         );
         self.state.selected_result_id = Some(normalized_id.clone());
@@ -581,17 +603,17 @@ impl McpAddView {
                 stored_secret_names: _,
                 url,
             } => {
-                self.apply_configure_draft(
-                    &id,
+                self.apply_configure_draft(ConfigureDraftPayload {
+                    id,
                     name,
                     package,
                     package_type,
                     runtime_hint,
                     command,
                     args,
-                    &env,
+                    env,
                     url,
-                );
+                });
             }
             ViewCommand::McpRegistrySearchResults { results } => {
                 let mapped = results
