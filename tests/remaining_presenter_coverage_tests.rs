@@ -413,8 +413,13 @@ async fn collect_mpsc_commands(
 }
 
 #[tokio::test]
+// tokio's MutexGuard is async-aware and made to be held across await points;
+// clippy's await_holding_lock lint matches guard type names and cannot tell
+// it apart from a std guard.
+#[allow(clippy::await_holding_lock)]
 async fn api_key_manager_lists_keys_and_handles_store_delete_errors() {
     secure_store::use_mock_backend();
+    let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
     let _ = secure_store::api_keys::delete("used-label");
     let _ = secure_store::api_keys::delete("");
     secure_store::api_keys::store("used-label", "secret-1234").expect("store used label for test");
@@ -1164,8 +1169,13 @@ async fn mcp_configure_draft_loads_env_vars_from_app_config() {
 }
 
 #[tokio::test]
+// tokio's MutexGuard is async-aware and made to be held across await points;
+// clippy's await_holding_lock lint matches guard type names and cannot tell
+// it apart from a std guard.
+#[allow(clippy::await_holding_lock)]
 async fn mcp_configure_save_stores_keychain_secrets() {
     personal_agent::services::secure_store::use_mock_backend();
+    let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
     let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(Uuid::new_v4())));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = broadcast::channel(128);
