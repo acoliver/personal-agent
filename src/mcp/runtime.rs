@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::mcp::{
-    McpConfig, McpManager, McpStatus, McpStatusManager, McpTransport, SecretsManager,
+    McpAuthType, McpConfig, McpManager, McpStatus, McpStatusManager, McpTransport, SecretsManager,
 };
 
 /// Active MCP connection
@@ -141,25 +141,19 @@ impl McpRuntime {
         env: HashMap<String, String>,
     ) -> Result<McpClient, String> {
         match config.transport {
-            McpTransport::Http => Ok(Self::create_http_client(config, &env)),
+            McpTransport::Http => Self::create_http_client(config, &env).inspect_err(|e| {
+                self.status_manager
+                    .set_status(config.id, McpStatus::Error(e.clone()));
+            }),
             McpTransport::Stdio => self.create_stdio_client(config, env).await,
         }
     }
 
-    fn create_http_client(config: &McpConfig, env: &HashMap<String, String>) -> McpClient {
-        let mut headers = std::collections::HashMap::new();
-
-        // Check for OAuth token first (highest priority for Smithery servers)
-        if let Some(ref oauth_token) = config.oauth_token {
-            headers.insert("Authorization".to_string(), format!("Bearer {oauth_token}"));
-        } else {
-            // Derive auth headers from env vars through the shared rule so
-            // this path and the toolset header builder agree.
-            for (key, value) in env {
-                let (header, derived) = crate::mcp::toolset::derive_http_auth_header(key, value);
-                headers.insert(header, derived);
-            }
-        }
+    fn create_http_client(
+        config: &McpConfig,
+        env: &HashMap<String, String>,
+    ) -> Result<McpClient, String> {
+        let headers = Self::http_auth_headers(config, env)?;
 
         // Create HTTP transport with custom headers if needed
         let transport = if headers.is_empty() {
@@ -171,7 +165,75 @@ impl McpRuntime {
                 headers,
             )
         };
-        McpClient::new(transport)
+        Ok(McpClient::new(transport))
+    }
+
+    /// Compute the Authorization credential plus custom headers for an HTTP MCP.
+    ///
+    /// Exactly one credential source wins, in priority order: the OAuth
+    /// token, the keyfile bearer (Keyfile auth reads `keyfile_path` here so
+    /// the live path matches [`crate::mcp::toolset::build_headers_for_config`]),
+    /// or the single `ApiKey` secret env var through the shared
+    /// [`crate::mcp::toolset::derive_http_auth_header`] rule. Every other env
+    /// var becomes an `X-{NAME}` custom header and can never produce a second
+    /// `Authorization`, no matter how token-ish its name looks.
+    fn http_auth_headers(
+        config: &McpConfig,
+        env: &HashMap<String, String>,
+    ) -> Result<HashMap<String, String>, String> {
+        let mut headers = HashMap::new();
+        let mut credential_var: Option<&str> = None;
+
+        // Priority: oauth_token > keyfile > single ApiKey secret var
+        if let Some(ref oauth_token) = config.oauth_token {
+            headers.insert("Authorization".to_string(), format!("Bearer {oauth_token}"));
+        } else if config.auth_type == McpAuthType::Keyfile {
+            let path = config.keyfile_path.as_ref().ok_or_else(|| {
+                format!(
+                    "MCP {} uses Keyfile auth without a keyfile path",
+                    config.name
+                )
+            })?;
+            let token = std::fs::read_to_string(path).map_err(|e| {
+                format!(
+                    "MCP {}: cannot read keyfile {}: {e}",
+                    config.name,
+                    path.display()
+                )
+            })?;
+            headers.insert(
+                "Authorization".to_string(),
+                format!("Bearer {}", token.trim()),
+            );
+        } else if config.auth_type == McpAuthType::ApiKey {
+            let secret_vars: Vec<&crate::mcp::EnvVarConfig> =
+                config.env_vars.iter().filter(|var| var.is_secret).collect();
+            let [var] = secret_vars.as_slice() else {
+                return Err(format!(
+                    "MCP {} needs exactly one secret env var for HTTP API key auth, found {}",
+                    config.name,
+                    secret_vars.len()
+                ));
+            };
+            let value = env.get(&var.name).ok_or_else(|| {
+                format!(
+                    "MCP {}: secret env var {} is missing from the resolved environment",
+                    config.name, var.name
+                )
+            })?;
+            let (header, derived) = crate::mcp::toolset::derive_http_auth_header(&var.name, value);
+            headers.insert(header, derived);
+            credential_var = Some(var.name.as_str());
+        }
+
+        for (name, value) in env {
+            if credential_var == Some(name.as_str()) {
+                continue;
+            }
+            headers.insert(format!("X-{}", name.to_uppercase()), value.clone());
+        }
+
+        Ok(headers)
     }
     async fn create_stdio_client(
         &self,
@@ -443,5 +505,131 @@ mod tests {
         let runtime = McpRuntime::new(crate::mcp::SecretsManager::new());
         assert!(runtime.find_tool_provider_metadata("missing").is_none());
         assert!(runtime.find_tool_provider("missing").is_none());
+    }
+
+    fn secret_var(name: &str) -> EnvVarConfig {
+        EnvVarConfig {
+            name: name.to_string(),
+            required: true,
+            is_secret: true,
+            value: None,
+        }
+    }
+
+    fn plain_var(name: &str, value: &str) -> EnvVarConfig {
+        EnvVarConfig {
+            name: name.to_string(),
+            required: true,
+            is_secret: false,
+            value: Some(value.to_string()),
+        }
+    }
+
+    #[test]
+    fn http_auth_headers_error_when_api_key_has_multiple_secrets() {
+        let mut config = make_config(Uuid::new_v4(), "multi-secret");
+        config.auth_type = McpAuthType::ApiKey;
+        config.env_vars = vec![secret_var("PRIMARY_TOKEN"), secret_var("SECONDARY_TOKEN")];
+
+        let err = McpRuntime::http_auth_headers(&config, &HashMap::new())
+            .expect_err("zero or multiple secret vars must fail fast for Http + ApiKey");
+        assert!(
+            err.contains("multi-secret") && err.contains("found 2"),
+            "the error must name the MCP and the offending count, got: {err}"
+        );
+    }
+
+    #[test]
+    fn http_auth_headers_single_secret_yields_one_authorization_and_x_headers() {
+        let mut config = make_config(Uuid::new_v4(), "exa");
+        config.auth_type = McpAuthType::ApiKey;
+        config.env_vars = vec![
+            secret_var("EXA_API_KEY"),
+            plain_var("WORKSPACE_TOKEN", "acme"),
+        ];
+        let env = HashMap::from([
+            ("EXA_API_KEY".to_string(), "sk-1".to_string()),
+            ("WORKSPACE_TOKEN".to_string(), "acme".to_string()),
+        ]);
+
+        let headers = McpRuntime::http_auth_headers(&config, &env)
+            .expect("single-secret ApiKey config must produce headers");
+
+        // Exactly one Authorization: if the token-named plain var were also
+        // run through the bearer rule it would overwrite this entry.
+        assert_eq!(
+            headers.get("Authorization"),
+            Some(&"Bearer sk-1".to_string())
+        );
+        assert_eq!(headers.get("X-WORKSPACE_TOKEN"), Some(&"acme".to_string()));
+    }
+
+    #[test]
+    fn http_auth_headers_keyfile_bearer_is_read_from_keyfile_path() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let keyfile = temp.path().join("key.txt");
+        std::fs::write(&keyfile, "file-token\n").expect("write keyfile");
+
+        let mut config = make_config(Uuid::new_v4(), "keyfile-mcp");
+        config.auth_type = McpAuthType::Keyfile;
+        config.keyfile_path = Some(keyfile);
+
+        let headers = McpRuntime::http_auth_headers(&config, &HashMap::new())
+            .expect("readable keyfile must yield a bearer header");
+        assert_eq!(
+            headers.get("Authorization"),
+            Some(&"Bearer file-token".to_string())
+        );
+    }
+
+    #[test]
+    fn http_auth_headers_error_when_keyfile_is_missing_or_unreadable() {
+        let mut config = make_config(Uuid::new_v4(), "keyfile-mcp");
+        config.auth_type = McpAuthType::Keyfile;
+
+        assert!(
+            McpRuntime::http_auth_headers(&config, &HashMap::new()).is_err(),
+            "Keyfile auth without a keyfile path must fail fast"
+        );
+
+        config.keyfile_path = Some(std::path::PathBuf::from("/nonexistent/dir/key.txt"));
+        assert!(
+            McpRuntime::http_auth_headers(&config, &HashMap::new()).is_err(),
+            "an unreadable keyfile must fail fast instead of dropping the credential"
+        );
+    }
+
+    #[test]
+    fn http_auth_headers_oauth_token_wins_and_env_vars_stay_custom() {
+        let mut config = make_config(Uuid::new_v4(), "oauth-mcp");
+        config.oauth_token = Some("oauth-token".to_string());
+        config.env_vars = vec![secret_var("EXA_API_KEY"), plain_var("WORKSPACE", "acme")];
+        let env = HashMap::from([
+            ("EXA_API_KEY".to_string(), "sk-1".to_string()),
+            ("WORKSPACE".to_string(), "acme".to_string()),
+        ]);
+
+        let headers = McpRuntime::http_auth_headers(&config, &env)
+            .expect("oauth config must produce headers");
+        assert_eq!(
+            headers.get("Authorization"),
+            Some(&"Bearer oauth-token".to_string())
+        );
+        assert_eq!(headers.get("X-EXA_API_KEY"), Some(&"sk-1".to_string()));
+        assert_eq!(headers.get("X-WORKSPACE"), Some(&"acme".to_string()));
+    }
+
+    #[test]
+    fn http_auth_headers_error_when_api_key_secret_is_missing_from_env() {
+        let mut config = make_config(Uuid::new_v4(), "exa");
+        config.auth_type = McpAuthType::ApiKey;
+        config.env_vars = vec![secret_var("EXA_API_KEY")];
+
+        let err = McpRuntime::http_auth_headers(&config, &HashMap::new())
+            .expect_err("a declared secret var absent from env must fail fast");
+        assert!(
+            err.contains("EXA_API_KEY"),
+            "the error must name the missing secret var, got: {err}"
+        );
     }
 }

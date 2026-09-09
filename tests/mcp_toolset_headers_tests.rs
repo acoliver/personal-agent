@@ -60,7 +60,7 @@ fn build_headers_falls_back_to_keyfile() {
 }
 
 #[test]
-fn build_headers_emits_x_api_key_for_http_api_key_auth() {
+fn build_headers_sends_bearer_authorization_for_http_api_key_auth() {
     personal_agent::services::secure_store::use_mock_backend();
     let secrets = SecretsManager::new();
 
@@ -108,7 +108,7 @@ fn build_headers_errors_when_api_key_secret_is_missing() {
 }
 
 #[test]
-fn build_headers_skips_x_api_key_for_stdio_transport() {
+fn build_headers_omits_all_headers_for_stdio_transport() {
     personal_agent::services::secure_store::use_mock_backend();
     let secrets = SecretsManager::new();
 

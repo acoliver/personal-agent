@@ -59,6 +59,24 @@ pub fn env_var_name_is_secret(name: &str) -> bool {
         || upper.contains("PAT")
 }
 
+/// Whether `name` is safe to use as an MCP env var name.
+///
+/// Env var names are free-form text typed in the UI or read from remote
+/// registry metadata, and they flow into HTTP header material. A name with
+/// whitespace or control characters would produce malformed or injectable
+/// headers, so the accepted set is deliberately narrow: non-empty, at most
+/// 64 chars, starting with an ASCII letter or underscore, and containing
+/// only ASCII letters, digits, or underscores.
+#[must_use]
+pub fn env_var_name_is_valid(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    name.len() <= 64 && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum McpPackageArgType {
@@ -155,4 +173,39 @@ pub fn detect_auth_type(env_vars: &[RegistryEnvVar]) -> McpAuthType {
     }
 
     McpAuthType::None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_var_name_validation_accepts_safe_names() {
+        assert!(env_var_name_is_valid("API_KEY"));
+        assert!(env_var_name_is_valid("_private"));
+        assert!(env_var_name_is_valid("a"));
+        assert!(env_var_name_is_valid("A1_b2"));
+        assert!(env_var_name_is_valid(&"A".repeat(64)));
+    }
+
+    #[test]
+    fn env_var_name_validation_rejects_empty_and_too_long_names() {
+        assert!(!env_var_name_is_valid(""));
+        assert!(!env_var_name_is_valid(&"A".repeat(65)));
+    }
+
+    #[test]
+    fn env_var_name_validation_rejects_names_with_whitespace() {
+        assert!(!env_var_name_is_valid("EXA KEY"));
+        assert!(!env_var_name_is_valid("KEY\r\n"));
+        assert!(!env_var_name_is_valid("KEY\n"));
+        assert!(!env_var_name_is_valid("\tKEY"));
+    }
+
+    #[test]
+    fn env_var_name_validation_rejects_bad_first_or_body_chars() {
+        assert!(!env_var_name_is_valid("1KEY"));
+        assert!(!env_var_name_is_valid("KEY-NAME"));
+        assert!(!env_var_name_is_valid("CLÉ"));
+    }
 }

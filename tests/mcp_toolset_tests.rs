@@ -114,21 +114,129 @@ fn build_env_for_config_keyfile_auth_does_not_touch_keychain() {
     let mut config = base_config();
     config.auth_type = McpAuthType::Keyfile;
     config.keyfile_path = Some(std::path::PathBuf::from("/tmp/keyfile-auth.json"));
-    // The secret var HAS a stored entry; keyfile auth must ignore it.
-    secrets
-        .store_api_key_named(config.id, "API_KEY", "unused-keychain-value")
-        .unwrap();
-    config.env_vars.push(personal_agent::mcp::EnvVarConfig {
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
         name: "WORKSPACE".to_string(),
         required: false,
         is_secret: false,
         value: Some("acme".to_string()),
-    });
+    }];
+
+    let env = build_env_for_config(&config, &secrets).unwrap();
+    assert_eq!(
+        env.get("WORKSPACE"),
+        Some(&"acme".to_string()),
+        "keyfile auth resolves from keyfile_path and must never keychain-load env vars"
+    );
+}
+
+#[test]
+fn build_env_for_config_keyfile_auth_rejects_secret_env_vars() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.auth_type = McpAuthType::Keyfile;
+    config.keyfile_path = Some(std::path::PathBuf::from("/tmp/keyfile-auth.json"));
+    // A secret var has no keyfile slot to resolve into; it used to be
+    // silently dropped, losing the credential.
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "API_KEY".to_string(),
+        required: true,
+        is_secret: true,
+        value: None,
+    }];
+    secrets
+        .store_api_key_named(config.id, "API_KEY", "unused-keychain-value")
+        .unwrap();
+
+    let result = build_env_for_config(&config, &secrets);
+    let err = result.expect_err("Keyfile auth with a secret env var must fail fast");
+    assert!(
+        err.to_string().contains("API_KEY"),
+        "the error must name the unusable secret var, got: {err}"
+    );
+}
+
+#[test]
+fn build_env_for_config_requires_value_for_required_plain_var() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "REGION".to_string(),
+        required: true,
+        is_secret: false,
+        value: None,
+    }];
+
+    let result = build_env_for_config(&config, &secrets);
+    let err = result.expect_err("a required plain var with no value must fail fast");
+    assert!(
+        err.to_string().contains("REGION"),
+        "the error must name the unconfigured var, got: {err}"
+    );
+}
+
+#[test]
+fn build_env_for_config_skips_optional_plain_var_without_value() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "REGION".to_string(),
+        required: false,
+        is_secret: false,
+        value: None,
+    }];
 
     let env = build_env_for_config(&config, &secrets).unwrap();
     assert!(
-        !env.contains_key("API_KEY"),
-        "keyfile auth resolves from keyfile_path and must never keychain-load secret vars"
+        !env.contains_key("REGION"),
+        "an optional var without a value must be absent, not present as an empty string"
     );
-    assert_eq!(env.get("WORKSPACE"), Some(&"acme".to_string()));
+}
+
+#[test]
+fn build_env_for_config_rejects_invalid_env_var_names() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    for bad_name in ["BAD NAME", "KEY\r\n", "", "1KEY"] {
+        let mut config = base_config();
+        config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+            name: bad_name.to_string(),
+            required: true,
+            is_secret: false,
+            value: Some("value".to_string()),
+        }];
+
+        let result = build_env_for_config(&config, &secrets);
+        assert!(
+            result.is_err(),
+            "env var name {bad_name:?} must be rejected before it can reach header material"
+        );
+    }
+}
+
+#[test]
+fn build_env_for_config_rejects_line_breaks_in_plain_value() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let secrets = SecretsManager::new();
+
+    let mut config = base_config();
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "REGION".to_string(),
+        required: true,
+        is_secret: false,
+        value: Some("eu-west\r\n-1".to_string()),
+    }];
+
+    let result = build_env_for_config(&config, &secrets);
+    let err = result.expect_err("a CRLF in a plain value must fail fast");
+    assert!(
+        err.to_string().contains("REGION"),
+        "the error must name the offending var, got: {err}"
+    );
 }
