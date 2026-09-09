@@ -3,6 +3,7 @@
 //! @plan PLAN-20250130-GPUIREDUX.P10
 //! @requirement REQ-UI-MC
 
+mod ime;
 mod render;
 
 use gpui::FocusHandle;
@@ -11,6 +12,13 @@ use std::sync::Arc;
 use crate::events::types::UserEvent;
 use crate::presentation::view_command::ViewCommand;
 use crate::ui_gpui::bridge::GpuiBridge;
+
+/// Input-capable fields on the configure screen
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ActiveField {
+    ApiKey,
+    KeyfilePath,
+}
 
 /// Auth method for MCP configuration
 /// @plan PLAN-20250130-GPUIREDUX.P10
@@ -185,6 +193,9 @@ pub struct McpConfigureView {
     pub(super) state: McpConfigureState,
     pub(super) bridge: Option<Arc<GpuiBridge>>,
     pub(super) focus_handle: FocusHandle,
+    pub(super) active_field: Option<ActiveField>,
+    pub(super) show_auth_dropdown: bool,
+    pub(super) ime_marked_byte_count: usize,
 }
 
 impl McpConfigureView {
@@ -193,6 +204,9 @@ impl McpConfigureView {
             state: McpConfigureState::new_mcp(),
             bridge: None,
             focus_handle: cx.focus_handle(),
+            active_field: None,
+            show_auth_dropdown: false,
+            ime_marked_byte_count: 0,
         }
     }
 
@@ -236,15 +250,156 @@ impl McpConfigureView {
         });
     }
 
-    fn handle_key_down(&self, event: &gpui::KeyDownEvent) {
-        let key = &event.keystroke.key;
+    fn active_field_text(&self) -> &str {
+        match self.active_field {
+            Some(ActiveField::ApiKey) => &self.state.data.api_key,
+            Some(ActiveField::KeyfilePath) => &self.state.data.keyfile_path,
+            None => "",
+        }
+    }
+
+    fn append_to_active_field(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        match self.active_field {
+            Some(ActiveField::ApiKey) => self.state.data.api_key.push_str(text),
+            Some(ActiveField::KeyfilePath) => self.state.data.keyfile_path.push_str(text),
+            None => {}
+        }
+    }
+
+    fn backspace_active_field(&mut self) {
+        match self.active_field {
+            Some(ActiveField::ApiKey) => {
+                self.state.data.api_key.pop();
+            }
+            Some(ActiveField::KeyfilePath) => {
+                self.state.data.keyfile_path.pop();
+            }
+            None => {}
+        }
+    }
+
+    fn remove_trailing_bytes_from_active_field(&mut self, byte_count: usize) {
+        if byte_count == 0 {
+            return;
+        }
+
+        match self.active_field {
+            Some(ActiveField::ApiKey) => {
+                let len = self.state.data.api_key.len();
+                self.state
+                    .data
+                    .api_key
+                    .truncate(len.saturating_sub(byte_count));
+            }
+            Some(ActiveField::KeyfilePath) => {
+                let len = self.state.data.keyfile_path.len();
+                self.state
+                    .data
+                    .keyfile_path
+                    .truncate(len.saturating_sub(byte_count));
+            }
+            None => {}
+        }
+    }
+
+    fn sanitized_clipboard_text(text: &str) -> String {
+        text.trim_matches(|c| c == '\r' || c == '\n').to_string()
+    }
+
+    /// Paste sanitized text into the active field (testable seam for cmd-v).
+    fn paste_text(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
+        let sanitized = Self::sanitized_clipboard_text(text);
+        if sanitized.is_empty() || self.active_field.is_none() {
+            return;
+        }
+        self.append_to_active_field(&sanitized);
+        cx.notify();
+    }
+
+    fn activate_field(
+        &mut self,
+        field: ActiveField,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.active_field = Some(field);
+        self.show_auth_dropdown = false;
+        window.activate_window();
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    fn toggle_auth_dropdown(&mut self, cx: &mut gpui::Context<Self>) {
+        self.show_auth_dropdown = !self.show_auth_dropdown;
+        self.active_field = None;
+        cx.notify();
+    }
+
+    fn select_auth_method(&mut self, method: McpAuthMethod, cx: &mut gpui::Context<Self>) {
+        self.state.data.auth_method = method;
+        self.show_auth_dropdown = false;
+        cx.notify();
+    }
+
+    fn handle_key_down(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let key = event.keystroke.key.as_str();
         let modifiers = &event.keystroke.modifiers;
 
-        if key == "escape" || (modifiers.platform && key == "w") {
-            Self::navigate_to_settings();
+        if modifiers.platform && key == "v" {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    self.paste_text(&text, cx);
+                }
+            }
+            return;
         }
+
+        if key == "escape" || (modifiers.platform && key == "w") {
+            if self.show_auth_dropdown {
+                self.show_auth_dropdown = false;
+                cx.notify();
+                return;
+            }
+            Self::navigate_to_settings();
+            return;
+        }
+
         if modifiers.platform && key == "s" {
             self.save_current();
+            return;
+        }
+
+        if modifiers.platform || modifiers.control {
+            return;
+        }
+
+        if key == "backspace" {
+            if self.ime_marked_byte_count > 0 {
+                self.remove_trailing_bytes_from_active_field(self.ime_marked_byte_count);
+                self.ime_marked_byte_count = 0;
+            } else {
+                self.backspace_active_field();
+            }
+            cx.notify();
+            return;
+        }
+
+        if key == "tab" {
+            self.active_field = Some(match self.active_field {
+                Some(ActiveField::ApiKey) => ActiveField::KeyfilePath,
+                Some(ActiveField::KeyfilePath) | None => ActiveField::ApiKey,
+            });
+            self.show_auth_dropdown = false;
+            cx.notify();
         }
     }
 
@@ -293,6 +448,53 @@ impl McpConfigureView {
             },
         };
 
+        let auth_type = match d.auth_method {
+            McpAuthMethod::None => crate::mcp::McpAuthType::None,
+            McpAuthMethod::ApiKey => crate::mcp::McpAuthType::ApiKey,
+            McpAuthMethod::Keyfile => crate::mcp::McpAuthType::Keyfile,
+            McpAuthMethod::OAuth => crate::mcp::McpAuthType::OAuth,
+        };
+
+        let mut env_vars: Vec<crate::mcp::EnvVarConfig> =
+            d.env.as_ref().map_or_else(Vec::new, |pairs| {
+                pairs
+                    .iter()
+                    .map(|(k, _)| crate::mcp::EnvVarConfig {
+                        name: k.clone(),
+                        required: true,
+                        is_secret: true,
+                    })
+                    .collect()
+            });
+        if env_vars.is_empty() && d.auth_method == McpAuthMethod::ApiKey {
+            env_vars.push(crate::mcp::EnvVarConfig {
+                name: d.env_var_name.clone(),
+                required: true,
+                is_secret: true,
+            });
+        }
+
+        let keyfile_path =
+            if d.auth_method == McpAuthMethod::Keyfile && !d.keyfile_path.trim().is_empty() {
+                Some(std::path::PathBuf::from(&d.keyfile_path))
+            } else {
+                None
+            };
+
+        // The typed key travels only in the secrets payload (env var name →
+        // value) so the presenter can store it in the OS keychain; it is never
+        // serialized into the config.
+        let secrets = if d.auth_method == McpAuthMethod::ApiKey && !d.api_key.is_empty() {
+            let var_name = d
+                .env
+                .as_ref()
+                .and_then(|pairs| pairs.first())
+                .map_or_else(|| d.env_var_name.clone(), |(k, _)| k.clone());
+            vec![(var_name, d.api_key.clone())]
+        } else {
+            Vec::new()
+        };
+
         let config = crate::mcp::McpConfig {
             id,
             name: d.name.clone(),
@@ -300,18 +502,10 @@ impl McpConfigureView {
             source,
             package,
             transport,
-            auth_type: crate::mcp::McpAuthType::None,
-            env_vars: d.env.as_ref().map_or_else(Vec::new, |pairs| {
-                pairs
-                    .iter()
-                    .map(|(k, _)| crate::mcp::EnvVarConfig {
-                        name: k.clone(),
-                        required: true,
-                    })
-                    .collect()
-            }),
+            auth_type,
+            env_vars,
             package_args: vec![],
-            keyfile_path: None,
+            keyfile_path,
             config: serde_json::Value::Null,
             oauth_token: None,
         };
@@ -319,6 +513,7 @@ impl McpConfigureView {
         self.emit(&UserEvent::SaveMcpConfig {
             id,
             config: Box::new(config),
+            secrets,
         });
     }
 
@@ -369,6 +564,14 @@ impl McpConfigureView {
                 self.state.data.args = args;
                 self.state.data.env = env;
                 self.state.data.url = url;
+                // Fresh edit session: drop credentials captured for a previous
+                // MCP and close any open input UI.
+                self.state.data.api_key.clear();
+                self.state.data.keyfile_path.clear();
+                self.state.mask_api_key = true;
+                self.active_field = None;
+                self.show_auth_dropdown = false;
+                self.ime_marked_byte_count = 0;
                 self.state.is_new = self
                     .state
                     .data
@@ -459,7 +662,11 @@ mod tests {
         });
 
         match user_rx.recv().expect("save mcp config event") {
-            UserEvent::SaveMcpConfig { id, config } => {
+            UserEvent::SaveMcpConfig {
+                id,
+                config,
+                secrets,
+            } => {
                 assert_eq!(id, Uuid::nil());
                 assert_eq!(config.name, "Exa Remote");
                 assert_eq!(
@@ -474,6 +681,7 @@ mod tests {
                     }
                 );
                 assert!(config.env_vars.is_empty());
+                assert!(secrets.is_empty());
             }
             other => panic!("expected SaveMcpConfig event, got {other:?}"),
         }
@@ -597,7 +805,11 @@ mod tests {
         });
 
         match user_rx.recv().expect("save docker mcp event") {
-            UserEvent::SaveMcpConfig { id, config } => {
+            UserEvent::SaveMcpConfig {
+                id,
+                config,
+                secrets,
+            } => {
                 assert_eq!(id, saved_id);
                 assert_eq!(config.name, "Docker Filesystem");
                 assert_eq!(
@@ -622,13 +834,21 @@ mod tests {
                         crate::mcp::EnvVarConfig {
                             name: "FILESYSTEM_TOKEN".to_string(),
                             required: true,
+                            is_secret: true,
                         },
                         crate::mcp::EnvVarConfig {
                             name: "ROOT".to_string(),
                             required: true,
+                            is_secret: true,
                         },
                     ]
                 );
+                assert_eq!(config.auth_type, crate::mcp::McpAuthType::Keyfile);
+                assert_eq!(
+                    config.keyfile_path,
+                    Some(std::path::PathBuf::from("/tmp/filesystem-key.json"))
+                );
+                assert!(secrets.is_empty());
             }
             other => panic!("expected SaveMcpConfig event, got {other:?}"),
         }
@@ -696,7 +916,11 @@ mod tests {
         });
 
         match user_rx.recv().expect("save npm mcp event") {
-            UserEvent::SaveMcpConfig { id, config } => {
+            UserEvent::SaveMcpConfig {
+                id,
+                config,
+                secrets,
+            } => {
                 assert_ne!(id, Uuid::nil());
                 assert_eq!(config.name, "OAuth MCP");
                 assert_eq!(config.package.package_type, crate::mcp::McpPackageType::Npm);
@@ -710,6 +934,7 @@ mod tests {
                     }
                 );
                 assert!(config.env_vars.is_empty());
+                assert!(secrets.is_empty());
             }
             other => panic!("expected SaveMcpConfig event, got {other:?}"),
         }
@@ -724,7 +949,7 @@ mod tests {
         let view = cx.new(McpConfigureView::new);
         let saved_id = Uuid::new_v4();
 
-        view.update(cx, |view: &mut McpConfigureView, cx| {
+        view.update(cx, |view: &mut McpConfigureView, view_cx| {
             view.set_bridge(Arc::clone(&bridge));
 
             let mut data = McpConfigureData::new();
@@ -741,36 +966,36 @@ mod tests {
             view.set_mcp(data, false);
 
             assert!(view.state.mask_api_key);
-            view.toggle_mask_api_key(cx);
+            view.toggle_mask_api_key(view_cx);
             assert!(!view.state.mask_api_key);
-            view.toggle_mask_api_key(cx);
+            view.toggle_mask_api_key(view_cx);
             assert!(view.state.mask_api_key);
 
             view.start_oauth();
             view.save_current();
-
-            view.handle_key_down(&gpui::KeyDownEvent {
-                keystroke: gpui::Keystroke::parse("cmd-s").expect("cmd-s keystroke"),
-                is_held: false,
-                prefer_character_input: false,
-            });
-
-            view.handle_key_down(&gpui::KeyDownEvent {
-                keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
-                is_held: false,
-                prefer_character_input: false,
-            });
-            assert_eq!(
-                crate::ui_gpui::navigation_channel().take_pending(),
-                Some(crate::presentation::view_command::ViewId::Settings)
-            );
-
-            McpConfigureView::navigate_to_settings();
-            assert_eq!(
-                crate::ui_gpui::navigation_channel().take_pending(),
-                Some(crate::presentation::view_command::ViewId::Settings)
-            );
         });
+
+        let mut visual_cx = cx.add_empty_window().clone();
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpConfigureView, cx| {
+                view.handle_key_down(&key_event("cmd-s"), window, cx);
+            });
+        });
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpConfigureView, cx| {
+                view.handle_key_down(&key_event("escape"), window, cx);
+            });
+        });
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(crate::presentation::view_command::ViewId::Settings)
+        );
+
+        McpConfigureView::navigate_to_settings();
+        assert_eq!(
+            crate::ui_gpui::navigation_channel().take_pending(),
+            Some(crate::presentation::view_command::ViewId::Settings)
+        );
 
         assert_eq!(
             user_rx.recv().expect("oauth start event"),
@@ -781,16 +1006,25 @@ mod tests {
         );
 
         match user_rx.recv().expect("explicit save event") {
-            UserEvent::SaveMcpConfig { id, config } => {
+            UserEvent::SaveMcpConfig {
+                id,
+                config,
+                secrets,
+            } => {
                 assert_eq!(id, saved_id);
                 assert_eq!(config.name, "Weather MCP");
                 assert_eq!(config.package.identifier, "@example/weather-mcp");
+                assert_eq!(config.auth_type, crate::mcp::McpAuthType::ApiKey);
+                assert_eq!(
+                    secrets,
+                    vec![("WEATHER_API_KEY".to_string(), "secret-token".to_string())]
+                );
             }
             other => panic!("expected SaveMcpConfig event, got {other:?}"),
         }
 
         match user_rx.recv().expect("cmd-s save event") {
-            UserEvent::SaveMcpConfig { id, config } => {
+            UserEvent::SaveMcpConfig { id, config, .. } => {
                 assert_eq!(id, saved_id);
                 assert_eq!(config.name, "Weather MCP");
                 assert_eq!(config.package.identifier, "@example/weather-mcp");
@@ -802,5 +1036,303 @@ mod tests {
             user_rx.try_recv().is_err(),
             "unexpected additional mcp configure events"
         );
+    }
+
+    fn key_event(key: &str) -> gpui::KeyDownEvent {
+        gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap_or_else(|_| panic!("{key} keystroke")),
+            is_held: false,
+            prefer_character_input: false,
+        }
+    }
+
+    #[gpui::test]
+    async fn paste_populates_active_field_and_sanitizes(cx: &mut TestAppContext) {
+        let view = cx.new(McpConfigureView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpConfigureView, cx| {
+                view.active_field = Some(ActiveField::ApiKey);
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                    "sk-test-123\r\n".to_string(),
+                ));
+                view.handle_key_down(&key_event("cmd-v"), window, cx);
+                assert_eq!(view.state.data.api_key, "sk-test-123");
+
+                view.active_field = Some(ActiveField::KeyfilePath);
+                view.handle_key_down(&key_event("cmd-v"), window, cx);
+                assert_eq!(view.state.data.keyfile_path, "sk-test-123");
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn paste_without_active_field_is_a_no_op(cx: &mut TestAppContext) {
+        let view = cx.new(McpConfigureView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpConfigureView, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                    "sk-nothing\r\n".to_string(),
+                ));
+                view.handle_key_down(&key_event("cmd-v"), window, cx);
+                assert!(view.state.data.api_key.is_empty());
+                assert!(view.state.data.keyfile_path.is_empty());
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn backspace_pops_last_character(cx: &mut TestAppContext) {
+        let view = cx.new(McpConfigureView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpConfigureView, cx| {
+                view.state.data.api_key = "sk-test".to_string();
+                view.active_field = Some(ActiveField::ApiKey);
+                view.handle_key_down(&key_event("backspace"), window, cx);
+                assert_eq!(view.state.data.api_key, "sk-tes");
+
+                view.state.data.keyfile_path = "/tmp/k.json".to_string();
+                view.active_field = Some(ActiveField::KeyfilePath);
+                view.handle_key_down(&key_event("backspace"), window, cx);
+                assert_eq!(view.state.data.keyfile_path, "/tmp/k.jso");
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn tab_cycles_active_fields(cx: &mut TestAppContext) {
+        let view = cx.new(McpConfigureView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpConfigureView, cx| {
+                view.handle_key_down(&key_event("tab"), window, cx);
+                assert_eq!(view.active_field, Some(ActiveField::ApiKey));
+
+                view.handle_key_down(&key_event("tab"), window, cx);
+                assert_eq!(view.active_field, Some(ActiveField::KeyfilePath));
+
+                view.handle_key_down(&key_event("tab"), window, cx);
+                assert_eq!(view.active_field, Some(ActiveField::ApiKey));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn ime_replace_lands_in_active_field(cx: &mut TestAppContext) {
+        use gpui::EntityInputHandler;
+
+        let view = cx.new(McpConfigureView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpConfigureView, cx| {
+                view.active_field = Some(ActiveField::ApiKey);
+
+                view.replace_text_in_range(None, "sk-ime", window, cx);
+                assert_eq!(view.state.data.api_key, "sk-ime");
+
+                view.replace_and_mark_text_in_range(None, "!", None, window, cx);
+                assert_eq!(view.state.data.api_key, "sk-ime!");
+                assert_eq!(view.marked_text_range(window, cx), Some(6..7));
+
+                view.replace_text_in_range(None, "?", window, cx);
+                assert_eq!(view.state.data.api_key, "sk-ime?");
+                assert_eq!(view.marked_text_range(window, cx), None);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn auth_dropdown_state_transitions(cx: &mut TestAppContext) {
+        clear_navigation_requests();
+        let view = cx.new(McpConfigureView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|window, app| {
+            view.update(app, |view: &mut McpConfigureView, cx| {
+                view.active_field = Some(ActiveField::ApiKey);
+
+                view.toggle_auth_dropdown(cx);
+                assert!(view.show_auth_dropdown);
+                assert_eq!(view.active_field, None);
+
+                view.handle_key_down(&key_event("escape"), window, cx);
+                assert!(!view.show_auth_dropdown);
+                assert_eq!(crate::ui_gpui::navigation_channel().take_pending(), None);
+
+                view.toggle_auth_dropdown(cx);
+                view.select_auth_method(McpAuthMethod::OAuth, cx);
+                assert_eq!(view.state.data.auth_method, McpAuthMethod::OAuth);
+                assert!(!view.show_auth_dropdown);
+
+                // cmd-w still navigates once the dropdown is closed
+                view.handle_key_down(&key_event("cmd-w"), window, cx);
+                assert_eq!(
+                    crate::ui_gpui::navigation_channel().take_pending(),
+                    Some(crate::presentation::view_command::ViewId::Settings)
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn selecting_auth_method_updates_can_save(cx: &mut TestAppContext) {
+        let view = cx.new(McpConfigureView::new);
+
+        view.update(cx, |view: &mut McpConfigureView, cx| {
+            let mut data = McpConfigureData::new();
+            data.name = "Exa".to_string();
+            data.url = Some("https://exa.example/mcp".to_string());
+            data.auth_method = McpAuthMethod::None;
+            view.set_mcp(data, true);
+            assert!(view.state.data.can_save());
+
+            view.select_auth_method(McpAuthMethod::ApiKey, cx);
+            assert!(!view.state.data.can_save());
+            view.state.data.api_key = "secret".to_string();
+            assert!(view.state.data.can_save());
+
+            view.select_auth_method(McpAuthMethod::Keyfile, cx);
+            assert!(!view.state.data.can_save());
+            view.state.data.keyfile_path = "/tmp/k.json".to_string();
+            assert!(view.state.data.can_save());
+        });
+    }
+
+    #[gpui::test]
+    async fn save_payload_carries_auth_env_and_secrets(cx: &mut TestAppContext) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpConfigureView::new);
+        let saved_id = Uuid::new_v4();
+
+        view.update(cx, |view: &mut McpConfigureView, _cx| {
+            view.set_bridge(Arc::clone(&bridge));
+
+            let mut data = McpConfigureData::new();
+            data.id = Some(saved_id.to_string());
+            data.name = "Exa".to_string();
+            data.url = Some("https://exa.example/mcp".to_string());
+            data.auth_method = McpAuthMethod::ApiKey;
+            data.env_var_name = "EXA_API_KEY".to_string();
+            data.env = Some(vec![("EXA_API_KEY".to_string(), String::new())]);
+            data.api_key = "secret".to_string();
+            view.set_mcp(data, false);
+            view.emit_save_mcp_config();
+        });
+
+        match user_rx.recv().expect("save mcp config event") {
+            UserEvent::SaveMcpConfig {
+                id,
+                config,
+                secrets,
+            } => {
+                assert_eq!(id, saved_id);
+                assert_eq!(config.auth_type, crate::mcp::McpAuthType::ApiKey);
+                assert_eq!(
+                    config.env_vars,
+                    vec![crate::mcp::EnvVarConfig {
+                        name: "EXA_API_KEY".to_string(),
+                        required: true,
+                        is_secret: true,
+                    }]
+                );
+                assert_eq!(
+                    secrets,
+                    vec![("EXA_API_KEY".to_string(), "secret".to_string())]
+                );
+                assert_eq!(config.keyfile_path, None);
+            }
+            other => panic!("expected SaveMcpConfig event, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn save_payload_derives_env_var_when_missing(cx: &mut TestAppContext) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpConfigureView::new);
+
+        view.update(cx, |view: &mut McpConfigureView, _cx| {
+            view.set_bridge(Arc::clone(&bridge));
+
+            let mut data = McpConfigureData::new();
+            data.name = "Manual MCP".to_string();
+            data.package = "@example/manual".to_string();
+            data.command = "npx".to_string();
+            data.auth_method = McpAuthMethod::ApiKey;
+            data.env_var_name = "API_KEY".to_string();
+            data.env = None;
+            data.api_key = "typed-key".to_string();
+            view.set_mcp(data, true);
+            view.emit_save_mcp_config();
+        });
+
+        match user_rx.recv().expect("save mcp config event") {
+            UserEvent::SaveMcpConfig {
+                config, secrets, ..
+            } => {
+                assert_eq!(config.auth_type, crate::mcp::McpAuthType::ApiKey);
+                assert_eq!(
+                    config.env_vars,
+                    vec![crate::mcp::EnvVarConfig {
+                        name: "API_KEY".to_string(),
+                        required: true,
+                        is_secret: true,
+                    }]
+                );
+                assert_eq!(
+                    secrets,
+                    vec![("API_KEY".to_string(), "typed-key".to_string())]
+                );
+            }
+            other => panic!("expected SaveMcpConfig event, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn save_payload_carries_keyfile_path(cx: &mut TestAppContext) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpConfigureView::new);
+
+        view.update(cx, |view: &mut McpConfigureView, _cx| {
+            view.set_bridge(Arc::clone(&bridge));
+
+            let mut data = McpConfigureData::new();
+            data.name = "Keyfile MCP".to_string();
+            data.package = "@example/keyfile".to_string();
+            data.command = "npx".to_string();
+            data.auth_method = McpAuthMethod::Keyfile;
+            data.keyfile_path = "/tmp/service-key.json".to_string();
+            data.env = Some(vec![("FILESYSTEM_TOKEN".to_string(), String::new())]);
+            view.set_mcp(data, true);
+            view.emit_save_mcp_config();
+        });
+
+        match user_rx.recv().expect("save mcp config event") {
+            UserEvent::SaveMcpConfig {
+                config, secrets, ..
+            } => {
+                assert_eq!(config.auth_type, crate::mcp::McpAuthType::Keyfile);
+                assert_eq!(
+                    config.keyfile_path,
+                    Some(std::path::PathBuf::from("/tmp/service-key.json"))
+                );
+                assert_eq!(
+                    config.env_vars,
+                    vec![crate::mcp::EnvVarConfig {
+                        name: "FILESYSTEM_TOKEN".to_string(),
+                        required: true,
+                        is_secret: true,
+                    }]
+                );
+                assert!(secrets.is_empty());
+            }
+            other => panic!("expected SaveMcpConfig event, got {other:?}"),
+        }
     }
 }

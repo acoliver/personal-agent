@@ -22,6 +22,7 @@ fn base_config() -> McpConfig {
         env_vars: vec![personal_agent::mcp::EnvVarConfig {
             name: "API_KEY".to_string(),
             required: true,
+            is_secret: true,
         }],
         package_args: vec![],
         keyfile_path: None,
@@ -58,7 +59,9 @@ fn build_env_for_config_loads_secrets() {
     let secrets = SecretsManager::new();
 
     let config = base_config();
-    secrets.store_api_key(config.id, "secret").unwrap();
+    secrets
+        .store_api_key_named(config.id, "API_KEY", "secret")
+        .unwrap();
 
     let env = build_env_for_config(&config, &secrets).unwrap();
     assert_eq!(env.get("API_KEY"), Some(&"secret".to_string()));

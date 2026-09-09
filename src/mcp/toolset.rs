@@ -1,6 +1,6 @@
 //! Toolset bridge - converts `McpConfig` to `SerdesAI` `McpToolset` format
 
-use crate::mcp::manager::McpError;
+use crate::mcp::manager::{McpError, McpResult};
 use crate::mcp::secrets::SecretsManager;
 use crate::mcp::{McpAuthType, McpConfig, McpPackageArgType, McpPackageType, McpTransport};
 use std::collections::HashMap;
@@ -77,25 +77,12 @@ pub fn build_env_for_config(
 
     match config.auth_type {
         McpAuthType::None => {}
-        McpAuthType::ApiKey => {
-            // Load API keys for each env var
+        // Keyfile auth is deprecated — treated as an API key lookup.
+        McpAuthType::ApiKey | McpAuthType::Keyfile => {
+            // Secrets are stored per env var name (`mcp:{id}:{var_name}`);
+            // load each one by name so store and load sides agree.
             for var in &config.env_vars {
-                let key = if config.env_vars.len() == 1 {
-                    secrets.load_api_key(config.id)?
-                } else {
-                    secrets.load_api_key_named(config.id, &var.name)?
-                };
-                env.insert(var.name.clone(), key);
-            }
-        }
-        McpAuthType::Keyfile => {
-            // Keyfile auth is deprecated — treat as API key lookup.
-            for var in &config.env_vars {
-                let key = if config.env_vars.len() == 1 {
-                    secrets.load_api_key(config.id)?
-                } else {
-                    secrets.load_api_key_named(config.id, &var.name)?
-                };
+                let key = secrets.load_api_key_named(config.id, &var.name)?;
                 env.insert(var.name.clone(), key);
             }
         }
@@ -113,9 +100,20 @@ pub fn build_env_for_config(
     Ok(env)
 }
 
-/// Build HTTP headers for an MCP (primarily for OAuth tokens)
-#[must_use]
-pub fn build_headers_for_config(config: &McpConfig) -> HashMap<String, String> {
+/// Build HTTP headers for an MCP (OAuth token, keyfile bearer, or keychain API key)
+///
+/// For `Http` transport with `ApiKey` auth, the keychain secret behind the
+/// single configured env var is delivered as an `x-api-key` header. A missing
+/// secret is an error so misconfigured remote MCPs fail at startup instead of
+/// failing per-request with a provider 401.
+///
+/// # Errors
+///
+/// Returns `McpError` if the `ApiKey` secret cannot be loaded from the keychain.
+pub fn build_headers_for_config(
+    config: &McpConfig,
+    secrets: &SecretsManager,
+) -> McpResult<HashMap<String, String>> {
     let mut headers = HashMap::new();
 
     // Priority: oauth_token > keyfile
@@ -130,7 +128,14 @@ pub fn build_headers_for_config(config: &McpConfig) -> HashMap<String, String> {
         }
     }
 
-    headers
+    if config.transport == McpTransport::Http && config.auth_type == McpAuthType::ApiKey {
+        if let [var] = config.env_vars.as_slice() {
+            let key = secrets.load_api_key_named(config.id, &var.name)?;
+            headers.insert("x-api-key".to_string(), key);
+        }
+    }
+
+    Ok(headers)
 }
 
 /// Create a toolset from MCP configuration
@@ -146,7 +151,7 @@ pub async fn create_toolset_from_config(
     // This will be implemented when we integrate with SerdesAI McpToolset
     // For now, validate the config and return Ok
     let _ = build_env_for_config(config, secrets)?;
-    let _ = build_headers_for_config(config);
+    let _ = build_headers_for_config(config, secrets)?;
     let (cmd, _args) = build_command(config);
 
     if config.transport == McpTransport::Stdio && cmd.is_empty() {

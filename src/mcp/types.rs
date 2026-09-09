@@ -33,6 +33,9 @@ pub struct McpConfig {
 pub struct EnvVarConfig {
     pub name: String,
     pub required: bool,
+    /// Whether the value is a secret resolved from the OS keychain at runtime.
+    #[serde(default)]
+    pub is_secret: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

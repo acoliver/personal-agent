@@ -970,6 +970,7 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
         .publish(AppEvent::User(UserEvent::SaveMcpConfig {
             id: Uuid::nil(),
             config: Box::new(test_rich_mcp_config(Uuid::nil(), "Filesystem")),
+            secrets: vec![],
         }))
         .expect("publish save new mcp config");
     let create_commands = collect_broadcast_commands(&mut view_rx).await;
@@ -991,6 +992,7 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
         .publish(AppEvent::User(UserEvent::SaveMcpConfig {
             id: config_id,
             config: Box::new(test_rich_mcp_config(config_id, "Filesystem Updated")),
+            secrets: vec![],
         }))
         .expect("publish update mcp config");
     let update_commands = collect_broadcast_commands(&mut view_rx).await;
@@ -1073,6 +1075,7 @@ async fn mcp_configure_presenter_surfaces_load_and_save_errors() {
         .publish(AppEvent::User(UserEvent::SaveMcpConfig {
             id: config_id,
             config: Box::new(test_rich_mcp_config(config_id, "Broken")),
+            secrets: vec![],
         }))
         .expect("publish save failure");
     let save_error = collect_broadcast_commands(&mut view_rx).await;
@@ -1084,4 +1087,112 @@ async fn mcp_configure_presenter_surfaces_load_and_save_errors() {
             severity: ErrorSeverity::Error,
         } if title == "Save Failed"
     )));
+}
+
+fn temp_config_with_env_mcp(id: Uuid, name: &str, env_var_names: &[&str]) -> std::path::PathBuf {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let dir_path = dir.keep();
+    let path = dir_path.join("config.json");
+    let mut config = personal_agent::config::Config::default();
+    config.mcps.push(personal_agent::mcp::McpConfig {
+        id,
+        name: name.to_string(),
+        enabled: true,
+        source: personal_agent::mcp::McpSource::Manual { url: String::new() },
+        package: personal_agent::mcp::McpPackage {
+            package_type: personal_agent::mcp::McpPackageType::Npm,
+            identifier: "@example/exa".to_string(),
+            runtime_hint: Some("npx".to_string()),
+        },
+        transport: personal_agent::mcp::McpTransport::Stdio,
+        auth_type: personal_agent::mcp::McpAuthType::ApiKey,
+        env_vars: env_var_names
+            .iter()
+            .map(|env_var_name| personal_agent::mcp::EnvVarConfig {
+                name: (*env_var_name).to_string(),
+                required: true,
+                is_secret: true,
+            })
+            .collect(),
+        package_args: vec![],
+        keyfile_path: None,
+        config: serde_json::Value::Null,
+        oauth_token: None,
+    });
+    let json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(&path, json).expect("write config");
+    path
+}
+
+#[tokio::test]
+async fn mcp_configure_draft_loads_env_vars_from_app_config() {
+    let config_id = Uuid::new_v4();
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(config_id)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let tmp_config = temp_config_with_env_mcp(config_id, "Exa", &["EXA_API_KEY"]);
+    let mut presenter =
+        McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
+            .with_config_path(tmp_config);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::ConfigureMcp { id: config_id }))
+        .expect("publish configure mcp");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigureDraftLoaded {
+            id,
+            env: Some(env),
+            env_var_name,
+            ..
+        } if id == &config_id.to_string()
+            && env == &vec![("EXA_API_KEY".to_string(), String::new())]
+            && env_var_name == "EXA_API_KEY"
+    )));
+}
+
+#[tokio::test]
+async fn mcp_configure_save_stores_keychain_secrets() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(Uuid::new_v4())));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let tmp_config = temp_config_path();
+    let mut presenter =
+        McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
+            .with_config_path(tmp_config.clone());
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveMcpConfig {
+            id: Uuid::nil(),
+            config: Box::new(test_rich_mcp_config(Uuid::nil(), "Exa")),
+            secrets: vec![("EXA_API_KEY".to_string(), "sk-123".to_string())],
+        }))
+        .expect("publish save mcp config");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    let saved_id = commands
+        .iter()
+        .find_map(|command| match command {
+            ViewCommand::McpConfigSaved { id, name: Some(_) } if !id.is_nil() => Some(*id),
+            _ => None,
+        })
+        .expect("save should emit McpConfigSaved with a generated id");
+
+    let stored =
+        personal_agent::services::secure_store::mcp_keys::get_named(saved_id, "EXA_API_KEY")
+            .expect("keychain lookup should succeed");
+    assert_eq!(stored.as_deref(), Some("sk-123"));
+
+    let config_json = std::fs::read_to_string(&tmp_config).expect("read saved config");
+    assert!(
+        !config_json.contains("sk-123"),
+        "plaintext secret must never be serialized into the config file"
+    );
 }

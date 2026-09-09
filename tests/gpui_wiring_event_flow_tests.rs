@@ -1646,6 +1646,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
         .send(AppEvent::User(UserEvent::SaveMcpConfig {
             id,
             config: Box::new(test_rich_mcp_config(id, "Fetch")),
+            secrets: vec![],
         }))
         .ok();
 
@@ -1714,6 +1715,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
         .send(AppEvent::User(UserEvent::SaveMcpConfig {
             id,
             config: Box::new(test_rich_mcp_config(id, "Registry Fetch")),
+            secrets: vec![],
         }))
         .ok();
 
@@ -1780,6 +1782,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_failure_emits_error_only()
         .send(AppEvent::User(UserEvent::SaveMcpConfig {
             id,
             config: Box::new(test_rich_mcp_config(id, "Broken MCP")),
+            secrets: vec![],
         }))
         .ok();
 
@@ -1835,6 +1838,7 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payloa
         .send(AppEvent::User(UserEvent::SaveMcpConfig {
             id,
             config: Box::new(test_rich_mcp_config(id, "Filesystem")),
+            secrets: vec![],
         }))
         .ok();
 

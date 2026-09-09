@@ -189,10 +189,14 @@ impl McpConfigurePresenter {
     ) {
         match event {
             UserEvent::ConfigureMcp { id } => {
-                Self::on_configure_mcp(mcp_service, view_tx, id).await;
+                Self::on_configure_mcp(mcp_service, view_tx, id, config_path).await;
             }
-            UserEvent::SaveMcpConfig { id, config } => {
-                Self::on_save_config(mcp_service, view_tx, id, *config, config_path).await;
+            UserEvent::SaveMcpConfig {
+                id,
+                config,
+                secrets,
+            } => {
+                Self::on_save_config(mcp_service, view_tx, id, *config, secrets, config_path).await;
             }
             UserEvent::StartMcpOAuth { id, provider } => {
                 Self::on_start_oauth(mcp_service, view_tx, id, provider).await;
@@ -207,10 +211,14 @@ impl McpConfigurePresenter {
     /// Handle configure MCP event
     ///
     /// Loads persisted MCP data and projects it into MCP configure draft payload.
+    ///
+    /// Env var metadata comes from the persisted app config; drafts for MCPs
+    /// without an app-config entry keep the legacy `env: None` contract.
     async fn on_configure_mcp(
         mcp_service: &Arc<dyn McpService>,
         view_tx: &broadcast::Sender<ViewCommand>,
         id: Uuid,
+        config_path: Option<&std::path::Path>,
     ) {
         tracing::info!("Loading MCP config for id: {}", id);
 
@@ -251,16 +259,22 @@ impl McpConfigurePresenter {
                     ),
                 };
 
+                let env = Self::load_env_draft(config_path, id);
+                let env_var_name = env
+                    .as_ref()
+                    .and_then(|pairs| pairs.first())
+                    .map_or_else(|| "API_KEY".to_string(), |(var, _)| var.clone());
+
                 let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
                     id: id.to_string(),
                     name,
                     package,
                     package_type,
                     runtime_hint,
-                    env_var_name: "API_KEY".to_string(),
+                    env_var_name,
                     command,
                     args,
-                    env: None,
+                    env,
                     url,
                 });
 
@@ -279,6 +293,26 @@ impl McpConfigurePresenter {
         }
     }
 
+    /// Map persisted env var metadata into draft `(name, value)` pairs with
+    /// empty values; values are resolved from the OS keychain at runtime.
+    fn load_env_draft(
+        config_path: Option<&std::path::Path>,
+        id: Uuid,
+    ) -> Option<Vec<(String, String)>> {
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => crate::config::Config::default_path().ok()?,
+        };
+        let app_config = crate::config::Config::load(&path).ok()?;
+        let mcp = app_config.mcps.iter().find(|m| m.id == id)?;
+        Some(
+            mcp.env_vars
+                .iter()
+                .map(|var| (var.name.clone(), String::new()))
+                .collect(),
+        )
+    }
+
     // Signature fixed by the shared call convention, not by the body.
     #[allow(clippy::unused_async_trait_impl)]
     async fn on_save_config(
@@ -286,6 +320,7 @@ impl McpConfigurePresenter {
         view_tx: &broadcast::Sender<ViewCommand>,
         id: Uuid,
         config: crate::events::types::McpConfig,
+        secrets: Vec<(String, String)>,
         config_path_override: Option<&std::path::Path>,
     ) {
         tracing::info!("Saving MCP config for id: {} name: {}", id, config.name);
@@ -300,6 +335,15 @@ impl McpConfigurePresenter {
         let saved_id = config.id;
 
         let save_result: Result<(), String> = (|| {
+            // Persist credentials to the OS keychain first; a failed store
+            // aborts the save so the config never references a missing secret.
+            let secrets_manager = crate::mcp::SecretsManager::new();
+            for (var_name, value) in &secrets {
+                secrets_manager
+                    .store_api_key_named(saved_id, var_name, value)
+                    .map_err(|e| format!("Failed to store MCP secret {var_name}: {e}"))?;
+            }
+
             let config_path = match config_path_override {
                 Some(p) => p.to_path_buf(),
                 None => crate::config::Config::default_path()

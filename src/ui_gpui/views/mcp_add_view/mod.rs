@@ -322,6 +322,10 @@ impl McpAddView {
         cx.notify();
     }
 
+    fn sanitized_clipboard_text(text: &str) -> String {
+        text.trim_matches(|c| c == '\r' || c == '\n').to_string()
+    }
+
     fn handle_key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut gpui::Context<Self>) {
         let key = &event.keystroke.key;
         let modifiers = &event.keystroke.modifiers;
@@ -334,6 +338,22 @@ impl McpAddView {
             }
             crate::ui_gpui::navigation_channel()
                 .request_navigate(crate::presentation::view_command::ViewId::Settings);
+            return;
+        }
+
+        if modifiers.platform && key == "v" {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    let sanitized = Self::sanitized_clipboard_text(&text);
+                    if !sanitized.is_empty() && self.state.active_field.is_some() {
+                        self.append_to_active_field(&sanitized);
+                        if self.state.active_field == Some(ActiveField::SearchQuery) {
+                            self.emit_search_registry();
+                        }
+                        cx.notify();
+                    }
+                }
+            }
             return;
         }
 
@@ -971,5 +991,48 @@ mod tests {
                 );
             });
         });
+    }
+
+    #[gpui::test]
+    async fn paste_appends_to_active_fields_sanitized_and_ignores_no_field(
+        cx: &mut TestAppContext,
+    ) {
+        let (bridge, user_rx) = make_bridge();
+        let view = cx.new(McpAddView::new);
+        let mut visual_cx = cx.add_empty_window().clone();
+
+        visual_cx.update(|_window, app| {
+            view.update(app, |view: &mut McpAddView, cx| {
+                view.set_bridge(Arc::clone(&bridge));
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string("npx foo\r\n".to_string()));
+
+                view.state.active_field = Some(ActiveField::ManualEntry);
+                view.handle_key_down(&key_event("cmd-v"), cx);
+                assert_eq!(view.get_state().manual_entry, "npx foo");
+
+                view.state.active_field = Some(ActiveField::SearchQuery);
+                view.handle_key_down(&key_event("cmd-v"), cx);
+                assert_eq!(view.get_state().search_query, "npx foo");
+                assert_eq!(view.get_state().selected_result_id, None);
+
+                view.state.active_field = None;
+                view.handle_key_down(&key_event("cmd-v"), cx);
+                assert_eq!(view.get_state().search_query, "npx foo");
+            });
+        });
+
+        assert_eq!(
+            user_rx.recv().expect("search registry event after paste"),
+            UserEvent::SearchMcpRegistry {
+                query: "npx foo".to_string(),
+                source: crate::events::types::McpRegistrySource {
+                    name: "both".to_string(),
+                },
+            }
+        );
+        assert!(
+            user_rx.try_recv().is_err(),
+            "paste must not emit events beyond the search refresh"
+        );
     }
 }

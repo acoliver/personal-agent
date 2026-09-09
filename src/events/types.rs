@@ -156,7 +156,14 @@ pub enum UserEvent {
     ConfigureMcp { id: Uuid },
 
     /// User saved MCP configuration (boxed to keep `UserEvent` size small).
-    SaveMcpConfig { id: Uuid, config: Box<McpConfig> },
+    ///
+    /// `secrets` carries plaintext credential values (env var name → value)
+    /// for the OS keychain; they must never be serialized into the config.
+    SaveMcpConfig {
+        id: Uuid,
+        config: Box<McpConfig>,
+        secrets: Vec<(String, String)>,
+    },
 
     /// User clicked delete MCP
     DeleteMcp { id: Uuid },

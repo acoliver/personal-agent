@@ -1,8 +1,11 @@
 //! Render implementation for `McpConfigureView`.
 
-use super::{ConfigField, McpAuthMethod, McpConfigureView, OAuthStatus};
+use super::{ActiveField, ConfigField, McpAuthMethod, McpConfigureView, OAuthStatus};
 use crate::ui_gpui::theme::Theme;
-use gpui::{div, prelude::*, px, FocusHandle, FontWeight, MouseButton, SharedString};
+use gpui::{
+    canvas, div, prelude::*, px, Bounds, ElementInputHandler, FocusHandle, FontWeight, MouseButton,
+    Pixels, ScrollWheelEvent, SharedString,
+};
 
 impl McpConfigureView {
     fn render_top_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -177,9 +180,9 @@ impl McpConfigureView {
             )
     }
 
-    /// Render auth method dropdown
+    /// Render auth method dropdown trigger
     /// @plan PLAN-20250130-GPUIREDUX.P10
-    fn render_auth_method_section(&self) -> impl IntoElement {
+    fn render_auth_method_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let auth_method = self.state.data.auth_method.display();
 
         div()
@@ -194,7 +197,11 @@ impl McpConfigureView {
                     .px(px(8.0))
                     .bg(Theme::bg_dark())
                     .border_1()
-                    .border_color(Theme::border())
+                    .border_color(if self.show_auth_dropdown {
+                        Theme::accent()
+                    } else {
+                        Theme::border()
+                    })
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
@@ -202,8 +209,72 @@ impl McpConfigureView {
                     .cursor_pointer()
                     .text_size(px(Theme::font_size_mono()))
                     .text_color(Theme::text_primary())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.toggle_auth_dropdown(cx);
+                            window.activate_window();
+                            window.focus(&this.focus_handle, cx);
+                        }),
+                    )
                     .child(auth_method)
-                    .child(div().text_color(Theme::text_muted()).child("v")),
+                    .child(div().text_color(Theme::text_muted()).child(
+                        if self.show_auth_dropdown {
+                            "▲"
+                        } else {
+                            "▼"
+                        },
+                    )),
+            )
+    }
+
+    /// Render the floating auth method dropdown overlay
+    fn render_auth_method_overlay(cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .id("auth-method-menu-overlay")
+            .absolute()
+            .top(px(212.0))
+            .left(px(12.0))
+            .w(px(360.0))
+            .bg(Theme::bg_dark())
+            .border_1()
+            .border_color(Theme::accent())
+            .rounded(px(4.0))
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .children(
+                [
+                    McpAuthMethod::None,
+                    McpAuthMethod::ApiKey,
+                    McpAuthMethod::Keyfile,
+                    McpAuthMethod::OAuth,
+                ]
+                .into_iter()
+                .map(|method| {
+                    let method_for_display = method.clone();
+                    div()
+                        .id(SharedString::from(format!(
+                            "auth-method-option-{}",
+                            method.display().to_lowercase()
+                        )))
+                        .px(px(8.0))
+                        .py(px(6.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(Theme::bg_darker()))
+                        .text_size(px(Theme::font_size_ui()))
+                        .text_color(Theme::text_primary())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.select_auth_method(method.clone(), cx);
+                                window.activate_window();
+                                window.focus(&this.focus_handle, cx);
+                                cx.notify();
+                            }),
+                        )
+                        .child(method_for_display.display())
+                }),
             )
     }
 
@@ -212,11 +283,13 @@ impl McpConfigureView {
     fn render_api_key_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let masked = self.state.mask_api_key;
         let env_var_name = self.state.data.env_var_name.clone();
-        let display = if masked && !self.state.data.api_key.is_empty() {
+        let active = self.active_field == Some(ActiveField::ApiKey);
+        let value = if masked && !self.state.data.api_key.is_empty() {
             "•".repeat(self.state.data.api_key.len().min(40))
         } else {
             self.state.data.api_key.clone()
         };
+        let display = if active { format!("{value}|") } else { value };
 
         div()
             .flex()
@@ -274,17 +347,29 @@ impl McpConfigureView {
             )
             .child(
                 div()
+                    .id("field-api-key")
                     .mt(px(4.0))
                     .w(px(360.0))
                     .h(px(24.0))
                     .px(px(8.0))
                     .bg(Theme::bg_dark())
                     .border_1()
-                    .border_color(Theme::border())
+                    .border_color(if active {
+                        Theme::accent()
+                    } else {
+                        Theme::border()
+                    })
                     .rounded(px(4.0))
                     .flex()
                     .items_center()
+                    .cursor_text()
                     .text_size(px(Theme::font_size_mono()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.activate_field(ActiveField::ApiKey, window, cx);
+                        }),
+                    )
                     .child(if display.is_empty() {
                         div()
                             .text_color(Theme::text_muted())
@@ -298,6 +383,13 @@ impl McpConfigureView {
     /// Render keyfile field with browse button
     /// @plan PLAN-20250130-GPUIREDUX.P10
     fn render_keyfile_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let active = self.active_field == Some(ActiveField::KeyfilePath);
+        let display = if active {
+            format!("{}|", self.state.data.keyfile_path)
+        } else {
+            self.state.data.keyfile_path.clone()
+        };
+
         div()
             .flex()
             .flex_col()
@@ -312,23 +404,33 @@ impl McpConfigureView {
                     // Path field
                     .child(
                         div()
+                            .id("field-keyfile-path")
                             .flex_1()
                             .h(px(24.0))
                             .px(px(8.0))
                             .bg(Theme::bg_dark())
                             .border_1()
-                            .border_color(Theme::border())
+                            .border_color(if active {
+                                Theme::accent()
+                            } else {
+                                Theme::border()
+                            })
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
+                            .cursor_text()
                             .text_size(px(Theme::font_size_mono()))
                             .overflow_hidden()
-                            .child(if self.state.data.keyfile_path.is_empty() {
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.activate_field(ActiveField::KeyfilePath, window, cx);
+                                }),
+                            )
+                            .child(if display.is_empty() {
                                 div().text_color(Theme::text_muted()).child("/path/to/key")
                             } else {
-                                div()
-                                    .text_color(Theme::text_primary())
-                                    .child(self.state.data.keyfile_path.clone())
+                                div().text_color(Theme::text_primary()).child(display)
                             }),
                     )
                     // Browse button
@@ -623,7 +725,7 @@ impl McpConfigureView {
                     .flex()
                     .flex_col()
                     .gap(px(12.0))
-                    .child(self.render_auth_method_section())
+                    .child(self.render_auth_method_section(cx))
                     .when(*auth_method == McpAuthMethod::ApiKey, |d| {
                         d.child(self.render_api_key_section(cx))
                     })
@@ -654,21 +756,70 @@ impl gpui::Render for McpConfigureView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        div()
+        let root = div()
             .id("mcp-configure-view")
+            .relative()
             .flex()
             .flex_col()
             .size_full()
             .bg(Theme::bg_base())
             .track_focus(&self.focus_handle)
-            .on_key_down(
-                cx.listener(|this, event: &gpui::KeyDownEvent, _window, _cx| {
-                    this.handle_key_down(event);
-                }),
+            // Invisible canvas for InputHandler registration (IME/diacritics)
+            .child(
+                canvas(
+                    |bounds, _window: &mut gpui::Window, _cx: &mut gpui::App| bounds,
+                    {
+                        let entity = cx.entity();
+                        let focus = self.focus_handle.clone();
+                        move |bounds: Bounds<Pixels>,
+                              _,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::App| {
+                            window.handle_input(
+                                &focus,
+                                ElementInputHandler::new(bounds, entity),
+                                cx,
+                            );
+                        }
+                    },
+                )
+                .size_0(),
             )
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                this.handle_key_down(event, window, cx);
+                // All other keys (printable chars) fall through to EntityInputHandler
+            }))
             // Top bar (44px)
             .child(self.render_top_bar(cx))
             // Content (scrollable)
-            .child(self.render_content(cx))
+            .child(self.render_content(cx));
+
+        if self.show_auth_dropdown {
+            root.child(
+                div()
+                    .id("auth-method-menu-backdrop")
+                    .absolute()
+                    .top(px(44.0))
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .bottom(px(0.0))
+                    .block_mouse_except_scroll()
+                    .on_scroll_wheel(cx.listener(
+                        |_this, _event: &ScrollWheelEvent, _window, cx| {
+                            cx.stop_propagation();
+                        },
+                    ))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| {
+                            this.show_auth_dropdown = false;
+                            cx.notify();
+                        }),
+                    )
+                    .child(Self::render_auth_method_overlay(cx)),
+            )
+        } else {
+            root
+        }
     }
 }
