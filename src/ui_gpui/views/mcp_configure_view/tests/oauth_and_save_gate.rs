@@ -384,6 +384,76 @@ async fn whitespace_only_api_key_is_not_treated_as_a_typed_secret(cx: &mut TestA
     });
 }
 
+fn api_key_draft_with_secret_rows(secret_rows: usize) -> McpConfigureData {
+    let mut data = McpConfigureData::new();
+    data.name = "Exa Multi".to_string();
+    data.command = "npx".to_string();
+    data.auth_method = McpAuthMethod::ApiKey;
+    data.env_var_name = "EXA_API_KEY".to_string();
+    data.api_key = "typed-key".to_string();
+    data.env = (0..secret_rows)
+        .map(|row| (format!("SECRET_VAR_{row}"), String::new(), true))
+        .collect();
+    data
+}
+
+#[gpui::test]
+async fn multi_secret_api_key_draft_blocks_save_with_reason(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+        // Imported drafts can carry several secret rows; ApiKey auth only
+        // supports one, and only the first row would receive the typed key.
+        view.set_mcp(api_key_draft_with_secret_rows(2), false);
+        assert!(!view.state.data.can_save());
+
+        view.save_current(cx);
+        assert_eq!(
+            view.state.data.save_blocked_reason.as_deref(),
+            Some("API key auth supports exactly one secret env var"),
+            "a multi-secret ApiKey draft must surface why the save was refused"
+        );
+    });
+
+    assert!(
+        user_rx.try_recv().is_err(),
+        "a multi-secret ApiKey draft must not emit SaveMcpConfig"
+    );
+}
+
+#[gpui::test]
+async fn single_secret_api_key_draft_with_typed_key_saves(cx: &mut TestAppContext) {
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, _cx| {
+        view.set_mcp(api_key_draft_with_secret_rows(1), false);
+        assert!(view.state.data.can_save());
+    });
+}
+
+#[gpui::test]
+async fn multi_secret_rows_stay_savable_under_non_api_key_auth(cx: &mut TestAppContext) {
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, _cx| {
+        // Secret rows demote to plain rows under Keyfile auth, so the same
+        // multi-secret draft stays savable there.
+        let mut data = api_key_draft_with_secret_rows(2);
+        data.auth_method = McpAuthMethod::Keyfile;
+        data.keyfile_path = "/tmp/k.json".to_string();
+        view.set_mcp(data, false);
+        assert!(view.state.data.can_save());
+
+        // ...and under no auth at all.
+        let mut data = api_key_draft_with_secret_rows(2);
+        data.auth_method = McpAuthMethod::None;
+        view.set_mcp(data, false);
+        assert!(view.state.data.can_save());
+    });
+}
+
 #[gpui::test]
 async fn blocked_save_sets_reason_and_successful_save_clears_it(cx: &mut TestAppContext) {
     let (bridge, user_rx) = make_bridge();

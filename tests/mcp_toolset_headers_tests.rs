@@ -60,6 +60,34 @@ fn build_headers_falls_back_to_keyfile() {
 }
 
 #[test]
+fn build_headers_errors_when_keyfile_is_unreadable() {
+    let temp_dir = TempDir::new().unwrap();
+    let missing_keyfile = temp_dir.path().join("missing-token.txt");
+
+    let mut config = base_config();
+    config.oauth_token = None;
+    config.keyfile_path = Some(PathBuf::from(&missing_keyfile));
+
+    let secrets = SecretsManager::new();
+    let err = build_headers_for_config(&config, &secrets).expect_err(
+        "an unreadable keyfile must fail fast instead of sending an unauthenticated request",
+    );
+    let message = err.to_string();
+    assert!(
+        message.contains("cannot read keyfile"),
+        "the error must explain the keyfile failure, got: {message}"
+    );
+    assert!(
+        message.contains(missing_keyfile.to_string_lossy().as_ref()),
+        "the error must name the unreadable path, got: {message}"
+    );
+    assert!(
+        message.contains(&config.name),
+        "the error must name the misconfigured MCP, got: {message}"
+    );
+}
+
+#[test]
 fn build_headers_sends_bearer_authorization_for_http_api_key_auth() {
     personal_agent::services::secure_store::use_mock_backend();
     let secrets = SecretsManager::new();

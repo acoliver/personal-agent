@@ -139,6 +139,21 @@ impl McpConfigureData {
         }
     }
 
+    /// Whether the draft would persist more than one secret env row under
+    /// `ApiKey` auth. The runtime requires exactly one secret var for HTTP
+    /// API key auth, and `typed_secrets` can only fill the first row, so
+    /// such a draft must be blocked at the save gate instead of saving a
+    /// config the runtime later rejects.
+    fn has_multiple_api_key_secrets(&self) -> bool {
+        self.auth_method == McpAuthMethod::ApiKey
+            && self
+                .env
+                .iter()
+                .filter(|(_, _, is_secret)| *is_secret)
+                .count()
+                > 1
+    }
+
     /// Check if save should be enabled
     #[must_use]
     pub fn can_save(&self) -> bool {
@@ -150,6 +165,10 @@ impl McpConfigureData {
         let has_command = !self.command.trim().is_empty();
         let has_url = self.url.as_ref().is_some_and(|u| !u.trim().is_empty());
         if !has_command && !has_url {
+            return false;
+        }
+
+        if self.has_multiple_api_key_secrets() {
             return false;
         }
 
@@ -240,6 +259,8 @@ impl McpConfigureData {
             && self.url.as_ref().is_none_or(|u| u.trim().is_empty())
         {
             "Command or URL is required".to_string()
+        } else if self.has_multiple_api_key_secrets() {
+            "API key auth supports exactly one secret env var".to_string()
         } else {
             match self.auth_method {
                 McpAuthMethod::ApiKey => "API key required (no stored key)".to_string(),

@@ -215,8 +215,9 @@ pub fn derive_http_auth_header(name: &str, value: &str) -> (String, String) {
 ///
 /// # Errors
 ///
-/// Returns `McpError` when the `ApiKey` secret var count is not exactly one or
-/// the secret cannot be loaded from the keychain.
+/// Returns `McpError` when the keyfile cannot be read, the `ApiKey` secret
+/// var count is not exactly one, or the secret cannot be loaded from the
+/// keychain.
 pub fn build_headers_for_config(
     config: &McpConfig,
     secrets: &SecretsManager,
@@ -229,12 +230,17 @@ pub fn build_headers_for_config(
         return Ok(headers);
     }
     if let Some(ref keyfile) = config.keyfile_path {
-        if let Ok(token) = std::fs::read_to_string(keyfile) {
-            headers.insert(
-                "Authorization".to_string(),
-                format!("Bearer {}", token.trim()),
-            );
-        }
+        let token = std::fs::read_to_string(keyfile).map_err(|e| {
+            McpError::Config(format!(
+                "MCP {}: cannot read keyfile {}: {e}",
+                config.name,
+                keyfile.display()
+            ))
+        })?;
+        headers.insert(
+            "Authorization".to_string(),
+            format!("Bearer {}", token.trim()),
+        );
     }
 
     if config.transport == McpTransport::Http && config.auth_type == McpAuthType::ApiKey {
