@@ -70,6 +70,7 @@ fn http_config() -> McpConfig {
             name: "API_KEY".to_string(),
             required: false,
             is_secret: false,
+            value: None,
         }],
         package_args: vec![],
         keyfile_path: None,

@@ -45,6 +45,7 @@ fn entry_to_config_maps_env_vars_and_package_args() {
             name: "API_KEY".to_string(),
             required: true,
             is_secret: true,
+            value: None,
         }
     );
     assert_eq!(entry.auth_type, McpAuthType::ApiKey);

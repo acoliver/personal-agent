@@ -24,14 +24,15 @@ use personal_agent::services::{
 use personal_agent::ui_gpui::bridge::{spawn_user_event_forwarder, GpuiBridge};
 
 /// Create a temporary config file with a valid default Config for test isolation.
-fn temp_config_path() -> std::path::PathBuf {
+/// Returns the `TempDir` guard alongside the path so the directory is deleted
+/// when the test ends instead of leaking.
+fn temp_config_path() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("create temp dir");
-    let dir_path = dir.keep();
-    let path = dir_path.join("config.json");
+    let path = dir.path().join("config.json");
     let default_config = personal_agent::config::Config::default();
     let json = serde_json::to_string_pretty(&default_config).expect("serialize default config");
     std::fs::write(&path, json).expect("write default config");
-    path
+    (dir, path)
 }
 
 /// Create a temporary config file whose path is unwritable (for failure tests).
@@ -1628,12 +1629,13 @@ async fn test_mcp_configure_presenter_save_mcp_config_emits_saved_then_navigate_
     let mcp_service: Arc<dyn personal_agent::services::McpService> =
         Arc::new(RecordingMcpService::with_ids(vec![uuid::Uuid::new_v4()]));
 
+    let (_config_dir, config_path) = temp_config_path();
     let mut presenter = personal_agent::presentation::McpConfigurePresenter::new(
         mcp_service,
         &event_bus_sender,
         view_tx,
     )
-    .with_config_path(temp_config_path());
+    .with_config_path(config_path);
 
     presenter
         .start()
@@ -1697,12 +1699,13 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_emits_saved_then_na
     let mcp_service: Arc<dyn personal_agent::services::McpService> =
         Arc::new(RecordingMcpService::with_ids(vec![]));
 
+    let (_config_dir, config_path) = temp_config_path();
     let mut presenter = personal_agent::presentation::McpConfigurePresenter::new(
         mcp_service,
         &event_bus_sender,
         view_tx,
     )
-    .with_config_path(temp_config_path());
+    .with_config_path(config_path);
 
     presenter
         .start()
@@ -1820,12 +1823,13 @@ async fn test_mcp_configure_presenter_save_mcp_config_nil_id_with_command_payloa
     let mcp_service: Arc<dyn personal_agent::services::McpService> =
         Arc::new(RecordingMcpService::with_ids(vec![]));
 
+    let (_config_dir, config_path) = temp_config_path();
     let mut presenter = personal_agent::presentation::McpConfigurePresenter::new(
         mcp_service,
         &event_bus_sender,
         view_tx,
     )
-    .with_config_path(temp_config_path());
+    .with_config_path(config_path);
 
     presenter
         .start()

@@ -23,6 +23,7 @@ fn base_config() -> McpConfig {
             name: "API_KEY".to_string(),
             required: true,
             is_secret: true,
+            value: None,
         }],
         package_args: vec![],
         keyfile_path: None,

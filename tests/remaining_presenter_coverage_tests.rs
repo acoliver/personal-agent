@@ -25,14 +25,15 @@ fn test_rich_mcp_config(id: Uuid, name: &str) -> personal_agent::mcp::McpConfig 
     }
 }
 
-fn temp_config_path() -> std::path::PathBuf {
+/// Returns the `TempDir` guard alongside the path so the directory is
+/// deleted when the test ends instead of leaking.
+fn temp_config_path() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("create temp dir");
-    let dir_path = dir.keep();
-    let path = dir_path.join("config.json");
+    let path = dir.path().join("config.json");
     let default_config = personal_agent::config::Config::default();
     let json = serde_json::to_string_pretty(&default_config).expect("serialize default config");
     std::fs::write(&path, json).expect("write default config");
-    path
+    (dir, path)
 }
 
 use personal_agent::events::{
@@ -941,7 +942,7 @@ async fn mcp_configure_presenter_handles_load_save_oauth_and_domain_events() {
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = broadcast::channel(128);
 
-    let tmp_config = temp_config_path();
+    let (_config_dir, tmp_config) = temp_config_path();
     let mut presenter =
         McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
             .with_config_path(tmp_config);
@@ -1089,10 +1090,15 @@ async fn mcp_configure_presenter_surfaces_load_and_save_errors() {
     )));
 }
 
-fn temp_config_with_env_mcp(id: Uuid, name: &str, env_var_names: &[&str]) -> std::path::PathBuf {
+/// Returns the `TempDir` guard alongside the path so the directory is
+/// deleted when the test ends instead of leaking.
+fn temp_config_with_env_mcp(
+    id: Uuid,
+    name: &str,
+    env_var_names: &[&str],
+) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("create temp dir");
-    let dir_path = dir.keep();
-    let path = dir_path.join("config.json");
+    let path = dir.path().join("config.json");
     let mut config = personal_agent::config::Config::default();
     config.mcps.push(personal_agent::mcp::McpConfig {
         id,
@@ -1112,6 +1118,7 @@ fn temp_config_with_env_mcp(id: Uuid, name: &str, env_var_names: &[&str]) -> std
                 name: (*env_var_name).to_string(),
                 required: true,
                 is_secret: true,
+                value: None,
             })
             .collect(),
         package_args: vec![],
@@ -1121,17 +1128,18 @@ fn temp_config_with_env_mcp(id: Uuid, name: &str, env_var_names: &[&str]) -> std
     });
     let json = serde_json::to_string_pretty(&config).expect("serialize config");
     std::fs::write(&path, json).expect("write config");
-    path
+    (dir, path)
 }
 
 #[tokio::test]
 async fn mcp_configure_draft_loads_env_vars_from_app_config() {
+    personal_agent::services::secure_store::use_mock_backend();
     let config_id = Uuid::new_v4();
     let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(config_id)));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = broadcast::channel(128);
 
-    let tmp_config = temp_config_with_env_mcp(config_id, "Exa", &["EXA_API_KEY"]);
+    let (_config_dir, tmp_config) = temp_config_with_env_mcp(config_id, "Exa", &["EXA_API_KEY"]);
     let mut presenter =
         McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
             .with_config_path(tmp_config);
@@ -1146,11 +1154,11 @@ async fn mcp_configure_draft_loads_env_vars_from_app_config() {
         command,
         ViewCommand::McpConfigureDraftLoaded {
             id,
-            env: Some(env),
+            env,
             env_var_name,
             ..
         } if id == &config_id.to_string()
-            && env == &vec![("EXA_API_KEY".to_string(), String::new())]
+            && env == &vec![("EXA_API_KEY".to_string(), String::new(), true)]
             && env_var_name == "EXA_API_KEY"
     )));
 }
@@ -1162,7 +1170,7 @@ async fn mcp_configure_save_stores_keychain_secrets() {
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = broadcast::channel(128);
 
-    let tmp_config = temp_config_path();
+    let (_config_dir, tmp_config) = temp_config_path();
     let mut presenter =
         McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
             .with_config_path(tmp_config.clone());
@@ -1173,7 +1181,10 @@ async fn mcp_configure_save_stores_keychain_secrets() {
         .publish(AppEvent::User(UserEvent::SaveMcpConfig {
             id: Uuid::nil(),
             config: Box::new(test_rich_mcp_config(Uuid::nil(), "Exa")),
-            secrets: vec![("EXA_API_KEY".to_string(), "sk-123".to_string())],
+            secrets: vec![(
+                "EXA_API_KEY".to_string(),
+                personal_agent::events::types::SecretValue::new("sk-123"),
+            )],
         }))
         .expect("publish save mcp config");
     let commands = collect_broadcast_commands(&mut view_rx).await;
@@ -1194,5 +1205,255 @@ async fn mcp_configure_save_stores_keychain_secrets() {
     assert!(
         !config_json.contains("sk-123"),
         "plaintext secret must never be serialized into the config file"
+    );
+}
+
+/// Serializes tests that touch the process-global mock keychain, including
+/// failure injection, so parallel tests cannot observe each other's state.
+static KEYCHAIN_WRITE_SERIALIZER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test]
+// tokio's MutexGuard is async-aware and made to be held across await points;
+// clippy's await_holding_lock lint matches guard type names and cannot tell
+// it apart from a std guard.
+#[allow(clippy::await_holding_lock)]
+async fn mcp_configure_save_persists_realistic_secret_payload() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(Uuid::new_v4())));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let (_config_dir, tmp_config) = temp_config_path();
+    let mut presenter =
+        McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
+            .with_config_path(tmp_config.clone());
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    // The exact payload shape the configure screen emits for an ApiKey MCP:
+    // one secret env var (no value in the config) plus one plain var.
+    let mut config = test_rich_mcp_config(Uuid::nil(), "Exa Pro");
+    config.auth_type = personal_agent::mcp::McpAuthType::ApiKey;
+    config.env_vars = vec![
+        personal_agent::mcp::EnvVarConfig {
+            name: "EXA_API_KEY".to_string(),
+            required: true,
+            is_secret: true,
+            value: None,
+        },
+        personal_agent::mcp::EnvVarConfig {
+            name: "EXA_WORKSPACE".to_string(),
+            required: true,
+            is_secret: false,
+            value: Some("acme".to_string()),
+        },
+    ];
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveMcpConfig {
+            id: Uuid::nil(),
+            config: Box::new(config),
+            secrets: vec![(
+                "EXA_API_KEY".to_string(),
+                personal_agent::events::types::SecretValue::new("sk-real-4f2a"),
+            )],
+        }))
+        .expect("publish save mcp config");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    let saved_id = commands
+        .iter()
+        .find_map(|command| match command {
+            ViewCommand::McpConfigSaved { id, name: Some(_) } if !id.is_nil() => Some(*id),
+            _ => None,
+        })
+        .expect("save should emit McpConfigSaved");
+
+    let stored = secure_store::mcp_keys::get_named(saved_id, "EXA_API_KEY")
+        .expect("keychain lookup should succeed");
+    assert_eq!(stored.as_deref(), Some("sk-real-4f2a"));
+
+    let config_json = std::fs::read_to_string(&tmp_config).expect("read saved config");
+    let persisted: personal_agent::config::Config =
+        serde_json::from_str(&config_json).expect("parse saved config");
+    let saved = persisted
+        .mcps
+        .iter()
+        .find(|mcp| mcp.id == saved_id)
+        .expect("saved MCP entry");
+    let secret_var = saved
+        .env_vars
+        .iter()
+        .find(|var| var.name == "EXA_API_KEY")
+        .expect("secret var persisted");
+    assert!(secret_var.is_secret);
+    assert_eq!(
+        secret_var.value, None,
+        "a secret var must never carry a serialized value"
+    );
+    let plain_var = saved
+        .env_vars
+        .iter()
+        .find(|var| var.name == "EXA_WORKSPACE")
+        .expect("plain var persisted");
+    assert!(!plain_var.is_secret);
+    assert_eq!(plain_var.value.as_deref(), Some("acme"));
+}
+
+#[tokio::test]
+// See the note on mcp_configure_save_persists_realistic_secret_payload.
+#[allow(clippy::await_holding_lock)]
+async fn mcp_configure_save_with_empty_secrets_preserves_stored_key() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
+    let existing_id = Uuid::new_v4();
+    secure_store::mcp_keys::store_named(existing_id, "EXA_API_KEY", "stored-key-9f31")
+        .expect("pre-store key");
+
+    let (_config_dir, tmp_config) = temp_config_with_env_mcp(existing_id, "Exa", &["EXA_API_KEY"]);
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(existing_id)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter =
+        McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
+            .with_config_path(tmp_config);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    // Editing the MCP without retyping the key emits an empty secrets
+    // payload; the keychain entry must survive untouched.
+    let mut config = test_rich_mcp_config(existing_id, "Exa Updated");
+    config.auth_type = personal_agent::mcp::McpAuthType::ApiKey;
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "EXA_API_KEY".to_string(),
+        required: true,
+        is_secret: true,
+        value: None,
+    }];
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveMcpConfig {
+            id: existing_id,
+            config: Box::new(config),
+            secrets: vec![],
+        }))
+        .expect("publish save mcp config");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigSaved { id, .. } if *id == existing_id
+    )));
+
+    let stored = secure_store::mcp_keys::get_named(existing_id, "EXA_API_KEY")
+        .expect("keychain lookup should succeed");
+    assert_eq!(
+        stored.as_deref(),
+        Some("stored-key-9f31"),
+        "an edit without a typed key must preserve the stored keychain entry"
+    );
+}
+
+#[tokio::test]
+// See the note on mcp_configure_save_persists_realistic_secret_payload.
+#[allow(clippy::await_holding_lock)]
+async fn mcp_configure_save_surfaces_keychain_failure_and_writes_nothing() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
+    personal_agent::services::secure_store::set_mock_store_failure(true);
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(Uuid::new_v4())));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let (_config_dir, tmp_config) = temp_config_path();
+    let mut presenter =
+        McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
+            .with_config_path(tmp_config.clone());
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveMcpConfig {
+            id: Uuid::nil(),
+            config: Box::new(test_rich_mcp_config(Uuid::nil(), "Doomed")),
+            secrets: vec![(
+                "EXA_API_KEY".to_string(),
+                personal_agent::events::types::SecretValue::new("sk-never-stored"),
+            )],
+        }))
+        .expect("publish save mcp config");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+
+    assert!(
+        commands.iter().any(|command| matches!(
+            command,
+            ViewCommand::ShowError {
+                title,
+                severity: ErrorSeverity::Error,
+                ..
+            } if title == "Save Failed"
+        )),
+        "a keychain store failure must surface as ShowError"
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, ViewCommand::McpConfigSaved { .. })),
+        "no McpConfigSaved may follow a failed keychain store"
+    );
+
+    let config_json = std::fs::read_to_string(&tmp_config).expect("read untouched config");
+    let persisted: personal_agent::config::Config =
+        serde_json::from_str(&config_json).expect("parse config");
+    assert!(
+        persisted.mcps.is_empty(),
+        "a failed keychain store must not leave a config entry behind"
+    );
+
+    personal_agent::services::secure_store::set_mock_store_failure(false);
+}
+
+#[tokio::test]
+// See the note on mcp_configure_save_persists_realistic_secret_payload.
+#[allow(clippy::await_holding_lock)]
+async fn mcp_configure_draft_never_carries_stored_secret_value() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
+    let config_id = Uuid::new_v4();
+    secure_store::mcp_keys::store_named(config_id, "EXA_API_KEY", "canary-only-keychain")
+        .expect("pre-store canary");
+
+    let (_config_dir, tmp_config) = temp_config_with_env_mcp(config_id, "Exa", &["EXA_API_KEY"]);
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(config_id)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter =
+        McpConfigurePresenter::new_with_event_bus(mcp_service.clone(), &event_bus, view_tx)
+            .with_config_path(tmp_config);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::ConfigureMcp { id: config_id }))
+        .expect("publish configure mcp");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+
+    assert!(
+        commands.iter().any(|command| matches!(
+            command,
+            ViewCommand::McpConfigureDraftLoaded {
+                id,
+                stored_secret_names,
+                ..
+            } if id == &config_id.to_string()
+                && stored_secret_names == &vec!["EXA_API_KEY".to_string()]
+        )),
+        "the draft must report which secret vars already have keychain entries"
+    );
+    let rendered = format!("{commands:?}");
+    assert!(
+        !rendered.contains("canary-only-keychain"),
+        "the stored secret value must never appear in any ViewCommand payload, got: {rendered}"
     );
 }
