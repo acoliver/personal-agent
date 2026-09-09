@@ -413,10 +413,6 @@ async fn collect_mpsc_commands(
 }
 
 #[tokio::test]
-// tokio's MutexGuard is async-aware and made to be held across await points;
-// clippy's await_holding_lock lint matches guard type names and cannot tell
-// it apart from a std guard.
-#[allow(clippy::await_holding_lock)]
 async fn api_key_manager_lists_keys_and_handles_store_delete_errors() {
     secure_store::use_mock_backend();
     let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
@@ -1169,10 +1165,6 @@ async fn mcp_configure_draft_loads_env_vars_from_app_config() {
 }
 
 #[tokio::test]
-// tokio's MutexGuard is async-aware and made to be held across await points;
-// clippy's await_holding_lock lint matches guard type names and cannot tell
-// it apart from a std guard.
-#[allow(clippy::await_holding_lock)]
 async fn mcp_configure_save_stores_keychain_secrets() {
     personal_agent::services::secure_store::use_mock_backend();
     let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
@@ -1222,11 +1214,17 @@ async fn mcp_configure_save_stores_keychain_secrets() {
 /// failure injection, so parallel tests cannot observe each other's state.
 static KEYCHAIN_WRITE_SERIALIZER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Clears the mock-store failure flag on drop, so an assert failure in the
+/// middle of an injection test cannot poison later tests in this binary.
+struct MockStoreFailureGuard;
+
+impl Drop for MockStoreFailureGuard {
+    fn drop(&mut self) {
+        secure_store::set_mock_store_failure(false);
+    }
+}
+
 #[tokio::test]
-// tokio's MutexGuard is async-aware and made to be held across await points;
-// clippy's await_holding_lock lint matches guard type names and cannot tell
-// it apart from a std guard.
-#[allow(clippy::await_holding_lock)]
 async fn mcp_configure_save_persists_realistic_secret_payload() {
     personal_agent::services::secure_store::use_mock_backend();
     let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
@@ -1311,8 +1309,6 @@ async fn mcp_configure_save_persists_realistic_secret_payload() {
 }
 
 #[tokio::test]
-// See the note on mcp_configure_save_persists_realistic_secret_payload.
-#[allow(clippy::await_holding_lock)]
 async fn mcp_configure_save_with_empty_secrets_preserves_stored_key() {
     personal_agent::services::secure_store::use_mock_backend();
     let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
@@ -1365,12 +1361,11 @@ async fn mcp_configure_save_with_empty_secrets_preserves_stored_key() {
 }
 
 #[tokio::test]
-// See the note on mcp_configure_save_persists_realistic_secret_payload.
-#[allow(clippy::await_holding_lock)]
 async fn mcp_configure_save_surfaces_keychain_failure_and_writes_nothing() {
     personal_agent::services::secure_store::use_mock_backend();
     let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
-    personal_agent::services::secure_store::set_mock_store_failure(true);
+    let _failure = MockStoreFailureGuard;
+    secure_store::set_mock_store_failure(true);
     let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(Uuid::new_v4())));
     let event_bus = Arc::new(EventBus::new(64));
     let (view_tx, mut view_rx) = broadcast::channel(128);
@@ -1419,13 +1414,9 @@ async fn mcp_configure_save_surfaces_keychain_failure_and_writes_nothing() {
         persisted.mcps.is_empty(),
         "a failed keychain store must not leave a config entry behind"
     );
-
-    personal_agent::services::secure_store::set_mock_store_failure(false);
 }
 
 #[tokio::test]
-// See the note on mcp_configure_save_persists_realistic_secret_payload.
-#[allow(clippy::await_holding_lock)]
 async fn mcp_configure_draft_never_carries_stored_secret_value() {
     personal_agent::services::secure_store::use_mock_backend();
     let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
@@ -1465,5 +1456,188 @@ async fn mcp_configure_draft_never_carries_stored_secret_value() {
     assert!(
         !rendered.contains("canary-only-keychain"),
         "the stored secret value must never appear in any ViewCommand payload, got: {rendered}"
+    );
+}
+
+/// Unwritable config path that fails the save AFTER the secret store has
+/// succeeded, which is exactly when the rollback path runs.
+fn unwritable_config_path() -> std::path::PathBuf {
+    #[cfg(not(windows))]
+    {
+        std::path::PathBuf::from("/nonexistent/dir/config.json")
+    }
+    #[cfg(windows)]
+    {
+        std::path::PathBuf::from(r"invalid:path\config.json")
+    }
+}
+
+#[tokio::test]
+async fn mcp_configure_failed_save_restores_preexisting_keychain_entry() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
+    let saved_id = Uuid::new_v4();
+    secure_store::mcp_keys::store_named(saved_id, "EXA_API_KEY", "prior-working-key")
+        .expect("pre-store prior credential");
+
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(saved_id)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx)
+        .with_config_path(unwritable_config_path());
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveMcpConfig {
+            id: saved_id,
+            config: Box::new(test_rich_mcp_config(saved_id, "Exa Rotated")),
+            secrets: vec![(
+                "EXA_API_KEY".to_string(),
+                personal_agent::events::types::SecretValue::new("rotated-key"),
+            )],
+        }))
+        .expect("publish failing save");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+
+    assert!(
+        commands.iter().any(|command| matches!(
+            command,
+            ViewCommand::ShowError {
+                title,
+                severity: ErrorSeverity::Error,
+                ..
+            } if title == "Save Failed"
+        )),
+        "the save must fail after the store for the rollback to run"
+    );
+
+    let stored = secure_store::mcp_keys::get_named(saved_id, "EXA_API_KEY")
+        .expect("keychain lookup should succeed");
+    assert_eq!(
+        stored.as_deref(),
+        Some("prior-working-key"),
+        "a failed save must restore the previously stored credential, not delete it"
+    );
+}
+
+#[tokio::test]
+async fn mcp_configure_failed_save_deletes_secret_it_created() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let _serial = KEYCHAIN_WRITE_SERIALIZER.lock().await;
+    let saved_id = Uuid::new_v4();
+
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(saved_id)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx)
+        .with_config_path(unwritable_config_path());
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveMcpConfig {
+            id: saved_id,
+            config: Box::new(test_rich_mcp_config(saved_id, "Exa New")),
+            secrets: vec![(
+                "EXA_API_KEY".to_string(),
+                personal_agent::events::types::SecretValue::new("never-committed-key"),
+            )],
+        }))
+        .expect("publish failing save");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+
+    assert!(
+        commands.iter().any(|command| matches!(
+            command,
+            ViewCommand::ShowError {
+                title,
+                severity: ErrorSeverity::Error,
+                ..
+            } if title == "Save Failed"
+        )),
+        "the save must fail after the store for the rollback to run"
+    );
+
+    let stored = secure_store::mcp_keys::get_named(saved_id, "EXA_API_KEY")
+        .expect("keychain lookup should succeed");
+    assert!(
+        stored.is_none(),
+        "a failed save must not leave the secret it created behind"
+    );
+}
+
+#[tokio::test]
+async fn mcp_configure_save_rejects_unsafe_env_var_names_before_persisting() {
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(Uuid::new_v4())));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let (_config_dir, tmp_config) = temp_config_path();
+    let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx)
+        .with_config_path(tmp_config.clone());
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    // Invalid name in the declared config env vars.
+    let mut config = test_rich_mcp_config(Uuid::nil(), "Exa");
+    config.env_vars = vec![personal_agent::mcp::EnvVarConfig {
+        name: "BAD NAME".to_string(),
+        required: true,
+        is_secret: true,
+        value: None,
+    }];
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveMcpConfig {
+            id: Uuid::nil(),
+            config: Box::new(config),
+            secrets: vec![],
+        }))
+        .expect("publish save with invalid env var name");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(
+        commands.iter().any(|command| matches!(
+            command,
+            ViewCommand::ShowError {
+                title,
+                message,
+                severity: ErrorSeverity::Error,
+            } if title == "Save Failed" && message.contains("BAD NAME")
+        )),
+        "an invalid env var name must surface a descriptive save error"
+    );
+
+    // Invalid name in the secrets payload alone.
+    event_bus
+        .publish(AppEvent::User(UserEvent::SaveMcpConfig {
+            id: Uuid::nil(),
+            config: Box::new(test_rich_mcp_config(Uuid::nil(), "Exa")),
+            secrets: vec![(
+                "KEY\r\nINJECTED".to_string(),
+                personal_agent::events::types::SecretValue::new("sk-1"),
+            )],
+        }))
+        .expect("publish save with invalid secret name");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(
+        commands.iter().any(|command| matches!(
+            command,
+            ViewCommand::ShowError {
+                title,
+                severity: ErrorSeverity::Error,
+                ..
+            } if title == "Save Failed"
+        )),
+        "an invalid secret payload name must surface a save error"
+    );
+
+    let config_json = std::fs::read_to_string(&tmp_config).expect("read untouched config");
+    let persisted: personal_agent::config::Config =
+        serde_json::from_str(&config_json).expect("parse config");
+    assert!(
+        persisted.mcps.is_empty(),
+        "rejected saves must not persist a config entry"
     );
 }

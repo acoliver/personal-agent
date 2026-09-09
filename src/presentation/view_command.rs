@@ -383,6 +383,9 @@ pub enum ViewCommand {
         /// Auth type persisted for this MCP; registry drafts infer it from
         /// env var names.
         auth_type: crate::mcp::McpAuthType,
+        /// True when the persisted MCP already holds an OAuth token, so the
+        /// configure view may save without re-running the OAuth flow.
+        oauth_connected: bool,
         /// Persisted keyfile path (empty when the MCP has none).
         keyfile_path: String,
         /// Draft env vars as `(name, plain value, is_secret)`. Secret values

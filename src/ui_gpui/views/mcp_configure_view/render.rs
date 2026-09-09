@@ -61,33 +61,46 @@ impl McpConfigureView {
                         .child(title),
                 ),
             )
-            // Right: Save button
+            // Right: Save button (+ why a blocked save was refused)
             .child(
                 div()
-                    .id("btn-save")
-                    .w(px(60.0))
-                    .py(px(6.0))
-                    .rounded(px(4.0))
                     .flex()
-                    .justify_center()
-                    .text_size(px(Theme::font_size_mono()))
-                    .when(can_save, |d| {
-                        d.cursor_pointer()
-                            .bg(Theme::accent())
-                            .hover(|s| s.bg(Theme::accent_hover()))
-                            .text_color(Theme::selection_fg())
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _window, _cx| {
-                                    tracing::info!("Save clicked - emitting SaveMcpConfig");
-                                    this.save_current();
-                                }),
-                            )
-                    })
-                    .when(!can_save, |d| {
-                        d.bg(Theme::bg_dark()).text_color(Theme::text_muted())
-                    })
-                    .child("Save"),
+                    .flex_col()
+                    .items_end()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .id("btn-save")
+                            .w(px(60.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .flex()
+                            .justify_center()
+                            .text_size(px(Theme::font_size_mono()))
+                            .when(can_save, |d| {
+                                d.cursor_pointer()
+                                    .bg(Theme::accent())
+                                    .hover(|s| s.bg(Theme::accent_hover()))
+                                    .text_color(Theme::selection_fg())
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _window, cx| {
+                                            tracing::info!("Save clicked - emitting SaveMcpConfig");
+                                            this.save_current(cx);
+                                        }),
+                                    )
+                            })
+                            .when(!can_save, |d| {
+                                d.bg(Theme::bg_dark()).text_color(Theme::text_muted())
+                            })
+                            .child("Save"),
+                    )
+                    .children(self.state.data.save_blocked_reason.clone().map(|reason| {
+                        div()
+                            .text_size(px(Theme::font_size_small()))
+                            .text_color(Theme::error())
+                            .child(reason)
+                    })),
             )
     }
 

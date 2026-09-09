@@ -20,6 +20,9 @@ use crate::services::McpService;
 /// Persisted MCP fields the configure draft needs beyond the service payload.
 struct PersistedMcpDraft {
     auth_type: crate::mcp::McpAuthType,
+    /// True when the persisted MCP authenticates with OAuth and already
+    /// holds a token, so the draft may save without re-running the flow.
+    oauth_connected: bool,
     keyfile_path: String,
     env: Vec<(String, String, bool)>,
     stored_secret_names: Vec<String>,
@@ -29,11 +32,32 @@ impl PersistedMcpDraft {
     const fn empty() -> Self {
         Self {
             auth_type: crate::mcp::McpAuthType::None,
+            oauth_connected: false,
             keyfile_path: String::new(),
             env: Vec::new(),
             stored_secret_names: Vec::new(),
         }
     }
+}
+
+/// A keychain entry written during a save, with the prior value it
+/// overwrote (`None` when no entry existed before).
+struct StoredSecret {
+    name: String,
+    prior: Option<String>,
+}
+
+/// Roll one stored entry back to its pre-save keychain state: restore the
+/// value this save overwrote, or delete the entry this save created.
+fn rollback_secret(
+    saved_id: Uuid,
+    name: &str,
+    prior: Option<&String>,
+) -> Result<(), crate::services::secure_store::SecureStoreError> {
+    if let Some(prior) = prior {
+        return crate::services::secure_store::mcp_keys::store_named(saved_id, name, prior);
+    }
+    crate::services::secure_store::mcp_keys::delete_named(saved_id, name)
 }
 
 /// `McpConfigurePresenter` - handles MCP server configuration UI
@@ -308,6 +332,7 @@ impl McpConfigurePresenter {
                             command,
                             args,
                             auth_type: persisted.auth_type,
+                            oauth_connected: persisted.oauth_connected,
                             keyfile_path: persisted.keyfile_path,
                             env: persisted.env,
                             stored_secret_names: persisted.stored_secret_names,
@@ -355,13 +380,20 @@ impl McpConfigurePresenter {
             };
             let mut stored_secret_names = Vec::new();
             for var in &mcp.env_vars {
-                if var.is_secret
-                    && matches!(
-                        crate::services::secure_store::mcp_keys::get_named(id, &var.name),
-                        Ok(Some(_))
-                    )
-                {
-                    stored_secret_names.push(var.name.clone());
+                if !var.is_secret {
+                    continue;
+                }
+                match crate::services::secure_store::mcp_keys::get_named(id, &var.name) {
+                    Ok(Some(_)) => stored_secret_names.push(var.name.clone()),
+                    // A probe failure is not proof of absence; keep the
+                    // draft usable (treat as not stored) but leave a
+                    // diagnosable trace.
+                    Err(e) => tracing::warn!(
+                        "Keychain probe for MCP {id} secret env var {} failed, \
+                         treating as not stored: {e}",
+                        var.name
+                    ),
+                    Ok(None) => {}
                 }
             }
             let env = mcp
@@ -380,6 +412,8 @@ impl McpConfigurePresenter {
                 .collect();
             Ok(Some(PersistedMcpDraft {
                 auth_type: mcp.auth_type.clone(),
+                oauth_connected: mcp.auth_type == crate::mcp::McpAuthType::OAuth
+                    && mcp.oauth_token.is_some(),
                 keyfile_path: mcp
                     .keyfile_path
                     .as_ref()
@@ -461,17 +495,22 @@ impl McpConfigurePresenter {
     ///
     /// Secrets are stored before the config write so a failed store aborts
     /// the save; any failure after stores have happened rolls each stored
-    /// entry back. On success, keychain entries for old secret vars the new
-    /// config no longer declares are deleted so renames cannot strand
-    /// credentials.
+    /// entry back. Because a store OVERWRITES any existing entry, the prior
+    /// value is snapshotted first: rollback restores it when there was one
+    /// and deletes only entries this save created, so a failed save can
+    /// never destroy a credential that already worked. On success, keychain
+    /// entries for old secret vars the new config no longer declares are
+    /// deleted so renames cannot strand credentials.
     fn persist_save(
         saved_id: Uuid,
         config: crate::events::types::McpConfig,
         secrets: &[(String, crate::events::types::SecretValue)],
         config_path: Option<&std::path::Path>,
     ) -> Result<(), String> {
+        Self::validate_env_payload(&config, secrets)?;
+
         let secrets_manager = crate::mcp::SecretsManager::new();
-        let mut stored: Vec<String> = Vec::new();
+        let mut stored: Vec<StoredSecret> = Vec::new();
 
         let result = Self::write_config_and_secrets(
             saved_id,
@@ -483,15 +522,40 @@ impl McpConfigurePresenter {
         );
 
         if result.is_err() {
-            for name in &stored {
-                if let Err(e) =
-                    crate::services::secure_store::mcp_keys::delete_named(saved_id, name)
-                {
-                    tracing::warn!("Failed to roll back MCP secret {name}: {e}");
+            for entry in &stored {
+                if let Err(e) = rollback_secret(saved_id, &entry.name, entry.prior.as_ref()) {
+                    tracing::warn!("Failed to roll back MCP secret {}: {e}", entry.name);
                 }
             }
         }
         result
+    }
+
+    /// Reject env var names or secret payload names that could not travel
+    /// safely as HTTP header material before anything is persisted.
+    fn validate_env_payload(
+        config: &crate::events::types::McpConfig,
+        secrets: &[(String, crate::events::types::SecretValue)],
+    ) -> Result<(), String> {
+        for var in &config.env_vars {
+            if !crate::mcp::env_var_name_is_valid(&var.name) {
+                return Err(format!(
+                    "MCP {}: env var name {:?} is invalid; use ASCII letters, digits, \
+                     or underscores (max 64 chars, starting with a letter or underscore)",
+                    config.name, var.name
+                ));
+            }
+        }
+        for (name, _) in secrets {
+            if !crate::mcp::env_var_name_is_valid(name) {
+                return Err(format!(
+                    "MCP {}: secret env var name {:?} is invalid; use ASCII letters, \
+                     digits, or underscores (max 64 chars, starting with a letter or underscore)",
+                    config.name, name
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Store each secret, then merge `config` into the config file and clean
@@ -501,14 +565,21 @@ impl McpConfigurePresenter {
         config: crate::events::types::McpConfig,
         secrets: &[(String, crate::events::types::SecretValue)],
         secrets_manager: &crate::mcp::SecretsManager,
-        stored: &mut Vec<String>,
+        stored: &mut Vec<StoredSecret>,
         config_path: Option<&std::path::Path>,
     ) -> Result<(), String> {
         for (var_name, value) in secrets {
+            // Snapshot before overwriting: the rollback path needs the
+            // prior value to restore, not just the fact we wrote here.
+            let prior = crate::services::secure_store::mcp_keys::get_named(saved_id, var_name)
+                .map_err(|e| format!("Failed to read prior MCP secret {var_name}: {e}"))?;
             secrets_manager
                 .store_api_key_named(saved_id, var_name, value.expose())
                 .map_err(|e| format!("Failed to store MCP secret {var_name}: {e}"))?;
-            stored.push(var_name.clone());
+            stored.push(StoredSecret {
+                name: var_name.clone(),
+                prior,
+            });
         }
 
         let path = match config_path {

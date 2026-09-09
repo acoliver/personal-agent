@@ -69,6 +69,7 @@ async fn draft_loaded_preserves_transport_metadata_and_requests_configure_naviga
                     "@modelcontextprotocol/server-fetch".to_string(),
                 ],
                 auth_type: crate::mcp::McpAuthType::ApiKey,
+                oauth_connected: false,
                 keyfile_path: String::new(),
                 env: vec![("FETCH_API_KEY".to_string(), String::new(), true)],
                 stored_secret_names: vec![],

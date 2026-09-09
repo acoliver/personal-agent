@@ -41,6 +41,7 @@ async fn draft_loaded_sets_auth_transport_and_save_payload_for_remote_http(
                 command: String::new(),
                 args: vec![],
                 auth_type: crate::mcp::McpAuthType::None,
+                oauth_connected: false,
                 keyfile_path: String::new(),
                 env: vec![],
                 stored_secret_names: vec![],
@@ -106,6 +107,7 @@ async fn draft_loaded_with_env_requires_api_key_and_status_commands_update_oauth
                     "@modelcontextprotocol/server-filesystem".to_string(),
                 ],
                 auth_type: crate::mcp::McpAuthType::ApiKey,
+                oauth_connected: false,
                 keyfile_path: String::new(),
                 env: vec![("FILESYSTEM_TOKEN".to_string(), String::new(), true)],
                 stored_secret_names: vec![],
@@ -374,7 +376,7 @@ async fn helper_actions_and_key_shortcuts_emit_oauth_save_and_navigation_events(
         assert!(view.state.mask_api_key);
 
         view.start_oauth();
-        view.save_current();
+        view.save_current(view_cx);
     });
 
     let mut visual_cx = cx.add_empty_window().clone();
@@ -777,6 +779,7 @@ async fn stored_secret_round_trip_keeps_can_save_and_emits_no_secret(cx: &mut Te
                 command: "npx".to_string(),
                 args: vec!["-y".to_string(), "@example/exa".to_string()],
                 auth_type: crate::mcp::McpAuthType::ApiKey,
+                oauth_connected: false,
                 keyfile_path: String::new(),
                 env: vec![("EXA_API_KEY".to_string(), String::new(), true)],
                 stored_secret_names: vec!["EXA_API_KEY".to_string()],
@@ -829,6 +832,7 @@ async fn keyfile_draft_round_trip_preserves_path_and_method(cx: &mut TestAppCont
                 command: "npx".to_string(),
                 args: vec![],
                 auth_type: crate::mcp::McpAuthType::Keyfile,
+                oauth_connected: false,
                 keyfile_path: "/tmp/service-key.json".to_string(),
                 env: vec![],
                 stored_secret_names: vec![],
@@ -881,6 +885,7 @@ async fn oauth_draft_resets_stale_connection_state(cx: &mut TestAppContext) {
                     command: "npx".to_string(),
                     args: vec![],
                     auth_type: crate::mcp::McpAuthType::OAuth,
+                    oauth_connected: false,
                     keyfile_path: String::new(),
                     env: vec![],
                     stored_secret_names: vec![],
@@ -951,6 +956,7 @@ async fn cmd_s_with_incomplete_api_key_emits_nothing(cx: &mut TestAppContext) {
                     command: "npx".to_string(),
                     args: vec![],
                     auth_type: crate::mcp::McpAuthType::ApiKey,
+                    oauth_connected: false,
                     keyfile_path: String::new(),
                     env: vec![("EXA_API_KEY".to_string(), String::new(), true)],
                     stored_secret_names: vec![],
@@ -967,5 +973,156 @@ async fn cmd_s_with_incomplete_api_key_emits_nothing(cx: &mut TestAppContext) {
     assert!(
         user_rx.try_recv().is_err(),
         "cmd-s on an incomplete draft must not emit SaveMcpConfig"
+    );
+}
+
+#[gpui::test]
+async fn oauth_draft_with_persisted_token_loads_connected_and_savable(cx: &mut TestAppContext) {
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, cx| {
+        view.handle_command(
+            ViewCommand::McpConfigureDraftLoaded {
+                id: Uuid::new_v4().to_string(),
+                name: "OAuth MCP".to_string(),
+                package: "@example/oauth-mcp".to_string(),
+                package_type: crate::mcp::McpPackageType::Npm,
+                runtime_hint: Some("npx".to_string()),
+                env_var_name: String::new(),
+                command: "npx".to_string(),
+                args: vec![],
+                auth_type: crate::mcp::McpAuthType::OAuth,
+                oauth_connected: true,
+                keyfile_path: String::new(),
+                env: vec![],
+                stored_secret_names: vec![],
+                url: None,
+            },
+            cx,
+        );
+        // The persisted token means the draft is already connected under
+        // the loaded MCP's own name and stays savable without re-running
+        // the OAuth flow (even for a rename-only edit).
+        assert_eq!(
+            view.state.data.oauth_status,
+            OAuthStatus::Connected {
+                username: "OAuth MCP".to_string()
+            }
+        );
+        assert!(view.state.data.can_save());
+    });
+}
+
+#[gpui::test]
+async fn persisted_env_vars_convert_plain_var_to_secret_instead_of_duplicating(
+    cx: &mut TestAppContext,
+) {
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, _cx| {
+        let mut data = McpConfigureData::new();
+        data.auth_method = McpAuthMethod::ApiKey;
+        data.env_var_name = "API_KEY".to_string();
+        // A plain var already carries the derived secret name.
+        data.env = vec![("API_KEY".to_string(), String::new(), false)];
+        view.set_mcp(data, true);
+
+        let env_vars = view.state.data.persisted_env_vars();
+        let api_key_vars: Vec<_> = env_vars
+            .iter()
+            .filter(|var| var.name == "API_KEY")
+            .collect();
+        assert_eq!(
+            api_key_vars.len(),
+            1,
+            "the derived secret must reuse the existing plain var, got {env_vars:?}"
+        );
+        assert!(api_key_vars[0].is_secret);
+        assert_eq!(api_key_vars[0].value, None);
+    });
+}
+
+#[gpui::test]
+async fn whitespace_only_api_key_is_not_treated_as_a_typed_secret(cx: &mut TestAppContext) {
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, _cx| {
+        let mut data = McpConfigureData::new();
+        data.auth_method = McpAuthMethod::ApiKey;
+        data.env_var_name = "EXA_API_KEY".to_string();
+        data.env = vec![("EXA_API_KEY".to_string(), String::new(), true)];
+        data.api_key = "   ".to_string();
+        view.set_mcp(data, false);
+
+        // A whitespace-only key must not count as typed (can_save) and must
+        // not be emitted, or it would overwrite a good stored key.
+        assert!(
+            view.state.data.typed_secrets().is_empty(),
+            "whitespace-only api_key must yield no secrets payload"
+        );
+        assert!(
+            !view.state.data.can_save(),
+            "a whitespace-only key with no stored entry must not unlock save"
+        );
+    });
+}
+
+#[gpui::test]
+async fn blocked_save_sets_reason_and_successful_save_clears_it(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, cx| {
+        view.set_bridge(Arc::clone(&bridge));
+
+        // Missing name: the first can_save rule.
+        view.handle_command(
+            ViewCommand::McpConfigureDraftLoaded {
+                id: Uuid::new_v4().to_string(),
+                name: String::new(),
+                package: "@example/exa".to_string(),
+                package_type: crate::mcp::McpPackageType::Npm,
+                runtime_hint: Some("npx".to_string()),
+                env_var_name: "EXA_API_KEY".to_string(),
+                command: "npx".to_string(),
+                args: vec![],
+                auth_type: crate::mcp::McpAuthType::ApiKey,
+                oauth_connected: false,
+                keyfile_path: String::new(),
+                env: vec![("EXA_API_KEY".to_string(), String::new(), true)],
+                stored_secret_names: vec![],
+                url: None,
+            },
+            cx,
+        );
+        view.save_current(cx);
+        assert_eq!(
+            view.state.data.save_blocked_reason.as_deref(),
+            Some("Name is required"),
+            "a blocked save must surface why"
+        );
+        assert!(
+            user_rx.try_recv().is_err(),
+            "a blocked save must not emit SaveMcpConfig"
+        );
+
+        // Completing the draft (stored key satisfies the ApiKey gate) lets
+        // the save through and clears the stale reason.
+        view.state.data.name = "Exa".to_string();
+        view.state
+            .data
+            .stored_secret_names
+            .push("EXA_API_KEY".to_string());
+        assert!(view.state.data.can_save());
+        view.save_current(cx);
+        assert_eq!(
+            view.state.data.save_blocked_reason, None,
+            "a completed save must clear the blocked reason"
+        );
+    });
+
+    assert!(
+        user_rx.try_recv().is_ok(),
+        "the completed save must emit SaveMcpConfig"
     );
 }

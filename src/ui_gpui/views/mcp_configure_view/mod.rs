@@ -97,6 +97,9 @@ pub struct McpConfigureData {
     pub keyfile_path: String,
     pub oauth_provider: String,
     pub oauth_status: OAuthStatus,
+    /// Why the last save attempt was blocked; cleared once a save is
+    /// emitted so the feedback never outlives its cause.
+    pub save_blocked_reason: Option<String>,
     pub config_fields: Vec<ConfigField>,
     /// Remote URL for HTTP/SSE transport MCPs (None for stdio-only).
     pub url: Option<String>,
@@ -120,6 +123,7 @@ impl Default for McpConfigureData {
             keyfile_path: String::new(),
             oauth_provider: String::new(),
             oauth_status: OAuthStatus::default(),
+            save_blocked_reason: None,
             config_fields: vec![],
             url: None,
         }
@@ -164,7 +168,8 @@ impl McpConfigureData {
     /// Env vars to persist: draft pairs become `EnvVarConfig` entries whose
     /// plain value rides in the config only for non-secret vars. An `ApiKey`
     /// draft without any secret var derives one from `env_var_name` so the
-    /// typed key has a keychain slot at runtime.
+    /// typed key has a keychain slot at runtime; when a plain var already
+    /// carries that name it is converted in place rather than duplicated.
     fn persisted_env_vars(&self) -> Vec<crate::mcp::EnvVarConfig> {
         let mut env_vars: Vec<crate::mcp::EnvVarConfig> = self
             .env
@@ -183,21 +188,31 @@ impl McpConfigureData {
         if self.auth_method == McpAuthMethod::ApiKey
             && !self.env.iter().any(|(_, _, is_secret)| *is_secret)
         {
-            env_vars.push(crate::mcp::EnvVarConfig {
-                name: self.env_var_name.clone(),
-                required: true,
-                is_secret: true,
-                value: None,
-            });
+            match env_vars
+                .iter_mut()
+                .find(|var| var.name == self.env_var_name)
+            {
+                Some(existing) => {
+                    existing.is_secret = true;
+                    existing.value = None;
+                }
+                None => env_vars.push(crate::mcp::EnvVarConfig {
+                    name: self.env_var_name.clone(),
+                    required: true,
+                    is_secret: true,
+                    value: None,
+                }),
+            }
         }
         env_vars
     }
 
     /// Secrets payload for the save event: the typed key targets the first
     /// secret var (or the derived env var name) and is emitted only when the
-    /// field is non-empty, leaving any stored key otherwise untouched.
+    /// field holds more than whitespace, leaving any stored key otherwise
+    /// untouched.
     fn typed_secrets(&self) -> Vec<(String, crate::events::types::SecretValue)> {
-        if self.auth_method != McpAuthMethod::ApiKey || self.api_key.is_empty() {
+        if self.auth_method != McpAuthMethod::ApiKey || self.api_key.trim().is_empty() {
             return Vec::new();
         }
         let var_name = self
@@ -209,6 +224,25 @@ impl McpConfigureData {
             var_name,
             crate::events::types::SecretValue::new(&self.api_key),
         )]
+    }
+
+    /// Why `can_save` is false, matching the gate's check order so the
+    /// first failing rule is the one reported.
+    fn blocked_save_reason(&self) -> String {
+        if self.name.trim().is_empty() {
+            "Name is required".to_string()
+        } else if self.command.trim().is_empty()
+            && self.url.as_ref().is_none_or(|u| u.trim().is_empty())
+        {
+            "Command or URL is required".to_string()
+        } else {
+            match self.auth_method {
+                McpAuthMethod::ApiKey => "API key required (no stored key)".to_string(),
+                McpAuthMethod::Keyfile => "Keyfile path is required".to_string(),
+                McpAuthMethod::OAuth => "OAuth connection required".to_string(),
+                McpAuthMethod::None => "Draft is incomplete".to_string(),
+            }
+        }
     }
 }
 
@@ -283,13 +317,17 @@ impl McpConfigureView {
             .request_navigate(crate::presentation::view_command::ViewId::Settings);
     }
 
-    fn save_current(&self) {
+    fn save_current(&mut self, cx: &mut gpui::Context<Self>) {
         // Single gate for every save entrypoint (save button, cmd-s): an
-        // incomplete draft must not emit SaveMcpConfig.
+        // incomplete draft must not emit SaveMcpConfig. Say why instead of
+        // dropping the attempt silently.
         if !self.state.data.can_save() {
             tracing::info!("Save blocked: draft is not complete (can_save is false)");
+            self.state.data.save_blocked_reason = Some(self.state.data.blocked_save_reason());
+            cx.notify();
             return;
         }
+        self.state.data.save_blocked_reason = None;
         self.emit_save_mcp_config();
     }
 
@@ -438,7 +476,7 @@ impl McpConfigureView {
         }
 
         if modifiers.platform && key == "s" {
-            self.save_current();
+            self.save_current(cx);
             return;
         }
 
@@ -585,6 +623,7 @@ impl McpConfigureView {
                 command,
                 args,
                 auth_type,
+                oauth_connected,
                 keyfile_path,
                 env,
                 stored_secret_names,
@@ -598,7 +637,7 @@ impl McpConfigureView {
                 };
 
                 self.state.data.id = Some(id);
-                self.state.data.name = name;
+                self.state.data.name.clone_from(&name);
                 self.state.data.package = package;
                 self.state.data.package_type = package_type;
                 self.state.data.runtime_hint = runtime_hint;
@@ -609,16 +648,23 @@ impl McpConfigureView {
                 self.state.data.stored_secret_names = stored_secret_names;
                 self.state.data.keyfile_path = keyfile_path;
                 self.state.data.url = url;
-                // Fresh edit session: drop credentials captured for a previous
-                // MCP, reset stale OAuth state so Save cannot ride a stale
-                // Connected, and close any open input UI.
+                // Fresh edit session: drop credentials captured for a
+                // previous MCP, restore the persisted OAuth connection (an
+                // existing OAuth MCP must stay savable without re-running
+                // the flow) or reset stale state so Save cannot ride a
+                // stale Connected, and close any open input UI.
                 self.state.data.api_key.clear();
                 self.state.mask_api_key = true;
-                self.state.data.oauth_status = OAuthStatus::NotConnected;
+                self.state.data.oauth_status = if oauth_connected {
+                    OAuthStatus::Connected { username: name }
+                } else {
+                    OAuthStatus::NotConnected
+                };
                 self.state.data.oauth_provider.clear();
                 self.active_field = None;
                 self.show_auth_dropdown = false;
                 self.ime_marked_byte_count = 0;
+                self.state.data.save_blocked_reason = None;
                 self.state.is_new = self
                     .state
                     .data

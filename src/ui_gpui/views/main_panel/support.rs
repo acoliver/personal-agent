@@ -89,6 +89,7 @@ pub(super) fn assert_mcp_routing_targets(saved_mcp_id: Uuid) {
             command: "npx".to_string(),
             args: vec!["-y".to_string(), "@example/workspace-mcp".to_string()],
             auth_type: crate::mcp::McpAuthType::ApiKey,
+            oauth_connected: false,
             keyfile_path: String::new(),
             env: vec![("WORKSPACE_TOKEN".to_string(), String::new(), true)],
             stored_secret_names: vec![],

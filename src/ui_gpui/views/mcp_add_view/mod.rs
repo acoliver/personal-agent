@@ -575,6 +575,7 @@ impl McpAddView {
                 command,
                 args,
                 auth_type: _,
+                oauth_connected: _,
                 keyfile_path: _,
                 env,
                 stored_secret_names: _,
