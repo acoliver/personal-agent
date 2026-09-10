@@ -366,7 +366,14 @@ impl McpAddView {
             return;
         }
 
-        if modifiers.platform && key == "v" {
+        // Issue #244: on macOS the Control key is distinct from Command, so
+        // plain Ctrl+V pastes too; alt/shift combinations keep their own
+        // meaning.
+        if (modifiers.platform || modifiers.control)
+            && key == "v"
+            && !modifiers.alt
+            && !modifiers.shift
+        {
             if let Some(item) = cx.read_from_clipboard() {
                 if let Some(text) = item.text() {
                     let sanitized = crate::ui_gpui::sanitize_single_line(&text);

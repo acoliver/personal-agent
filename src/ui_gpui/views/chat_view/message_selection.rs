@@ -485,6 +485,10 @@ impl super::ChatView {
     /// copying, and unmodified navigation keys keep their plain bindings.
     /// Events without Control fall back to the platform modifier, which on
     /// macOS preserves the existing Command routing unchanged.
+    ///
+    /// On macOS Control is a real modifier distinct from Command, so plain
+    /// Ctrl+V additionally routes as paste (Issue #244); alt/shift
+    /// companions keep their own meaning.
     pub(super) const fn routes_platform_shortcut(
         modifiers: gpui::Modifiers,
         key: &str,
@@ -503,6 +507,11 @@ impl super::ChatView {
             ) && (key.eq_ignore_ascii_case("a") || key.eq_ignore_ascii_case("c"))
         } else {
             modifiers.platform
+                || (!non_macos
+                    && modifiers.control
+                    && !modifiers.shift
+                    && !modifiers.alt
+                    && key.eq_ignore_ascii_case("v"))
         }
     }
 }

@@ -571,6 +571,46 @@ fn non_macos_ctrl_a_and_ctrl_c_reject_any_companion_modifier() {
     ));
 }
 
+#[test]
+fn macos_routes_plain_ctrl_v_for_paste_but_not_other_ctrl_keys_or_companions() {
+    let plain_ctrl = Modifiers {
+        control: true,
+        ..Default::default()
+    };
+    let ctrl_shift = Modifiers {
+        control: true,
+        shift: true,
+        ..Default::default()
+    };
+    let ctrl_alt = Modifiers {
+        control: true,
+        alt: true,
+        ..Default::default()
+    };
+    let command = Modifiers {
+        platform: true,
+        ..Default::default()
+    };
+
+    // Issue #244: on macOS plain Ctrl+V routes as paste alongside Cmd+V.
+    assert!(ChatView::routes_platform_shortcut(plain_ctrl, "v", false));
+    assert!(ChatView::routes_platform_shortcut(command, "v", false));
+
+    // Alt/shift companions keep their own meaning.
+    assert!(!ChatView::routes_platform_shortcut(ctrl_shift, "v", false));
+    assert!(!ChatView::routes_platform_shortcut(ctrl_alt, "v", false));
+
+    // Non-paste Ctrl shortcuts still do not route on macOS.
+    assert!(!ChatView::routes_platform_shortcut(plain_ctrl, "a", false));
+    assert!(!ChatView::routes_platform_shortcut(plain_ctrl, "c", false));
+
+    // Non-macOS Ctrl handling is unchanged: plain Ctrl+A/C route, Ctrl+V
+    // does not.
+    assert!(ChatView::routes_platform_shortcut(plain_ctrl, "a", true));
+    assert!(ChatView::routes_platform_shortcut(plain_ctrl, "c", true));
+    assert!(!ChatView::routes_platform_shortcut(plain_ctrl, "v", true));
+}
+
 #[gpui::test]
 fn escape_clears_selection_and_stops_the_owner_loop_without_stopping_the_stream(
     cx: &mut TestAppContext,

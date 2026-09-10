@@ -464,6 +464,35 @@ async fn paste_appends_to_active_fields_sanitized_and_ignores_no_field(cx: &mut 
 }
 
 #[gpui::test]
+async fn ctrl_v_pastes_like_cmd_v_and_alt_shift_companions_do_not(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(McpAddView::new);
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|_window, app| {
+        view.update(app, |view: &mut McpAddView, cx| {
+            view.set_bridge(Arc::clone(&bridge));
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("npx ctrl\r\n".to_string()));
+
+            // Plain Ctrl+V must paste exactly like Cmd+V (Issue #244).
+            view.state.active_field = Some(ActiveField::ManualEntry);
+            view.handle_key_down(&key_event("ctrl-v"), cx);
+            assert_eq!(view.get_state().manual_entry, "npx ctrl");
+
+            // Alt/shift companions keep their own meaning: no paste.
+            view.handle_key_down(&key_event("ctrl-alt-v"), cx);
+            view.handle_key_down(&key_event("ctrl-shift-v"), cx);
+            assert_eq!(view.get_state().manual_entry, "npx ctrl");
+        });
+    });
+
+    assert!(
+        user_rx.try_recv().is_err(),
+        "ctrl-v paste must not emit events beyond the search refresh"
+    );
+}
+
+#[gpui::test]
 async fn backspace_during_ime_mark_keeps_truncation_on_char_boundaries(cx: &mut TestAppContext) {
     let (bridge, user_rx) = make_bridge();
     let view = cx.new(McpAddView::new);

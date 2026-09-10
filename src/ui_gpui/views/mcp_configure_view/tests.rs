@@ -407,6 +407,30 @@ async fn paste_without_active_field_is_a_no_op(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn ctrl_v_pastes_like_cmd_v_and_alt_shift_companions_do_not(cx: &mut TestAppContext) {
+    let view = cx.new(McpConfigureView::new);
+    let mut visual_cx = cx.add_empty_window().clone();
+
+    visual_cx.update(|window, app| {
+        view.update(app, |view: &mut McpConfigureView, cx| {
+            view.active_field = Some(ActiveField::ApiKey);
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                "sk-ctrl-123\r\n".to_string(),
+            ));
+
+            // Plain Ctrl+V must paste exactly like Cmd+V (Issue #244).
+            view.handle_key_down(&key_event("ctrl-v"), window, cx);
+            assert_eq!(view.state.data.api_key, "sk-ctrl-123");
+
+            // Alt/shift companions keep their own meaning: no paste.
+            view.handle_key_down(&key_event("ctrl-alt-v"), window, cx);
+            view.handle_key_down(&key_event("ctrl-shift-v"), window, cx);
+            assert_eq!(view.state.data.api_key, "sk-ctrl-123");
+        });
+    });
+}
+
+#[gpui::test]
 async fn backspace_pops_last_character(cx: &mut TestAppContext) {
     let view = cx.new(McpConfigureView::new);
     let mut visual_cx = cx.add_empty_window().clone();
