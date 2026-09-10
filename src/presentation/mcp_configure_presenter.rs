@@ -40,6 +40,19 @@ impl PersistedMcpDraft {
     }
 }
 
+/// Registry-independent fields the configure draft carries: the identity
+/// and transport projection served either by the MCP service or by the
+/// persisted config.json entry (Issue #246).
+struct McpDraftParts {
+    name: String,
+    command: String,
+    args: Vec<String>,
+    url: Option<String>,
+    package: String,
+    package_type: crate::mcp::McpPackageType,
+    runtime_hint: Option<String>,
+}
+
 /// A keychain entry written during a save, with the prior value it
 /// overwrote (`None` when no entry existed before).
 struct StoredSecret {
@@ -257,6 +270,10 @@ impl McpConfigurePresenter {
     ///
     /// Draft env/auth fields come from the persisted app config; drafts for
     /// MCPs without an app-config entry carry empty defaults.
+    ///
+    /// Issue #246: when the MCP service cannot serve `id`, the persisted
+    /// config.json entry (if any) is projected into the same draft instead,
+    /// so an entry saved by a previous session still opens for editing.
     async fn on_configure_mcp(
         mcp_service: &Arc<dyn McpService>,
         view_tx: &broadcast::Sender<ViewCommand>,
@@ -265,95 +282,201 @@ impl McpConfigurePresenter {
     ) {
         tracing::info!("Loading MCP config for id: {}", id);
 
-        match mcp_service.get(id).await {
-            Ok(cfg) => {
-                let name = cfg.name;
-                let (command, args, url, package, package_type, runtime_hint) = match cfg.transport
-                {
-                    serdes_ai_mcp::McpTransportConfig::Stdio { command, args } => {
-                        let package = if command == "docker" {
-                            args.last().cloned().unwrap_or_default()
-                        } else {
-                            args.iter()
-                                .find(|arg| !arg.starts_with('-'))
-                                .cloned()
-                                .unwrap_or_else(|| command.clone())
-                        };
-                        let package_type = if command == "docker" {
-                            crate::mcp::McpPackageType::Docker
-                        } else {
-                            crate::mcp::McpPackageType::Npm
-                        };
-                        let runtime_hint = if command == "docker" {
-                            Some("docker".to_string())
-                        } else {
-                            Some(command.clone())
-                        };
-                        (command, args, None, package, package_type, runtime_hint)
-                    }
-                    serdes_ai_mcp::McpTransportConfig::Http { url }
-                    | serdes_ai_mcp::McpTransportConfig::Sse { url } => (
-                        String::new(),
-                        vec![],
-                        Some(url.clone()),
-                        url,
-                        crate::mcp::McpPackageType::Http,
-                        None,
-                    ),
-                };
-
-                match Self::load_persisted_draft(config_path, id).await {
-                    Err(e) => {
-                        tracing::error!("Failed to load MCP draft for {}: {}", id, e);
+        let parts = match mcp_service.get(id).await {
+            Ok(cfg) => Some(Self::draft_parts_from_service_config(cfg)),
+            Err(service_err) => {
+                match Self::load_persisted_config(config_path, id).await {
+                    Ok(Some(mcp)) => Some(Self::draft_parts_from_persisted_config(mcp)),
+                    // A missing entry or an unreadable config keeps the
+                    // original service error in front: it is the reason the
+                    // registry-backed load failed.
+                    fallback => {
+                        if let Err(e) = &fallback {
+                            tracing::error!("Config.json fallback for MCP {id} failed: {e}");
+                        }
+                        tracing::error!("Failed to load MCP config {}: {}", id, service_err);
                         let _ = view_tx.send(ViewCommand::ShowError {
                             title: "Load Failed".to_string(),
-                            message: e,
+                            message: service_err.to_string(),
                             severity: super::view_command::ErrorSeverity::Error,
                         });
-                    }
-                    Ok(persisted) => {
-                        let persisted = persisted.unwrap_or_else(PersistedMcpDraft::empty);
-                        // The typed-key slot targets a secret var; a plain
-                        // var name would send the secret to the wrong
-                        // keychain entry (or into the config file).
-                        let env_var_name = persisted
-                            .env
-                            .iter()
-                            .find(|(_, _, is_secret)| *is_secret)
-                            .map_or_else(|| "API_KEY".to_string(), |(var, _, _)| var.clone());
-
-                        let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
-                            id: id.to_string(),
-                            name,
-                            package,
-                            package_type,
-                            runtime_hint,
-                            env_var_name,
-                            command,
-                            args,
-                            auth_type: persisted.auth_type,
-                            oauth_connected: persisted.oauth_connected,
-                            keyfile_path: persisted.keyfile_path,
-                            env: persisted.env,
-                            stored_secret_names: persisted.stored_secret_names,
-                            url,
-                        });
-
-                        let _ = view_tx.send(ViewCommand::NavigateTo {
-                            view: super::view_command::ViewId::McpConfigure,
-                        });
+                        None
                     }
                 }
             }
+        };
+        let Some(parts) = parts else {
+            return;
+        };
+
+        match Self::load_persisted_draft(config_path, id).await {
             Err(e) => {
-                tracing::error!("Failed to load MCP config {}: {}", id, e);
+                tracing::error!("Failed to load MCP draft for {}: {}", id, e);
                 let _ = view_tx.send(ViewCommand::ShowError {
                     title: "Load Failed".to_string(),
-                    message: e.to_string(),
+                    message: e,
                     severity: super::view_command::ErrorSeverity::Error,
                 });
             }
+            Ok(persisted) => Self::send_configure_draft(view_tx, id, parts, persisted),
         }
+    }
+
+    /// Project the registry service payload into configure draft fields.
+    fn draft_parts_from_service_config(cfg: serdes_ai_mcp::McpServerConfig) -> McpDraftParts {
+        let (command, args, url, package, package_type, runtime_hint) = match cfg.transport {
+            serdes_ai_mcp::McpTransportConfig::Stdio { command, args } => {
+                let package = if command == "docker" {
+                    args.last().cloned().unwrap_or_default()
+                } else {
+                    args.iter()
+                        .find(|arg| !arg.starts_with('-'))
+                        .cloned()
+                        .unwrap_or_else(|| command.clone())
+                };
+                let package_type = if command == "docker" {
+                    crate::mcp::McpPackageType::Docker
+                } else {
+                    crate::mcp::McpPackageType::Npm
+                };
+                let runtime_hint = if command == "docker" {
+                    Some("docker".to_string())
+                } else {
+                    Some(command.clone())
+                };
+                (command, args, None, package, package_type, runtime_hint)
+            }
+            serdes_ai_mcp::McpTransportConfig::Http { url }
+            | serdes_ai_mcp::McpTransportConfig::Sse { url } => (
+                String::new(),
+                vec![],
+                Some(url.clone()),
+                url,
+                crate::mcp::McpPackageType::Http,
+                None,
+            ),
+        };
+        McpDraftParts {
+            name: cfg.name,
+            command,
+            args,
+            url,
+            package,
+            package_type,
+            runtime_hint,
+        }
+    }
+
+    /// Project a config.json-only MCP entry into configure draft fields
+    /// (Issue #246), mirroring the registry mapping so the same entry edits
+    /// the same way regardless of which side served it.
+    fn draft_parts_from_persisted_config(mcp: crate::mcp::McpConfig) -> McpDraftParts {
+        match mcp.transport {
+            crate::mcp::McpTransport::Http => {
+                // The manual source URL is what the user typed in; other
+                // sources fall back to the package identifier.
+                let url = match mcp.source {
+                    crate::mcp::McpSource::Manual { url } => url,
+                    _ => mcp.package.identifier.clone(),
+                };
+                McpDraftParts {
+                    name: mcp.name,
+                    command: String::new(),
+                    args: vec![],
+                    url: Some(url.clone()),
+                    package: url,
+                    package_type: mcp.package.package_type,
+                    runtime_hint: None,
+                }
+            }
+            crate::mcp::McpTransport::Stdio => {
+                let command = mcp
+                    .package
+                    .runtime_hint
+                    .clone()
+                    .unwrap_or_else(|| "npx".to_string());
+                let runtime_hint = Some(command.clone());
+                McpDraftParts {
+                    name: mcp.name,
+                    command,
+                    args: vec![mcp.package.identifier.clone()],
+                    url: None,
+                    package: mcp.package.identifier,
+                    package_type: mcp.package.package_type,
+                    runtime_hint,
+                }
+            }
+        }
+    }
+
+    /// Emit the configure draft for `parts` merged with the persisted
+    /// draft (`None`/empty when the config has no entry), then navigate.
+    fn send_configure_draft(
+        view_tx: &broadcast::Sender<ViewCommand>,
+        id: Uuid,
+        parts: McpDraftParts,
+        persisted: Option<PersistedMcpDraft>,
+    ) {
+        let persisted = persisted.unwrap_or_else(PersistedMcpDraft::empty);
+        // The typed-key slot targets a secret var; a plain var name would
+        // send the secret to the wrong keychain entry (or into the config
+        // file).
+        let env_var_name = persisted
+            .env
+            .iter()
+            .find(|(_, _, is_secret)| *is_secret)
+            .map_or_else(|| "API_KEY".to_string(), |(var, _, _)| var.clone());
+
+        let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
+            id: id.to_string(),
+            name: parts.name,
+            package: parts.package,
+            package_type: parts.package_type,
+            runtime_hint: parts.runtime_hint,
+            env_var_name,
+            command: parts.command,
+            args: parts.args,
+            auth_type: persisted.auth_type,
+            oauth_connected: persisted.oauth_connected,
+            keyfile_path: persisted.keyfile_path,
+            env: persisted.env,
+            stored_secret_names: persisted.stored_secret_names,
+            url: parts.url,
+        });
+
+        let _ = view_tx.send(ViewCommand::NavigateTo {
+            view: super::view_command::ViewId::McpConfigure,
+        });
+    }
+
+    /// Load the app config off the async path.
+    ///
+    /// The config read runs in `spawn_blocking`; `config_path` overrides
+    /// the default config location (tests use this).
+    async fn load_app_config(
+        config_path: Option<&std::path::Path>,
+    ) -> Result<crate::config::Config, String> {
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => crate::config::Config::default_path()
+                .map_err(|e| format!("Failed to resolve config path: {e}"))?,
+        };
+        tokio::task::spawn_blocking(move || {
+            crate::config::Config::load(&path).map_err(|e| format!("Failed to load config: {e}"))
+        })
+        .await
+        .map_err(|e| format!("Config load task failed: {e}"))?
+    }
+
+    /// Load the persisted config.json entry for `id`, if one exists.
+    ///
+    /// `Ok(None)` means the config has no entry for this id.
+    async fn load_persisted_config(
+        config_path: Option<&std::path::Path>,
+        id: Uuid,
+    ) -> Result<Option<crate::mcp::McpConfig>, String> {
+        let app_config = Self::load_app_config(config_path).await?;
+        Ok(app_config.mcps.into_iter().find(|m| m.id == id))
     }
 
     /// Load persisted draft fields for `id` off the async path.
@@ -367,17 +490,11 @@ impl McpConfigurePresenter {
         config_path: Option<&std::path::Path>,
         id: Uuid,
     ) -> Result<Option<PersistedMcpDraft>, String> {
-        let path = match config_path {
-            Some(p) => p.to_path_buf(),
-            None => crate::config::Config::default_path()
-                .map_err(|e| format!("Failed to resolve config path: {e}"))?,
+        let app_config = Self::load_app_config(config_path).await?;
+        let Some(mcp) = app_config.mcps.into_iter().find(|m| m.id == id) else {
+            return Ok(None);
         };
         tokio::task::spawn_blocking(move || {
-            let app_config = crate::config::Config::load(&path)
-                .map_err(|e| format!("Failed to load config: {e}"))?;
-            let Some(mcp) = app_config.mcps.iter().find(|m| m.id == id) else {
-                return Ok(None);
-            };
             let mut stored_secret_names = Vec::new();
             for var in &mcp.env_vars {
                 if !var.is_secret {

@@ -1093,6 +1093,213 @@ async fn mcp_configure_presenter_surfaces_load_and_save_errors() {
 
 /// Returns the `TempDir` guard alongside the path so the directory is
 /// deleted when the test ends instead of leaking.
+fn temp_config_with_mcps(
+    mcps: Vec<personal_agent::mcp::McpConfig>,
+) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let path = dir.path().join("config.json");
+    let config = personal_agent::config::Config {
+        mcps,
+        ..personal_agent::config::Config::default()
+    };
+    let json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(&path, json).expect("write config");
+    (dir, path)
+}
+
+fn http_manual_mcp_config(id: Uuid, name: &str, url: &str) -> personal_agent::mcp::McpConfig {
+    personal_agent::mcp::McpConfig {
+        id,
+        name: name.to_string(),
+        enabled: true,
+        source: personal_agent::mcp::McpSource::Manual {
+            url: url.to_string(),
+        },
+        package: personal_agent::mcp::McpPackage {
+            package_type: personal_agent::mcp::McpPackageType::Http,
+            identifier: url.to_string(),
+            runtime_hint: None,
+        },
+        transport: personal_agent::mcp::McpTransport::Http,
+        auth_type: personal_agent::mcp::McpAuthType::ApiKey,
+        env_vars: vec![personal_agent::mcp::EnvVarConfig {
+            name: "WEATHER_API_KEY".to_string(),
+            required: true,
+            is_secret: true,
+            value: None,
+        }],
+        package_args: vec![],
+        keyfile_path: None,
+        config: serde_json::Value::Null,
+        oauth_token: None,
+    }
+}
+
+/// Issue #246: a config.json-only HTTP entry opens for editing instead of
+/// showing an error when the MCP service cannot serve it.
+#[tokio::test]
+async fn mcp_configure_falls_back_to_config_json_for_http_entry() {
+    personal_agent::services::secure_store::use_mock_backend();
+    let config_id = Uuid::new_v4();
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(config_id)));
+    mcp_service
+        .set_get_result(Err(ServiceError::Internal("not in registry".to_string())))
+        .await;
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let (_config_dir, tmp_config) = temp_config_with_mcps(vec![http_manual_mcp_config(
+        config_id,
+        "Weather MCP",
+        "https://api.example.com/mcp",
+    )]);
+    let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx)
+        .with_config_path(tmp_config);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::ConfigureMcp { id: config_id }))
+        .expect("publish configure mcp");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigureDraftLoaded {
+            id,
+            name,
+            url,
+            package,
+            package_type,
+            runtime_hint,
+            command,
+            args,
+            auth_type,
+            env_var_name,
+            env,
+            ..
+        } if id == &config_id.to_string()
+            && name == "Weather MCP"
+            && url.as_deref() == Some("https://api.example.com/mcp")
+            && package == "https://api.example.com/mcp"
+            && *package_type == personal_agent::mcp::McpPackageType::Http
+            && runtime_hint.is_none()
+            && command.is_empty()
+            && args.is_empty()
+            && *auth_type == personal_agent::mcp::McpAuthType::ApiKey
+            && env_var_name == "WEATHER_API_KEY"
+            && env == &vec![("WEATHER_API_KEY".to_string(), String::new(), true)]
+    )));
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::NavigateTo {
+            view: ViewId::McpConfigure
+        }
+    )));
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, ViewCommand::ShowError { .. })),
+        "the config.json fallback must not surface an error"
+    );
+}
+
+/// The registry-backed configure path keeps its mapping when config.json
+/// has no entry for the id.
+#[tokio::test]
+async fn mcp_configure_keeps_service_mapping_when_registry_backed() {
+    let config_id = Uuid::new_v4();
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(config_id)));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let (_config_dir, tmp_config) = temp_config_path();
+    let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx)
+        .with_config_path(tmp_config);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::ConfigureMcp { id: config_id }))
+        .expect("publish configure mcp");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigureDraftLoaded {
+            id,
+            name,
+            command,
+            args,
+            url,
+            ..
+        } if id == &config_id.to_string()
+            && name == "Filesystem"
+            && command == "npx"
+            && args == &vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]
+            && url.is_none()
+    )));
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::NavigateTo {
+            view: ViewId::McpConfigure
+        }
+    )));
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, ViewCommand::ShowError { .. })),
+        "a registry-backed entry must not surface an error"
+    );
+}
+
+/// An id the service and config.json both lack still surfaces the service
+/// error and no draft.
+#[tokio::test]
+async fn mcp_configure_surfaces_service_error_when_id_missing_everywhere() {
+    let config_id = Uuid::new_v4();
+    let mcp_service = Arc::new(MockMcpService::new(test_mcp_config(config_id)));
+    mcp_service
+        .set_get_result(Err(ServiceError::Internal(
+            "missing everywhere".to_string(),
+        )))
+        .await;
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let (_config_dir, tmp_config) = temp_config_path();
+    let mut presenter = McpConfigurePresenter::new_with_event_bus(mcp_service, &event_bus, view_tx)
+        .with_config_path(tmp_config);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::ConfigureMcp { id: config_id }))
+        .expect("publish configure mcp");
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::ShowError {
+            title,
+            message,
+            severity: ErrorSeverity::Error,
+        } if title == "Load Failed" && message.contains("missing everywhere")
+    )));
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, ViewCommand::McpConfigureDraftLoaded { .. })),
+        "no draft may be emitted for an unknown id"
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, ViewCommand::NavigateTo { .. })),
+        "no navigation may follow an unknown id"
+    );
+}
+
+/// Returns the `TempDir` guard alongside the path so the directory is
+/// deleted when the test ends instead of leaking.
 fn temp_config_with_env_mcp(
     id: Uuid,
     name: &str,
