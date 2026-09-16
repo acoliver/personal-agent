@@ -153,6 +153,7 @@ impl McpRuntime {
         config: &McpConfig,
         env: &HashMap<String, String>,
     ) -> Result<McpClient, String> {
+        Self::validate_http_identifier(config)?;
         let headers = Self::http_auth_headers(config, env)?;
 
         // Create HTTP transport with custom headers if needed
@@ -166,6 +167,23 @@ impl McpRuntime {
             )
         };
         Ok(McpClient::new(transport))
+    }
+
+    /// For Http the package identifier is the endpoint the transport dials,
+    /// so a non-URL identifier can never connect; fail before building it
+    /// instead of surfacing a cryptic "Transport error: builder error".
+    fn validate_http_identifier(config: &McpConfig) -> Result<(), String> {
+        if config.package.identifier.starts_with("http://")
+            || config.package.identifier.starts_with("https://")
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "MCP {}: HTTP transport requires an http(s) URL as the package identifier, \
+                 got '{}'",
+                config.name, config.package.identifier
+            ))
+        }
     }
 
     /// Compute the Authorization credential plus custom headers for an HTTP MCP.
@@ -630,6 +648,31 @@ mod tests {
         assert!(
             err.contains("EXA_API_KEY"),
             "the error must name the missing secret var, got: {err}"
+        );
+    }
+
+    #[test]
+    fn create_http_client_rejects_non_url_identifier() {
+        let mut config = make_config(Uuid::new_v4(), "newsoracle");
+        config.package.identifier = "io.tooloracle/newsoracle".to_string();
+
+        let err = McpRuntime::create_http_client(&config, &HashMap::new())
+            .map(|_| ())
+            .expect_err("a non-URL Http identifier must fail before building a transport");
+        assert!(
+            err.contains("newsoracle") && err.contains("io.tooloracle/newsoracle"),
+            "the error must name the MCP and the offending identifier, got: {err}"
+        );
+    }
+
+    #[test]
+    fn create_http_client_accepts_https_url_identifier() {
+        let mut config = make_config(Uuid::new_v4(), "exa");
+        config.package.identifier = "https://mcp.exa.ai/mcp".to_string();
+
+        assert!(
+            McpRuntime::create_http_client(&config, &HashMap::new()).is_ok(),
+            "an https identifier must pass validation and build a transport"
         );
     }
 }

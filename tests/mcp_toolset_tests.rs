@@ -55,6 +55,36 @@ fn build_command_includes_named_package_args() {
 }
 
 #[test]
+fn build_command_runs_uvx_without_npx_y_flag() {
+    let mut config = base_config();
+    // pypi-backed registry entries run through uvx, which rejects npx's
+    // global `-y` ("error: unexpected argument '-y' found").
+    config.package = McpPackage {
+        package_type: McpPackageType::Npm,
+        identifier: "mcp-hackernews".to_string(),
+        runtime_hint: Some("uvx".to_string()),
+    };
+
+    let (cmd, args) = build_command(&config);
+    assert_eq!(cmd, "uvx");
+    assert_eq!(
+        args,
+        vec!["mcp-hackernews".to_string()],
+        "uvx must not receive npx's -y flag"
+    );
+}
+
+#[test]
+fn build_command_keeps_y_flag_for_npx_runtime() {
+    let mut config = base_config();
+    config.package.runtime_hint = None; // falls back to npx
+
+    let (cmd, args) = build_command(&config);
+    assert_eq!(cmd, "npx");
+    assert_eq!(args, vec!["-y".to_string(), "@test/mcp".to_string()]);
+}
+
+#[test]
 fn build_env_for_config_loads_secrets() {
     personal_agent::services::secure_store::use_mock_backend();
     let secrets = SecretsManager::new();

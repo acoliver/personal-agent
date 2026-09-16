@@ -88,6 +88,108 @@ async fn draft_loaded_sets_auth_transport_and_save_payload_for_remote_http(
 }
 
 #[gpui::test]
+async fn http_save_persists_url_as_package_identifier(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, _cx| {
+        view.set_bridge(Arc::clone(&bridge));
+
+        let mut data = McpConfigureData::new();
+        data.name = "News Oracle".to_string();
+        data.auth_method = McpAuthMethod::None;
+        // Registry selection leaves the qualified registry name in
+        // `package`; the saved Http identifier must still be the endpoint
+        // the runtime dials, never that display name.
+        data.package = "io.tooloracle/newsoracle".to_string();
+        data.package_type = crate::mcp::McpPackageType::Npm;
+        data.url = Some("https://tooloracle.io/news/mcp/".to_string());
+        view.set_mcp(data, true);
+        view.emit_save_mcp_config();
+    });
+
+    match user_rx.recv().expect("save mcp config event") {
+        UserEvent::SaveMcpConfig { config, .. } => {
+            assert_eq!(
+                config.package.package_type,
+                crate::mcp::McpPackageType::Http,
+                "a non-empty url forces the Http transport"
+            );
+            assert_eq!(config.transport, crate::mcp::McpTransport::Http);
+            assert_eq!(
+                config.package.identifier, "https://tooloracle.io/news/mcp/",
+                "for Http the identifier is the endpoint the runtime dials"
+            );
+            assert_eq!(
+                config.source,
+                crate::mcp::McpSource::Manual {
+                    url: "https://tooloracle.io/news/mcp/".to_string()
+                }
+            );
+        }
+        other => panic!("expected SaveMcpConfig event, got {other:?}"),
+    }
+}
+
+#[gpui::test]
+async fn http_save_keeps_url_identifier_for_manual_url_entries(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, _cx| {
+        view.set_bridge(Arc::clone(&bridge));
+
+        let mut data = McpConfigureData::new();
+        data.name = "Exa Remote".to_string();
+        data.auth_method = McpAuthMethod::None;
+        // Manual URL entry already puts the URL in `package`; that
+        // identifier == url behavior must survive the save path.
+        data.package = "https://exa.example/mcp".to_string();
+        data.package_type = crate::mcp::McpPackageType::Http;
+        data.url = Some("https://exa.example/mcp".to_string());
+        view.set_mcp(data, true);
+        view.emit_save_mcp_config();
+    });
+
+    match user_rx.recv().expect("save mcp config event") {
+        UserEvent::SaveMcpConfig { config, .. } => {
+            assert_eq!(config.transport, crate::mcp::McpTransport::Http);
+            assert_eq!(config.package.identifier, "https://exa.example/mcp");
+        }
+        other => panic!("expected SaveMcpConfig event, got {other:?}"),
+    }
+}
+
+#[gpui::test]
+async fn npm_save_with_uvx_runtime_hint_keeps_stdio_package_mapping(cx: &mut TestAppContext) {
+    let (bridge, user_rx) = make_bridge();
+    let view = cx.new(McpConfigureView::new);
+
+    view.update(cx, |view: &mut McpConfigureView, _cx| {
+        view.set_bridge(Arc::clone(&bridge));
+
+        let mut data = McpConfigureData::new();
+        data.name = "Hacker News".to_string();
+        data.package = "mcp-hackernews".to_string();
+        data.package_type = crate::mcp::McpPackageType::Npm;
+        data.runtime_hint = Some("uvx".to_string());
+        data.auth_method = McpAuthMethod::None;
+        view.set_mcp(data, true);
+        view.emit_save_mcp_config();
+    });
+
+    match user_rx.recv().expect("save mcp config event") {
+        UserEvent::SaveMcpConfig { config, .. } => {
+            assert_eq!(config.transport, crate::mcp::McpTransport::Stdio);
+            assert_eq!(config.package.package_type, crate::mcp::McpPackageType::Npm);
+            assert_eq!(config.package.identifier, "mcp-hackernews");
+            assert_eq!(config.package.runtime_hint.as_deref(), Some("uvx"));
+        }
+        other => panic!("expected SaveMcpConfig event, got {other:?}"),
+    }
+}
+
+#[gpui::test]
 async fn draft_loaded_with_env_requires_api_key_and_status_commands_update_oauth_state(
     cx: &mut TestAppContext,
 ) {

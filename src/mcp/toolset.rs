@@ -13,10 +13,14 @@ pub fn build_command(config: &McpConfig) -> (String, Vec<String>) {
     let (cmd, mut args) = match config.package.package_type {
         McpPackageType::Npm => {
             let runtime = config.package.runtime_hint.as_deref().unwrap_or("npx");
-            (
-                runtime.to_string(),
-                vec!["-y".to_string(), config.package.identifier.clone()],
-            )
+            // Only npx takes the global-install shortcut `-y`; uvx rejects it
+            // ("error: unexpected argument '-y' found").
+            let runtime_args = if runtime == "npx" {
+                vec!["-y".to_string(), config.package.identifier.clone()]
+            } else {
+                vec![config.package.identifier.clone()]
+            };
+            (runtime.to_string(), runtime_args)
         }
         McpPackageType::Docker => (
             "docker".to_string(),

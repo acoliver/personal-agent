@@ -1274,7 +1274,7 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
         author: "MCP Team".to_string(),
         license: "MIT".to_string(),
         repository: "https://github.com/modelcontextprotocol/servers".to_string(),
-        command: "npx".to_string(),
+        command: "@modelcontextprotocol/server-fetch".to_string(),
         args: vec![
             "-y".to_string(),
             "@modelcontextprotocol/server-fetch".to_string(),
@@ -1332,9 +1332,9 @@ async fn test_mcp_add_presenter_select_emits_configure_draft_and_navigate() {
                 ..
             } if id == "official::fetch"
                 && name == "Fetch"
-                && package == "fetch"
+                && package == "@modelcontextprotocol/server-fetch"
                 && env_var_name == "FETCH_API_KEY"
-                && command == "npx"
+                && command == "@modelcontextprotocol/server-fetch"
                 && args == &vec!["-y".to_string(), "@modelcontextprotocol/server-fetch".to_string()]
         ),
         "first command should be a configure draft for selected MCP, got {first:?}"
@@ -1371,7 +1371,7 @@ async fn test_mcp_add_presenter_select_preserves_source_hint_in_configure_draft_
         author: "MCP Team".to_string(),
         license: "MIT".to_string(),
         repository: "https://github.com/modelcontextprotocol/servers".to_string(),
-        command: "npx".to_string(),
+        command: "@modelcontextprotocol/server-filesystem".to_string(),
         args: vec![
             "-y".to_string(),
             "@modelcontextprotocol/server-filesystem".to_string(),
@@ -1419,7 +1419,8 @@ async fn test_mcp_add_presenter_select_preserves_source_hint_in_configure_draft_
                 ref id,
                 ref package,
                 ..
-            } if id == "smithery::filesystem" && package == "filesystem"
+            } if id == "smithery::filesystem"
+                && package == "@modelcontextprotocol/server-filesystem"
         ),
         "expected source-hinted configure draft id, got {first:?}"
     );
