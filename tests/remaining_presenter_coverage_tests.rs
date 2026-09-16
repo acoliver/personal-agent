@@ -379,7 +379,7 @@ fn registry_entry() -> personal_agent::services::McpRegistryEntry {
         author: "Test".to_string(),
         license: "MIT".to_string(),
         repository: "https://example.com".to_string(),
-        command: "npx".to_string(),
+        command: "@test/filesystem".to_string(),
         args: vec!["-y".to_string(), "@test/filesystem".to_string()],
         env: Some(vec![("API_KEY".to_string(), "value".to_string())]),
         tags: vec!["files".to_string()],
@@ -846,9 +846,9 @@ async fn mcp_add_presenter_handles_search_selection_and_errors() {
             ..
         } if id == "community::filesystem"
             && name == "Filesystem"
-            && package == "filesystem"
+            && package == "@test/filesystem"
             && env_var_name == "API_KEY"
-            && command == "npx"
+            && command == "@test/filesystem"
     )));
     assert!(select_commands.iter().any(|command| matches!(
         command,
@@ -882,6 +882,312 @@ async fn mcp_add_presenter_handles_search_selection_and_errors() {
     )));
 }
 
+#[tokio::test]
+async fn mcp_add_presenter_selection_saves_package_command_as_identifier() {
+    let mut entry = registry_entry();
+    entry.name = "io.github.AlexDeMichieli/weather".to_string();
+    entry.display_name = "Weather".to_string();
+    entry.command = "@alexdemichieli/mcp-weather-server".to_string();
+    entry.package_type = Some(personal_agent::mcp::McpPackageType::Npm);
+    entry.runtime_hint = Some("npx".to_string());
+    entry.env = Some(vec![("API_KEY".to_string(), String::new())]);
+
+    let mcp_registry_service = Arc::new(MockMcpRegistryService::new(
+        Ok(vec![entry.clone()]),
+        Ok(vec![entry]),
+    ));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter =
+        McpAddPresenter::new_with_event_bus(mcp_registry_service, &event_bus, view_tx);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SelectMcpFromRegistry {
+            source: McpRegistrySource {
+                name: "official::io.github.AlexDeMichieli/weather".to_string(),
+            },
+        }))
+        .expect("publish select from registry");
+
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigureDraftLoaded {
+            id,
+            package,
+            package_type,
+            runtime_hint,
+            command,
+            ..
+        } if id == "official::io.github.AlexDeMichieli/weather"
+            && package == "@alexdemichieli/mcp-weather-server"
+            && *package_type == personal_agent::mcp::McpPackageType::Npm
+            && runtime_hint.as_deref() == Some("npx")
+            && command == "@alexdemichieli/mcp-weather-server"
+    )));
+}
+
+#[tokio::test]
+async fn mcp_add_presenter_selection_saves_remote_url_for_http_transport() {
+    let mut entry = registry_entry();
+    entry.name = "io.tooloracle/newsoracle".to_string();
+    entry.display_name = "News Oracle".to_string();
+    entry.command = String::new();
+    entry.args = vec![];
+    entry.env = None;
+    entry.package_type = None;
+    entry.runtime_hint = None;
+    entry.url = Some("https://tooloracle.io/news/mcp/".to_string());
+
+    let mcp_registry_service = Arc::new(MockMcpRegistryService::new(
+        Ok(vec![entry.clone()]),
+        Ok(vec![entry]),
+    ));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter =
+        McpAddPresenter::new_with_event_bus(mcp_registry_service, &event_bus, view_tx);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SelectMcpFromRegistry {
+            source: McpRegistrySource {
+                name: "official::io.tooloracle/newsoracle".to_string(),
+            },
+        }))
+        .expect("publish select from registry");
+
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigureDraftLoaded {
+            package,
+            package_type,
+            runtime_hint,
+            url,
+            ..
+        } if package == "https://tooloracle.io/news/mcp/"
+            && *package_type == personal_agent::mcp::McpPackageType::Http
+            && runtime_hint.is_none()
+            && url.as_deref() == Some("https://tooloracle.io/news/mcp/")
+    )));
+}
+
+#[tokio::test]
+async fn mcp_add_presenter_selection_runs_pypi_command_through_uvx() {
+    let mut entry = registry_entry();
+    entry.name = "io.github.YinTokey/mcp_hackernews".to_string();
+    entry.display_name = "Hacker News".to_string();
+    entry.command = "mcp-hackernews".to_string();
+    entry.args = vec![];
+    entry.env = None;
+    entry.package_type = None;
+    entry.runtime_hint = None;
+    entry.url = None;
+
+    let mcp_registry_service = Arc::new(MockMcpRegistryService::new(
+        Ok(vec![entry.clone()]),
+        Ok(vec![entry]),
+    ));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter =
+        McpAddPresenter::new_with_event_bus(mcp_registry_service, &event_bus, view_tx);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SelectMcpFromRegistry {
+            source: McpRegistrySource {
+                name: "official::io.github.YinTokey/mcp_hackernews".to_string(),
+            },
+        }))
+        .expect("publish select from registry");
+
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigureDraftLoaded {
+            package,
+            package_type,
+            runtime_hint,
+            ..
+        } if package == "mcp-hackernews"
+            && *package_type == personal_agent::mcp::McpPackageType::Npm
+            && runtime_hint.as_deref() == Some("uvx")
+    )));
+}
+
+#[tokio::test]
+async fn mcp_add_presenter_selection_errors_when_entry_has_no_package_or_url() {
+    let mut entry = registry_entry();
+    entry.name = "x".to_string();
+    entry.display_name = "X".to_string();
+    entry.command = String::new();
+    entry.args = vec![];
+    entry.env = None;
+    entry.package_type = None;
+    entry.runtime_hint = None;
+    entry.url = None;
+
+    let mcp_registry_service = Arc::new(MockMcpRegistryService::new(
+        Ok(vec![entry.clone()]),
+        Ok(vec![entry]),
+    ));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter =
+        McpAddPresenter::new_with_event_bus(mcp_registry_service, &event_bus, view_tx);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SelectMcpFromRegistry {
+            source: McpRegistrySource {
+                name: "official::x".to_string(),
+            },
+        }))
+        .expect("publish select from registry");
+
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::ShowError {
+            title,
+            message,
+            severity: ErrorSeverity::Warning,
+        } if title == "Selection Failed"
+            && message == "MCP 'x' has no runnable package or URL in the registry"
+    )));
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, ViewCommand::McpConfigureDraftLoaded { .. })),
+        "an unusable entry must not open the configure draft"
+    );
+    assert!(
+        !commands.iter().any(|command| matches!(
+            command,
+            ViewCommand::NavigateTo {
+                view: ViewId::McpConfigure
+            }
+        )),
+        "an unusable entry must not navigate to the configure view"
+    );
+}
+
+#[tokio::test]
+async fn mcp_add_presenter_selection_fails_when_npm_entry_has_empty_command() {
+    let mut entry = registry_entry();
+    entry.name = "io.example/broken".to_string();
+    entry.display_name = "Broken".to_string();
+    entry.command = String::new();
+    entry.args = vec![];
+    entry.env = None;
+    entry.package_type = Some(personal_agent::mcp::McpPackageType::Npm);
+    entry.runtime_hint = None;
+    entry.url = None;
+
+    let mcp_registry_service = Arc::new(MockMcpRegistryService::new(
+        Ok(vec![entry.clone()]),
+        Ok(vec![entry]),
+    ));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter =
+        McpAddPresenter::new_with_event_bus(mcp_registry_service, &event_bus, view_tx);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SelectMcpFromRegistry {
+            source: McpRegistrySource {
+                name: "official::io.example/broken".to_string(),
+            },
+        }))
+        .expect("publish select from registry");
+
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::ShowError {
+            title,
+            message,
+            severity: ErrorSeverity::Warning,
+        } if title == "Selection Failed"
+            && message
+                == "MCP 'io.example/broken' has no runnable package or URL in the registry"
+    )));
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, ViewCommand::McpConfigureDraftLoaded { .. })),
+        "a package-typed entry without a command must not open the configure draft"
+    );
+    assert!(
+        !commands.iter().any(|command| matches!(
+            command,
+            ViewCommand::NavigateTo {
+                view: ViewId::McpConfigure
+            }
+        )),
+        "a package-typed entry without a command must not navigate to the configure view"
+    );
+}
+
+#[tokio::test]
+async fn mcp_add_presenter_selection_prefers_package_over_remote_url() {
+    let mut entry = registry_entry();
+    entry.name = "io.example/dual".to_string();
+    entry.display_name = "Dual".to_string();
+    entry.command = "@scope/pkg".to_string();
+    entry.args = vec![];
+    entry.env = None;
+    entry.package_type = Some(personal_agent::mcp::McpPackageType::Npm);
+    entry.runtime_hint = Some("npx".to_string());
+    entry.url = Some("https://remote.example/mcp".to_string());
+
+    let mcp_registry_service = Arc::new(MockMcpRegistryService::new(
+        Ok(vec![entry.clone()]),
+        Ok(vec![entry]),
+    ));
+    let event_bus = Arc::new(EventBus::new(64));
+    let (view_tx, mut view_rx) = broadcast::channel(128);
+
+    let mut presenter =
+        McpAddPresenter::new_with_event_bus(mcp_registry_service, &event_bus, view_tx);
+    presenter.start().await.expect("start presenter");
+    let _ = collect_broadcast_commands(&mut view_rx).await;
+
+    event_bus
+        .publish(AppEvent::User(UserEvent::SelectMcpFromRegistry {
+            source: McpRegistrySource {
+                name: "official::io.example/dual".to_string(),
+            },
+        }))
+        .expect("publish select from registry");
+
+    let commands = collect_broadcast_commands(&mut view_rx).await;
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        ViewCommand::McpConfigureDraftLoaded {
+            package,
+            package_type,
+            url,
+            ..
+        } if package == "@scope/pkg"
+            && *package_type == personal_agent::mcp::McpPackageType::Npm
+            && url.is_none()
+    )));
+}
 #[tokio::test]
 async fn mcp_add_presenter_surfaces_registry_failures() {
     let mcp_registry_service = Arc::new(MockMcpRegistryService::new(

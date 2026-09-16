@@ -269,6 +269,29 @@ impl McpAddPresenter {
 
                 let selected = entries.into_iter().find(|e| e.name == requested_name);
                 if let Some(entry) = selected {
+                    let Some((package, package_type, runtime_hint)) =
+                        Self::resolve_entry_package(&entry)
+                    else {
+                        let _ = view_tx.send(ViewCommand::ShowError {
+                            title: "Selection Failed".to_string(),
+                            message: format!(
+                                "MCP '{requested_name}' has no runnable package or URL in \
+                                 the registry"
+                            ),
+                            severity: super::view_command::ErrorSeverity::Warning,
+                        });
+                        return;
+                    };
+
+                    // Package-backed drafts must not carry the registry URL:
+                    // the configure view forces Http whenever a draft url is
+                    // set, silently discarding the package at save.
+                    let draft_url = if package_type == crate::mcp::McpPackageType::Http {
+                        entry.url.clone()
+                    } else {
+                        None
+                    };
+
                     // Registry service entries flatten env metadata to
                     // name/value pairs; restore the secret flag from the name
                     // so the configure draft and the install path agree.
@@ -295,15 +318,12 @@ impl McpAddPresenter {
                         .collect();
 
                     let configure_name = entry.display_name;
-                    let package_name = entry.name;
                     let _ = view_tx.send(ViewCommand::McpConfigureDraftLoaded {
-                        id: format!("{source_hint}::{package_name}"),
+                        id: format!("{source_hint}::{requested_name}"),
                         name: configure_name,
-                        package: package_name,
-                        package_type: entry
-                            .package_type
-                            .unwrap_or(crate::mcp::McpPackageType::Npm),
-                        runtime_hint: entry.runtime_hint,
+                        package,
+                        package_type,
+                        runtime_hint,
                         env_var_name,
                         command: entry.command,
                         args: entry.args,
@@ -312,7 +332,7 @@ impl McpAddPresenter {
                         keyfile_path: String::new(),
                         env,
                         stored_secret_names: vec![],
-                        url: entry.url,
+                        url: draft_url,
                     });
                     let _ = view_tx.send(ViewCommand::NavigateTo {
                         view: super::view_command::ViewId::McpConfigure,
@@ -334,6 +354,46 @@ impl McpAddPresenter {
                 });
             }
         }
+    }
+
+    /// Resolve the runnable draft identity for a registry entry.
+    ///
+    /// The registry's qualified server name is a lookup key, not a runnable
+    /// package. Package-backed entries (npm/docker/pypi) require the real
+    /// identifier from `command`; remote-only entries use `url`. Entries
+    /// without a usable package or URL yield `None`, failing the selection
+    /// instead of saving a config that cannot start.
+    fn resolve_entry_package(
+        entry: &crate::services::McpRegistryEntry,
+    ) -> Option<(String, crate::mcp::McpPackageType, Option<String>)> {
+        if let Some(
+            package_type @ (crate::mcp::McpPackageType::Npm | crate::mcp::McpPackageType::Docker),
+        ) = entry.package_type.clone()
+        {
+            // `command` carries the real package identifier; an entry typed
+            // as a package but missing it cannot run.
+            if entry.command.is_empty() {
+                return None;
+            }
+            return Some((
+                entry.command.clone(),
+                package_type,
+                entry.runtime_hint.clone(),
+            ));
+        }
+
+        // Pypi-backed entries have no mapped package_type but a non-empty
+        // command; uvx (not npx) runs them.
+        if !entry.command.is_empty() {
+            return Some((
+                entry.command.clone(),
+                crate::mcp::McpPackageType::Npm,
+                Some("uvx".to_string()),
+            ));
+        }
+
+        let url = entry.url.as_deref().filter(|url| !url.is_empty())?;
+        Some((url.to_string(), crate::mcp::McpPackageType::Http, None))
     }
 
     /// Handle `McpAddNext`: user advanced to next step in MCP add wizard

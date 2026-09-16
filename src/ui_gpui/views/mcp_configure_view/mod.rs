@@ -585,7 +585,14 @@ impl McpConfigureView {
 
         let package = crate::mcp::McpPackage {
             package_type: package_type.clone(),
-            identifier: d.package.clone(),
+            // For Http the identifier is the endpoint the runtime dials, so
+            // it must be the URL, never the display package field (which may
+            // still hold the registry's qualified server name).
+            identifier: if package_type == crate::mcp::McpPackageType::Http {
+                d.url.clone().unwrap_or_default()
+            } else {
+                d.package.clone()
+            },
             runtime_hint: match package_type {
                 crate::mcp::McpPackageType::Npm => d.runtime_hint.clone(),
                 crate::mcp::McpPackageType::Docker => Some("docker".to_string()),
